@@ -23,6 +23,11 @@ const BOOST_MIN_TOKE_SECONDS:f64=0.5;
 /// The flame must be held to the tip this long.
 const LIGHT_SECONDS:f64=0.35;
 const ASH_TAP_SECONDS:f64=0.7;
+/// A press on the right button shorter than this, on a lit cigarette in the hand, is a tap that
+/// knocks the ash off (2 November 2026, "tap rmb to ash cig while lit and there's some ash"),
+/// not a draw; it needs this much burn since the ash was last knocked off.
+const ASH_TAP_PRESS_SECONDS:f64=0.3;
+const ASH_READY_SECONDS:f64=6.0;
 /// The slot whose cigarette sits tobacco-end up.
 pub const INVERTED_SLOT:u8=9;
 const FULL_PACK:u32=(1<<PACK_SIZE)-1;
@@ -50,7 +55,7 @@ pub struct View {
     pub quarter_progress:f32,
 }
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
-pub enum Action {#[default] None,Draw,Light,Puff,Cough,BurnedOut}
+pub enum Action {#[default] None,Draw,Light,Puff,Cough,BurnedOut,Tap}
 #[derive(Clone,Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct State {
@@ -59,12 +64,13 @@ pub struct State {
     consumed:u32,drawn:u32,lit_count:u32,puffs:u32,
     toke_s:f64,exhale_s:f64,exhale_total:f64,last_toke_s:f64,cough_s:f64,dose_s:f64,
     boost_s:f64,boost_shown:f64,ash_tap_s:f64,quarters_tapped:u8,butt_pending:bool,
+    #[serde(default)] ash_s:f64,
 }
 impl Default for State {fn default()->Self {Self{slots:FULL_PACK,reserve:0,held_burn_s:None,
     lit:false,equipped:false,in_mouth:false,pack_open:false,lighter_raise:0.0,lighter_held:false,flame_s:0.0,
     previous_toke:false,wait_for_release:false,consumed:0,drawn:0,lit_count:0,puffs:0,
     toke_s:0.0,exhale_s:0.0,exhale_total:0.0,last_toke_s:0.0,cough_s:0.0,dose_s:0.0,
-    boost_s:0.0,boost_shown:0.0,ash_tap_s:0.0,quarters_tapped:0,butt_pending:false}}}
+    boost_s:0.0,boost_shown:0.0,ash_tap_s:0.0,quarters_tapped:0,butt_pending:false,ash_s:0.0}}}
 impl State {
     /// The hands are occupied by the packet or a cigarette. One in the mouth leaves them free.
     pub fn active(&self)->bool {self.equipped}
@@ -164,6 +170,11 @@ impl State {
         if toking {
             let inhaled=dt.min(MAX_TOKE_SECONDS-self.toke_s);
             self.toke_s+=inhaled;self.dose_s+=inhaled;
+        }else if was_toking&&self.toke_s<ASH_TAP_PRESS_SECONDS&&self.equipped&&self.ash_s>=ASH_READY_SECONDS {
+            // A tap, not a draw: the ash is knocked off; the breath of it is not a puff.
+            self.dose_s=(self.dose_s-self.toke_s).max(0.0);self.toke_s=0.0;
+            self.ash_tap_s=ASH_TAP_SECONDS;self.ash_s=0.0;action=Action::Tap;
+            if toke {self.wait_for_release=true;}
         }else if was_toking {
             // Release: the breath goes out, and a draw held too long comes back as a cough.
             self.puffs=self.puffs.saturating_add(1);self.last_toke_s=self.toke_s;
@@ -181,7 +192,7 @@ impl State {
         self.boost_shown+=(boost_target-self.boost_shown).clamp(-dt/1.5,dt/1.0);
         self.ash_tap_s=(self.ash_tap_s-dt).max(0.0);
         if self.lit {if let Some(burn)=self.held_burn_s.as_mut() {
-            *burn-=dt;
+            *burn-=dt;self.ash_s+=dt;
             if *burn<=0.0 {
                 // Down to the filter: the butt is thrown away and the hand or mouth is empty.
                 self.held_burn_s=None;self.lit=false;self.toke_s=0.0;self.in_mouth=false;
@@ -194,6 +205,7 @@ impl State {
                     self.quarters_tapped=quarter;
                     // In the hand it is tapped off; in the mouth the ash just falls.
                     if self.equipped {self.ash_tap_s=ASH_TAP_SECONDS;}
+                    self.ash_s=0.0;
                 }
             }
         }}
@@ -303,6 +315,25 @@ impl State {
         let mut u=draw();assert!(u.stow());assert!(!u.view().cigarette_present&&!u.view().in_mouth);
         u.advance(30.0,false);u.toggle_pack();
         assert!(u.view().cigarette_present&&u.view().burn_remaining==1.0);assert_eq!(u.drawn(),1);}
+    /// The game's steps are small: a long wait in one step would let a quarter mark drop the ash
+    /// at the step's end and wipe the whole wait's growth.
+    fn wait(s:&mut State,seconds:f32) {for _ in 0..(seconds/0.1).round() as usize {s.advance(0.1,false);}}
+    #[test]fn a_short_press_on_a_lit_cigarette_with_ash_taps_it_off_and_is_no_puff(){let mut s=light();
+        // Fresh from the lighter there is no ash to tap: a short press is a (tiny) draw.
+        s.advance(0.5,false);assert_eq!(toke(&mut s,0.2),Action::Puff);assert_eq!(s.puffs(),1);
+        // Eight seconds of burn: a tap knocks the ash off, counts no puff and exhales nothing.
+        wait(&mut s,8.0);let dose=s.take_dose();
+        assert_eq!(toke(&mut s,0.2),Action::Tap);assert_eq!(s.puffs(),1);
+        assert!(s.view().ash_tap>0.0);assert_eq!(s.view().exhale,0.0);assert!(s.take_dose()<=dose+1e-3);
+        // Tapped clean, the next short press is a draw again until the ash has grown back.
+        s.advance(1.0,false);assert_eq!(toke(&mut s,0.2),Action::Puff);
+        // (Twelve seconds on: the quarter mark at fifteen seconds of burn drops the ash by itself
+        // on the way, and seven seconds have grown back since.)
+        wait(&mut s,12.0);assert_eq!(toke(&mut s,0.2),Action::Tap);
+        // A held press is a draw whatever the ash.
+        wait(&mut s,8.0);assert_eq!(toke(&mut s,1.0),Action::Puff);
+        // In the mouth there is no hand to tap it.
+        let mut m=light();wait(&mut m,8.0);assert!(m.stow());m.advance(0.2,true);assert_eq!(m.advance(0.01,false),Action::None);}
     #[test]fn the_ash_is_tapped_off_at_each_quarter(){let mut s=light();let mut taps=0;let mut tapping=false;
         for _ in 0..590 {s.advance(0.1,false);let now=s.view().ash_tap>0.0;
             if now&&!tapping {taps+=1;}tapping=now;}

@@ -2,23 +2,29 @@
 //! rectangle. The turning leaf and stationary pages retain separate surfaces during a page turn.
 use std::sync::Arc;
 
-const WIDTH: u32 = 768;
-const HEIGHT: u32 = 1024;
+/// A5 landscape at 248 dpi: 2048 x 1448 (was 768 x 1024 portrait), so a plate keeps its
+/// line weight through the page and the loupe; four retained surfaces, 47 MB.
+const WIDTH: u32 = 2048;
+const HEIGHT: u32 = 1448;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 pub(super) struct PageSurface {
     view: wgpu::TextureView,
     material: Arc<wgpu::BindGroup>,
     last_ink: Option<u64>,
+    /// The same ink in the image registry (nearest-sampled), for the top-down overlay.
+    ui_handle: u32,
+    /// The texture's size: the print page, or the pixel book's page in internal pixels.
+    size: (u32, u32),
 }
 
 impl PageSurface {
-    fn new(renderer: &super::Renderer, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    fn new(renderer: &mut super::Renderer, device: &wgpu::Device, queue: &wgpu::Queue, size: (u32, u32)) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("repair-manual-page"),
             size: wgpu::Extent3d {
-                width: WIDTH,
-                height: HEIGHT,
+                width: size.0,
+                height: size.1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -29,6 +35,7 @@ impl PageSurface {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_handle = renderer.ui.import_image_view(device, &view);
         let mr = super::upload_texture(
             device,
             queue,
@@ -71,11 +78,19 @@ impl PageSurface {
             view,
             material,
             last_ink: None,
+            ui_handle,
+            size,
         }
     }
 }
 
 impl super::Renderer {
+    /// The four page faces' ink as display-resolution images (left, right, the turning leaf's
+    /// front and back), once the book has been painted: what the top-down overlay draws.
+    pub fn manual_page_images(&self) -> Option<[u32; 4]> {
+        (self.repair_manual_surfaces.len() >= 4)
+            .then(|| std::array::from_fn(|i| self.repair_manual_surfaces[i].ui_handle))
+    }
     pub fn debug_dump_manual_albedo(&self,device:&wgpu::Device,queue:&wgpu::Queue,
         path:&str)->anyhow::Result<()> {
         self.raymarch.as_ref().ok_or_else(||anyhow::anyhow!("manual albedo requires raymarch backend"))?
@@ -86,7 +101,7 @@ impl super::Renderer {
         let surface = self.repair_manual_surfaces.first()
             .ok_or_else(|| anyhow::anyhow!("manual ink has not been rendered"))?;
         let bytes = super::debug_read_light_target(device,queue,surface.view.texture())?;
-        image::save_buffer(path,&bytes,WIDTH,HEIGHT,image::ColorType::Rgba8)?;
+        image::save_buffer(path,&bytes,surface.size.0,surface.size.1,image::ColorType::Rgba8)?;
         Ok(())
     }
     /// Read-only capture diagnostics. Never called by the live frame loop.
@@ -107,8 +122,11 @@ impl super::Renderer {
         slots: [usize; crate::repair_manual::PART_COUNT],
         state: &crate::repair_manual::ManualState,
     ) {
+        // The overlay book is paper over the frame, not in it: its pages never enter the
+        // scene's light history, so a page turn there resets nothing.
+        let in_scene = !crate::repair_manual::overlay_mode();
         if !state.held {
-            if self.repair_manual_presentation.take().is_some() {
+            if self.repair_manual_presentation.take().is_some() && in_scene {
                 self.reset_history();
             }
             return;
@@ -119,15 +137,22 @@ impl super::Renderer {
             // printed surface, so retaining it literally prints the old words over the new
             // page. Pose changes also invalidate that surface correspondence. Camera motion
             // alone is deliberately absent from this key and keeps normal temporal lighting.
-            self.reset_history();
+            if in_scene {
+                self.reset_history();
+            }
             self.repair_manual_presentation = Some(presentation);
         }
         assert!(
             slots.iter().all(|&slot| slot < self.meshes.len()),
             "manual slots must belong to scene"
         );
+        // The pixel book's page is exactly the internal pixels it covers; the print page 2048 wide.
+        let size = if in_scene { (WIDTH, HEIGHT) } else { crate::repair_manual::overlay_page_pixels((self.iw, self.ih)) };
+        if self.repair_manual_surfaces.first().is_some_and(|s| s.size != size) {
+            self.repair_manual_surfaces.clear();
+        }
         while self.repair_manual_surfaces.len() < 4 {
-            let surface = PageSurface::new(self, device, queue);
+            let surface = PageSurface::new(self, device, queue, size);
             self.repair_manual_surfaces.push(surface);
         }
         let pages = state.page_bindings();
@@ -136,7 +161,11 @@ impl super::Renderer {
                 continue;
             }
             self.ui_reset();
-            crate::repair_manual::draw_page(self, pages[index], state);
+            if in_scene {
+                crate::repair_manual::draw_page(self, pages[index], state);
+            } else {
+                crate::repair_manual::draw_page_pixel(self, pages[index], state, size);
+            }
             let key = self.ui.queued_content_fingerprint();
             let surface = &mut self.repair_manual_surfaces[index];
             self.meshes[slots[index + 1]].tex_bind = Arc::clone(&surface.material);
@@ -156,9 +185,9 @@ impl super::Renderer {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.86,
-                                g: 0.86,
-                                b: 0.82,
+                                r: 0.90,
+                                g: 0.87,
+                                b: 0.76,
                                 a: 1.0,
                             }),
                             store: wgpu::StoreOp::Store,
@@ -170,7 +199,7 @@ impl super::Renderer {
                 });
             }
             self.ui
-                .render_over(device, &mut encoder, &surface.view, FORMAT, WIDTH, HEIGHT);
+                .render_over(device, &mut encoder, &surface.view, FORMAT, size.0, size.1);
             queue.submit(Some(encoder.finish()));
             surface.last_ink = Some(key);
         }

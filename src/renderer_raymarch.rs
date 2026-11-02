@@ -186,8 +186,122 @@ struct FrameUniform {
     /// was in the previous frame (identity when the domain is off or the history is cut).
     cabin_motion: [[[f32; 4]; 4]; super::cabin_medium::DOMAINS],
     /// Other vehicles worn at their edges and corners (`Renderer::set_worn_vehicles`): x the count.
+    /// x other vehicles worn; y the apertures below in use.
     worn_count: [f32; 4],
     worn: [[[f32; 4]; 2]; super::MAX_WORN_VEHICLES],
+    /// The player's panes as daylight apertures (`aperture_records`; rm_aperture.wgsl measures
+    /// each against the scene and names its face): centre + tint r, the piece's shortest axis
+    /// + tint g, its longest half-axis + tint b, its middle half-axis + the shortest half-length.
+    apertures: [[[f32; 4]; 4]; MAX_APERTURES],
+}
+
+/// The most panes the frame carries as daylight apertures (rm_common.wgsl `RM_APERTURES`).
+pub(super) const MAX_APERTURES: usize = 24;
+/// `KESSEL_RM_SKIP` bit: no daylight through the panes (the apertures' term in rm_shade.wgsl and
+/// rm_volume.wgsl), for the A/B.
+const SKIP_APERTURES: u32 = 2097152;
+
+/// The smallest pane taken as an aperture (m^2 of its face): a port's glass block is about
+/// 117 cm^2, a cupola block's window 65 cm^2 and more; a stray sliver of a bake is not a pane.
+pub(super) const MIN_PANE_AREA_M2: f32 = 0.004;
+
+/// The principal axes of a cloud of points about its mean (Jacobi rotations on the covariance),
+/// with the half-extent of the cloud along each; the first is the longest.
+fn principal_axes(points: &[Vec3], centre: Vec3) -> [(Vec3, f32); 3] {
+    let mut c = [[0.0f32; 3]; 3];
+    for &p in points {
+        let d = (p - centre).to_array();
+        for i in 0..3 { for j in 0..3 { c[i][j] += d[i] * d[j]; } }
+    }
+    let mut v = [[1.0f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    for _ in 0..24 {
+        let (mut p, mut q, mut largest) = (0, 1, 0.0f32);
+        for i in 0..3 { for j in (i + 1)..3 { if c[i][j].abs() > largest { largest = c[i][j].abs(); p = i; q = j; } } }
+        if largest < 1.0e-12 { break; }
+        let theta = 0.5 * (c[q][q] - c[p][p]) / c[p][q];
+        let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
+        let (cs, sn) = (1.0 / (t * t + 1.0).sqrt(), t / (t * t + 1.0).sqrt());
+        for k in 0..3 {
+            let (ckp, ckq) = (c[k][p], c[k][q]);
+            c[k][p] = cs * ckp - sn * ckq;
+            c[k][q] = sn * ckp + cs * ckq;
+        }
+        for k in 0..3 {
+            let (cpk, cqk) = (c[p][k], c[q][k]);
+            c[p][k] = cs * cpk - sn * cqk;
+            c[q][k] = sn * cpk + cs * cqk;
+        }
+        for k in 0..3 {
+            let (vkp, vkq) = (v[k][p], v[k][q]);
+            v[k][p] = cs * vkp - sn * vkq;
+            v[k][q] = sn * vkp + cs * vkq;
+        }
+    }
+    let mut axes: [(Vec3, f32); 3] = std::array::from_fn(|i| {
+        let axis = Vec3::new(v[0][i], v[1][i], v[2][i]).normalize_or_zero();
+        (axis, points.iter().fold(0.0f32, |h, &p| h.max((p - centre).dot(axis).abs())))
+    });
+    axes.sort_by(|a, b| b.1.total_cmp(&a.1));
+    axes
+}
+/// The most panes one glass mesh contributes (a bake's page holds a part's panes together).
+const MAX_PANES_PER_MESH: usize = 8;
+
+/// A glass mesh's panes, one per connected piece of the mesh (a bake's page holds a part's
+/// panes together: the turret's two port blocks and the sight's lens are one mesh), each from
+/// the piece itself: the vertices' mean as the centre, the piece's principal axes with their
+/// half-extents, the longest and the middle as half-axes and the shortest as a unit axis with
+/// its half-length. Which of the two shorter axes is the pane's face (a port's block is thicker
+/// than it is tall, so its proportions alone do not say) is measured against the scene by
+/// rm_aperture.wgsl. Pieces are joined where triangles share a vertex position (within half a
+/// millimetre); pieces below `MIN_PANE_AREA_M2` are left out.
+pub(super) fn pane_quads(m: &crate::gltf_load::CpuMesh) -> Vec<([Vec3; 4], f32)> {
+    let mut out = Vec::new();
+    if m.vertices.is_empty() || m.indices.len() < 3 { return out; }
+    let pos = |i: u32| Vec3::from(m.vertices[i as usize].pos);
+    // Vertices by position, so a bake's per-face duplicates join their piece.
+    let mut canonical: HashMap<[i32; 3], u32> = HashMap::new();
+    let key = |p: Vec3| [(p.x * 2000.0).round() as i32, (p.y * 2000.0).round() as i32, (p.z * 2000.0).round() as i32];
+    let mut parent: Vec<u32> = (0..m.vertices.len() as u32).collect();
+    fn find(parent: &mut [u32], mut i: u32) -> u32 {
+        while parent[i as usize] != i { parent[i as usize] = parent[parent[i as usize] as usize]; i = parent[i as usize]; }
+        i
+    }
+    let mut union = |parent: &mut [u32], a: u32, b: u32| { let (ra, rb) = (find(parent, a), find(parent, b)); if ra != rb { parent[ra as usize] = rb; } };
+    for (i, v) in m.vertices.iter().enumerate() {
+        let k = key(Vec3::from(v.pos));
+        match canonical.get(&k) { Some(&first) => union(&mut parent, i as u32, first), None => { canonical.insert(k, i as u32); } }
+    }
+    for tri in m.indices.chunks_exact(3) { union(&mut parent, tri[0], tri[1]); union(&mut parent, tri[0], tri[2]); }
+    let mut pieces: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (t, tri) in m.indices.chunks_exact(3).enumerate() { pieces.entry(find(&mut parent, tri[0])).or_default().push(t); }
+    let mut roots: Vec<u32> = pieces.keys().copied().collect();
+    roots.sort_unstable();
+    for root in roots {
+        let tris = &pieces[&root];
+        let mut verts: Vec<Vec3> = Vec::with_capacity(tris.len() * 3);
+        for &t in tris { verts.extend([pos(m.indices[3 * t]), pos(m.indices[3 * t + 1]), pos(m.indices[3 * t + 2])]); }
+        let centre = verts.iter().fold(Vec3::ZERO, |s, &p| s + p) / verts.len() as f32;
+        let axes = principal_axes(&verts, centre);
+        if axes.iter().any(|(axis, _)| *axis == Vec3::ZERO) { continue; }
+        let (long_axis, hu) = axes[0];
+        let (hv, hn) = (axes[1].1, axes[2].1);
+        // A right-handed frame: the middle axis from the long one and the shortest.
+        let short_axis = axes[2].0;
+        let mid_axis = short_axis.cross(long_axis).normalize_or_zero();
+        if mid_axis == Vec3::ZERO || hu < 1.0e-4 || hv < 1.0e-4 || 4.0 * hu * hv < MIN_PANE_AREA_M2 { continue; }
+        out.push(([centre, short_axis, long_axis * hu, mid_axis * hv], hn.max(0.0015)));
+        if out.len() >= MAX_PANES_PER_MESH { break; }
+    }
+    out
+}
+
+/// A pane's normal-incidence transmittance per channel, as rm_glass.wgsl draws the pane: a 1.52
+/// dielectric's entry face and the soda-lime laminate's absorption over its thickness, less the
+/// glass load's grime (its mean over the pane).
+pub(super) fn pane_transmittance(thickness_m: f32, grime: f32) -> Vec3 {
+    let tint = Vec3::new((-3.4 * thickness_m).exp(), (-2.0 * thickness_m).exp(), (-3.8 * thickness_m).exp());
+    tint * 0.96 * (1.0 - 0.2 * grime.clamp(0.0, 1.0))
 }
 
 /// `KESSEL_RM_SKIP` bit: no relayed exterior views on the vision blocks and sights.
@@ -396,6 +510,13 @@ pub(super) struct Backend {
     /// bind, and an empty TLAS bound until the scene's first exists.
     rt_bgl: Option<wgpu::BindGroupLayout>,
     rt_bind: Option<wgpu::BindGroup>,
+    /// The apertures' measured face, open share and acceptance (rm_aperture.wgsl; one mat4 per
+    /// aperture; the default record, open and unrestricted on the piece's shortest axis, where
+    /// the device has no ray queries).
+    aperture_measure_buf: wgpu::Buffer,
+    aperture_bind: wgpu::BindGroup,
+    aperture_pipe: Option<wgpu::ComputePipeline>,
+    aperture_count: u32,
     rt_empty: Option<wgpu::Tlas>,
     rt_empty_built: bool,
     /// Per mesh slot: x y z a mirror's world normal, w the optic (0 none, 1 window, 2 mirror).
@@ -485,6 +606,8 @@ pub(super) struct Backend {
     /// and printed each frame (radiance in renderer units, before exposure).
     probe: Option<(u32, u32)>,
     probe_buf: wgpu::Buffer,
+    /// With the probe: the apertures' measure read back and printed (`[rm-aperture]`).
+    aperture_readback: wgpu::Buffer,
     probe_pending: Cell<bool>,
     optic_active: bool,
     pub stats: Stats,
@@ -609,6 +732,7 @@ fn rm_source(name: &str) -> String {
         "rm_rt.wgsl" => include_str!("../shaders/rm_rt.wgsl"),
         "rm_cloud_shadow.wgsl" => include_str!("../shaders/rm_cloud_shadow.wgsl"),
         "rm_rt_stub.wgsl" => include_str!("../shaders/rm_rt_stub.wgsl"),
+        "rm_aperture.wgsl" => include_str!("../shaders/rm_aperture.wgsl"),
         "rm_sky_cache.wgsl" => include_str!("../shaders/rm_sky_cache.wgsl"),
         "sky.wgsl" => include_str!("../shaders/sky.wgsl"),
         "terrain_material.wgsl" => include_str!("../shaders/terrain_material.wgsl"),
@@ -632,6 +756,8 @@ fn rm_source(name: &str) -> String {
 fn rm_assemble(parts: &[&str]) -> String {
     radiance_storage(format!("{}\n{}",include_str!("../shaders/weather_density.wgsl"),parts.iter().map(|&name| if name == "rm_rt_g3.wgsl" {
         rm_source("rm_rt.wgsl").replace("@group(2)", "@group(3)")
+    } else if name == "rm_rt_g1.wgsl" {
+        rm_source("rm_rt.wgsl").replace("@group(2)", "@group(1)")
     } else { rm_source(name) }).collect::<Vec<_>>().join("\n")))
 }
 
@@ -804,15 +930,38 @@ impl Backend {
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let rt_bgl = rt_scene.then(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
+                binding: 0, visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
-            }, readonly_storage(1, wgpu::ShaderStages::FRAGMENT),
+            }, readonly_storage(1, wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE),
             // The static half of the split scene (`Renderer::rt_split`; the empty TLAS otherwise).
             wgpu::BindGroupLayoutEntry {
-                binding: 2, visibility: wgpu::ShaderStages::FRAGMENT,
+                binding: 2, visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
             }],
         }));
+        // The apertures' measure: one record per pane, the open-and-unrestricted default until
+        // rm_aperture.wgsl writes it (only where the device has ray queries).
+        let aperture_default: Vec<[[f32; 4]; 4]> = vec![[[1.0, std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]]; MAX_APERTURES];
+        let aperture_measure_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rm-aperture-measure"), contents: bytemuck::cast_slice(&aperture_default),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        });
+        let aperture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-aperture-bgl"), entries: &[
+                uniform_entry(0, wgpu::ShaderStages::COMPUTE),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+            ],
+        });
+        let aperture_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-aperture"), layout: &aperture_bgl, entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: frame_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: aperture_measure_buf.as_entire_binding() },
+            ],
+        });
         // Per mesh slot: what a ray query does at it (periscope windows pass, mirrors fold).
         let rt_optics_buf = rt_scene.then(|| device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rm-rt-optics"), size: (MAX_OPTIC_SLOTS * 16) as u64,
@@ -910,6 +1059,8 @@ impl Backend {
                 sampler_filtering(10, vis_stages),
                 tex2d_entry(11, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
                 tex2d_entry(12, vis_stages, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array),
+                readonly_storage(13, vis_stages),
+                readonly_storage(14, vis_stages),
             ],
         });
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1057,6 +1208,16 @@ impl Backend {
             primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
             fragment: Some(wgpu::FragmentState { module: shader, entry_point: Some("fs"), targets: &[Some(color_target(hdr_format()))], compilation_options: Default::default() }),
             multiview: None, cache: None,
+        });
+        // The apertures' measure (ray queries only): the pane records against the scene.
+        let aperture_pipe = rt_bgl.as_ref().map(|rt_bgl| {
+            let shader = rm_shader(device, "rm-aperture", &["rm_common.wgsl", "rm_rt_g1.wgsl", "rm_aperture.wgsl"]);
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("rm-aperture-pl"), bind_group_layouts: &[&aperture_bgl, rt_bgl], push_constant_ranges: &[],
+            });
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("rm-aperture"), layout: Some(&layout), module: &shader, entry_point: Some("cs"), compilation_options: Default::default(), cache: None,
+            })
         });
         let rt_source = if rt_scene { "rm_rt.wgsl" } else { "rm_rt_stub.wgsl" };
         let shade_shader = rm_shader(device, "rm-shade", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt_source, "rm_shade.wgsl"]);
@@ -1237,6 +1398,7 @@ impl Backend {
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
+            aperture_measure_buf, aperture_bind, aperture_pipe, aperture_count: 0,
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
@@ -1257,6 +1419,9 @@ impl Backend {
             }).filter(|&(x, y)| x < iw && y < ih),
             probe_buf: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rm-probe"), size: (5 + vol[2] as u64) * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+            }),
+            aperture_readback: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rm-aperture-readback"), size: (MAX_APERTURES * 64) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
             }),
             probe_pending: Cell::new(false),
             optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
@@ -1337,6 +1502,9 @@ impl Backend {
                 entry(10, wgpu::BindingResource::Sampler(&self.sky_sampler)),
                 entry(11, wgpu::BindingResource::TextureView(&self.cloud_shadow.view)),
                 entry(12, wgpu::BindingResource::TextureView(&r.cabin_medium_view)),
+                entry(13, self.aperture_measure_buf.as_entire_binding()),
+                // The main view's eye: the pixel stars' ceiling (rm_shade.wgsl rm_display_white).
+                entry(14, r.exp_bufs[0].as_entire_binding()),
             ],
         });
         let volume = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1438,6 +1606,50 @@ impl Backend {
             });
     }
 
+    /// The player's panes as daylight apertures: every visible glass mesh within the crew
+    /// compartment's reach but the sight's eyepiece, its pieces from the mesh (`pane_quads`)
+    /// posed by its model, each piece's axes for the measure to name its face, its transmittance
+    /// from the glass and the glass load.
+    fn aperture_records(&self, r: &Renderer, vehicle: [f32; 4]) -> ([[[f32; 4]; 4]; MAX_APERTURES], u32) {
+        let mut out = [[[0.0f32; 4]; 4]; MAX_APERTURES];
+        if vehicle[3] <= 0.0 || self.debug_skip & SKIP_APERTURES != 0 { return (out, 0); }
+        let centre = Vec3::new(vehicle[0], vehicle[1], vehicle[2]);
+        let grime = self.glass_grime.unwrap_or(r.wear[2]).clamp(0.0, 1.0);
+        let mut n = 0usize;
+        let debug = std::env::var("KESSEL_RM_DEBUG").as_deref() == Ok("1") && r.frame % 64 == 2;
+        // A telescope's eyepiece admits light only through its exit pupil, a few millimetres
+        // across (not modelled): the registered eyepieces' meshes are no apertures.
+        let eyepieces = r.raster_optic_eyepiece_meshes();
+        for (index, m) in r.meshes.iter().enumerate() {
+            if n >= MAX_APERTURES { break; }
+            // The panes: the direct glass (the ports, the visors) and the periscopes' windows
+            // (kind 1; their mirrors and the sight's lenses are not panes).
+            if !m.visible || !(m.glass || m.periscope_kind == 1) || m.raster_only || m.periscope_kind >= 2 || eyepieces.contains(&index) { continue; }
+            let panes = m.pane.get_or_init(|| m.visibility_source.as_ref().map(pane_quads).unwrap_or_default());
+            for (quad, short_half) in panes {
+                if n >= MAX_APERTURES { break; }
+                let c = m.model.transform_point3(quad[0]);
+                if (c - centre).length() > vehicle[3] { continue; }
+                // The shortest axis signed out of the vehicle (the measure tests both ways anyway).
+                let mut short_axis = m.model.transform_vector3(quad[1]).normalize_or_zero();
+                if short_axis == Vec3::ZERO { continue; }
+                if short_axis.dot(c - centre) < 0.0 { short_axis = -short_axis; }
+                let long_half = m.model.transform_vector3(quad[2]);
+                let mid_half = m.model.transform_vector3(quad[3]);
+                if long_half.cross(mid_half).length() < 1.0e-7 { continue; }
+                // The slab for the transmittance: the piece's shortest extent (a pane's glass).
+                let tint = pane_transmittance(2.0 * short_half, grime);
+                if debug {
+                    println!("[raymarch] aperture {n}: mesh {index} centre {:.3?} shortest axis {:.2?} half-extents {:.3} x {:.3} x {:.4} m tint {:.2?}",
+                        c, short_axis, long_half.length(), mid_half.length(), short_half, tint);
+                }
+                out[n] = [[c.x, c.y, c.z, tint.x], [short_axis.x, short_axis.y, short_axis.z, tint.y], [long_half.x, long_half.y, long_half.z, tint.z], [mid_half.x, mid_half.y, mid_half.z, *short_half]];
+                n += 1;
+            }
+        }
+        (out, n as u32)
+    }
+
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
         let started = std::time::Instant::now();
         if let Some(voxels) = self.explosion_pending.take() {
@@ -1454,7 +1666,11 @@ impl Backend {
             self.rt_optics.resize(r.meshes.len().min(MAX_OPTIC_SLOTS), [0.0; 4]);
             for (i, mesh) in r.meshes.iter().enumerate().take(MAX_OPTIC_SLOTS) {
                 match mesh.periscope_kind {
-                    1 => self.rt_optics[i] = [0.0, 0.0, 0.0, 1.0],
+                    // Windows pass a ray; so do the relays' thin lenses on the energy path
+                    // (straight through, no refraction: a named approximation, as the pane
+                    // material's; 2 November 2026, the cupola's periscope windows measured closed
+                    // behind their lenses). Their imaging stays the relay captures'.
+                    1 | 3 => self.rt_optics[i] = [0.0, 0.0, 0.0, 1.0],
                     2 if mesh.mirror_normal != Vec3::ZERO => {
                         let n = mesh.model.transform_vector3(mesh.mirror_normal).normalize_or_zero();
                         self.rt_optics[i] = [n.x, n.y, n.z, 2.0];
@@ -1467,6 +1683,23 @@ impl Backend {
             }
         }
         if self.probe_pending.replace(false) {
+            if self.aperture_count > 0 {
+                let slice = self.aperture_readback.slice(..);
+                let (tx, rx) = std::sync::mpsc::channel();
+                slice.map_async(wgpu::MapMode::Read, move |result| { let _ = tx.send(result); });
+                let _ = device.poll(wgpu::PollType::wait_indefinitely());
+                if rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                    let mapped = slice.get_mapped_range();
+                    let lane = |o: usize| -> [f32; 4] { std::array::from_fn(|i| f32::from_le_bytes([mapped[o + i * 4], mapped[o + i * 4 + 1], mapped[o + i * 4 + 2], mapped[o + i * 4 + 3]])) };
+                    for a in 0..self.aperture_count as usize {
+                        let (m0, m1, m2, m3) = (lane(a * 64), lane(a * 64 + 16), lane(a * 64 + 32), lane(a * 64 + 48));
+                        println!("[rm-aperture] {a}: open {:.2} half-angles {:.1} x {:.1} deg measured {} face {:.2?} half-axes {:.3} x {:.3} m",
+                            m0[0], m0[1].to_degrees(), m0[2].to_degrees(), m0[3], [m1[0], m1[1], m1[2]],
+                            (m2[0] * m2[0] + m2[1] * m2[1] + m2[2] * m2[2]).sqrt(), (m3[0] * m3[0] + m3[1] * m3[1] + m3[2] * m3[2]).sqrt());
+                    }
+                }
+                self.aperture_readback.unmap();
+            }
             if let Some((px, py)) = self.probe {
                 let slice = self.probe_buf.slice(..);
                 let (tx, rx) = std::sync::mpsc::channel();
@@ -1696,6 +1929,14 @@ impl Backend {
         self.panes.extend(panes.iter().map(|&(_, i)| i));
         self.stats.panes = self.panes.len();
 
+        // The player's crew compartment: 0.9 m above the turret frame's origin (its basket
+        // floor, about 0.4 m above the ground: the commander's eye is 2.41 m above it), 3 m reach.
+        let vehicle = r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
+            let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
+            [c.x, c.y, c.z, 3.0]
+        });
+        let (apertures, aperture_count) = self.aperture_records(r, vehicle);
+        self.aperture_count = aperture_count;
         let frame = FrameUniform {
             view_proj: rel_vp.to_cols_array_2d(),
             inv_view_proj: rel_vp.inverse().to_cols_array_2d(),
@@ -1730,8 +1971,6 @@ impl Backend {
                 if let Some(glass) = self.glass_grime { wear[2] = glass; }
                 wear
             },
-            // The player's crew compartment: 0.9 m above the turret frame's origin (its basket
-            // floor, about 0.4 m above the ground: the commander's eye is 2.41 m above it), 3 m reach.
             cloud: [self.cloud_area[0], self.cloud_area[1], self.cloud_area[2], if cloud_shadows { 1.0 } else { 0.0 }],
             fog: r.fog_bank,
             optic_eye: [r.optic_eye[0], r.optic_eye[1], 0.0, 0.0],
@@ -1744,16 +1983,14 @@ impl Backend {
                     + r.sky_clock.site.longitude_deg_east).to_radians();
                 [latitude.sin() as f32, latitude.cos() as f32, sidereal as f32, 1.0]
             },
-            vehicle: r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
-                let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
-                [c.x, c.y, c.z, 3.0]
-            }),
+            vehicle,
             pshadow,
             puffs,
             cabin_air,
             cabin_motion,
-            worn_count: [if self.debug_skip & 65536 != 0 { 0.0 } else { r.worn_vehicles.len() as f32 }, 0.0, 0.0, 0.0],
+            worn_count: [if self.debug_skip & 65536 != 0 { 0.0 } else { r.worn_vehicles.len() as f32 }, aperture_count as f32, 0.0, 0.0],
             worn: std::array::from_fn(|i| r.worn_vehicles.get(i).copied().unwrap_or([[0.0; 4]; 2])),
+            apertures,
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -2712,6 +2949,20 @@ impl Backend {
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
+        // 3c. The apertures: each pane's open share and acceptance measured against the scene.
+        if let (Some(pipe), Some(rt)) = (&self.aperture_pipe, &self.rt_bind) {
+            // KESSEL_RM_APERTURE_UNMEASURED=1 keeps the open-and-unrestricted default record (review).
+            if self.aperture_count > 0 && std::env::var("KESSEL_RM_APERTURE_UNMEASURED").as_deref() != Ok("1") {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("rm-aperture"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("rm-aperture")),
+                });
+                cpass.set_pipeline(pipe);
+                cpass.set_bind_group(0, &self.aperture_bind, &[]);
+                cpass.set_bind_group(1, rt, &[]);
+                cpass.dispatch_workgroups(self.aperture_count, 1, 1);
+                work.compute_passes += 1;
+            }
+        }
         // 4. Froxel media: light every cell, then integrate each column front to back.
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -2765,6 +3016,7 @@ impl Backend {
                     origin: wgpu::Origin3d { x: (px * self.vol[0] / self.iw).min(self.vol[0] - 1), y: (py * self.vol[1] / self.ih).min(self.vol[1] - 1), z: 0 }, aspect: wgpu::TextureAspect::All },
                 wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: 5 * 256, bytes_per_row: Some(256), rows_per_image: Some(1) } },
                 wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: self.vol[2] });
+            encoder.copy_buffer_to_buffer(&self.aperture_measure_buf, 0, &self.aperture_readback, 0, (MAX_APERTURES * 64) as u64);
             self.probe_pending.set(true);
         }
         // The shaded frame is next frame's bounce source (after the probe has read last frame's).
@@ -3073,6 +3325,7 @@ mod shader_tests {
             ("rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]),
         ];
         for (label, parts) in common { validate(label, &rm_assemble(parts)); }
+        validate("rm-aperture", &rm_assemble(&["rm_common.wgsl", "rm_rt_g1.wgsl", "rm_aperture.wgsl"]));
         for (rt, glass_rt) in [("rm_rt.wgsl", "rm_rt_g3.wgsl"), ("rm_rt_stub.wgsl", "rm_rt_stub.wgsl")] {
             validate(&format!("rm-shade {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt, "rm_shade.wgsl"]));
             validate(&format!("rm-reflect {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", rt, "rm_reflect.wgsl"]));
@@ -3080,6 +3333,109 @@ mod shader_tests {
         }
         validate("rm-cloud-shadow", &physical_atmosphere_transport_shader_source(
             &format!("{}\n{}", rm_source("sky.wgsl"), rm_source("rm_cloud_shadow.wgsl"))));
+    }
+}
+
+#[cfg(test)]
+mod aperture_tests {
+    use super::*;
+
+    /// A port's glass block (7 cm through the armour, 6 cm tall, 19.5 cm long, its broad face
+    /// across x) reads as a quad across x with the block's half-extents and its thickness.
+    #[test]
+    fn a_glass_block_reads_as_its_broad_face_with_the_slabs_thickness() {
+        let block = crate::prims::box_mesh(Vec3::new(-0.035, -0.03, -0.0975), Vec3::new(0.035, 0.03, 0.0975), [200, 200, 200]);
+        // The block is thicker across x (7 cm) than it is tall (6 cm): its shortest axis is y,
+        // its longest z, its middle x; which of x and y is the face the measure decides.
+        let panes = pane_quads(&block);
+        assert_eq!(panes.len(), 1);
+        let (quad, short_half) = panes[0];
+        assert!(quad[0].length() < 1.0e-5, "centre {:?}", quad[0]);
+        assert!(quad[1].y.abs() > 0.999, "shortest axis across y: {:?}", quad[1]);
+        assert!((quad[2].length() - 0.0975).abs() < 1.0e-4 && quad[2].z.abs() > 0.097, "longest half-axis {:?}", quad[2]);
+        assert!((quad[3].length() - 0.035).abs() < 1.0e-4 && quad[3].x.abs() > 0.034, "middle half-axis {:?}", quad[3]);
+        assert!(quad[2].dot(quad[1]).abs() < 1.0e-5 && quad[3].dot(quad[1]).abs() < 1.0e-5 && quad[2].dot(quad[3]).abs() < 1.0e-5);
+        assert!((short_half - 0.03).abs() < 1.0e-4, "the shortest half-extent {short_half}");
+    }
+
+    /// A bake's page holding both port blocks and the sight's small lens gives the two blocks as
+    /// two panes, each at its own place, and leaves the lens out.
+    #[test]
+    fn a_glass_page_gives_one_pane_per_block_and_leaves_the_lens_out() {
+        let mut page = crate::prims::box_mesh(Vec3::new(-1.04, 2.01, 0.3275), Vec3::new(-0.97, 2.07, 0.5225), [200, 200, 200]);
+        let right = crate::prims::box_mesh(Vec3::new(0.97, 2.0, 0.4625), Vec3::new(1.02, 2.06, 0.6575), [200, 200, 200]);
+        let lens = crate::prims::box_mesh(Vec3::new(-0.02, 1.9, -0.3), Vec3::new(0.02, 1.94, -0.295), [200, 200, 200]);
+        for extra in [right, lens] {
+            let base = page.vertices.len() as u32;
+            page.vertices.extend(extra.vertices.iter().copied());
+            page.indices.extend(extra.indices.iter().map(|i| i + base));
+        }
+        let panes = pane_quads(&page);
+        assert_eq!(panes.len(), 2, "{panes:?}");
+        let mut xs: Vec<f32> = panes.iter().map(|(q, _)| q[0].x).collect();
+        xs.sort_by(f32::total_cmp);
+        assert!((xs[0] + 1.005).abs() < 1.0e-3 && (xs[1] - 0.995).abs() < 1.0e-3, "{xs:?}");
+        for (quad, short_half) in &panes {
+            assert!((quad[2].length() - 0.0975).abs() < 1.0e-3 && quad[2].z.abs() > 0.097, "{quad:?}");
+            // The left block is 7 cm thick and 6 cm tall (shortest y), the right 5 cm thick (shortest x).
+            if quad[0].x < 0.0 { assert!(quad[1].y.abs() > 0.99 && (short_half - 0.03).abs() < 1.0e-3 && (quad[3].length() - 0.035).abs() < 1.0e-3, "{quad:?} {short_half}"); }
+            else { assert!(quad[1].x.abs() > 0.99 && (short_half - 0.025).abs() < 1.0e-3 && (quad[3].length() - 0.03).abs() < 1.0e-3, "{quad:?} {short_half}"); }
+        }
+    }
+
+    /// The Tiger's turret glass bake (the two port blocks and the sight's lens on one page):
+    /// the blocks read as two panes 19.5 cm by 6 cm facing out of the turret's sides.
+    #[test]
+    fn the_turret_bakes_port_blocks_read_as_two_side_panes() {
+        let Some(root) = std::env::var_os("KESSEL_ASSET_ROOT") else { eprintln!("skipped: no KESSEL_ASSET_ROOT"); return; };
+        let path = std::path::Path::new(&root).join("assets/tanks/tiger/baked/tiger_port_turret.glb");
+        if !path.exists() { eprintln!("skipped: {} missing", path.display()); return; }
+        let page = crate::gltf_load::load_glb(path.to_str().unwrap()).expect("the turret glass page");
+        let panes = pane_quads(&page);
+        let ports: Vec<_> = panes.iter().filter(|(q, _)| q[2].length() > 0.08).collect();
+        assert_eq!(ports.len(), 2, "two port panes among {panes:?}");
+        for (quad, short_half) in ports {
+            assert!(quad[1].x.abs() > 0.8, "a centimetre of glass across the turret's side: {quad:?}");
+            assert!((quad[2].length() - 0.0975).abs() < 0.01 && (quad[3].length() - 0.03).abs() < 0.006, "{quad:?}");
+            assert!(*short_half > 0.003 && *short_half < 0.01, "half a centimetre of glass: {short_half}");
+        }
+    }
+
+    /// The pane's transmittance is the pane shader's: a 1.52 dielectric's entry face and the
+    /// laminate's absorption, 70-80 % through a 7 cm block, less with grime, never above 0.96.
+    #[test]
+    fn the_panes_transmittance_follows_the_pane_shader() {
+        let clean = pane_transmittance(0.07, 0.0);
+        assert!(clean.y > clean.x && clean.x > clean.z, "{clean:?}");
+        assert!(clean.y < 0.96 && clean.y > 0.80 && clean.z > 0.70, "{clean:?}");
+        let grimy = pane_transmittance(0.07, 1.0);
+        assert!(grimy.y < clean.y && grimy.y > 0.6 * clean.y);
+        assert!(pane_transmittance(0.0, 0.0).max_element() <= 0.96 + 1.0e-6);
+    }
+
+    /// The daylight through the panes is one path: the apertures' term in the shade and the
+    /// cabin air, measured by the aperture pass, with the stochastic rays sealed at the panes
+    /// for a receiver in the compartment, and the stub (no ray queries) keeping the names.
+    #[test]
+    fn the_panes_daylight_is_one_measured_path_on_both_ray_backends() {
+        let shade = rm_source("rm_shade.wgsl");
+        assert!(shade.contains("rm_aperture_acceptance(face, w)"));
+        assert!(shade.contains("rm_quad_projected_solid_angle(world, n, c, face.u, face.v)"));
+        assert!(shade.contains("rt_open_share(world, n, dist, pixel, history, receiver_in_cabin)"));
+        let volume = rm_source("rm_volume.wgsl");
+        assert!(volume.contains("rm_quad_solid_angle(p, c, face.u, face.v)"));
+        let measure = rm_source("rm_aperture.wgsl");
+        assert!(measure.contains("measure_out[a] = mat4x4<f32>(vec4(best_share, max(half_u, 0.002), max(half_v, 0.002), 1.0), vec4(m, sky_dir.x), vec4(u, sky_dir.y), vec4(v, sky_dir.z))"));
+        assert!(measure.contains("measure_out[a] = mat4x4<f32>(vec4(0.0, 0.0, 0.0, 1.0)"), "a walled-in pane reads closed");
+        assert!(measure.contains("rm_ray_escape(origin, dir, APERTURE_REACH_M).w > 0.5"), "the open test follows the periscopes' folds");
+        assert!(shade.contains("rm_aperture_radiance(face.sky_dir)") && volume.contains("rm_aperture_radiance(face.sky_dir)"));
+        let rt = rm_source("rm_rt.wgsl");
+        assert!(rt.contains("return rm_ray_open_masked(origin, dir, range, 0x13u);"), "sealed rays count panes as cover and keep the periscope path");
+        assert!(rm_source("rm_rt_stub.wgsl").contains("fn rm_ray_escape("));
+        assert!(shade.contains("let face = rm_aperture_face(a);") && volume.contains("let face = rm_aperture_face(a);"), "both take the measured face");
+        assert!(rt.contains("fn rm_ray_open_sealed(") && rm_source("rm_rt_stub.wgsl").contains("fn rm_ray_open_sealed("));
+        assert!(rm_source("rm_common.wgsl").contains(&format!("apertures: array<mat4x4<f32>, {MAX_APERTURES}>")));
+        assert_eq!(std::mem::size_of::<FrameUniform>() % 16, 0);
     }
 }
 

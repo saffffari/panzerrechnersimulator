@@ -30,6 +30,11 @@ pub const J2000: f64 = 2_451_545.0;
 pub const AU_KM: f64 = 149_597_870.7;
 /// Mean Earth-Moon distance used by the lunar photometry, km.
 pub const MOON_MEAN_DISTANCE_KM: f64 = 384_400.0;
+/// The mean synodic month, days (new Moon to new Moon).
+pub const SYNODIC_MONTH_DAYS: f64 = 29.530_589;
+/// Mean daily motions in ecliptic longitude, degrees per day: the Sun's and the Moon's.
+pub const SUN_MEAN_MOTION_DEG_PER_DAY: f64 = 0.985_647;
+pub const MOON_MEAN_MOTION_DEG_PER_DAY: f64 = 13.176_358;
 pub const MOON_RADIUS_KM: f64 = 1_737.4;
 pub const EARTH_EQUATORIAL_RADIUS_KM: f64 = 6_378.14;
 
@@ -533,9 +538,23 @@ pub struct CelestialState {
 
 impl CelestialState {
     pub fn at(instant: UtcInstant, site: Site) -> Self {
+        Self::at_with_moon(instant, site, instant, 1.0)
+    }
+
+    /// The sky with the Moon's orbit run faster: its geometric position is taken at `moon_epoch`
+    /// plus the time since it scaled by `moon_rate` (1 is the real sky), while the Sun and the
+    /// sidereal time are the instant's own. The phase, the rising and the setting, the distance
+    /// and the illuminance then stay consistent with each other and with the Sun; only the month
+    /// is shorter (celestial_sky::SkyClock::moon_rate, the owner's ten-day cycle).
+    pub fn at_with_moon(instant: UtcInstant, site: Site, moon_epoch: UtcInstant, moon_rate: f64) -> Self {
         let jde = instant.jde();
+        let moon_jde = if moon_rate.is_finite() && moon_rate > 0.0 {
+            moon_epoch.jde() + (jde - moon_epoch.jde()) * moon_rate
+        } else {
+            jde
+        };
         let sun = sun_position(jde);
-        let moon = moon_position(jde);
+        let moon = moon_position(moon_jde);
         Self {
             instant,
             site,

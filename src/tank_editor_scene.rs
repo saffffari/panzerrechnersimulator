@@ -199,6 +199,7 @@ pub fn load_preview(id: TankAssetId) -> anyhow::Result<PreviewParts> {
                     mesh.min.x.abs().max(mesh.max.x.abs()),
                     mesh.min.z.abs().max(mesh.max.z.abs()),
                 ),
+                frame_scale: 1.0,
             }
         }
     };

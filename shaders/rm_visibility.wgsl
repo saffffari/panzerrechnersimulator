@@ -25,6 +25,60 @@ struct Light { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, };
 // The player's cabin air (cabin_medium.rs): per rigid frame (hull, turret, cupola) a 2 cm grid of
 // source floor-to-roof intervals, moving with the vehicle.
 @group(1) @binding(12) var cabin_air_columns: texture_2d_array<f32>;
+// Per aperture (fr.apertures), measured each frame against the vehicle's own geometry by
+// rm_aperture.wgsl: col0 x the open share of the pane's face (the slot through the armour behind
+// it), y and z the half-angles across u and v a ray leaving the face may tilt and still escape,
+// w 1 when measured (0: the no-ray-query default, fully open and unrestricted, the face the
+// piece's shortest axis); col1 the face's outward normal, col2 and col3 its half-axes, and in
+// their w lanes the direction the pane looks out along (a periscope's folded at its mirror).
+@group(1) @binding(13) var<storage, read> aperture_measure: array<mat4x4<f32>>;
+// The crewman's eye as the exposure pass keeps it (exposure.wgsl's state lanes; lane 0 the cone
+// channel's exposure, display input per unit radiance).
+@group(1) @binding(14) var<storage, read> eye_state: array<f32>;
+// The radiance the eye currently maps to the display's white (0 before it is metered).
+fn rm_display_white() -> f32 {
+    if (arrayLength(&eye_state) < 1u) { return 0.0; }
+    let e = eye_state[0];
+    return select(0.0, 1.0 / e, e > 0.0);
+}
+
+// Aperture `a`'s face: the measured one, else the record's shortest axis with its longest and
+// middle half-axes. Returns the outward normal, the two half-axes, the direction the pane looks
+// out along and the measure's first lane.
+struct ApertureFace { m: vec3<f32>, u: vec3<f32>, v: vec3<f32>, sky_dir: vec3<f32>, measure: vec4<f32> };
+fn rm_aperture_face(a: u32) -> ApertureFace {
+    let ap = fr.apertures[a];
+    if (a < arrayLength(&aperture_measure)) {
+        let r = aperture_measure[a];
+        if (r[0].w > 0.5) { return ApertureFace(r[1].xyz, r[2].xyz, r[3].xyz, normalize(vec3(r[1].w, r[2].w, r[3].w)), r[0]); }
+    }
+    let m = normalize(ap[1].xyz);
+    return ApertureFace(m, ap[2].xyz, ap[3].xyz, m, vec4(1.0, 1.5, 1.5, 0.0));
+}
+// What share of aperture `a`'s outer opening a point sees through its face along `w` (the unit
+// direction from the point to the pane's centre): the measured open share times the slot's
+// acceptance, which for a straight slot of depth d and width h falls as 1 - tan(angle) d / h
+// to zero at the measured half-angle (where tan(half) = h / d).
+fn rm_aperture_acceptance(face: ApertureFace, w: vec3<f32>) -> f32 {
+    let r = face.measure;
+    let m = face.m;
+    let u_hat = normalize(face.u);
+    let v_hat = normalize(face.v);
+    let along = max(dot(w, m), 1.0e-4);
+    let tan_u = abs(dot(w, u_hat)) / along;
+    let tan_v = abs(dot(w, v_hat)) / along;
+    let acc_u = clamp(1.0 - tan_u / max(tan(min(r.y, 1.55)), 1.0e-4), 0.0, 1.0);
+    let acc_v = clamp(1.0 - tan_v / max(tan(min(r.z, 1.55)), 1.0e-4), 0.0, 1.0);
+    return clamp(r.x, 0.0, 1.0) * acc_u * acc_v;
+}
+// The radiance an aperture shows along the direction it looks out (its measured sky direction:
+// a port's a few degrees wide, a periscope's folded field): the cached sky above the horizon,
+// the mean upwelling ground band below it (named approximation: the sky over a pane's field is
+// taken along one direction, and the exterior's own geometry, the deck and the fender in a
+// port's view, is not resolved).
+fn rm_aperture_radiance(w: vec3<f32>) -> vec3<f32> {
+    return select(fr.sky_ground.rgb, rm_sky_background(w).rgb, w.y > 0.0);
+}
 
 // Which cabin domain's air holds a world point (-1: outside the vehicle's air). The membership
 // test of cabin_medium.wgsl `cabin_contains` (same cells, same intervals), returning the domain

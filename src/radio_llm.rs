@@ -381,7 +381,50 @@ impl RadioResult {
 struct Request {
     id: u64,
     text: String,
-    ctx: RadioContext,
+    net: Net,
+}
+
+/// Which net a transmission goes out on: the platoon's wingmen, or the expedition's support
+/// detail ("Stab"), whose answers come back as one reply and never as an order.
+enum Net {
+    Platoon(RadioContext),
+    Stab(StabContext),
+}
+
+pub const STAB_CALLSIGN: &str = "Stab";
+
+/// What the simulation hands the model (and the offline responder) about the expedition when
+/// the commander keys the support detail: the open order and its beat, the stock, the site,
+/// the camp. Truth from the simulation; the model may only restate and advise on it.
+#[derive(Clone, Debug, Default)]
+pub struct StabContext {
+    pub callsign: String,
+    pub order_title: Option<String>,
+    pub order_lines: Vec<String>,
+    pub beat: Option<String>,
+    pub beats_done: usize,
+    pub beats_total: usize,
+    pub stock_lines: Vec<String>,
+    pub site_notice: String,
+    pub camp: String,
+    pub position: String,
+    pub clock: String,
+    pub weather: String,
+}
+
+impl StabContext {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "tiger": {"callsign": self.callsign, "position": self.position},
+            "order": self.order_title.as_ref().map(|t| json!({"title": t, "lines": self.order_lines, "current_beat": self.beat,
+                "beats_done": self.beats_done, "beats_total": self.beats_total})),
+            "stock": self.stock_lines,
+            "theatre_notice": self.site_notice,
+            "camp": self.camp,
+            "clock": self.clock,
+            "weather": self.weather,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -475,10 +518,19 @@ impl RadioLlm {
 
     /// Queue a transmission. Returns its id; the result arrives through [`RadioLlm::poll`].
     pub fn submit(&mut self, text: &str, ctx: RadioContext) -> u64 {
+        self.submit_on(text, Net::Platoon(ctx))
+    }
+
+    /// Key the support detail's line: the reply comes back as one `Stab` reply, no order.
+    pub fn submit_stab(&mut self, text: &str, ctx: StabContext) -> u64 {
+        self.submit_on(text, Net::Stab(ctx))
+    }
+
+    fn submit_on(&mut self, text: &str, net: Net) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.pending += 1;
-        let _ = self.tx.send(Request { id, text: text.to_string(), ctx });
+        let _ = self.tx.send(Request { id, text: text.to_string(), net });
         id
     }
 
@@ -512,8 +564,16 @@ impl RadioLlm {
 
 fn handle_request(cfg: &RadioConfig, req: Request) -> RadioResult {
     let started = Instant::now();
+    let offline = |text: &str| match &req.net {
+        Net::Platoon(ctx) => parse_offline(text, ctx),
+        Net::Stab(ctx) => (None, parse_offline_stab(text, ctx)),
+    };
     if cfg.online() {
-        match call_llm(cfg, &req.text, &req.ctx) {
+        let called = match &req.net {
+            Net::Platoon(ctx) => call_llm(cfg, &req.text, ctx),
+            Net::Stab(ctx) => call_llm_stab(cfg, &req.text, ctx),
+        };
+        match called {
             Ok((order, replies, input_tokens, output_tokens)) => {
                 let latency_ms = started.elapsed().as_millis() as u64;
                 let cost_usd = PRICES
@@ -529,7 +589,7 @@ fn handle_request(cfg: &RadioConfig, req: Request) -> RadioResult {
                 };
             }
             Err(reason) => {
-                let (order, replies) = parse_offline(&req.text, &req.ctx);
+                let (order, replies) = offline(&req.text);
                 return RadioResult {
                     request_id: req.id,
                     transmission: req.text,
@@ -541,7 +601,7 @@ fn handle_request(cfg: &RadioConfig, req: Request) -> RadioResult {
         }
     }
     let reason = if cfg.force_offline { "forced_offline" } else { "no_key" };
-    let (order, replies) = parse_offline(&req.text, &req.ctx);
+    let (order, replies) = offline(&req.text);
     RadioResult {
         request_id: req.id,
         transmission: req.text,
@@ -619,9 +679,77 @@ pub fn request_body(model: &str, text: &str, ctx: &RadioContext) -> Value {
 
 type LlmOk = (Option<RadioOrder>, Vec<RadioReply>, u64, u64);
 
+/// The support detail's end of the line. It knows only the context the simulation hands it.
+pub fn stab_system_prompt() -> String {
+    let mut s = String::new();
+    s.push_str("You are the radio of a German support detail (callsign Stab): a few men with a half-track, a workshop tent and beds, supporting one Tiger (callsign Elster) on a lone expedition through a 12 km theatre of twelve sites, winter 1942-43, inside the pocket. ");
+    s.push_str("The Tiger's commander types a line to you on the teleprinter. Answer as the detail's radio operator in ONE or TWO short lines of radio procedure, printed on a strip: begin \"Elster, Stab.\", end \"Out.\" when nothing more is expected or \"Over.\" when the commander must answer. ");
+    s.push_str("Use only the facts in the CONTEXT: the open order and its current beat, the stock aboard (fuel and the kilometres it buys, 88 mm rounds, men, orders left), the theatre notice, the camp. ");
+    s.push_str("You may restate the order, say what the beat asks, read back the stock, remind him of the rules he already knows (a lost man is relieved from camp and costs an opportunity; supplies are only what the sites hold; the final operation comes when the opportunities are spent), and advise plainly. ");
+    s.push_str("Never invent sightings, enemy positions, reinforcements, supplies, people or events; if asked what you cannot know, say so. No modern slang, no humour, no exclamation marks. German military terms are welcome where natural.\n");
+    s
+}
+
+fn stab_output_schema() -> Value {
+    json!({"type": "object", "properties": {"reply": {"type": "string"}}, "required": ["reply"], "additionalProperties": false})
+}
+
+pub fn request_body_stab(model: &str, text: &str, ctx: &StabContext) -> Value {
+    let user = format!("CONTEXT (truth from the simulation):\n{}\n\nLINE from {}: \"{}\"", ctx.to_json(), ctx.callsign, text.replace('"', "'"));
+    json!({
+        "model": model,
+        "max_tokens": 400,
+        "system": stab_system_prompt(),
+        "thinking": {"type": "disabled"},
+        "output_config": {"effort": "low", "format": {"type": "json_schema", "schema": stab_output_schema()}},
+        "messages": [{"role": "user", "content": user}],
+    })
+}
+
+/// Offline responder for the detail: reads the same context back by keyword, in the same
+/// procedure, so the line works with no key and no network.
+pub fn parse_offline_stab(text: &str, ctx: &StabContext) -> Vec<RadioReply> {
+    let norm = normalize(text);
+    let any = |words: &[&str]| words.iter().any(|w| has(&norm, w));
+    let body = if any(&["order", "befehl", "auftrag", "task", "what now", "next"]) {
+        match (&ctx.order_title, &ctx.beat) {
+            (Some(title), Some(beat)) => format!("{title}. Current beat: {beat}. {} of {} beats done.", ctx.beats_done, ctx.beats_total),
+            (Some(title), None) => format!("{title}. No beat open."),
+            (None, _) => "No order open. Choose one on the map and accept it.".to_string(),
+        }
+    } else if any(&["fuel", "sprit", "kraftstoff", "range", "ammo", "ammunition", "munition", "rounds", "stock", "bestand", "men", "crew", "status", "report"]) {
+        if ctx.stock_lines.is_empty() { "No stock report available.".to_string() } else { ctx.stock_lines.join(". ") }
+    } else if any(&["where", "position", "camp", "lager", "wo"]) {
+        format!("You are at {}. The camp: {}.", ctx.position, ctx.camp)
+    } else if any(&["help", "hilfe", "recover", "bergung", "relief", "wounded", "dead", "lost"]) {
+        "A lost man is relieved from the camp's reserve and the trip costs one opportunity; the Tiger must be remounted before new orders. Wounded go to the beds.".to_string()
+    } else if any(&["weather", "wetter", "time", "clock", "night", "day"]) {
+        format!("{}, {}.", ctx.clock, ctx.weather)
+    } else if !ctx.site_notice.is_empty() && any(&["site", "notice", "news", "lage", "situation"]) {
+        ctx.site_notice.clone()
+    } else {
+        "Say again, over.".to_string()
+    };
+    let text = if body.ends_with("over.") || body.ends_with("Over.") { format!("{}, Stab. {body}", ctx.callsign) } else { format!("{}, Stab. {body} Out.", ctx.callsign) };
+    vec![RadioReply { callsign: STAB_CALLSIGN.into(), text }]
+}
+
 fn call_llm(cfg: &RadioConfig, text: &str, ctx: &RadioContext) -> Result<LlmOk, String> {
-    let key = cfg.api_key.as_deref().ok_or("no_key")?;
     let body = request_body(&cfg.model, text, ctx);
+    let v = post_messages(cfg, &body)?;
+    parse_llm_response(&v, ctx)
+}
+
+fn call_llm_stab(cfg: &RadioConfig, text: &str, ctx: &StabContext) -> Result<LlmOk, String> {
+    let body = request_body_stab(&cfg.model, text, ctx);
+    let v = post_messages(cfg, &body)?;
+    parse_stab_response(&v)
+}
+
+/// POST one Messages request through the system curl; the key goes through curl's config on
+/// stdin and never a command line. Returns the response JSON, or a short reason.
+fn post_messages(cfg: &RadioConfig, body: &Value) -> Result<Value, String> {
+    let key = cfg.api_key.as_deref().ok_or("no_key")?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -641,7 +769,7 @@ fn call_llm(cfg: &RadioConfig, text: &str, ctx: &RadioContext) -> Result<LlmOk, 
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash under the fullscreen game
     }
-    let result = (|| -> Result<LlmOk, String> {
+    let result = (|| -> Result<Value, String> {
         let mut child = cmd.spawn().map_err(|e| format!("curl_spawn:{e}"))?;
         child
             .stdin
@@ -672,16 +800,14 @@ fn call_llm(cfg: &RadioConfig, text: &str, ctx: &RadioContext) -> Result<LlmOk, 
             let message = message.replace(['\n', '\r', ' '], "_");
             return Err(if message.is_empty() { format!("http_{code}:{kind}") } else { format!("http_{code}:{kind}:{message}") });
         }
-        let v: Value = serde_json::from_str(payload).map_err(|e| format!("bad_json:{e}"))?;
-        parse_llm_response(&v, ctx)
+        serde_json::from_str(payload).map_err(|e| format!("bad_json:{e}"))
     })();
     let _ = std::fs::remove_file(&body_path);
     result
 }
 
-/// Validate the model's JSON against the grammar and the context. Anything off-grammar is an
-/// `Err`, which routes the transmission to the offline parser.
-pub fn parse_llm_response(v: &Value, ctx: &RadioContext) -> Result<LlmOk, String> {
+/// The text block and token counts of a Messages response, or why it is unusable.
+fn response_text(v: &Value) -> Result<(&str, u64, u64), String> {
     let stop = v["stop_reason"].as_str().unwrap_or("");
     if stop == "refusal" {
         return Err("refusal".into());
@@ -694,8 +820,25 @@ pub fn parse_llm_response(v: &Value, ctx: &RadioContext) -> Result<LlmOk, String
         .and_then(|blocks| blocks.iter().find(|b| b["type"] == "text"))
         .and_then(|b| b["text"].as_str())
         .ok_or("no_text_block")?;
-    let input_tokens = v["usage"]["input_tokens"].as_u64().unwrap_or(0);
-    let output_tokens = v["usage"]["output_tokens"].as_u64().unwrap_or(0);
+    Ok((text, v["usage"]["input_tokens"].as_u64().unwrap_or(0), v["usage"]["output_tokens"].as_u64().unwrap_or(0)))
+}
+
+/// The support detail's answer: one `reply` string, trimmed to the strip.
+pub fn parse_stab_response(v: &Value) -> Result<LlmOk, String> {
+    let (text, input_tokens, output_tokens) = response_text(v)?;
+    let parsed: Value = serde_json::from_str(text).map_err(|e| format!("bad_output_json:{e}"))?;
+    let reply = parsed["reply"].as_str().map(str::trim).filter(|s| !s.is_empty()).ok_or("no_reply")?;
+    let mut reply = reply.to_string();
+    if reply.chars().count() > 240 {
+        reply = reply.chars().take(237).collect::<String>() + "...";
+    }
+    Ok((None, vec![RadioReply { callsign: STAB_CALLSIGN.into(), text: reply }], input_tokens, output_tokens))
+}
+
+/// Validate the model's JSON against the grammar and the context. Anything off-grammar is an
+/// `Err`, which routes the transmission to the offline parser.
+pub fn parse_llm_response(v: &Value, ctx: &RadioContext) -> Result<LlmOk, String> {
+    let (text, input_tokens, output_tokens) = response_text(v)?;
     let parsed: Value = serde_json::from_str(text).map_err(|e| format!("bad_output_json:{e}"))?;
     let (order, replies) = validate_output(&parsed, ctx)?;
     Ok((order, replies, input_tokens, output_tokens))
@@ -1067,6 +1210,30 @@ pub fn compose_reply_offline(order: &RadioOrder, w: &WingmanContext) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_detail_reads_the_context_back_offline() {
+        let ctx = super::StabContext {
+            callsign: "Elster".into(), order_title: Some("Order 10: Hagen ammunition yard".into()),
+            order_lines: vec!["Clear the yard.".into()], beat: Some("2  Contact".into()), beats_done: 1, beats_total: 3,
+            stock_lines: vec!["FUEL 410 L  ~31 KM".into(), "88 MM  22 AP  8 HE".into()],
+            site_notice: "ORDER 10: Clear the yard.".into(), camp: "site 0 at (-5250, 3200)".into(),
+            position: "(-4016, 2533), aboard".into(), clock: "day".into(), weather: "winter overcast".into(),
+        };
+        let fuel = super::parse_offline_stab("Stab, Elster. What is my fuel? Over.", &ctx);
+        assert_eq!(fuel.len(), 1);
+        assert_eq!(fuel[0].callsign, super::STAB_CALLSIGN);
+        assert!(fuel[0].text.starts_with("Elster, Stab.") && fuel[0].text.contains("FUEL 410 L") && fuel[0].text.ends_with("Out."), "{}", fuel[0].text);
+        let order = super::parse_offline_stab("say again the order", &ctx);
+        assert!(order[0].text.contains("Hagen") && order[0].text.contains("2  Contact"), "{}", order[0].text);
+        let unknown = super::parse_offline_stab("what is the enemy doing", &ctx);
+        assert!(unknown[0].text.contains("Say again"), "{}", unknown[0].text);
+        let body = super::request_body_stab("m", "line", &ctx);
+        assert_eq!(body["output_config"]["format"]["schema"]["required"][0], "reply");
+        let reply = super::parse_stab_response(&serde_json::json!({"stop_reason":"end_turn","content":[{"type":"text","text":"{\"reply\":\"Elster, Stab. Fuel 410 litres. Out.\"}"}],"usage":{"input_tokens":10,"output_tokens":5}})).unwrap();
+        assert_eq!(reply.1[0].text, "Elster, Stab. Fuel 410 litres. Out.");
+        assert!(reply.0.is_none());
+    }
+
     use super::*;
 
     fn ctx() -> RadioContext {

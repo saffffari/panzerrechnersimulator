@@ -132,6 +132,8 @@ mod cigarette_butts;
 mod hand_compass;
 #[path = "hand_map.rs"]
 mod hand_map;
+#[path = "order_printer.rs"]
+pub mod order_printer;
 #[path = "repair_manual_game.rs"]
 mod repair_manual_game;
 #[path = "hatch_control.rs"]
@@ -402,7 +404,7 @@ enum TrackRepairPhase {
 const N_PICKUPS: usize = 14;
 /// Tiger I road-fuel capacity. Campaign fuel is already tracked in litres, so a physical can feeds
 /// the same live meter instead of creating a second abstract "fuel pickup" currency.
-const TIGER_FUEL_CAPACITY_L: f32 = 540.0;
+pub(crate) const TIGER_FUEL_CAPACITY_L: f32 = 540.0;
 const PORTABLE_REACH_M: f32 = 2.2;
 const N_MAP_CASES: usize = crate::run_route::ROUTE_SITE_COUNT;
 
@@ -8947,7 +8949,11 @@ struct Slots {
     binocular_prop: usize, // view-local physical field glasses during the lower/raise travel
     hand_compass: [usize; 2], // view-local imported body and magnetic needle
     held_map: usize, // folded physical paper with registered cartography/annotations
+    order_printer_head: usize, // the teleprinter head at the commander's left (src/order_printer.rs)
+    order_strip: usize,        // the strip on the machine, emerging line by line
+    order_receipt: usize,      // the torn-off strip in the reader's hands (view-local)
     repair_manual: [usize; crate::repair_manual::PART_COUNT],
+    loupe: usize, // the reader's glass over the manual (view-local, raster-only)
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
@@ -9617,6 +9623,10 @@ pub struct Game {
     /// Entries are parallel to `slots.tiger_dressing`; failed GLBs never enter either vector.
     tiger_dressing: Vec<crate::tank_dressing::Prop>,
     enigma_dressing: Option<crate::tank_dressing::Prop>,
+    /// The written order's teleprinter and strip (src/order_printer.rs).
+    order_printer: order_printer::Printer,
+    /// The support detail's line, opened on first use (src/radio_llm.rs, `submit_stab`).
+    stab_net: Option<crate::radio_llm::RadioLlm>,
     fx: Fx,
     /// Host-authoritative cannon shells. Stable IDs are never reused during a Game lifetime;
     /// presentation pools may drop/replace a tracer without changing this simulation pool.
@@ -11828,8 +11838,16 @@ impl Game {
         scene.extend(hand_compass::load()?);
         let held_map = scene.len();
         scene.push(hand_map::mesh());
+        let order_printer_head = scene.len();
+        scene.push(order_printer::head_mesh());
+        let order_strip = scene.len();
+        scene.push(order_printer::strip_mesh());
+        let order_receipt = scene.len();
+        scene.push(order_printer::strip_mesh());
         let repair_manual = std::array::from_fn(|i| scene.len() + i);
         scene.extend(crate::repair_manual::mesh());
+        let loupe = scene.len();
+        scene.push(crate::repair_manual::loupe_mesh());
 
         // Cupola HATCH lid: the real baked assembly (hinge post + disc + handle) exported from the
         // Blender rig with the mesh origin ON the hinge axis (`cupola hatch pivot`), so rotating
@@ -12515,7 +12533,11 @@ impl Game {
             binocular_prop,
             hand_compass,
             held_map,
+            order_printer_head,
+            order_strip,
+            order_receipt,
             repair_manual,
+            loupe,
             snow,
             hatch,
             tpz_needle,
@@ -13585,6 +13607,12 @@ impl Game {
         renderer.mark_raster_only(slots.held_map);
         renderer.set_emissive(slots.held_map, 0.0);
         renderer.set_visible(slots.held_map, false);
+        renderer.mark_raster_only(slots.order_receipt);
+        renderer.set_visible(slots.order_receipt, false);
+        renderer.set_visible(slots.order_strip, false);
+        renderer.set_emissive(slots.order_printer_head, 0.0);
+        renderer.mark_raster_only(slots.loupe);
+        renderer.set_visible(slots.loupe, false);
         for slot in slots.repair_manual {
             renderer.mark_raster_only(slot);
             renderer.set_emissive(slot, 0.0);
@@ -14051,6 +14079,8 @@ impl Game {
             slots,
             tiger_dressing,
             enigma_dressing,
+            order_printer: Default::default(),
+            stab_net: None,
             fx: Fx::default(),
             projectiles: Vec::with_capacity(256),
             projectile_scratch: Vec::with_capacity(256),
@@ -14618,30 +14648,10 @@ impl Game {
 
         // Rebuild the visible rack from typed carried ammunition. APCR currently rides the AP mesh
         // and ballistic family, but remains a distinct persistent count for the future shell model.
-        self.cartridge_primers.clear_inventory();
-        self.slot_taken.fill(true);
         let inv = &start.persistent.inventory;
         let ap_like = usize::from(inv.ap_rounds.saturating_add(inv.apcr_rounds));
         let he = usize::from(inv.he_rounds);
-        let total = (ap_like + he).min(self.slot_taken.len() + 1);
-        let chamber_he = total > 0 && ap_like == 0;
-        self.breech = if total > 0 {
-            Breech::Loaded
-        } else {
-            Breech::Empty
-        };
-        self.he_loaded = chamber_he;
-        let mut rack_ap = ap_like.saturating_sub(usize::from(total > 0 && !chamber_he));
-        let mut rack_he = he.saturating_sub(usize::from(chamber_he));
-        for (i, taken) in self.slot_taken.iter_mut().enumerate() {
-            let nature_he = crate::interior_rig::shell_slot_is_he(i);
-            self.slot_nature_he[i] = nature_he;
-            let remaining = if nature_he { &mut rack_he } else { &mut rack_ap };
-            if *remaining > 0 { *taken = false; *remaining -= 1; }
-        }
-        let rack = self.slot_taken.iter().filter(|taken| !**taken).count();
-        self.banked.ap_88mm = rack_ap as u32;
-        self.banked.he_88mm = rack_he as u32;
+        let rack = self.stow_main_gun_loadout(ap_like, he);
         // The firing counter starts at zero for a fresh act. Empty authored cradles are capacity,
         // not historical shots and must never offset the first chambered round.
         self.rounds_spent = 0;
@@ -15908,6 +15918,7 @@ impl Game {
 
     fn update_campaign_director(&mut self, dt: f32, map_interact: bool) {
         self.update_tiger_fuel(dt);
+        self.tick_order_printer(dt);
         let Some(_) = self.campaign else { return };
         // Exploration belongs to the crew, not only the hull.  A dismounted commander can read a
         // story site, scout a route, and prepare Halbe even when the Tiger is immobilised or dry.
@@ -18612,6 +18623,8 @@ impl Game {
         self.drive_local_binocular_prop(r);
         self.drive_hand_map(r);
         self.repair_manual.tick(dt);
+        // The right button over the open book holds the loupe; the book must be in the hands.
+        self.repair_manual.loupe_wanted = input.aim && self.repair_manual.held && !self.repair_manual.turning();
         self.drive_repair_manual(r);
         self.drive_hand_compass(dt, r);
         self.update_cupola_pistol(&sidearm_input,dt,r);
@@ -19472,6 +19485,7 @@ impl Game {
         r.set_model(self.slots.enigma, enigma_model);
         r.set_visible(self.slots.enigma, self.tank_editor_scene.is_none() || self.enigma_dressing.is_some());
         r.set_emissive(self.slots.enigma, 0.0);
+        self.drive_order_printer(r);
         r.set_model(
             self.slots.turret_disc,
             crate::turret_disc::turret_disc_model(tm),
@@ -21273,9 +21287,12 @@ impl Game {
     /// Pick the portable prop the dismounted player's crosshair is actually resting on. Collected
     /// is intentionally ignored: an emptied can remains a real object and can be picked up again.
     fn portable_item_hover(&self, cam_fwd: Vec3, cam_pos: Vec3) -> Option<usize> {
+        // The track kit in hand does not hide a prop from the crosshair: taking the prop sets the
+        // kit down first (`interact_portable_item`; 2 November 2026, "while holding hammer you
+        // should still be able to lmb on stuff").
         if !matches!(self.mode, Mode::Foot) || self.climb.active || self.held_item.is_some()
             || self.carry_mesh.is_some() || self.carried_casing.is_some()
-            || self.carrying_track_kit || self.panzerfaust_claimed {
+            || self.panzerfaust_claimed {
             return None;
         }
         self.pickups
@@ -21384,6 +21401,8 @@ impl Game {
         let Some(index) = self.portable_item_hover(cam_fwd, cam_pos) else {
             return false;
         };
+        // Both hands for the prop: the track kit is set down where he stands first.
+        if self.carrying_track_kit { self.put_down_toolbox(); }
         if let Some(item) = &mut self.pickups[index].portable {
             item.equip();
             self.held_item = Some(index);
@@ -22938,6 +22957,42 @@ impl Game {
     pub fn debug_casing_carried(&self) -> bool {
         self.carried_casing.is_some()
     }
+    /// Stow an exact typed loadout: the chamber first (AP when any AP is carried), then the
+    /// hull cradles by their permanent nature, the overflow banked as typed counts. Primers are
+    /// re-issued for the new bodies. Returns the rack count. The campaign start and the
+    /// expedition's authored opening (`expedition_theatre::Start`) both come through here.
+    pub(crate) fn stow_main_gun_loadout(&mut self, ap_like: usize, he: usize) -> usize {
+        self.cartridge_primers.clear_inventory();
+        self.slot_taken.fill(true);
+        let total = (ap_like + he).min(self.slot_taken.len() + 1);
+        let chamber_he = total > 0 && ap_like == 0;
+        self.breech = if total > 0 { Breech::Loaded } else { Breech::Empty };
+        self.he_loaded = chamber_he;
+        let mut rack_ap = ap_like.saturating_sub(usize::from(total > 0 && !chamber_he));
+        let mut rack_he = he.saturating_sub(usize::from(chamber_he));
+        for (i, taken) in self.slot_taken.iter_mut().enumerate() {
+            let nature_he = crate::interior_rig::shell_slot_is_he(i);
+            self.slot_nature_he[i] = nature_he;
+            let remaining = if nature_he { &mut rack_he } else { &mut rack_ap };
+            if *remaining > 0 { *taken = false; *remaining -= 1; }
+        }
+        self.banked.ap_88mm = rack_ap as u32;
+        self.banked.he_88mm = rack_he as u32;
+        self.slot_taken.iter().filter(|taken| !**taken).count()
+    }
+
+    /// The 88 mm aboard by nature, (PzGr, SprGr): the chamber, the cradles, the loose rounds
+    /// riding inside, the one in the hands, and the banked overflow. Counts, not positions.
+    pub fn main_gun_rounds_aboard(&self) -> (u32, u32) {
+        let (mut ap, mut he) = (0u32, 0u32);
+        if matches!(self.breech, Breech::Loaded) { if self.he_loaded { he += 1 } else { ap += 1 } }
+        for (taken, nature_he) in self.slot_taken.iter().zip(&self.slot_nature_he) {
+            if !taken { if *nature_he { he += 1 } else { ap += 1 } }
+        }
+        let (loose_ap, loose_he) = unracked_88mm_aboard(&self.loose, self.carry_mesh, &self.slot_nature_he);
+        (ap + u32::from(loose_ap) + self.banked.ap_88mm, he + u32::from(loose_he) + self.banked.he_88mm)
+    }
+
     pub fn debug_rack_left(&self) -> usize {
         self.slot_taken.iter().filter(|t| !**t).count()
     }

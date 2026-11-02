@@ -18,8 +18,12 @@ and the current driver cruise setting.
 | Mouse | Fine gun aim only at sights; head/body look elsewhere |
 | V | Indicate an approximate clock-bearing sector; no enemy lock or automatic range measurement |
 | K | Toggle the autonomous-gunner experiment; no commander LMB fire order |
-| M / I | Physical map / repair manual (B stays the binoculars) |
-| PgUp / PgDn, Enter (map held) | Expedition orders on the theatre map: previous / next offer, accept. Accepting stows the map so the written order is held up (X or a move folds it; M rereads it on the map with its marks and bearing) |
+| M / I | Physical map / repair manual (B stays the binoculars). The manual opens flat over the view, read top-down on the game's own pixel grid (pixel type, one-pixel rules, pixel plates): click a chapter tab down its fore-edge (BOOK, TRACK, PARTS, CREW, WINCH, FIRE) to turn to that chapter; click the foot corners of a page, PgUp/PgDn or the wheel to turn a leaf; click a red arrow choice to follow the diagnosis; click the running head to mark a page (MARK) or return to the ribbon; +/- zooms to two pixels per texel about the pointer. `KESSEL_MANUAL_3D=1` keeps the physical book in the scene instead, with the loupe (**RMB held** over the page, a hand lens showing the paper three times larger through its own camera) |
+| PgUp / PgDn, Enter (map held) | Expedition orders on the theatre map: previous / next offer, accept. Accepting stows the map; the written order prints on the page teleprinter's 210 mm sheet (the head at the commander's left under the turret roof, or the detail's machine on the camp's orders table when you are on foot there); the sheet comes out leaning toward you. M rereads it on the map with its marks and bearing |
+| E / LMB on the sheet | Tear the printed order off the machine: it rises into view and is read flat on the pixel grid like the manual (free hands, like the map; `KESSEL_MANUAL_3D=1` reads it in hand in the scene) |
+| X (sheet in hand) | Fold the sheet into the pocket (it sinks out of view) |
+| O | Hold the pocketed sheet up again |
+| E / LMB on the head's keys, then type, Enter / Esc | Key a line to the support detail (Stab) at the teleprinter: the line and the detail's answer print on the sheet and hang there until torn off. The answer comes from the radio model (`KESSEL_RADIO_MODEL`, `ANTHROPIC_API_KEY`) or, with no key or network, from the offline responder that reads the same context back |
 | 1 / 2 | P08 / Panzerfaust on foot; 1 toggles the mounted P08 while aboard |
 | R | Reload personal weapon on foot; throw a carried spent case while aboard |
 | F / T | Handheld light / request ammunition type |
@@ -463,6 +467,8 @@ size, and stitch-apron rules.
   dismounting does not grant extra ammunition.
 - Pick up the physical repair toolbox. The box stays in the left hand and hammer in the right,
   inside or outside. Approach and aim at the actual broken component, then hold LMB to repair.
+  A prop under the crosshair can still be taken with the kit in hand: the kit is set down where
+  you stand first, both hands being needed.
   At a broken track: grab the loose end, hold LMB and pull down, fit the link, then hammer the pin.
   Completed work leaves the tools in your hands. X puts them down for later pickup; repair
   cannot be performed remotely from the kit mount. Specialized repair minigames beyond the
@@ -522,8 +528,10 @@ size, and stitch-apron rules.
   in a few seconds and then holds itself on a slope. It no longer rolls away when stopped.
 - **Cigarettes.** C brings out the whole packet. Look at a cigarette (it is outlined) and press
   the left button to take it. Hold the right button to light it, then hold the right button to
-  toke; the left button and every interaction stay free. C with one in the mouth takes it back in
-  the hand. A lit cigarette goes to the mouth by itself when the hands are needed.
+  toke; the left button and every interaction stay free. A short tap of the right button on a
+  lit cigarette in the hand knocks the ash off once some has grown (it falls by itself at each
+  quarter, and in the mouth). C with one in the mouth takes it back in the hand. A lit cigarette
+  goes to the mouth by itself when the hands are needed.
 - **Leaving by the cupola needs the cupola view first.** From below, click the cupola to climb
   into its seat; only there does held Space climb out. The hatch lever itself can be worked from
   below as well as from the seat. X drops back down.

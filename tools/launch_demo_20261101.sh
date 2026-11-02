@@ -15,6 +15,7 @@
 #   tools/launch_demo_20261101.sh --look standard the old display look at 480x270; the default is the deltaP look
 #                                                 (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered colour, pyramid bloom;
 #                                                 the owner's pick, 2026-11-01); --look deltap-pico8 for the 32-colour frame
+#   tools/launch_demo_20261101.sh --cabin-look pastel  the pastel palette itself inside the hull under the tinted look
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
 #   tools/launch_demo_20261101.sh --canyon --t34s 5 --no-guns
 #                                                 a 1v5: five T-34s at the first-encounter knot (the deep platoons benched,
@@ -23,6 +24,7 @@
 #                                                 every mode (the default since 2026-11-02); --brain doctrine puts the
 #                                                 winter encounter crews of docs/ENEMY_TANK_AI.md back in charge
 #   tools/launch_demo_20261101.sh --day-cycle 6   day/night clock: the 15-minute cycle times this (default 6, a 90-minute cycle)
+#   tools/launch_demo_20261101.sh --sky-start day   where the act clock starts: dawn (default), day (noon), dusk, night
 #   tools/launch_demo_20261101.sh --audio-range balanced   the playback curve: reference (default; distant sounds fall off as
 #                                                 the physical level does) or balanced (up to +12 dB below 110 dB(A))
 #   tools/launch_demo_20261101.sh --check         validate binary and assets, start nothing
@@ -31,7 +33,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-tinted CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=dawn AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -41,6 +43,7 @@ while (( $# )); do
         --platoon) PLATOON=1 ;;
         --res) RES=$2; RES_SET=1; shift ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;
+        --cabin-look) CABIN_LOOK=$2; shift ;;   # pastel: the palette itself inside the hull (tinted look)
         --seed) SEED=$2; shift ;;
         --t34s) T34S=$2; MODE=canyon; shift ;;
         --brain) BRAIN=$2; MODE=canyon; shift ;;
@@ -48,6 +51,7 @@ while (( $# )); do
         --order) ORDER=$2; MODE=expedition; shift ;;
         --forward) FORWARD=1; MODE=expedition ;;
         --day-cycle) DAY_CYCLE=$2; shift ;;
+        --sky-start) SKY_START=$2; shift ;;   # dawn (default) | day | dusk | night: where the act's clock starts
         --audio-range) AUDIO_RANGE=$2; shift ;;
         --check) CHECK=1 ;;
         -h|--help) sed -n 2,22p "$0"; exit 0 ;;
@@ -103,6 +107,7 @@ export KESSEL_CANYON_V2=1
 [[ -n "$ORDER" ]] && export KESSEL_EXPEDITION_ORDER="$ORDER"
 (( FORWARD )) && export KESSEL_EXPEDITION_FORWARD=1
 export KESSEL_DAY_CYCLE_SCALE="$DAY_CYCLE"
+export KESSEL_SKY_START="$SKY_START"
 # One shared folder for every still and clip, across worktrees (tools/capture_gallery.py indexes it).
 export KESSEL_CAPTURES_DIR=/home/alex/panzer/captures
 export KESSEL_CAPTURE_4K_JPG=1
@@ -117,6 +122,7 @@ export KESSEL_SESSION_LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).session.jsonl"
 [[ -n "$BRAIN" ]] && export KESSEL_T34_BRAIN="$BRAIN"
 [[ -n "$GUNS" ]] && export KESSEL_CANYON_GUNS="$GUNS"
 [[ -n "$LOOK" ]] && export KESSEL_LOOK="$LOOK"
+[[ -n "$CABIN_LOOK" ]] && export KESSEL_CABIN_LOOK="$CABIN_LOOK"
 
 LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).log"
 {

@@ -675,8 +675,21 @@ struct TextCmd {
     size: f32,
     color: [f32; 4],
     align: Align,
-    bold: bool,
+    /// The face: 0 regular, 1 bold (the bundled pixel faces), 2 and 3 the manual's grotesque
+    /// regular and black (`FACE_MANUAL`, `FACE_MANUAL_BOLD`), loaded from the asset root.
+    face: u8,
 }
+
+/// The bundled pixel faces every frame uses.
+pub const FACE_REGULAR: u8 = 0;
+pub const FACE_BOLD: u8 = 1;
+/// The repair manual's grotesque, regular and black: `assets/fonts/NHaasGrotesk-Md.otf` and
+/// `-Blk.otf` under the asset root (the owner's licensed faces, never bundled); when they are
+/// absent the bundled faces stand in and the log says so.
+pub const FACE_MANUAL: u8 = 2;
+pub const FACE_MANUAL_BOLD: u8 = 3;
+pub const FACE_COUNT: usize = 4;
+const MANUAL_FACE_PATHS: [&str; 2] = ["assets/fonts/NHaasGrotesk-Md.otf", "assets/fonts/NHaasGrotesk-Blk.otf"];
 
 /// An uploaded RGBA texture in the image registry (asset-browser thumbnails, preview inset, the
 /// shared 1×1 white used for tinted panel/selection rects). Kept alive by holding the texture.
@@ -707,7 +720,7 @@ struct GlyphMetric {
 
 /// Intermediate rasterized glyph before it is packed into the shared atlas.
 struct Raster {
-    key: (bool, char),
+    key: (u8, char),
     w: u32,
     h: u32,
     off: [f32; 2],
@@ -716,8 +729,8 @@ struct Raster {
 }
 
 pub struct Ui {
-    glyphs: HashMap<(bool, char), GlyphMetric>,
-    ascent: f32, // ATLAS_PX units — distance from the top anchor down to the baseline
+    glyphs: HashMap<(u8, char), GlyphMetric>,
+    ascent: [f32; FACE_COUNT], // ATLAS_PX units per face — top anchor down to the baseline
 
     // GPU
     atlas_bind: wgpu::BindGroup,
@@ -741,6 +754,10 @@ pub struct Ui {
     img_cmds: Vec<ImgCmd>,
     img_vbuf: Option<wgpu::Buffer>,
     white: u32, // handle of a 1×1 white texture → tinted filled rects
+    /// A frame every queued command is mapped through: x' = x0 + x * w, y' = y0 + y * h, sizes
+    /// by h. Identity by default; the top-down paper overlays set it to draw a page's own
+    /// [0,1] layout into a rectangle of the display (`set_frame`, `clear_frame`).
+    frame: [f32; 4],
 }
 
 impl Ui {
@@ -902,6 +919,7 @@ impl Ui {
             img_bgl,
             img_layout,
             img_pipes: HashMap::new(),
+            frame: [0.0, 0.0, 1.0, 1.0],
             img_sampler,
             images: Vec::new(),
             img_cmds: Vec::new(),
@@ -994,9 +1012,37 @@ impl Ui {
         (self.images.len() - 1) as u32
     }
 
+    /// Retain a live texture view sampled nearest: the top-down paper overlays draw the retained
+    /// page and sheet ink this way, one texel per pixel of the internal grid (two at zoom).
+    pub fn import_image_view(&mut self, device: &wgpu::Device, view: &wgpu::TextureView) -> u32 {
+        self.import_nearest_image_view(device, view)
+    }
+
+    /// As `upload_image`, sampled nearest (the pixel book's plates).
+    pub fn upload_image_nearest(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, rgba: &[u8], w: u32, h: u32) -> u32 {
+        let handle = self.upload_image(device, queue, rgba, w, h);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("paper-image-nearest"),
+            mag_filter: wgpu::FilterMode::Nearest, min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest, ..Default::default()
+        });
+        let tex = self.images[handle as usize]._tex.as_ref().expect("an uploaded image holds its texture");
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.images[handle as usize].bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("paper-image-nearest-bind"), layout: &self.img_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            ],
+        });
+        handle
+    }
+
     /// Queue an image quad. `x,y,w,h` are normalized [0,1] with the origin top-left; `color` tints
     /// the texel (use white to draw as-is). Drawn before text so labels overlay it.
     pub fn draw_image(&mut self, handle: u32, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+        let [x0, y0, fw, fh] = self.frame;
+        let (x, y, w, h) = (x0 + x * fw, y0 + y * fh, w * fw, h * fh);
         self.img_cmds.push(ImgCmd {
             handle,
             rect: [x, y, x + w, y + h],
@@ -1034,7 +1080,7 @@ impl Ui {
                 value.to_bits().hash(&mut key);
             }
             (cmd.align as u8).hash(&mut key);
-            cmd.bold.hash(&mut key);
+            cmd.face.hash(&mut key);
         }
         for cmd in &self.img_cmds {
             cmd.handle.hash(&mut key);
@@ -1054,15 +1100,40 @@ impl Ui {
         align: Align,
         bold: bool,
     ) {
+        self.push_face(text, x, y, size, color, align, if bold { FACE_BOLD } else { FACE_REGULAR });
+    }
+
+    /// Queue a string in a named face (`FACE_*`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_face(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: [f32; 4],
+        align: Align,
+        face: u8,
+    ) {
+        let [x0, y0, w, h] = self.frame;
         self.cmds.push(TextCmd {
             text: text.to_string(),
-            x,
-            y,
-            size,
+            x: x0 + x * w,
+            y: y0 + y * h,
+            size: size * h,
             color,
             align,
-            bold,
+            face,
         });
+    }
+
+    /// Map every following command through a rectangle of the display (normalized x, y, w, h),
+    /// so a page drawn in its own [0,1] lands there; `clear_frame` restores the identity.
+    pub fn set_frame(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.frame = [x, y, w, h];
+    }
+    pub fn clear_frame(&mut self) {
+        self.frame = [0.0, 0.0, 1.0, 1.0];
     }
 
     fn ensure_pipes(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
@@ -1260,13 +1331,13 @@ impl Ui {
             // the surrounding letters don't silently jam together; measure + draw must agree.
             let fallback_adv = self
                 .glyphs
-                .get(&(cmd.bold, ' '))
+                .get(&(cmd.face, ' '))
                 .map(|g| g.advance)
                 .unwrap_or(0.0);
             for c in cmd.text.chars() {
                 width += self
                     .glyphs
-                    .get(&(cmd.bold, c))
+                    .get(&(cmd.face, c))
                     .map(|g| g.advance)
                     .unwrap_or(fallback_adv)
                     * factor;
@@ -1276,9 +1347,9 @@ impl Ui {
                 Align::Center => cmd.x * tw - width * 0.5,
                 Align::Right => cmd.x * tw - width,
             };
-            let baseline = cmd.y * th + self.ascent * factor;
+            let baseline = cmd.y * th + self.ascent[usize::from(cmd.face) % FACE_COUNT] * factor;
             for c in cmd.text.chars() {
-                let g = match self.glyphs.get(&(cmd.bold, c)) {
+                let g = match self.glyphs.get(&(cmd.face, c)) {
                     Some(g) => *g,
                     None => {
                         pen_x += fallback_adv * factor; // unknown glyph: leave a gap, keep the pen moving
@@ -1435,17 +1506,26 @@ impl Ui {
 /// Rasterize both weights of the full charset with `ab_glyph` and shelf-pack them into one R8
 /// coverage atlas. Returns the glyph metric map, the ascent (ATLAS_PX units), the atlas dimensions,
 /// and the packed pixels.
-fn build_atlas() -> (HashMap<(bool, char), GlyphMetric>, f32, u32, u32, Vec<u8>) {
+fn build_atlas() -> (HashMap<(u8, char), GlyphMetric>, [f32; FACE_COUNT], u32, u32, Vec<u8>) {
     let scale = PxScale::from(ATLAS_PX);
     let mut rasters: Vec<Raster> = Vec::new();
-    let mut ascent = ATLAS_PX * 0.8;
+    let mut ascent = [ATLAS_PX * 0.8; FACE_COUNT];
 
-    for (bold, bytes) in [(false, FONT_REGULAR), (true, FONT_BOLD)] {
+    // The manual's faces come from the asset root at run time; a clone without the assets, or
+    // a file ab_glyph cannot parse, falls back to the bundled faces and says so once.
+    let manual: Vec<Vec<u8>> = MANUAL_FACE_PATHS.iter().enumerate().map(|(n, path)| {
+        match crate::resource::read(path) {
+            Ok(bytes) if FontRef::try_from_slice(&bytes).is_ok() => bytes,
+            Ok(_) => { eprintln!("[ui] {path} is not a font ab_glyph can read; the bundled face stands in"); Vec::new() }
+            Err(_) => { eprintln!("[ui] {path} absent (asset root); the bundled face stands in for the manual"); if n == 0 { FONT_REGULAR.to_vec() } else { FONT_BOLD.to_vec() } }
+        }
+    }).map(|bytes| if bytes.is_empty() { FONT_REGULAR.to_vec() } else { bytes }).collect();
+    let faces: [(u8, &[u8]); FACE_COUNT] = [(FACE_REGULAR, FONT_REGULAR), (FACE_BOLD, FONT_BOLD), (FACE_MANUAL, &manual[0]), (FACE_MANUAL_BOLD, &manual[1])];
+    for (face, bytes) in faces {
         let font = FontRef::try_from_slice(bytes).expect("bundled font failed to parse");
         let sf = font.as_scaled(scale);
-        if !bold {
-            ascent = sf.ascent();
-        }
+        ascent[usize::from(face)] = sf.ascent();
+        let bold = face;
         for ch in charset() {
             let id = font.glyph_id(ch);
             let advance = sf.h_advance(id);
@@ -1502,7 +1582,7 @@ fn build_atlas() -> (HashMap<(bool, char), GlyphMetric>, f32, u32, u32, Vec<u8>)
     let atlas_h = cy + row_h + PAD;
     let mut pixels = vec![0u8; (ATLAS_W * atlas_h) as usize];
 
-    let mut glyphs: HashMap<(bool, char), GlyphMetric> = HashMap::new();
+    let mut glyphs: HashMap<(u8, char), GlyphMetric> = HashMap::new();
     // whitespace glyphs (advance only)
     for r in &rasters {
         if r.w == 0 || r.h == 0 {

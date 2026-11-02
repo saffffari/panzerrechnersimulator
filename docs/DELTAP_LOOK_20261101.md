@@ -51,6 +51,33 @@ white balance, the display grade, the peak-channel ACES shoulder, the optic mask
 and the nearest blit. deltaP's night-vision model is not ported: this renderer has its own rod
 channel (`observer.rs`), and two observers in one display would be wrong.
 
+## Added 2 November 2026: the tonemap and the pastel palette
+
+- `KESSEL_TONEMAP=agx|aces` (default AgX; `crush.wgsl` `tonemap`, the look lane's z): the owner
+  found the sunset "oversaturated, deep fried" under the ACES fit, whose shoulder skews orange to
+  yellow; AgX desaturates bright colours toward white and keeps hue.
+- `KESSEL_LOOK=deltap-pastel` (mode 4, `DP_PASTEL`): a thirty-two colour palette authored for this
+  game (green-blues and teals first: "i don't really like these pinks and purples. we want more
+  green blue"), dithered by the same OKLab best-pair search as the PICO-8 mode. The demo
+  launcher's default look since the same night ("agx is too realistic, we need the pastel and
+  dither"); the palette's sky ramp rings round a high Sun, which the owner half likes.
+- `KESSEL_LOOK=deltap-tinted` (mode 5, `dp_tinted`, the launcher's default since the owner saw the
+  two: "i like the stylized color look of the pastel version but the agx realism also is nice,
+  these pastel tones are too stylized, somewhere in the middle, less pink and purple"): the
+  dithered-colour mode with each pixel's OKLab hue and chroma pulled toward the nearest pastel
+  entry's by `KESSEL_PALETTE_PULL` (0.7 unless set, after the 0.5 stills still read mauve at dusk), lightness kept: continuous tones in the
+  palette's colour family, magentas and purples sliding to its teals, greys and creams. Outdoors
+  only: inside the hull the pull is zero (the buttoned-up view's eye_range_strength), so the
+  cabin keeps the plain dithered colour, as it keeps its own rod hue and gain. (It went inside for
+  a few hours on 2 November 2026 and muted the annunciators' green; back outside.)
+- `KESSEL_CABIN_LOOK=pastel` (the launcher's `--cabin-look pastel`; the crush uniform's
+  `cabin_look` lane): in the tinted look the cabin quantizes to the pastel palette itself (mode 4's
+  quantizer) while the outside keeps the pulled continuous tones. Offered after the owner called a
+  cabin still under the palette "a fantastic shot" (2 November 2026); `plain` is the default.
+- `KESSEL_PALETTE_SMOOTH=0..1` (the look lane's w in the palette modes): 0 keeps deltaP's flat bands between palette
+  entries (the pair penalty, the ratio's dead zones and eighths); 1 dithers across them (a tenth
+  of the penalty, narrow dead zones, sixteenths), the smoother variant to compare.
+
 ## Physical truth
 
 - The look changes display encoding and the eye's glare only. No emitter, material, medium,

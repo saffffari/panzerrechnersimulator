@@ -78,7 +78,11 @@ already take any key or Enter.
 
 ## Guidance the player sees
 
-- **The order sheet.** At the start the typed Befehl is held up over the world: the title, the
+- **The order sheet.** Since 2 November 2026 the Befehl is a printed strip torn off the
+  teleprinter (The March section below; the same machine serves the Canyon run's order from the
+  turret); torn off, it rises into a flat reading overlay at the display's resolution, the
+  manual's presentation since the same evening (X pockets it, O brings it back; `KESSEL_MANUAL_3D=1`
+  reads it in hand in the scene). Before that, at the start the typed Befehl was held up over the world: the title, the
   three lines, the first beat, a close mark in its corner and the fold keys in small print.
   Enter, Space, E, a left click (the play cursor is captured, so the whole click is the close
   mark) or the pad's A or B folds it at once, and that press does nothing else (no shot, no
@@ -170,10 +174,23 @@ nudges after 300 s; no beat has a release or a consequence platoon (the theatre'
 finite and authored: a Defence, Bridge or Finale site releases its own counterattack when the
 Tiger stands on the cleared site, which the third beat's open line warns of).
 
-Accepting an order on the map (Enter, or the map's ACCEPT) now stows the map so the written order
-is held up and read; M rereads it on the map, where the order's marks, the position estimate and
-the bearing line are pencilled onto the theatre sheet (`draw_expedition_map`), and the pocket
-compass carries the march bearing. The demo launcher's `--order N` accepts order N at the start;
+Accepting an order on the map (Enter, or the map's ACCEPT) stows the map and sends the written
+order to the page teleprinter (`src/order_printer.rs`, 2 November 2026): a 210 x 150 mm sheet
+comes out of the head at the commander's left under the turret roof, or out of the detail's
+machine on the camp's orders table when the reader is on foot within 40 m of it, line by line
+in the machine's capitals at 60 characters a line (title, small print, the order's paragraphs,
+the first beat), leaning 25 degrees toward the reader as it hangs; E or the action button
+tears it off into the hands, where it is read like the map, X folds it into the pocket, O holds
+it up again. No flat sheet is
+drawn over the world any more (`MissionState::order_printed` folds the old sheet at once). M
+still rereads the order on the map, where the order's marks, the position estimate and the
+bearing line are pencilled onto the theatre sheet (`draw_expedition_map`), and the pocket
+compass carries the march bearing. The head's keys (E while looking at them) open a typed line
+to the detail: Enter sends it, the line prints on the strip at once and the detail's answer
+prints under it when it comes, through the platoon radio's model path with a prompt of its own
+(`radio_llm::stab_system_prompt`, one reply, no order grammar) or, with no key or network, the
+offline responder (`parse_offline_stab`), which reads the open order, the beat, the stock
+lines, the theatre notice and the camp back by keyword. Both know only the simulation's context. The demo launcher's `--order N` accepts order N at the start;
 `--forward` stands the crewed Tiger on the approach road at the first beat, engine running, facing
 the site, a playtest fixture disclosed in the log (`debug_expedition_start_order`).
 
@@ -188,6 +205,49 @@ Harness: `expedition-orders-review PREFIX` plays order 10 through on the retaine
 staged start, the garrison marked dead by fixture and the Tiger stood on the site for the hold,
 checks the beats and the net's lines in order, and writes `PREFIX_{order_at_camp,map_at_camp,order_at_turn,secured}.png`
 and a JSON receipt. CPU: `mission_game::tests::the_march_has_an_authored_order_for_every_site`.
+
+### The loop (2 November 2026)
+
+The March is now played against a stock the map states. The theatre catalog's `start` block
+(`catalog/expedition_theatre.v1.json`, `expedition_theatre::Start`) is what the Tiger carries when
+the expedition opens: 420 L of the 540 L tank, 24 PzGr and 8 SprGr in the 64 cradles (52 PzGr,
+12 SprGr, the chamber extra). It is applied once, when the theatre is first installed
+(`Game::enable_expedition_theatre` → `Game::stow_main_gun_loadout`, the same stowing the campaign
+start uses); resume never reapplies it. It is an authored state of the fiction (a Tiger low on
+ammunition inside the pocket), not a standard-issue claim, and the numbers are the owner's to tune
+in the catalog: a full rack would see out every order on the sheet, and the theatre's twelve sites
+hold 27 guard tanks plus nine released counterattack tanks against 65 rounds aboard a full Tiger
+and 72 on the sites' carts. Fuel burns by the authored campaign law (`standalone_fuel.rs`:
+0.018 + 0.010 × speed L/s, 13.2 L per road kilometre at 20 km/h, 32 km from the opening tank),
+and the fuel sites and the camp each stand eight 20 L cans.
+
+The map's margin carries the stock (`Game::expedition_stock`, `ExpeditionStock::lines`): fuel and
+the road kilometres it buys at 20 km/h under the same law, the 88 mm aboard by nature (chamber,
+cradles, loose rounds, the one in the hands, the banked overflow), the men aboard, at camp, in the
+field and dead, and the orders left of the eight and done. The lines are read from the live
+authorities, never from a tally of their own.
+
+Harness: `expedition-loop-review PREFIX` plays the whole loop in sequence on the actual Game: each
+order is the map's own first choice; the drive to its turn and on to the site is staged along the
+road graph (nodes from the catalog's road points, the shortest path by Dijkstra, the off-road legs
+added) with the fuel charged by the engine's drain law at road speed, so a drive the tank cannot
+afford strands it short; the fight is staged by marking the garrison and the released
+counterattack dead and spending two PzGr per tank from the cradles (a disclosed rate, not a
+ballistic result; a rack that cannot give them ends the run "out of ammunition"); the hold runs
+on the theatre's own clock; the site's carts and cans are taken by flag; the camp's moves follow;
+at order 3 (`KESSEL_LOOP_DEATH_AT`) the controlled man is a staged casualty, the camp's reserve
+relieves him through the real departure (one opportunity spent at 70 m out of camp), remounts and
+finishes the retained order; the finale at zero opportunities resolves the run. The receipt
+(`PREFIX.json`) carries the stock after every order. Run on 2 November 2026
+(`captures/demo-20261101-loop_review_20261102b.json`): eight orders in the map's own order
+(Hagen, Birken, the works with the staged death and relief, Linden, the Southern crossing, the
+broken column, the Northern crossing, the last corridor), every one secured and closed, the
+finale at zero opportunities resolving the run; 420 L fell to 220 L over 37 km of road with two
+fuel sites taken, 24 PzGr to 8 with 40 cart rounds loaded, one man dead, Victory. The first run
+failed at the Southern crossing: the authored sheets place a bridge order at the catalog's site
+point while the theatre re-seats bridge sites on the surveyed deck (139 m apart), so the hold
+asked for a place off the bridge; `expedition_accept_order` now re-seats the sheet's beats on
+the theatre's site position, and the harness withdraws a failed order and goes on.
 
 ## Verified by play (27 October 2026, RTX 4090, shader backend)
 

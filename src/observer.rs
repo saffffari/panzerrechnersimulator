@@ -110,8 +110,11 @@ pub const CABIN_ROD_DISPLAY_GAIN: f64 = 1.0;
 /// The display's draw-in of regions far from the adapted level (`crush.wgsl` `eye_range`): beyond
 /// the knee (stops from the display key) a region's distance to the key is scaled by the slope.
 /// Owner-directed presentation of local adaptation (docs/PHYSICAL_TRUTH_AUDIT.md).
-pub const EYE_RANGE_KNEE_STOPS: f64 = 1.5;
-pub const EYE_RANGE_SLOPE: f64 = 0.32;
+/// 2 November 2026: the knee 1.5 to 2.0 stops and the slope 0.32 to 0.55, so the cabin's dark
+/// corners stay near black beside the bright ports (the owner: "some areas near black or black
+/// so the focus goes to outside"); the draw-in still keeps the ports from clipping.
+pub const EYE_RANGE_KNEE_STOPS: f64 = 2.0;
+pub const EYE_RANGE_SLOPE: f64 = 0.55;
 /// The colour the rod signal is reproduced in, linear Rec. 709, luminance-neutral (luma 0.99).
 /// Rod vision has no hue of its own, but the mesopic appearance of a moonlit field is reported
 /// and modelled as a cool, bluish grey (the Purkinje shift: rod sensitivity peaks at 507 nm,
@@ -119,7 +122,11 @@ pub const EYE_RANGE_SLOPE: f64 = 0.32;
 /// 2011, Jensen et al. 2000). A reproduction choice named in docs/PHYSICAL_TRUTH_AUDIT.md: it
 /// scales the achromatic rod term only, so fire, lamps and anything the cones see keep their
 /// colour, and a daylight frame (rod share zero) is untouched. `KESSEL_ROD_HUE=r,g,b` overrides.
-pub const ROD_DISPLAY_HUE: [f64; 3] = [0.80, 1.00, 1.45];
+/// Outdoors: the deep blue the owner asked of the night (2 November 2026), still luminance-neutral.
+pub const ROD_DISPLAY_HUE: [f64; 3] = [0.675, 1.022, 1.738];
+/// Inside the hull: the hue the cabin has had since 2026-10-04, so the night's deeper blue outside
+/// changes nothing in the cabin (`crush.wgsl` mixes by the buttoned-up view's eye_range_strength).
+pub const CABIN_ROD_DISPLAY_HUE: [f64; 3] = [0.80, 1.00, 1.45];
 
 /// A sample brighter than this multiple of the cone adaptation counts as flash light [E].
 pub const FLASH_ABOVE_ADAPTATION: f64 = 30.0;
@@ -386,17 +393,26 @@ impl Eye {
     /// what `exposure.wgsl` integrates on every frame (tests hold the two together).
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn step(&mut self, meter: Meter, viewing: Viewing, dt_s: f64) {
+        self.step_at(meter, viewing, dt_s, 1.0);
+    }
+
+    /// As `step`, with the slow pigment processes (bleaching and regeneration) run `pigment_rate`
+    /// times faster than real: the sky clock's rate under the day cycle (`Renderer::pigment_rate`),
+    /// so a compressed night is not spent in the cone plateau. The pupil, the neural gains and
+    /// the flash memory keep real time. A reproduction choice named in docs/PHYSICAL_TRUTH_AUDIT.md.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn step_at(&mut self, meter: Meter, viewing: Viewing, dt_s: f64, pigment_rate: f64) {
         if !(dt_s > 0.0) { return; }
         let meter = meter.clamped();
         let substeps = (dt_s / MAX_STEP_S).ceil().clamp(1.0, 4096.0);
         let dt = dt_s / substeps;
         for _ in 0..substeps as u32 {
-            self.substep(meter, viewing, dt);
+            self.substep(meter, viewing, dt, pigment_rate.max(1.0));
         }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    fn substep(&mut self, meter: Meter, viewing: Viewing, dt: f64) {
+    fn substep(&mut self, meter: Meter, viewing: Viewing, dt: f64, pigment_rate: f64) {
         let relax = |value: f64, target: f64, tau: f64| value + (target - value) * (1.0 - (-dt / tau).exp());
         // Pupil.
         let target = pupil_diameter_mm(meter.photopic_cd_m2, viewing);
@@ -414,6 +430,11 @@ impl Eye {
         let bleach = |b: f64, retinal: f64, v: f64, q: f64| {
             let bleached = 1.0 - (1.0 - b) * (-(retinal / q) * dt).exp();
             (bleached - v * bleached / (bleached + PIGMENT_KM) * dt).clamp(0.0, 1.0)
+        };
+        let pigment_dt = dt * pigment_rate;
+        let bleach = |b: f64, retinal: f64, v: f64, q: f64| {
+            let bleached = 1.0 - (1.0 - b) * (-(retinal / q) * pigment_dt).exp();
+            (bleached - v * bleached / (bleached + PIGMENT_KM) * pigment_dt).clamp(0.0, 1.0)
         };
         self.cone_bleach = bleach(self.cone_bleach, meter.photopic_cd_m2 * area,
             CONE_REGENERATION_PER_S, CONE_PHOTOSENSITIVITY_TD_S);
@@ -596,6 +617,9 @@ pub fn wgsl_constants() -> String {
     push("OBS_ROD_HUE_R", hue[0]);
     push("OBS_ROD_HUE_G", hue[1]);
     push("OBS_ROD_HUE_B", hue[2]);
+    push("OBS_CABIN_ROD_HUE_R", CABIN_ROD_DISPLAY_HUE[0]);
+    push("OBS_CABIN_ROD_HUE_G", CABIN_ROD_DISPLAY_HUE[1]);
+    push("OBS_CABIN_ROD_HUE_B", CABIN_ROD_DISPLAY_HUE[2]);
     push("OBS_FLASH_ABOVE_ADAPTATION", FLASH_ABOVE_ADAPTATION);
     push("OBS_FLASH_MEMORY_TAU", FLASH_MEMORY_TAU_S);
     push("OBS_FLASH_MIN_RECOVERY", FLASH_MIN_RECOVERY_S);
@@ -710,23 +734,58 @@ mod tests {
         assert_eq!(crush.matches("OBS_ROD_DISPLAY_GAIN").count(), 1);
         assert!((1.0..=ROD_DISPLAY_GAIN).contains(&CABIN_ROD_DISPLAY_GAIN));
         assert!(crush.contains("mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN"));
-        assert!(crush.contains("vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * rod_gain)"));
+        assert!(crush.contains("rod_hue * (rods * rod_gain)"));
         assert!(wgsl_constants().contains("const OBS_ROD_DISPLAY_GAIN: f32 = "));
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("ROD_DISPLAY_GAIN"));
     }
 
     #[test]
-    fn the_rod_display_hue_is_luminance_neutral_cool_and_named() {
-        let [r, g, b] = ROD_DISPLAY_HUE;
-        let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        assert!((luma - 1.0).abs() < 0.02, "the hue must not change the rod signal's brightness: {luma}");
-        assert!(b > g && g >= r, "cool: blue above green above red");
-        assert!(b / r < 2.2, "bounded departure from grey");
+    fn the_rod_display_hues_are_luminance_neutral_cool_and_named() {
+        for (hue, bound) in [(ROD_DISPLAY_HUE, 2.8), (CABIN_ROD_DISPLAY_HUE, 2.2)] {
+            let [r, g, b] = hue;
+            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            assert!((luma - 1.0).abs() < 0.02, "the hue must not change the rod signal's brightness: {luma}");
+            assert!(b > g && g >= r, "cool: blue above green above red");
+            assert!(b / r < bound, "bounded departure from grey: {hue:?}");
+        }
+        // The cabin's hue is the one it has had since 2026-10-04; the night's is deeper.
+        assert_eq!(CABIN_ROD_DISPLAY_HUE, [0.80, 1.00, 1.45]);
+        assert!(ROD_DISPLAY_HUE[2] / ROD_DISPLAY_HUE[0] > CABIN_ROD_DISPLAY_HUE[2] / CABIN_ROD_DISPLAY_HUE[0]);
         let constants = wgsl_constants();
-        for name in ["OBS_ROD_HUE_R", "OBS_ROD_HUE_G", "OBS_ROD_HUE_B"] {
+        for name in ["OBS_ROD_HUE_R", "OBS_ROD_HUE_G", "OBS_ROD_HUE_B", "OBS_CABIN_ROD_HUE_R", "OBS_CABIN_ROD_HUE_G", "OBS_CABIN_ROD_HUE_B"] {
             assert!(constants.contains(&format!("const {name}: f32 = ")));
         }
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("ROD_DISPLAY_HUE"));
+        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("CABIN_ROD_DISPLAY_HUE"));
+    }
+
+    #[test]
+    fn at_the_clocks_rate_the_rods_recover_within_the_first_minutes_of_the_night() {
+        // A day on the snow bleaches the rods; at the real rate they need tens of minutes to
+        // recover, which the compressed night does not have. At the clock's rate (the night
+        // passes thirty times faster) they recover in the night's first play minutes.
+        let viewing = Viewing::Binocular;
+        let day = Meter::uniform(8_000.0, 8_000.0 * 2.35);
+        let dusk = Meter::uniform(1.0, 2.35);
+        let night = Meter::uniform(2.0e-4, 2.7e-4);
+        let mut real = Eye::adapted(day, viewing);
+        let mut compressed = real;
+        assert!(real.rod_bleach > 0.5, "the day bleaches the rods: {}", real.rod_bleach);
+        for eye in [&mut real, &mut compressed] { eye.step(dusk, viewing, 300.0); }
+        real.step_at(night, viewing, 240.0, 1.0);
+        compressed.step_at(night, viewing, 240.0, 30.0);
+        assert!(real.rod_bleach > 0.2, "four real minutes into the night the rods are still bleached: {}", real.rod_bleach);
+        assert!(compressed.rod_bleach < 0.02, "at the clock's rate they have recovered: {}", compressed.rod_bleach);
+        // What the display then makes of the night sky: the rod channel is alive, not black.
+        let shown = |eye: &Eye| {
+            let m = eye.mapping(viewing);
+            rod_response(night.scotopic_cd_m2, m.rod_exposure, m.rod_inverse_saturation) * ROD_DISPLAY_GAIN
+        };
+        assert!(shown(&compressed) > 4.0 * shown(&real), "{} vs {}", shown(&compressed), shown(&real));
+        assert!(shown(&compressed) > 0.008, "the moonless night is seen: {}", shown(&compressed));
+        let exposure = include_str!("../shaders/exposure.wgsl");
+        assert!(exposure.contains("let pigment_dt = dt * max(clock.pigment_rate, 1.0);"));
+        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("pigment_rate"));
     }
 
     #[test]

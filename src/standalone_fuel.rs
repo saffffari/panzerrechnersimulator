@@ -15,6 +15,18 @@ fn consumed_liters(speed_mps: f32, dt: f32) -> f32 {
     (0.018 + speed_mps.abs() * 0.010) * dt.max(0.0)
 }
 
+/// The road speed the map's range figure assumes (20 km/h, a Tiger on a theatre road).
+pub(super) const ROAD_SPEED_MPS: f32 = 5.56;
+/// Litres per kilometre at `ROAD_SPEED_MPS` under the same law the engine drains by.
+pub(super) fn road_liters_per_km() -> f32 {
+    consumed_liters(ROAD_SPEED_MPS, 1000.0 / ROAD_SPEED_MPS)
+}
+/// Kilometres of theatre road the tank's fuel buys at road speed: the stake the map shows.
+pub(super) fn road_range_km(liters: f32) -> f32 {
+    if !liters.is_finite() || liters <= 0.0 { return 0.0; }
+    liters / road_liters_per_km()
+}
+
 fn drain_tank(liters: &mut f32, speed_mps: f32, dt: f32) -> bool {
     *liters = (*liters - consumed_liters(speed_mps, dt)).max(0.0);
     *liters > 0.0
@@ -149,6 +161,17 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_map_range_is_the_drain_law_at_road_speed() {
+        // 0.018 + 0.010 * 5.56 L/s over the 180 s a kilometre takes: 13.2 L/km, 420 L buys 32 km.
+        assert!((road_liters_per_km() - 13.24).abs() < 0.05, "{}", road_liters_per_km());
+        assert!((road_range_km(420.0) - 31.7).abs() < 0.2, "{}", road_range_km(420.0));
+        assert_eq!(road_range_km(0.0), 0.0);
+        assert_eq!(road_range_km(f32::NAN), 0.0);
+        let mut tank = 1.0;
+        assert!(!drain_tank(&mut tank, ROAD_SPEED_MPS, 20.0), "a litre is gone in 14 s on the road");
+        assert_eq!(tank, 0.0);
+    }
     #[test]
     fn scene_and_playtest_climate_do_not_inherit_campaign_channel_geometry() {
         assert!(uses_campaign_channel(2, None));

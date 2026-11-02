@@ -38,6 +38,9 @@ pub(crate) mod track_ruts;
 
 #[path = "held_map_render.rs"]
 mod held_map_render;
+#[path = "order_receipt_render.rs"]
+mod order_receipt_render;
+pub use order_receipt_render::{draw_order_sheet_overlay, ReceiptInk, RECEIPT_CHARS_PER_LINE, RECEIPT_INK_HEIGHT, RECEIPT_INK_WIDTH};
 #[path = "repair_manual_render.rs"]
 mod repair_manual_render;
 
@@ -86,6 +89,25 @@ const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 const LOOK_ENV: &str = "KESSEL_LOOK";
 /// deltaP's pair-distance penalty for the PICO-8 best-pair search (its `--penalty` default).
 const DELTAP_PAIR_PENALTY: f32 = 0.12;
+/// `KESSEL_PALETTE_SMOOTH=0..1`: how far the palette modes dither between entries instead of
+/// holding flat bands (`crush.wgsl` `dp_palette`): at 0 deltaP's penalty, ratio dead zones and
+/// eighths (the rings the owner liked); at 1 a near-zero penalty, narrow dead zones and
+/// sixteenths. The look lane's w. 0 unless set.
+fn configured_palette_smooth() -> f32 {
+    std::env::var("KESSEL_PALETTE_SMOOTH").ok().and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.0)
+}
+/// `KESSEL_CABIN_LOOK=pastel`: in the tinted look (mode 5) the cabin (the buttoned-up view)
+/// quantizes to the pastel palette itself; `plain` (the default) keeps the dithered colour there.
+fn configured_cabin_pastel() -> bool {
+    std::env::var("KESSEL_CABIN_LOOK").map(|v| v.trim().eq_ignore_ascii_case("pastel")).unwrap_or(false)
+}
+/// `KESSEL_PALETTE_PULL=0..1`: in the tinted look (mode 5) how far each pixel's hue and chroma
+/// are pulled toward the nearest pastel entry's (`crush.wgsl` `dp_tinted`); 0.7 unless set.
+fn configured_palette_pull() -> f32 {
+    std::env::var("KESSEL_PALETTE_PULL").ok().and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.7)
+}
 /// deltaP's bloom strength (`bloom::DEFAULT`): the summed pyramid's share added to the frame.
 // 2026-11-01 playtest: at deltaP's 0.8 with its 0.55 knee and 1.0 cap a vision port's daylight
 // flooded the cabin and every lamp read as a wide blur ("super blurry", "can't see anything in
@@ -458,7 +480,19 @@ fn parse_look(raw: &str) -> Result<f32, &'static str> {
         "deltap" | "deltap-colour" | "deltap-color" => Ok(1.0),
         "deltap-pico8" | "deltap-pico-8" | "pico8" => Ok(2.0),
         "deltap-raw" => Ok(3.0),
-        _ => Err("allowed looks are standard, deltap, deltap-pico8 and deltap-raw"),
+        "deltap-pastel" | "pastel" => Ok(4.0),
+        "deltap-tinted" | "tinted" => Ok(5.0),
+        _ => Err("allowed looks are standard, deltap, deltap-pico8, deltap-raw, deltap-pastel and deltap-tinted"),
+    }
+}
+
+/// `KESSEL_TONEMAP`: the display tonemap, AgX unless `aces` asks for the former fit
+/// (`crush.wgsl` `tonemap`, the look lane's z).
+fn configured_tonemap() -> f32 {
+    match std::env::var("KESSEL_TONEMAP").ok().map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("aces") => { println!("[renderer] tonemap aces (KESSEL_TONEMAP)"); 1.0 }
+        Some("agx") | None | Some("") => 0.0,
+        Some(other) => { eprintln!("[renderer] invalid KESSEL_TONEMAP={other:?}; allowed are agx and aces; using agx"); 0.0 }
     }
 }
 
@@ -512,6 +546,16 @@ pub const MAX_WORN_VEHICLES: usize = 16;
 pub const FULL_DAY_S: f64 = 300.0;
 pub const TWILIGHT_S: f64 = 150.0;
 pub const NIGHT_S: f64 = 300.0;
+/// `KESSEL_SKY_START=dawn|day|dusk|night`: the phase of the act's day the clock starts in when
+/// no record authors an instant (`Renderer::new`); `day` (local apparent noon) unless set.
+pub fn configured_sky_start_phase() -> crate::celestial_sky::ClockPhase {
+    match std::env::var("KESSEL_SKY_START").ok().as_deref().map(str::trim) {
+        Some(v) if v.eq_ignore_ascii_case("dawn") => crate::celestial_sky::ClockPhase::Dawn,
+        Some(v) if v.eq_ignore_ascii_case("dusk") => crate::celestial_sky::ClockPhase::Dusk,
+        Some(v) if v.eq_ignore_ascii_case("night") => crate::celestial_sky::ClockPhase::Night,
+        _ => crate::celestial_sky::ClockPhase::Day,
+    }
+}
 /// `KESSEL_DAY_CYCLE_SCALE`: the three phase lengths above times this (an expedition of hours
 /// wants a slower clock than the Canyon run's fifteen-minute day; the demo launcher sets 6, a
 /// ninety-minute cycle, after the 2026-11-01 playtest found the transitions "way too fast" and
@@ -891,11 +935,13 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             ground_extinction_m_inv: 0.0068,
             wind_exposure: 1.0,
             mie_scale_height_m: 1_200.0,
-            mie_scattering_m_inv: 3.996e-6,
-            mie_extinction_m_inv: 4.440e-6,
+            // The winter continental aerosol and the low stratocumulus deck of
+            // physical_environment::AtmosphereParameters::default (2 November 2026).
+            mie_scattering_m_inv: 4.0e-5,
+            mie_extinction_m_inv: 4.444e-5,
             mie_asymmetry: 0.80,
-            cloud_bottom_m: 900.0,
-            cloud_top_m: 2_200.0,
+            cloud_bottom_m: 450.0,
+            cloud_top_m: 1_300.0,
             cloud_lwc_kg_m3: 0.25e-3,
             cloud_droplet_radius_m: 10.0e-6,
         },
@@ -1071,7 +1117,8 @@ struct CrushUniform {
     menu_mode: f32, // 1 = main-menu turntable pass (keep pure black truly black); 0 = normal game frame
     ldr_dither: f32, // shader-only fixed coverage for the linear 8-bit intermediate; ABI lane 32
     mask: f32, // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
-    _removed_proxy_rt_mix: f32,
+    /// 1: inside the hull the tinted look quantizes to the pastel palette (`KESSEL_CABIN_LOOK=pastel`).
+    cabin_look: f32,
     /// The eye's cone channel: ACES input per unit of radiance (byte 44). The eye pass copies it
     /// from the active view's state every metered frame; the upload only seeds unmetered frames.
     exposure: f32,
@@ -1087,8 +1134,12 @@ struct CrushUniform {
     dither_up: [f32; 4], // xyz world up, w vertical tangent of half-FOV
     dither_forward: [f32; 4],
     /// The deltaP look (`KESSEL_LOOK`, docs/DELTAP_LOOK_20261101.md): x = mode (0 standard,
-    /// 1 dithered colour, 2 PICO-8 32, 3 tonemapped only), y = best-pair penalty. Appended lane.
+    /// 1 dithered colour, 2 PICO-8 32, 3 tonemapped only, 4 the pastel palette), y = best-pair
+    /// penalty, z = the tonemap (0 AgX, 1 the ACES fit; `KESSEL_TONEMAP`). Appended lane.
     look: [f32; 4],
+    /// The reader's loupe (mask mode 5, `crush.wgsl`): xy the lens centre in screen uv, z its
+    /// radius in height units, w 1 while a lens pass sits in `optic_tex`. Appended lane.
+    loupe: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -1107,12 +1158,15 @@ struct ExposureClockUniform {
     point_veil: [f32;2],
     /// 1: the eye is inside the hull; 2: an optic's own eye (`exposure.wgsl` mode).
     mode: f32,
+    /// The rate of the eye's slow pigment processes over real time (`Renderer::pigment_rate`).
+    pigment_rate: f32,
+    _pad: [f32; 3],
 }
 
-/// The WGSL clock is eight scalar lanes. Keep this assertion beside the host declaration so a
-/// future field/layout edit cannot silently recreate a Vulkan bind-size mismatch.
+/// The WGSL clock is twelve scalar lanes (48 bytes). Keep this assertion beside the host
+/// declaration so a future field/layout edit cannot silently recreate a Vulkan bind-size mismatch.
 const EXPOSURE_CLOCK_UNIFORM_BYTES: u64 = std::mem::size_of::<ExposureClockUniform>() as u64;
-const _: [(); 32] = [(); EXPOSURE_CLOCK_UNIFORM_BYTES as usize];
+const _: [(); 48] = [(); EXPOSURE_CLOCK_UNIFORM_BYTES as usize];
 
 /// A replay dolly is authored continuous motion even when it travels several metres per frame.
 /// Other discontinuities still cut, and the accumulator still checks each reprojected depth/ID.
@@ -1606,6 +1660,10 @@ struct MeshGpu {
     periscope_focal_m: f32,
     /// A mirror's plane normal in the mesh's own frame (raymarch ray queries fold at it).
     mirror_normal: glam::Vec3,
+    /// A glass mesh's panes, each a quad and slab thickness in the mesh's own frame
+    /// (`renderer_raymarch::pane_quads`), read from the retained source mesh the first time
+    /// the mesh is taken as daylight apertures.
+    pane: std::cell::OnceCell<Vec<([glam::Vec3; 4], f32)>>,
     /// When true this mesh is TERRAIN: the fragment stage samples the tank-track map (rut darkening
     /// + a normal-perturbed dip). Signalled via params.w = 3.0.
     track_recv: bool,
@@ -2670,6 +2728,11 @@ pub struct Renderer {
     pub master_retro: f32,
     /// The deltaP display look (`KESSEL_LOOK`): 0 standard, 1..3 the look's modes.
     pub look: f32,
+    /// The display tonemap: 0 AgX, 1 the ACES fit (`KESSEL_TONEMAP`).
+    tonemap: f32,
+    /// The look lane's w: the palette modes' smoothness (`KESSEL_PALETTE_SMOOTH`), or in the
+    /// tinted mode the pull toward the palette (`KESSEL_PALETTE_PULL`).
+    palette_smooth: f32,
     pub display_tuning: Option<display_tuning::DisplayTuning>,
     /// User reproduction controls: exposure multiplier, saturation, warmth, gamma.
     pub display_grade: [f32; 4],
@@ -2741,6 +2804,11 @@ pub struct Renderer {
     pub night: f32,
     /// The act's running clock (Universal Time) and place. The Sun and the Moon come from it.
     pub sky_clock: crate::celestial_sky::SkyClock,
+    /// Ink queued for the internal pixel grid (the top-down book and sheet): flushed over the
+    /// crushed frame before the blit, so it is upscaled with the frame's pixels.
+    pixel_ink: bool,
+    /// The sky clock's rate over simulated time as last advanced (`sky_clock_rate`).
+    sky_clock_rate_now: f64,
     /// Sun and Moon of `sky_clock`'s current instant, as key and secondary directional sources.
     celestial: crate::celestial_sky::CelestialLighting,
     /// The authored lighting record's instant last applied to the clock.
@@ -2779,6 +2847,8 @@ pub struct Renderer {
     pub interior_haze: f32,
     /// Optic mask over the crushed frame: 0 none, 1 TZF circle, 2 visor letterbox, 3 binoculars.
     pub optic_mask: f32,
+    /// The loupe's circle for mask mode 5: centre uv, radius (height units), 1 when armed.
+    pub loupe: [f32; 4],
     /// Positioned point lights this frame (game.rs sets them; capped at N_LIGHTS in the shader).
     lights: Vec<PointLight>,
     /// Point lights offered for the latest frame (all of them, before the `N_LIGHTS` budget).
@@ -3082,6 +3152,7 @@ pub struct Renderer {
     // resolution — deliberately OUTSIDE the PS1 crush so the German UI stays crisp. See src/ui.rs. ----
     ui: Ui,
     held_map_surface: Option<held_map_render::MapSurface>,
+    order_receipt_surfaces: Vec<order_receipt_render::ReceiptSurface>,
     repair_manual_surfaces: Vec<repair_manual_render::PageSurface>,
     repair_manual_presentation: Option<u64>,
 }
@@ -3684,6 +3755,7 @@ fn make_mesh_gpu(
         periscope_kind: 0,
         periscope_focal_m: 0.0,
         mirror_normal: glam::Vec3::ZERO,
+        pane: std::cell::OnceCell::new(),
         track_recv: false,
         metallic_factor: m.metallic_factor,
         roughness_factor: m.roughness_factor,
@@ -3757,12 +3829,12 @@ impl Renderer {
         let graphics_preset = crate::graphics::active_preset();
         let shader_backend = crate::graphics::shader_backend_enabled();
         println!("[renderer] backend={} (ray queries {})", if crate::graphics::raymarch_backend_enabled() { "raymarch" } else if shader_backend { "shader" } else { "physical" }, if shader_backend && !crate::graphics::raymarch_ray_queries_wanted() { "disabled" } else { "adapter-dependent" });
-        // Until a caller sets an act clock the sky is Stalingrad's solstice noon.
-        let default_sky_clock = crate::celestial_sky::SkyClock::for_act(
-            1, crate::celestial_sky::ClockPhase::Day);
-        let default_celestial = crate::celestial_sky::CelestialLighting::at(
-            default_sky_clock.now(), default_sky_clock.site,
-            AtmosphereParameters::default().solar_irradiance);
+        // Until a caller sets an act clock the sky is Stalingrad's solstice noon, or the phase
+        // `KESSEL_SKY_START` names (the demo launcher starts play at dawn: from noon the Sun
+        // left the full day after a quarter of an hour, "day changes to night way too soon").
+        let default_sky_clock = crate::celestial_sky::SkyClock::for_act(1, configured_sky_start_phase());
+        let default_celestial = crate::celestial_sky::CelestialLighting::for_clock(
+            &default_sky_clock, AtmosphereParameters::default().solar_irradiance);
         let transport_quality = TransportQuality::configured();
         println!("[renderer] transport quality {} ({TRANSPORT_QUALITY_ENV}); smoke steps {:?}, glass fog steps {}, surface passes {:?}",
             transport_quality.key(), transport_quality.smoke_steps(),
@@ -5382,6 +5454,8 @@ impl Renderer {
                 transient_source: 0.0,
                 point_veil: [0.0;2],
                 mode: 0.0,
+                pigment_rate: 1.0,
+                _pad: [0.0; 3],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -6052,6 +6126,8 @@ impl Renderer {
             camera,
             master_retro: configured_master_retro(),
             look: configured_look(),
+            tonemap: configured_tonemap(),
+            palette_smooth: if configured_look() > 4.5 { configured_palette_pull() } else { configured_palette_smooth() },
             display_tuning: None,
             display_grade: [1.0, 1.0, 0.0, 1.0],
             display_dither_pattern: configured_display_dither(),
@@ -6077,6 +6153,8 @@ impl Renderer {
             menu_mode: false,
             night: default_celestial.darkness(),
             sky_clock: default_sky_clock,
+            sky_clock_rate_now: 1.0,
+            pixel_ink: false,
             celestial: default_celestial,
             authored_clock_start: None,
             // Bare/editor renderers start dry. Game::build_act applies the season explicitly, so a
@@ -6095,6 +6173,7 @@ impl Renderer {
             interior_light: 0.0,
             interior_haze: 0.0,
             optic_mask: 0.0,
+            loupe: [0.0; 4],
             lights: Vec::new(),
             lights_offered: 0,
             lights_full: Vec::new(),
@@ -6303,6 +6382,7 @@ impl Renderer {
             menu_meshes: Vec::new(),
             ui,
             held_map_surface: None,
+            order_receipt_surfaces: Vec::new(),
             repair_manual_surfaces: Vec::new(),
             repair_manual_presentation: None,
         }
@@ -6343,12 +6423,12 @@ impl Renderer {
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
             sky_clock, celestial, authored_clock_start, sky_time_scale, user_sky_phase, weather_offset, theatre_weather, weather_override, weather_original,
             weather_seed, weather_act_id, weather_progress, interior_light, interior_haze,
-            optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
+            optic_mask, loupe, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
             track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
             atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
-            pressure_fronts, heat_sources, ui, held_map_surface, repair_manual_surfaces,
+            pressure_fronts, heat_sources, ui, held_map_surface, order_receipt_surfaces, repair_manual_surfaces,
             repair_manual_presentation);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
             new.copy_registrations_from(old);
@@ -6475,6 +6555,7 @@ impl Renderer {
 
     pub fn advance_sky_clock(&mut self, dt_s: f32) {
         let rate = self.sky_clock_rate();
+        self.sky_clock_rate_now = rate;
         self.sky_clock.advance(dt_s as f64 * rate);
         self.apply_weather_override();
         self.weather_offset += glam::Vec3::new(self.weather_wind_world.x,0.0,self.weather_wind_world.y)
@@ -6482,9 +6563,18 @@ impl Renderer {
         self.refresh_celestial();
     }
 
+    /// The eye's slow pigment processes run at the sky clock's rate (`observer::Eye::step_at`,
+    /// `exposure.wgsl` pigment_rate): the day cycle compresses the crewman's day, and his dark
+    /// adaptation with it, so a night of thirty play minutes is not spent waiting for rods that
+    /// need forty real ones. 1 with the cycle off. Named in docs/PHYSICAL_TRUTH_AUDIT.md.
+    pub fn pigment_rate(&self) -> f32 {
+        if !self.day_night_cycle { return 1.0; }
+        (self.sky_clock_rate_now / (self.sky_time_scale as f64).max(1e-6)).clamp(1.0, 60.0) as f32
+    }
+
     fn refresh_celestial(&mut self) {
-        self.celestial = crate::celestial_sky::CelestialLighting::at(self.sky_clock.now(),
-            self.sky_clock.site, AtmosphereParameters::default().solar_irradiance);
+        self.celestial = crate::celestial_sky::CelestialLighting::for_clock(&self.sky_clock,
+            AtmosphereParameters::default().solar_irradiance);
         self.sun_dir = self.celestial.key.direction.as_vec3();
         self.night = self.celestial.darkness();
     }
@@ -8344,6 +8434,8 @@ impl Renderer {
                 transient_source: if self.observer_flash_source {1.0}else{0.0},
                 point_veil: [0.0;2],
                 mode: self.eye_mode(),
+                pigment_rate: self.pigment_rate(),
+                _pad: [0.0; 3],
             }),
         );
 
@@ -8480,7 +8572,7 @@ impl Renderer {
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
             ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,
-            _removed_proxy_rt_mix: 0.0,
+            cabin_look: if configured_cabin_pastel() { 1.0 } else { 0.0 },
             exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
@@ -8493,7 +8585,8 @@ impl Renderer {
             dither_right: self.camera.right().extend((self.camera.fov_y * 0.5).tan() * self.camera.aspect).to_array(),
             dither_up: self.camera.right().cross(self.camera.forward()).extend((self.camera.fov_y * 0.5).tan()).to_array(),
             dither_forward: self.camera.forward().extend(0.0).to_array(),
-            look: [self.look, DELTAP_PAIR_PENALTY, 0.0, 0.0],
+            look: [self.look, DELTAP_PAIR_PENALTY, self.tonemap, self.palette_smooth],
+            loupe: self.loupe,
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {
@@ -10964,8 +11057,21 @@ impl Renderer {
         self.rt_update(device, &mut encoder);
         self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
+        self.flush_pixel_ink(device, &mut encoder);
         self.blit(device, &mut encoder, view, format);
         queue.submit([encoder.finish()]);
+    }
+
+    /// The paper overlays are drawn on the internal grid: queue them (`repair_manual::
+    /// draw_manual_overlay`, `draw_order_sheet_overlay`) before the frame renders and they are
+    /// composited over the crushed frame at its own resolution, before the blit.
+    pub fn request_pixel_ink(&mut self) {
+        self.pixel_ink = true;
+    }
+    fn flush_pixel_ink(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        if !self.pixel_ink { return; }
+        self.pixel_ink = false;
+        self.ui.render_over(device, encoder, &self.ldr_view, LDR, self.iw, self.ih);
     }
 
     /// GUNNER EYEPIECE COMPOSITE, pass A: render the full optic frame (the caller has already
@@ -11297,6 +11403,7 @@ impl Renderer {
         self.rt_update(device, &mut encoder);
         self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
+        self.flush_pixel_ink(device, &mut encoder);
         self.blit(device, &mut encoder, &cap_view, format);
         if hud && !self.encode_preview_ui(device, &mut encoder, &cap_view, format, true) {
             self.ui.render_over(device, &mut encoder, &cap_view, format, cw, ch);
@@ -11388,6 +11495,21 @@ impl Renderer {
         self.ui.push(text, x, y, size, color, align, false);
     }
 
+    /// Map the following text, rects and images through a rectangle of the display: a page's
+    /// own [0,1] layout drawn at native resolution where the frame says (`ui::Ui::set_frame`).
+    pub fn ui_set_frame(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.ui.set_frame(x, y, w, h);
+    }
+    pub fn ui_clear_frame(&mut self) {
+        self.ui.clear_frame();
+    }
+
+    /// Queue a string in a named face (`ui::FACE_*`), the manual's grotesque among them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_face(&mut self, text: &str, x: f32, y: f32, size: f32, color: [f32; 4], align: Align, face: u8) {
+        self.ui.push_face(text, x, y, size, color, align, face);
+    }
+
     /// Queue a bold-weight string (title / headline / menu items). Same coordinate convention.
     pub fn draw_text_bold(
         &mut self,
@@ -11412,6 +11534,11 @@ impl Renderer {
         h: u32,
     ) -> u32 {
         self.ui.upload_image(device, queue, rgba, w, h)
+    }
+
+    /// Register an RGBA8 image sampled nearest (the pixel book's plates: one texel per pixel).
+    pub fn upload_image_nearest(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, rgba: &[u8], w: u32, h: u32) -> u32 {
+        self.ui.upload_image_nearest(device, queue, rgba, w, h)
     }
 
     /// Queue an image quad at normalized `x,y,w,h` (top-left origin), tinted by `color`. Drawn in
@@ -12356,7 +12483,7 @@ mod atmosphere_tests {
         assert!(!source.contains("var grain_amt"));
         assert!(!source.contains("black_point"));
         assert!(!source.contains("S-curve contrast"));
-        assert!(source.contains("var m = aces(c)"));
+        assert!(source.contains("var m = tonemap(c)"));
         let ordered_branch = &source[retro_branch..source.find("// TZF 9b/9c").unwrap()];
         assert!(!ordered_branch.contains("cr.frame"));
         assert!(!ordered_branch.contains("grain_gate"));
@@ -12395,8 +12522,9 @@ mod atmosphere_tests {
         assert_eq!(ranks.iter().map(|r|(r+0.5)/16.0-0.5).sum::<f32>(),0.0);
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 144);
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 160); // the look lane at 128, the loupe lane at 144
         assert_eq!(std::mem::offset_of!(CrushUniform, look), 128);
+        assert_eq!(std::mem::offset_of!(CrushUniform, loupe), 144);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
         assert_eq!(std::mem::offset_of!(CrushUniform, concussion), 52);
         assert_eq!(std::mem::offset_of!(CrushUniform, display_grade), 64);
@@ -13185,8 +13313,10 @@ mod atmosphere_tests {
         let crush = include_str!("../shaders/crush.wgsl");
         assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
         assert!(crush.contains("let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));"));
-        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure\n        + vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * rod_gain);"),
+        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + rod_hue * (rods * rod_gain);"),
             "owner-directed cabin reproduction still acts only on the display rod term");
+        assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));"),
+            "the night's hue outdoors, the cabin's own hue inside");
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(!mesh.contains("let spring_fill"));

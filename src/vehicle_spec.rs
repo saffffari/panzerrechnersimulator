@@ -501,7 +501,9 @@ pub fn for_kind(kind: EnemyKind) -> &'static VehicleSpec {
 /// The spec of a game `Tank`: Tigers (the player and the platoon's) carry the legacy `kind`
 /// default `T34`, so a Tiger is recognised by its rig (`TIGER_PARTS`' footprint).
 pub fn for_tank(kind: EnemyKind, parts: &crate::tank::Parts) -> &'static VehicleSpec {
-    if parts.hull_half_extents == crate::tank::TIGER_PARTS.hull_half_extents {
+    // The Tiger's rig by its trunnion and gun, which no frame scale changes (`Parts::resolved`).
+    let tiger = crate::tank::TIGER_PARTS;
+    if parts.gun_trunnion == tiger.gun_trunnion && parts.gun_len == tiger.gun_len {
         &TIGER_I
     } else {
         for_kind(kind)
