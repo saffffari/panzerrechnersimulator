@@ -13443,7 +13443,13 @@ impl Game {
             manifest.as_ref().is_some_and(|m| m.value()["terrain"]["grass_season"].as_str()==Some("winter")),
             grass_half_extent,
             act.seed,
-        ));
+        )).map(|mut grass| {
+            // A spring map on the raymarch backend: the GPU meadow over every green ground.
+            if let Some(m) = manifest.as_ref().filter(|m| m.value()["terrain"]["grass_season"].as_str() == Some("spring")) {
+                grass.enable_meadow(&mut renderer, device, queue, m.value(), &hf, grass_half_extent);
+            }
+            grass
+        });
 
         // Infantry is one shared authored character library, not 24 uploaded copies. Validate all
         // 17 static deformation frames first, then allocate one fixed, exact-TLAS pool per pose.

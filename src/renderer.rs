@@ -27,6 +27,8 @@ mod renderer_fine_vfx;
 pub(crate) mod renderer_weapon_particles;
 #[path = "renderer_scatter.rs"]
 mod renderer_scatter;
+#[path = "renderer_meadow.rs"]
+mod renderer_meadow;
 #[path = "renderer_raymarch.rs"]
 pub(crate) mod raymarch;
 #[path = "renderer_scars.rs"]
@@ -2722,6 +2724,10 @@ pub struct Renderer {
     raymarch: Option<raymarch::Backend>,
     /// The strewn field's GPU side (`renderer_scatter.rs`), installed once per act.
     scatter_field: Option<renderer_scatter::ScatterGpu>,
+    /// The spring meadow's GPU side (`renderer_meadow.rs`): raymarch backend only.
+    meadow: Option<renderer_meadow::MeadowGpu>,
+    /// Firefly lanterns lit this frame: world position and lane intensity (`meadow_fauna.rs`).
+    pub fireflies: Vec<[f32; 4]>,
     /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
     /// backend cuts, displaces and shades them (renderer_scars.rs).
     mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
@@ -6130,6 +6136,8 @@ impl Renderer {
             shader_backend,
             raymarch,
             scatter_field: None,
+            meadow: None,
+            fireflies: Vec::new(),
             mesh_scars: std::collections::HashMap::new(),
             actor_mesh_clones: Vec::new(),
             raster_optics: shader_backend.then(|| {
@@ -7134,6 +7142,20 @@ impl Renderer {
     }
     /// Set an instanced batch's shader flag (`params.w`). -1.0 = physical cubic smoke particles;
     /// 4.0 = grass wind/alpha material; 0.0 = plain lit module (default).
+    /// The spring meadow is drawn by the raymarch backend only.
+    pub fn meadow_supported(&self) -> bool { self.raymarch.is_some() }
+    /// Install the map's spring meadow on the GPU (`meadow.rs`).
+    pub fn install_meadow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, build: crate::meadow::Build) {
+        if self.raymarch.is_some() { self.meadow = Some(renderer_meadow::MeadowGpu::new(device, queue, build)); }
+    }
+    /// This frame's wind grid and new tread pages for the meadow.
+    pub fn set_meadow_frame(&mut self, frame: crate::meadow::Frame) {
+        if let Some(m) = &mut self.meadow { m.set_frame(frame); }
+    }
+    pub fn meadow_stats(&self) -> Option<renderer_meadow::MeadowStats> { self.meadow.as_ref().map(|m| m.stats) }
+    /// The Sun's altitude above the horizon, degrees (the act's ephemeris).
+    pub fn sun_altitude_deg(&self) -> f32 { self.celestial.sun_altitude_deg() as f32 }
+
     pub fn set_batch_flags(&mut self, batch: usize, flags: f32) {
         if let Some(b) = self.inst_batches.get_mut(batch) {
             let rt_membership_changed = (b.flags <= 3.5) != (flags <= 3.5);
@@ -8608,6 +8630,10 @@ impl Renderer {
             if let Some(mut sf) = self.scatter_field.take() {
                 sf.prepare(self, rm.shadow_views(), device, queue);
                 self.scatter_field = Some(sf);
+            }
+            if let Some(mut meadow) = self.meadow.take() {
+                meadow.prepare(self, rm.shadow_views(), rm.shadow_texels(), queue);
+                self.meadow = Some(meadow);
             }
             // The tracers' veil for the eye's meter (the clock's lanes 5 and 6).
             queue.write_buffer(&self.exp_clock_buf, 20, bytemuck::cast_slice(&rm.point_veil));

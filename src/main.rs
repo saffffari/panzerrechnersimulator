@@ -148,6 +148,8 @@ mod winter_bench;
 mod native_input_audit;
 mod graphics;
 mod grass;
+mod meadow;
+mod meadow_fauna;
 mod infantry;
 mod infantry_combat;
 mod interior_rig;
