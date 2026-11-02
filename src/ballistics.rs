@@ -65,6 +65,9 @@ pub struct ShellSpec {
 
 /// DeMarre velocity exponent: pen ∝ v^DEMARRE_N (≈1.4–1.43 in the classical fits).
 const DEMARRE_N: f32 = 1.43;
+/// The same exponent for the layered damage chain (`fea_damage::chain`), which continues the
+/// calibrated law through the layers behind the struck plate.
+pub(crate) const DEMARRE_EXPONENT: f32 = DEMARRE_N;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FlightStep {
@@ -361,6 +364,16 @@ fn slope_multiplier(shell: &ShellSpec, angle_deg: f32, plate_mm: f32) -> f32 {
     let t_over_d = (plate_mm / shell.caliber_mm).clamp(0.2, 3.0);
     let n = slope_exponent(shell.kind) * t_over_d.powf(0.4);
     (1.0 / cos).powf(n.max(0.85))
+}
+
+/// Effective thickness (mm RHA) of a layer behind the struck plate: `rha_mm` of RHA-equivalent
+/// material met at `angle_deg` from its normal, under the same slope and overmatch law the struck
+/// plate uses. For the layered damage chain (`fea_damage::chain`); no new calibration.
+pub(crate) fn layer_effective_mm(shell: &ShellSpec, rha_mm: f32, angle_deg: f32) -> f32 {
+    if !(rha_mm > 0.0) {
+        return 0.0;
+    }
+    rha_mm * slope_multiplier(shell, angle_deg.clamp(0.0, MAX_OBLIQUITY_DEG), rha_mm)
 }
 
 /// The steepest obliquity the plate solve represents. Source-triangle contacts report the true

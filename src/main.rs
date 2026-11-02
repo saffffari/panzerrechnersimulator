@@ -59,6 +59,7 @@ mod ai;
 mod ai_doctrine;
 mod anti_infantry_ai;
 mod armor_damage;
+mod fea_damage;
 #[cfg(test)]
 mod asset_catalog;
 mod asset_yard;

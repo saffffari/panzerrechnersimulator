@@ -58,6 +58,8 @@ mod wreck_turret;
 mod game_acoustics;
 #[path = "game_hit_sounds.rs"]
 mod game_hit_sounds;
+#[path = "game_fea.rs"]
+mod game_fea;
 #[path = "game_recorded_fx.rs"]
 mod game_recorded_fx;
 #[path = "main_gun_candidates.rs"]
@@ -9566,6 +9568,9 @@ pub struct Game {
     armor_tick: u32,         // counter-based penetration roll (deterministic, no rand)
     /// Persistent localized dents, holes and field patches on the one campaign Tiger.
     armor_scars: crate::armor_damage::ArmorField,
+    /// The layered damage model's state on the player's Tiger: lodged rounds and chain receipts
+    /// (`game_fea`, docs/FEA_DAMAGE_MODEL_20261102.md).
+    fea: game_fea::FeaRuntime,
     /// Rotating LAN cursor over `armor_scars` (`net_snapshot`).
     armor_net_cursor: std::cell::Cell<usize>,
     /// Probed surface extent and plug rest per drawn wound (`push_vehicle_scars`), keyed by the
@@ -13990,6 +13995,7 @@ impl Game {
             ai_tick: 0,
             armor_tick: 0,
             armor_scars: crate::armor_damage::ArmorField::default(),
+            fea: game_fea::FeaRuntime::default(),
             armor_net_cursor: std::cell::Cell::new(0),
             scar_geometry_cache: Default::default(),
             armor_clock_s: 0.0,
@@ -26639,6 +26645,10 @@ impl Game {
                     );
                     // What the shell breaks where it lands, whether or not it goes through.
                     self.apply_exterior_strike(armor, &event, penetrated, projectile.seed, projectile.velocity.normalize_or_zero());
+                    // A kinetic round the plate stopped may stay lodged in it (`game_fea`).
+                    if !penetrated {
+                        self.fea_nonpenetration(&armor, &event, impact_pos, travel_world, r.time);
+                    }
                 }
 
                 let (bearing, station_distance) = impact_listener_geometry(&r.camera, impact_pos);
@@ -28806,7 +28816,7 @@ impl Game {
             })
             .collect();
         let live_ammunition = self.live_ammunition_in_frame(frame);
-        let (result, couch_hits, contacts) = resolve_fragment_damage(
+        let (mut result, couch_hits, mut contacts) = resolve_fragment_damage(
             &fragments,
             body,
             &couch_bodies,
@@ -28814,6 +28824,10 @@ impl Game {
             &live_ammunition,
             &mut self.modules,
         );
+        // The layered chain: what the residual round itself breaches behind the plate, and its own
+        // path through crew and live rounds (`game_fea`).
+        self.fea_penetration_consequences(entry_w, shell_dir_w, &ev, armor_part, penetration_id, frame,
+            body, &couch_bodies, &live_ammunition, &mut result, &mut contacts);
         let solution = PenetrationSolution {
             penetration_id,
             frame,

@@ -283,3 +283,32 @@ proves a budget-sliced solve reproduces the unsliced reference bit for bit.
 `PHYSICAL_TRUTH_AUDIT.md` rows "Armor / terminal ballistics", "Armor scars" and "Crew / gore" are
 rewritten with each stage, describing what the code computes and its limits, and a new section
 lists every named approximation of this model.
+
+## Stage records
+
+### Stage 1 (landed): the layered chain, lodged rounds, and the lattice solver core
+
+- `src/fea_damage/materials.rs`, `components.rs`, `chain.rs`, `lodged.rs`; game glue in
+  `src/game_fea.rs` (called from `resolve_player_penetration` and, for rounds the plate stopped,
+  from the player branch of `resolve_authoritative_vehicle_impact`). Two helpers in `ballistics.rs`
+  (`DEMARRE_EXPONENT`, `layer_effective_mm`) expose the existing law to the chain without changing it.
+- The component envelopes are the CAD voxelisation (20 mm), not the boxes: the boxes are up to 92 %
+  empty. Front-lower-plate example (60 mm, along the hull axis, solid shot): the 76 mm BR-354P at
+  100 m perforates the plate (926 → 657 m/s), breaches the steering unit's housing and interior,
+  enters the gearbox housing and stops 28 mm into the gearbox: steering unit and gearbox breached,
+  transmission knocked out, the round lodged inside, not reachable by hand. The 8.8 cm PzGr.40 goes
+  further into the gearbox. A 45 mm BR-240 at 100 m stops 52 mm into the 60 mm plate; with a nose
+  taper of 1.2 calibres (54 mm) it is not held and falls away. Filled rounds (BR-350B, BR-365,
+  BR-412, BR-471) burst behind the plate as before.
+- The lattice solver (`src/fea_damage/lattice.rs`) was developed in this stage and is tested but
+  not yet wired into the game: its first, bond-based form let displaced steel vanish into plastic
+  compression (a drilled hole, no lip, no bulge); the state-based form keeps plastic flow
+  volume-preserving, so the displaced metal forms the lip, the bulge and the petals. Its energy
+  ledger closes to 0.2–0.7 % after two fixes found by the ledger itself: fracture had to release
+  energy conservatively (the dilatation change of a broken bond is taken into the remaining bonds'
+  plastic state and a damage dilatation), and an oblique projectile must start clear of the plate
+  (its nose side otherwise begins inside the plate and flings particles at 2,200 m/s).
+- Tests: `fea_damage::*` (24), all existing `ballistics`, `armor_calibration`, `armor_damage`,
+  `projectile_armor_source` and `tiger_damage` tests unchanged and passing; the full suite has the
+  same five pre-existing failures as the base commit (asset-cook, building-kit and mechanic-capture
+  tests that need files this worktree lacks) and no new ones.
