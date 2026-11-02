@@ -13,18 +13,30 @@ use std::hash::{Hash, Hasher};
 
 pub const SPREAD_COUNT: u8 = 16;
 pub const PART_COUNT: usize = 5;
-const WIDTH: f32 = 0.34;
-const HEIGHT: f32 = 0.24;
-const PAGE_WIDTH: f32 = 0.164;
-const PAGE_HEIGHT: f32 = 0.23;
+// A Fibel: A5 landscape pages (210 x 148 mm) bound on the short edge, the open book 0.43 m
+// wide (docs/REPAIR_MANUAL_REDESIGN_20261102.md). The covers overhang the pages by 4 mm.
+const WIDTH: f32 = 0.432;
+const HEIGHT: f32 = 0.158;
+const PAGE_WIDTH: f32 = 0.210;
+const PAGE_HEIGHT: f32 = 0.148;
 const PAGE_Z: f32 = 0.013;
 const TURN_SECONDS: f32 = 0.48;
-const MAX_ZOOM: f32 = 1.9;
-const BODY_TEXT_SIZE: f32 = 0.038;
-const BODY_LINE_HEIGHT: f32 = 0.040;
-const BODY_WRAP: usize = 32;
-const INK: [f32; 4] = [0.02, 0.02, 0.02, 1.];
-const PRINT_STROKE: f32 = 0.0035;
+const MAX_ZOOM: f32 = 2.6;
+/// Body type: 0.028 of the page height is 4.1 mm on the paper (the Fibel sets about 3.5 mm).
+const BODY_TEXT_SIZE: f32 = 0.028;
+const BODY_LINE_HEIGHT: f32 = 0.034;
+/// Characters per column: beside a plate, or in each of two columns.
+const COLUMN_WRAP_BESIDE_PLATE: usize = 36;
+const COLUMN_WRAP: usize = 40;
+const INK: [f32; 4] = [0.08, 0.08, 0.08, 1.];
+/// The Fibel's spot colour, one warm red, and its cream paper.
+pub const RED: [f32; 4] = [0.78, 0.17, 0.10, 1.];
+pub const PAPER: [f32; 4] = [0.90, 0.87, 0.76, 1.];
+const FADED: [f32; 4] = [0.40, 0.37, 0.32, 1.];
+const PRINT_STROKE: f32 = 0.0022;
+/// The plates the pages name, baked from the owner's Tiger CAD by tools/bake_manual_plates.py
+/// into `assets/manual/plates/<name>.png` under the asset root (not committed).
+pub const PLATE_NAMES: [&str; 7] = ["engine_iso", "engine_fan_drive_red", "drivetrain_iso", "transmission_red", "fuel_red", "running_gear_side", "drivetrain_exploded"];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -43,6 +55,11 @@ pub struct ManualState {
     turn: Option<PageTurn>,
     zoom: f32,
     focus: Vec2,
+    /// The plates found under the asset root: name -> (image handle, width / height).
+    #[serde(skip)]
+    plates: std::collections::HashMap<&'static str, (u32, f32)>,
+    #[serde(skip)]
+    plates_loaded: bool,
 }
 
 impl Default for ManualState {
@@ -54,11 +71,40 @@ impl Default for ManualState {
             turn: None,
             zoom: 1.0,
             focus: Vec2::splat(0.5),
+            plates: std::collections::HashMap::new(),
+            plates_loaded: false,
         }
     }
 }
 
 impl ManualState {
+    /// Load the plates once, when the book is first opened: a missing plate leaves its page on
+    /// the schematic and is named in the log; a present plate is uploaded as an ink image.
+    pub fn load_plates(&mut self, renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.plates_loaded {
+            return;
+        }
+        self.plates_loaded = true;
+        let mut found = Vec::new();
+        for name in PLATE_NAMES {
+            let path = format!("assets/manual/plates/{name}.png");
+            let Ok(bytes) = crate::resource::read(&path) else { continue };
+            match image::load_from_memory(&bytes) {
+                Ok(img) => {
+                    let rgba = img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    let handle = renderer.upload_image(device, queue, rgba.as_raw(), w, h);
+                    self.plates.insert(name, (handle, w as f32 / h.max(1) as f32));
+                    found.push(name);
+                }
+                Err(error) => eprintln!("[manual] plate {path} unreadable: {error}"),
+            }
+        }
+        println!("[manual] plates: {} of {} present ({})", found.len(), PLATE_NAMES.len(), found.join(", "));
+    }
+    pub fn plate(&self, name: &str) -> Option<(u32, f32)> {
+        self.plates.get(name).copied()
+    }
     pub fn spread(&self) -> u8 {
         self.spread
     }
@@ -261,7 +307,12 @@ struct Choice {
 }
 struct Page {
     title: &'static str,
-    text: &'static [&'static str],
+    /// The chapter, set in red in the margin as the Fibel labels its sections.
+    margin: &'static str,
+    /// The paragraphs, each led by a red word ("SO", "OTHERWISE", "MIND") or none.
+    text: &'static [(&'static str, &'static str)],
+    /// A plate from the works drawings, when the asset root has it; else the schematic.
+    plate: Option<&'static str>,
     drawing: Drawing,
     choices: &'static [Choice],
 }
@@ -269,154 +320,101 @@ struct Page {
 fn page_definition(page: u8) -> Page {
     use Drawing::*;
     match page {
-        0 => Page { title: "FIELD REPAIR MANUAL", drawing: Track,
-            text: &["TIGER / CREW EDITION", "Start with the symptom you can observe. Make one check at a time.",
-                "Keep this book dry. Pass it to the next crew. Record unfinished work before leaving the tank."],
+        0 => Page { title: "FIELD REPAIR MANUAL", margin: "THE BOOK", plate: None, drawing: Track,
+            text: &[("", "TIGER / CREW EDITION"), ("FIRST", "Start with the symptom you can observe. Make one check at a time."), ("ALWAYS", "Keep this book dry. Pass it to the next crew. Record unfinished work before leaving the tank.")],
             choices: &[Choice { label: "TANK WILL NOT MOVE  >", target: 1 }, Choice { label: "VIEW / LOOSE PARTS  >", target: 8 }] },
-        1 => Page { title: "BEFORE YOU OPEN UP", drawing: Recovery,
-            text: &["Stop somewhere covered if the tank can still move. Watch the threat before leaving it.",
-                "Listen, look, then test. Do not keep driving a visibly broken track.",
-                "An unsafe repair position calls for recovery, not more exposure."],
+        1 => Page { title: "BEFORE YOU OPEN UP", margin: "THE BOOK", plate: None, drawing: Recovery,
+            text: &[("STOP", "Stop somewhere covered if the tank can still move. Watch the threat before leaving it."), ("THEN", "Listen, look, then test. Do not keep driving a visibly broken track."), ("OTHERWISE", "An unsafe repair position calls for recovery, not more exposure.")],
             choices: &[Choice { label: "WOUNDED / RECOVERY  >", target: 12 }, Choice { label: "BEGIN DIAGNOSIS  >", target: 1 }] },
-        2 => Page { title: "1 / NO MOVEMENT", drawing: Drive,
-            text: &["IS THE ENGINE RUNNING?", "Listen for the engine and check its response at the driver's controls.",
-                "A missing driver also removes remote driving. Try the actual driver's station."],
+        2 => Page { title: "1 / NO MOVEMENT", margin: "TRACK", plate: Some("drivetrain_iso"), drawing: Drive,
+            text: &[("ASK", "IS THE ENGINE RUNNING?"), ("LISTEN", "Listen for the engine and check its response at the driver's controls."), ("MIND", "A missing driver also removes remote driving. Try the actual driver's station.")],
             choices: &[Choice { label: "YES - CHECK DRIVE  >", target: 2 }, Choice { label: "NO - POWER / RECOVERY  >", target: 6 }] },
-        3 => Page { title: "MAKE A USEFUL CHECK", drawing: Drive,
-            text: &["Stop the tank before inspecting outside.", "An engine sound alone does not prove drive reaches the tracks.",
-                "Do not guess which part broke from the impact sound. Inspect both sides."],
+        3 => Page { title: "MAKE A USEFUL CHECK", margin: "TRACK", plate: Some("transmission_red"), drawing: Drive,
+            text: &[("STOP", "Stop the tank before inspecting outside."), ("SO", "An engine sound alone does not prove drive reaches the tracks."), ("NEVER", "Do not guess which part broke from the impact sound. Inspect both sides.")],
             choices: &[Choice { label: "ENGINE RESPONDS  >", target: 2 }, Choice { label: "RETURN TO SYMPTOMS  >", target: 0 }] },
-        4 => Page { title: "2 / INSPECT TRACKS", drawing: Gap,
-            text: &["IS THERE A VISIBLE GAP OR BROKEN LINK?", "Look along each track, including its exposed connecting-pin end.",
-                "Compare both sides. Keep clear of the track while another person works the controls."],
+        4 => Page { title: "2 / INSPECT TRACKS", margin: "TRACK", plate: Some("running_gear_side"), drawing: Gap,
+            text: &[("ASK", "IS THERE A VISIBLE GAP OR BROKEN LINK?"), ("LOOK", "Look along each track, including its exposed connecting-pin end."), ("MIND", "Compare both sides. Keep clear of the track while another person works the controls.")],
             choices: &[Choice { label: "YES - PREPARE REPAIR  >", target: 3 }, Choice { label: "NO - OTHER DRIVE FAULT  >", target: 6 }] },
-        5 => Page { title: "WHAT YOU ARE FINDING", drawing: Gap,
-            text: &["The track must form a continuous chain around the running gear.",
-                "A spare shoe replaces the missing link. Its connecting pin joins the chain.",
-                "A damaged engine or transmission will not be fixed by fitting a track link."],
+        5 => Page { title: "WHAT YOU ARE FINDING", margin: "TRACK", plate: Some("running_gear_side"), drawing: Gap,
+            text: &[("WHY", "The track must form a continuous chain around the running gear."), ("SO", "A spare shoe replaces the missing link. Its connecting pin joins the chain."), ("NOT", "A damaged engine or transmission will not be fixed by fitting a track link.")],
             choices: &[Choice { label: "GAP FOUND  >", target: 3 }, Choice { label: "NO VISIBLE GAP  >", target: 6 }] },
-        6 => Page { title: "3 / PREPARE", drawing: Link,
-            text: &["Stop and secure the tank. Find cover and account for the crew.",
-                "Bring the track kit, a compatible spare link and its pin to the damaged side.",
-                "Work from the exposed end of the link. An armor plate between you and the part blocks access."],
+        6 => Page { title: "3 / PREPARE", margin: "TRACK", plate: None, drawing: Link,
+            text: &[("FIRST", "Stop and secure the tank. Find cover and account for the crew."), ("BRING", "Bring the track kit, a compatible spare link and its pin to the damaged side."), ("MIND", "Work from the exposed end of the link. An armor plate between you and the part blocks access.")],
             choices: &[Choice { label: "TOOLS AND ACCESS READY  >", target: 4 }, Choice { label: "CANNOT REACH IT SAFELY  >", target: 6 }] },
-        7 => Page { title: "KNOW YOUR TOOLS", drawing: Pin,
-            text: &["Use the track kit at the damaged track.", "Pull loose ends together at the pull point. Fit the spare in the gap.",
-                "Hammer the connecting-pin end. Striking armor will not repair the track."],
+        7 => Page { title: "KNOW YOUR TOOLS", margin: "TRACK", plate: None, drawing: Pin,
+            text: &[("TOOLS", "Use the track kit at the damaged track."), ("THEN", "Pull loose ends together at the pull point. Fit the spare in the gap."), ("NOT", "Hammer the connecting-pin end. Striking armor will not repair the track.")],
             choices: &[Choice { label: "FIT THE REPLACEMENT  >", target: 4 }, Choice { label: "CHECK THE GAP AGAIN  >", target: 2 }] },
-        8 => Page { title: "4 / JOIN THE TRACK", drawing: Link,
-            text: &["Bring the loose track ends together using the exposed repair point.",
-                "Position the spare shoe in the gap. Align its pin opening with the adjoining links.",
-                "Leave the tank stationary throughout the work."],
+        8 => Page { title: "4 / JOIN THE TRACK", margin: "TRACK", plate: None, drawing: Link,
+            text: &[("FIRST", "Bring the loose track ends together using the exposed repair point."), ("THEN", "Position the spare shoe in the gap. Align its pin opening with the adjoining links."), ("ALWAYS", "Leave the tank stationary throughout the work.")],
             choices: &[Choice { label: "LINK IS ALIGNED  >", target: 5 }, Choice { label: "NEED TO RECHECK ACCESS  >", target: 3 }] },
-        9 => Page { title: "WORK AT THE PART", drawing: Link,
-            text: &["Pull the ends together first. Carry a real spare shoe to the gap and hold LMB to seat it.",
-                "Release LMB after each step. Put the part down with X only on a clear support.",
-                "Then bring the toolbox to the exposed pin."],
+        9 => Page { title: "WORK AT THE PART", margin: "TRACK", plate: None, drawing: Link,
+            text: &[("HANDS", "Pull the ends together first. Carry a real spare shoe to the gap and hold LMB to seat it."), ("RELEASE", "Release LMB after each step. Put the part down with X only on a clear support."), ("THEN", "Then bring the toolbox to the exposed pin.")],
             choices: &[Choice { label: "CONTINUE TO PIN  >", target: 5 }, Choice { label: "RETURN TO PREPARATION  >", target: 3 }] },
-        10 => Page { title: "5 / CONNECT THE PIN", drawing: Pin,
-            text: &["Work the connecting pin at its exposed end with the hammer.",
-                "Each real contact advances the connection. Watch the fitted link, not a health bar.",
-                "When the joint is complete, put the tool away and inspect the track."],
+        10 => Page { title: "5 / CONNECT THE PIN", margin: "TRACK", plate: None, drawing: Pin,
+            text: &[("HAMMER", "Work the connecting pin at its exposed end with the hammer."), ("WATCH", "Each real contact advances the connection. Watch the fitted link, not a health bar."), ("THEN", "When the joint is complete, put the tool away and inspect the track.")],
             choices: &[Choice { label: "TRACK JOINED - TEST  >", target: 7 }, Choice { label: "LINK NOT ALIGNED  >", target: 4 }] },
-        11 => Page { title: "AFTER INTERRUPTION", drawing: Gap,
-            text: &["After a stop, inspect the joint before resuming.",
-                "A spare beside the tank does not mean the repair is done.",
-                "Another person can finish it. The physical joint determines completion."],
+        11 => Page { title: "AFTER INTERRUPTION", margin: "TRACK", plate: None, drawing: Gap,
+            text: &[("AFTER", "After a stop, inspect the joint before resuming."), ("MIND", "A spare beside the tank does not mean the repair is done."), ("ANYONE", "Another person can finish it. The physical joint determines completion.")],
             choices: &[Choice { label: "CHECK COMPLETION  >", target: 7 }, Choice { label: "BACK TO PIN WORK  >", target: 5 }] },
-        12 => Page { title: "POWER OR DRIVE FAULT", drawing: Drive,
-            text: &["No engine response, intact tracks or still immobile? Check again.",
-                "Check controls and damage; track repairs fix no other system.",
-                "This chapter covers links only. Seek recovery for other or major faults."],
+        12 => Page { title: "POWER OR DRIVE FAULT", margin: "TRACK", plate: Some("drivetrain_exploded"), drawing: Drive,
+            text: &[("ASK", "No engine response, intact tracks or still immobile? Check again."), ("CHECK", "Check controls and damage; track repairs fix no other system."), ("SO", "This chapter covers links only. Seek recovery for other or major faults.")],
             choices: &[Choice { label: "RECHECK SYMPTOMS  >", target: 0 }, Choice { label: "RECHECK TRACKS  >", target: 2 }] },
-        13 => Page { title: "RECOVERY REQUIRED", drawing: Recovery,
-            text: &["Leave the tank where it can be found. Mark its map position.",
-                "Record surviving crew, damage, tools left and threat direction.",
-                "A tow or heavy lift needs suitable equipment; this book cannot do it."],
+        13 => Page { title: "RECOVERY REQUIRED", margin: "TRACK", plate: None, drawing: Recovery,
+            text: &[("LEAVE", "Leave the tank where it can be found. Mark its map position."), ("RECORD", "Record surviving crew, damage, tools left and threat direction."), ("MIND", "A tow or heavy lift needs suitable equipment; this book cannot do it.")],
             choices: &[Choice { label: "RETURN TO INDEX  >", target: 0 }, Choice { label: "TRACK REPAIR CHECKLIST  >", target: 7 }] },
-        14 => Page { title: "6 / FUNCTION CHECK", drawing: Track,
-            text: &["Clear people and loose tools from the running gear.", "From cover, test movement gently at the driver's controls. Check that both tracks respond.",
-                "If the tank still will not move, stop. Return to diagnosis rather than repeating the same repair."],
+        14 => Page { title: "6 / FUNCTION CHECK", margin: "TRACK", plate: Some("running_gear_side"), drawing: Track,
+            text: &[("CLEAR", "Clear people and loose tools from the running gear."), ("TEST", "From cover, test movement gently at the driver's controls. Check that both tracks respond."), ("OTHERWISE", "If the tank still will not move, stop. Return to diagnosis rather than repeating the same repair.")],
             choices: &[Choice { label: "MOVEMENT RESTORED  >", target: 0 }, Choice { label: "STILL IMMOBILE  >", target: 6 }] },
-        15 => Page { title: "TRACK CHAPTER INDEX", drawing: Track,
-            text: &["NO MOVEMENT - pages 3-4", "INSPECT BOTH TRACKS - 5-6", "PREPARE / TOOLS - 7-8",
-                "FIT LINK - 9-10", "CONNECT PIN - 11-12", "OTHER FAULT / RECOVERY - 13-14"],
+        15 => Page { title: "TRACK CHAPTER INDEX", margin: "TRACK", plate: None, drawing: Track,
+            text: &[("", "NO MOVEMENT - pages 3-4"), ("", "INSPECT BOTH TRACKS - 5-6"), ("", "PREPARE / TOOLS - 7-8"), ("", "FIT LINK - 9-10"), ("", "CONNECT PIN - 11-12"), ("", "OTHER FAULT / RECOVERY - 13-14")],
             choices: &[Choice { label: "START DIAGNOSIS  >", target: 1 }, Choice { label: "GO TO PREPARATION  >", target: 3 }] },
-        16 => Page { title: "VIEW / LOOSE PARTS", drawing: Drive,
-            text: &["IS ONE VIEW DARK OR DAMAGED?", "Compare another viewing block. Check that the affected part is present and secured.",
-                "A loose or damaged sight cannot be fixed by aiming harder. Inspect its mounting."],
+        16 => Page { title: "VIEW / LOOSE PARTS", margin: "PARTS", plate: None, drawing: Drive,
+            text: &[("ASK", "IS ONE VIEW DARK OR DAMAGED?"), ("COMPARE", "Compare another viewing block. Check that the affected part is present and secured."), ("MIND", "A loose or damaged sight cannot be fixed by aiming harder. Inspect its mounting.")],
             choices: &[Choice { label: "YES - SERVICE THE PART  >", target: 9 }, Choice { label: "SPARES / WORK LIGHT  >", target: 10 }] },
-        17 => Page { title: "CHECK BEFORE REMOVAL", drawing: Recovery,
-            text: &["Stop the tank. Leave your hands free and put the toolbox down for lifting.",
-                "Look directly at the exposed retainer. Hold LMB to release it, then let go.",
-                "Hold again to draw the part out. Its old damage stays with it."],
+        17 => Page { title: "CHECK BEFORE REMOVAL", margin: "PARTS", plate: None, drawing: Recovery,
+            text: &[("STOP", "Stop the tank. Leave your hands free and put the toolbox down for lifting."), ("LOOK", "Look directly at the exposed retainer. Hold LMB to release it, then let go."), ("THEN", "Hold again to draw the part out. Its old damage stays with it.")],
             choices: &[Choice { label: "PART IS FREE  >", target: 9 }, Choice { label: "RETURN TO SYMPTOMS  >", target: 0 }] },
-        18 => Page { title: "REPLACE / SECURE / TEST", drawing: Link,
-            text: &["Carry a compatible part to the empty mounting. Hold LMB to seat it; release.",
-                "Hold at the retainer to secure it; release. Hold once more to check the component.",
-                "A check does not heal a damaged replacement."],
+        18 => Page { title: "REPLACE / SECURE / TEST", margin: "PARTS", plate: None, drawing: Link,
+            text: &[("CARRY", "Carry a compatible part to the empty mounting. Hold LMB to seat it; release."), ("SECURE", "Hold at the retainer to secure it; release. Hold once more to check the component."), ("MIND", "A check does not heal a damaged replacement.")],
             choices: &[Choice { label: "VIEW RESTORED  >", target: 0 }, Choice { label: "STILL BLOCKED  >", target: 8 }] },
-        19 => Page { title: "KEEP THE OLD PART", drawing: Recovery,
-            text: &["X lowers a part onto clear, level ground or a supported tank surface.",
-                "If it will not fit, choose a wider spot. Point at the part and click LMB to lift it.",
-                "Parts stay where you leave them. Remember the location."],
+        19 => Page { title: "KEEP THE OLD PART", margin: "PARTS", plate: None, drawing: Recovery,
+            text: &[("X", "X lowers a part onto clear, level ground or a supported tank surface."), ("LMB", "If it will not fit, choose a wider spot. Point at the part and click LMB to lift it."), ("MIND", "Parts stay where you leave them. Remember the location.")],
             choices: &[Choice { label: "TRANSPORT / LIGHT  >", target: 11 }, Choice { label: "RETURN TO FITTING  >", target: 9 }] },
-        20 => Page { title: "SPARE TRACK CARRIERS", drawing: Pin,
-            text: &["Bring the toolbox to a turret spare's exposed retaining pin.",
-                "Hold LMB for four hammer blows. Release, put the toolbox down, then draw out the shoe.",
-                "Carry it to the prepared break. A damaged shoe is no sound spare."],
+        20 => Page { title: "SPARE TRACK CARRIERS", margin: "PARTS", plate: None, drawing: Pin,
+            text: &[("TOOLS", "Bring the toolbox to a turret spare's exposed retaining pin."), ("HOLD", "Hold LMB for four hammer blows. Release, put the toolbox down, then draw out the shoe."), ("THEN", "Carry it to the prepared break. A damaged shoe is no sound spare.")],
             choices: &[Choice { label: "JOIN THE TRACK  >", target: 4 }, Choice { label: "TRACK CHAPTER INDEX  >", target: 7 }] },
-        21 => Page { title: "WORK LAMP", drawing: Drive,
-            text: &["Carry a battery work lamp to the bracket on the turret wall. Seat, secure and check it.",
-                "Click the lamp body to switch it. Its battery is finite; switch off when finished.",
-                "The beam cannot light a part behind an obstruction."],
+        21 => Page { title: "WORK LAMP", margin: "PARTS", plate: Some("engine_fan_drive_red"), drawing: Drive,
+            text: &[("CARRY", "Carry a battery work lamp to the bracket on the turret wall. Seat, secure and check it."), ("CLICK", "Click the lamp body to switch it. Its battery is finite; switch off when finished."), ("MIND", "The beam cannot light a part behind an obstruction.")],
             choices: &[Choice { label: "FITTING SEQUENCE  >", target: 9 }, Choice { label: "TRANSPORT / PARTS  >", target: 11 }] },
-        22 => Page { title: "TRANSPORTING SPARES", drawing: Recovery,
-            text: &["Stop the halftrack. Carry the part to the rear loading contact.",
-                "The bed needs a clear bay that fits the part. Loading keeps the same object.",
-                "Unload at the stopped rear bed, then carry it to the Tiger."],
+        22 => Page { title: "TRANSPORTING SPARES", margin: "PARTS", plate: None, drawing: Recovery,
+            text: &[("STOP", "Stop the halftrack. Carry the part to the rear loading contact."), ("BED", "The bed needs a clear bay that fits the part. Loading keeps the same object."), ("THEN", "Unload at the stopped rear bed, then carry it to the Tiger.")],
             choices: &[Choice { label: "FIT THE COMPONENT  >", target: 9 }, Choice { label: "RETURN TO INDEX  >", target: 0 }] },
-        23 => Page { title: "IF WORK WILL NOT START", drawing: Recovery,
-            text: &["STOPPED? HANDS CLEAR?", "Check reach and access to the retainer. Release LMB between steps.",
-                "Use a compatible part and tool. Keep the old component: fitting a replacement never refills supplies."],
+        23 => Page { title: "IF WORK WILL NOT START", margin: "PARTS", plate: None, drawing: Recovery,
+            text: &[("ASK", "STOPPED? HANDS CLEAR?"), ("CHECK", "Check reach and access to the retainer. Release LMB between steps."), ("KEEP", "Use a compatible part and tool. Keep the old component: fitting a replacement never refills supplies.")],
             choices: &[Choice { label: "CHECK PART / MOUNT  >", target: 8 }, Choice { label: "CREW / RECOVERY  >", target: 12 }] },
-        24 => Page { title: "CREW NOT RESPONDING?", drawing: Patient,
-            text: &["IS THE PERSON STILL ALIVE?", "Take the field kit from camp. LMB equips it; aim at the wounded person.",
-                "If a procedure is offered, act before bleeding takes its toll."],
+        24 => Page { title: "CREW NOT RESPONDING?", margin: "CREW", plate: None, drawing: Patient,
+            text: &[("ASK", "IS THE PERSON STILL ALIVE?"), ("KIT", "Take the field kit from camp. LMB equips it; aim at the wounded person."), ("ACT", "If a procedure is offered, act before bleeding takes its toll.")],
             choices: &[Choice { label: "YES - CARE / EVACUATE  >", target: 13 }, Choice { label: "NO - RECOVER THE TANK  >", target: 14 }] },
-        25 => Page { title: "FIELD KIT", drawing: Patient,
-            text: &["Click the patient to begin. Follow the shown hand action: hold, wrap, turn or watch.",
-                "Supplies are finite. X interrupts work and puts the bag down.",
-                "Treatment does not restore a dead person."],
+        25 => Page { title: "FIELD KIT", margin: "CREW", plate: None, drawing: Patient,
+            text: &[("CLICK", "Click the patient to begin. Follow the shown hand action: hold, wrap, turn or watch."), ("SUPPLIES", "Supplies are finite. X interrupts work and puts the bag down."), ("NEVER", "Treatment does not restore a dead person.")],
             choices: &[Choice { label: "TRANSPORT TO CARE  >", target: 13 }, Choice { label: "RETURN TO INDEX  >", target: 0 }] },
-        26 => Page { title: "LOAD THE WOUNDED", drawing: Patient,
-            text: &["Use empty hands to hold the person with LMB. Clear a real path out of the tank.",
-                "Bring him to the stopped carrier's rear loading contact. Hold to load a free stretcher.",
-                "Bleeding continues during travel."],
+        26 => Page { title: "LOAD THE WOUNDED", margin: "CREW", plate: None, drawing: Patient,
+            text: &[("HANDS", "Use empty hands to hold the person with LMB. Clear a real path out of the tank."), ("CARRIER", "Bring him to the stopped carrier's rear loading contact. Hold to load a free stretcher."), ("MIND", "Bleeding continues during travel.")],
             choices: &[Choice { label: "FIELD TREATMENT  >", target: 12 }, Choice { label: "TANK ALSO STRANDED  >", target: 14 }] },
-        27 => Page { title: "AT THE MEDICAL TENT", drawing: Patient,
-            text: &["Stop and unload the same person. Bring him beside an empty tent bed.",
-                "Aim at the bed and click LMB to admit him. The medic needs time and supplies.",
-                "Taking him away interrupts camp care."],
+        27 => Page { title: "AT THE MEDICAL TENT", margin: "CREW", plate: None, drawing: Patient,
+            text: &[("STOP", "Stop and unload the same person. Bring him beside an empty tent bed."), ("BED", "Aim at the bed and click LMB to admit him. The medic needs time and supplies."), ("MIND", "Taking him away interrupts camp care.")],
             choices: &[Choice { label: "RETURN TO FIELD CARE  >", target: 12 }, Choice { label: "TANK RECOVERY  >", target: 14 }] },
-        28 => Page { title: "TANK CANNOT MOVE?", drawing: Winch,
-            text: &["Bring the winch on the carrier. At the rear ramp, click LMB to lower it.",
-                "Push it onto level ground; click to set the anchor. Take the cable to the Tiger's tow point.",
-                "Keep a clear pulling route."],
+        28 => Page { title: "TANK CANNOT MOVE?", margin: "WINCH", plate: None, drawing: Winch,
+            text: &[("WINCH", "Bring the winch on the carrier. At the rear ramp, click LMB to lower it."), ("ANCHOR", "Push it onto level ground; click to set the anchor. Take the cable to the Tiger's tow point."), ("ROUTE", "Keep a clear pulling route.")],
             choices: &[Choice { label: "TRACK REPAIR FIRST  >", target: 1 }, Choice { label: "AFTER RECOVERY  >", target: 15 }] },
-        29 => Page { title: "WINCH WILL NOT PULL?", drawing: Winch,
-            text: &["Check fuel, anchor and cable. Leave 4 to 25 metres between winch and Tiger.",
-                "Hold LMB at the winch to pull. A steep slope, obstruction or overloaded line can stop it.",
-                "Release before re-rigging."],
+        29 => Page { title: "WINCH WILL NOT PULL?", margin: "WINCH", plate: None, drawing: Winch,
+            text: &[("CHECK", "Check fuel, anchor and cable. Leave 4 to 25 metres between winch and Tiger."), ("HOLD", "Hold LMB at the winch to pull. A steep slope, obstruction or overloaded line can stop it."), ("RELEASE", "Release before re-rigging.")],
             choices: &[Choice { label: "SET UP AGAIN  >", target: 14 }, Choice { label: "AFTER RECOVERY  >", target: 15 }] },
-        30 => Page { title: "AFTER A FIRE", drawing: Stowage,
-            text: &["FIRE OUT? ALL ROUNDS COLD?", "Hold LMB on each of the four ammunition banks until checked.",
-                "Repair damaged engine or fuel parts before using the starter. Keep surviving parts."],
+        30 => Page { title: "AFTER A FIRE", margin: "FIRE", plate: Some("fuel_red"), drawing: Stowage,
+            text: &[("ASK", "FIRE OUT? ALL ROUNDS COLD?"), ("HOLD", "Hold LMB on each of the four ammunition banks until checked."), ("REPAIR", "Repair damaged engine or fuel parts before using the starter. Keep surviving parts.")],
             choices: &[Choice { label: "PARTS / MOUNTS  >", target: 8 }, Choice { label: "RETURN TO INDEX  >", target: 0 }] },
-        _ => Page { title: "RETURN TO SERVICE", drawing: Drive,
-            text: &["Close and secure the engine access. Add fuel, then use the driver's starter.",
-                "A completed crank restarts only a safe, serviceable machine.",
-                "Test each control. Other damage and crew losses remain."],
+        _ => Page { title: "RETURN TO SERVICE", margin: "SERVICE", plate: Some("engine_iso"), drawing: Drive,
+            text: &[("CLOSE", "Close and secure the engine access. Add fuel, then use the driver's starter."), ("CRANK", "A completed crank restarts only a safe, serviceable machine."), ("TEST", "Test each control. Other damage and crew losses remain.")],
             choices: &[Choice { label: "STILL IMMOBILE  >", target: 1 }, Choice { label: "FIND REPLACEMENT PART  >", target: 8 }] },
     }
 }
@@ -568,7 +566,7 @@ pub fn models(camera: &Camera, state: &ManualState) -> [Mat4; PART_COUNT] {
         u.extend(0.),
         (-f).extend(0.),
         (camera.pos
-            + f * (0.27 / state.zoom + 0.015 * resting)
+            + f * (0.31 / state.zoom + 0.015 * resting)
             + u * (-0.008 / state.zoom + 0.030 * resting))
             .extend(1.),
     );
@@ -807,58 +805,70 @@ fn diagram(r: &mut Renderer, kind: Drawing) {
 
 /// Queue print for one page's albedo. The renderer consumes it before any screen HUD.
 pub fn draw_page(r: &mut Renderer, page: u8, state: &ManualState) {
-    let paper = [0.86, 0.86, 0.82, 1.];
-    let ink = INK;
+    use crate::ui::{FACE_MANUAL, FACE_MANUAL_BOLD};
+    let (ink, red, paper, faded) = (INK, RED, PAPER, FADED);
+    let right_hand = page % 2 == 1;
     r.fill_rect(0., 0., 1., 1., paper);
-    r.draw_text("INDEX", 0.08, 0.025, 0.023, ink, Align::Left);
-    r.draw_text(
-        if state.bookmark == Some(state.spread) {
-            "MARKED"
-        } else {
-            "MARK"
-        },
-        0.50,
-        0.025,
-        0.023,
-        ink,
-        Align::Center,
-    );
-    r.draw_text("RIBBON", 0.92, 0.025, 0.023, ink, Align::Right);
+    // The running head: the book's three controls, small and red, as the Fibel sets its folios.
+    r.draw_text_face("INDEX", 0.05, 0.026, 0.015, red, Align::Left, FACE_MANUAL);
+    r.draw_text_face(if state.bookmark == Some(state.spread) { "MARKED" } else { "MARK" }, 0.50, 0.026, 0.015, red, Align::Center, FACE_MANUAL);
+    r.draw_text_face("RIBBON", 0.95, 0.026, 0.015, red, Align::Right, FACE_MANUAL);
     let p = page_definition(page);
-    r.draw_text_bold(p.title, 0.07, 0.085, 0.033, ink, Align::Left);
-    r.fill_rect(0.07, 0.13, 0.86, PRINT_STROKE, ink);
-    let mut y = 0.16;
-    for paragraph in p.text {
-        for text in crate::ui::wrap_text(paragraph, BODY_WRAP) {
-            r.draw_text(&text, 0.07, y, BODY_TEXT_SIZE, ink, Align::Left);
-            y += BODY_LINE_HEIGHT;
+    // The title, letter-spaced capitals across the page, a red rule under it.
+    let spaced: String = p.title.chars().flat_map(|c| [c, ' ']).collect::<String>().trim_end().to_owned();
+    r.draw_text_face(&spaced, 0.05, 0.062, 0.032, ink, Align::Left, FACE_MANUAL_BOLD);
+    r.fill_rect(0.05, 0.118, 0.90, PRINT_STROKE, red);
+    r.draw_text_face(p.margin, 0.05, 0.132, 0.017, red, Align::Left, FACE_MANUAL);
+    let plate = p.plate.and_then(|name| state.plate(name));
+    // The body: beside a plate, one column on the left; without one, two columns above the
+    // schematic. Each paragraph opens with its red lead word on its own line.
+    let wrap = if plate.is_some() { COLUMN_WRAP_BESIDE_PLATE } else { COLUMN_WRAP };
+    let columns: Vec<(f32, &[(&str, &str)])> = if plate.is_some() || p.text.len() < 3 {
+        vec![(0.05, p.text)]
+    } else {
+        let split = p.text.len().div_ceil(2);
+        vec![(0.05, &p.text[..split]), (0.52, &p.text[split..])]
+    };
+    for (x, paragraphs) in columns {
+        let mut y = 0.175;
+        for (lead, text) in paragraphs {
+            if !lead.is_empty() {
+                r.draw_text_face(lead, x, y, 0.022, red, Align::Left, FACE_MANUAL_BOLD);
+                y += 0.032;
+            }
+            for line in crate::ui::wrap_text(text, wrap) {
+                r.draw_text_face(&line, x, y, BODY_TEXT_SIZE, ink, Align::Left, FACE_MANUAL);
+                y += BODY_LINE_HEIGHT;
+            }
+            y += 0.010;
         }
-        y += 0.012;
     }
-    diagram(r, p.drawing);
-    r.draw_text(
-        "SCHEMATIC / NOT TO SCALE",
-        0.5,
-        0.778,
-        0.018,
-        ink,
-        Align::Center,
-    );
+    match plate {
+        Some((handle, aspect)) => {
+            // The plate fills the right half, its proportions kept (the page is 1.414:1).
+            let w = 0.45;
+            let h = (w * 1.414 / aspect).min(0.60);
+            r.draw_image(handle, 0.51, 0.165, w, h, [1., 1., 1., 1.]);
+            r.draw_text_face("WORKS DRAWING · 1/35 KIT CAD · NOT TO SCALE", 0.735, 0.165 + h + 0.008, 0.013, faded, Align::Center, FACE_MANUAL);
+        }
+        None => {
+            diagram(r, p.drawing);
+            r.draw_text_face("SCHEMATIC · NOT TO SCALE", 0.5, 0.782, 0.014, faded, Align::Center, FACE_MANUAL);
+        }
+    }
+    // The diagnosis choices at the foot: a red arrow, the label, a hairline; their rows are the
+    // click zones `click` reads (y 0.81 + n * 0.065, 0.052 tall).
     for (index, choice) in p.choices.iter().enumerate() {
         let y = 0.81 + index as f32 * 0.065;
-        outline(r, 0.06, y, 0.88, 0.052, ink);
-        r.draw_text_bold(choice.label, 0.09, y + 0.015, 0.025, ink, Align::Left);
+        r.draw_text_face(">", 0.05, y + 0.012, 0.024, red, Align::Left, FACE_MANUAL_BOLD);
+        r.draw_text_face(choice.label.trim_end_matches(['>', ' ']), 0.085, y + 0.014, 0.021, ink, Align::Left, FACE_MANUAL_BOLD);
+        r.fill_rect(0.05, y + 0.050, 0.42, 0.0012, faded);
     }
-    r.draw_text("< PREV", 0.06, 0.96, 0.023, ink, Align::Left);
-    r.draw_text(
-        &(page + 1).to_string(),
-        0.5,
-        0.96,
-        0.026,
-        ink,
-        Align::Center,
-    );
-    r.draw_text("NEXT >", 0.94, 0.96, 0.023, ink, Align::Right);
+    // The folio at the outer corner; the turn marks at the foot where `click` turns the leaf.
+    let (nx, align) = if right_hand { (0.95, Align::Right) } else { (0.05, Align::Left) };
+    r.draw_text_face(&(page + 1).to_string(), nx, 0.952, 0.020, ink, align, FACE_MANUAL);
+    r.draw_text_face("< PREV", 0.14, 0.955, 0.014, faded, Align::Left, FACE_MANUAL);
+    r.draw_text_face("NEXT >", 0.86, 0.955, 0.014, faded, Align::Right, FACE_MANUAL);
 }
 
 #[cfg(test)]
@@ -1061,17 +1071,23 @@ mod tests {
                 .iter()
                 .all(|choice| choice.target < SPREAD_COUNT));
             assert!(page.choices.len() <= 2);
-            let lines = page
-                .text
-                .iter()
-                .map(|s| crate::ui::wrap_text(s, BODY_WRAP).len())
-                .sum::<usize>();
-            let bottom = 0.16 + lines as f32 * BODY_LINE_HEIGHT + page.text.len() as f32 * 0.012;
-            assert!(
-                bottom <= 0.55,
-                "page {} body overlaps its diagram",
-                number + 1
-            );
+            // The columns as `draw_page` splits them: beside a plate one column of 36 characters,
+            // otherwise two of 40 above the schematic (which starts at y 0.55).
+            let (wrap, columns): (usize, Vec<&[(&str, &str)]>) = if page.plate.is_some() || page.text.len() < 3 {
+                (if page.plate.is_some() { COLUMN_WRAP_BESIDE_PLATE } else { COLUMN_WRAP }, vec![page.text])
+            } else {
+                let split = page.text.len().div_ceil(2);
+                (COLUMN_WRAP, vec![&page.text[..split], &page.text[split..]])
+            };
+            for column in columns {
+                let mut bottom = 0.175;
+                for (lead, text) in column {
+                    if !lead.is_empty() { bottom += 0.032; }
+                    bottom += crate::ui::wrap_text(text, wrap).len() as f32 * BODY_LINE_HEIGHT + 0.010;
+                }
+                let limit = if page.plate.is_some() { 0.80 } else { 0.55 };
+                assert!(bottom <= limit, "page {} body runs to {bottom:.2}, past {limit}", number + 1);
+            }
         }
     }
 }

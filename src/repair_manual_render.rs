@@ -2,8 +2,10 @@
 //! rectangle. The turning leaf and stationary pages retain separate surfaces during a page turn.
 use std::sync::Arc;
 
-const WIDTH: u32 = 768;
-const HEIGHT: u32 = 1024;
+/// A5 landscape at 248 dpi: 2048 x 1448 (was 768 x 1024 portrait), so a plate keeps its
+/// line weight through the page and the loupe; four retained surfaces, 47 MB.
+const WIDTH: u32 = 2048;
+const HEIGHT: u32 = 1448;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 pub(super) struct PageSurface {
@@ -156,9 +158,9 @@ impl super::Renderer {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.86,
-                                g: 0.86,
-                                b: 0.82,
+                                r: 0.90,
+                                g: 0.87,
+                                b: 0.76,
                                 a: 1.0,
                             }),
                             store: wgpu::StoreOp::Store,

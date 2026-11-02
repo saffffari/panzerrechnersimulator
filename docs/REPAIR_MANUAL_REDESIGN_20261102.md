@@ -61,3 +61,22 @@ public-domain scans on Wikimedia Commons (`D656-27 Tigerfibel Seite 15 (Tanken)`
 
 Format and ink first (the book reads at once), the faces second, the plates third (the bake
 tool can run while the pages are being set), the loupe last.
+
+## Where it stands (2 November 2026, evening)
+
+Done and captured (`captures/demo-20261101-manual_fibel_20261102b_*.jpg`, the review at its
+640 x 360 internal resolution): the landscape book at 0.43 m with page ink at 2048 x 1448, the
+grotesque faces from the asset root, the Fibel layout (letter-spaced titles, red rule, red
+margin chapter, red lead words, red arrow choices, outer folios), the 32 pages re-set with
+their lead words, plates on nine pages when present, the schematic otherwise, the eight manual
+tests kept and the layout test rewritten for the columns. The bake tools: plates
+(`tools/bake_manual_plates.py`, engine and base-unit views, red highlights, an exploded drive
+train) and the CAD assemblies as meshes (`tools/bake_tiger_cad_parts.py`, `_glb.py`).
+
+Open: the loupe (designed above as a second camera through the optic composite; not built,
+the 2.6x reading zoom stands in); the first plates were too thin on the page (TechDraw's 0.7
+pen; the bake now sets 2.6) and the base-unit plates are still baking; no plate yet for the
+track link and pin, the winch rigging or the medical pages (the CAD has no such parts; those
+stay schematic or need drawing by hand); the kit CAD's offset into the game hull is not
+measured, so no CAD part is registered as a service part yet.
+

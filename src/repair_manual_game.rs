@@ -35,6 +35,9 @@ impl Game {
     pub fn prepare_repair_manual(&mut self, renderer: &mut Renderer,
         device: &wgpu::Device, queue: &wgpu::Queue) {
         self.drive_repair_manual(renderer);
+        if self.repair_manual.held {
+            self.repair_manual.load_plates(renderer, device, queue);
+        }
         renderer.render_repair_manual_pages(device, queue, self.slots.repair_manual, &self.repair_manual);
     }
 

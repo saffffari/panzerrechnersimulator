@@ -7,8 +7,8 @@ use std::sync::Arc;
 pub const RECEIPT_INK_WIDTH: u32 = 1024;
 pub const RECEIPT_INK_HEIGHT: u32 = 731;
 /// Characters per printed line on the 210 mm sheet (a page teleprinter's ten to the inch,
-/// inside 20 mm margins).
-pub const RECEIPT_CHARS_PER_LINE: usize = 60;
+/// inside 20 mm margins, set in the manual's grotesque so the crush can read it).
+pub const RECEIPT_CHARS_PER_LINE: usize = 56;
 const WIDTH: u32 = RECEIPT_INK_WIDTH;
 const HEIGHT: u32 = RECEIPT_INK_HEIGHT;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -71,8 +71,8 @@ pub fn draw_receipt(r: &mut super::Renderer, ink: &ReceiptInk) {
     let mut n = 0;
     let row = |r: &mut super::Renderer, text: &str, bold: bool, color: [f32; 4], y: &mut f32| {
         for line in crate::ui::wrap_text(text, RECEIPT_CHARS_PER_LINE) {
-            if bold { r.draw_text_bold(&line, 0.07, *y, 0.030, color, crate::ui::Align::Left); }
-            else { r.draw_text(&line, 0.07, *y, 0.034, color, crate::ui::Align::Left); }
+            let face = if bold { crate::ui::FACE_MANUAL_BOLD } else { crate::ui::FACE_MANUAL };
+            r.draw_text_face(&line, 0.07, *y, if bold { 0.040 } else { 0.036 }, color, crate::ui::Align::Left, face);
             *y += line_h;
         }
     };
@@ -93,7 +93,7 @@ pub fn draw_receipt(r: &mut super::Renderer, ink: &ReceiptInk) {
     }
     if ink.printed > ink.lines.len() + 1 {
         // The machine's end-of-message mark.
-        r.draw_text("+ + +", 0.5, y + 0.008, 0.034, faded, crate::ui::Align::Center);
+        r.draw_text_face("+ + +", 0.5, y + 0.008, 0.034, faded, crate::ui::Align::Center, crate::ui::FACE_MANUAL);
     }
 }
 

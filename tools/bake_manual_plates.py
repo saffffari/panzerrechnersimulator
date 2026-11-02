@@ -45,6 +45,17 @@ PLATES = {
     "engine_front": (ENGINE, (0, -1, 0), (1, 0, 0), None, [], None, 0),
     "engine_exploded": (ENGINE, (1, -1, 1), (1, 0, -1), None, [], (0, 0, 1), 220),
     "engine_fan_drive_red": (ENGINE, (1, -1, 1), (1, 0, -1), None, [2, 3], None, 0),
+    # The base unit (hull, running gear, engine, transmission, tanks, cooling): 190 solids.
+    # Solid groups measured on 2 November 2026 (kit millimetres, z along the hull, rear negative):
+    # 0 hull tub; 152 engine; 132/133 fuel tanks; 130/131/147/148 radiators, 136/137 fans;
+    # 68 gearbox, 69 steering unit, 70 forward drive, 72/73 final drives; 22/23 sprockets,
+    # 26/27 idlers; 20/21 side plates; 169/170 sponsons.
+    "running_gear_side": (BASE_UNIT, (1, 0, 0), (0, 0, -1), None, [], None, 0),
+    "drivetrain_iso": (BASE_UNIT, (1, -1, 1), (1, 0, -1), [152, 68, 69, 70, 72, 73, 22, 23, 132, 133, 130, 131, 136, 137], [], None, 0),
+    "transmission_red": (BASE_UNIT, (1, -1, 1), (1, 0, -1), [152, 68, 69, 70, 72, 73, 22, 23, 132, 133, 130, 131, 136, 137], [1, 2, 3, 4, 5], None, 0),
+    "fuel_red": (BASE_UNIT, (1, -1, 1), (1, 0, -1), [152, 68, 69, 70, 72, 73, 22, 23, 132, 133, 130, 131, 136, 137], [8, 9], None, 0),
+    "cooling_red": (BASE_UNIT, (1, -1, 1), (1, 0, -1), [152, 68, 69, 70, 72, 73, 22, 23, 132, 133, 130, 131, 136, 137], [10, 11, 12, 13], None, 0),
+    "drivetrain_exploded": (BASE_UNIT, (1, -1, 1), (1, 0, -1), [152, 68, 69, 70, 72, 73, 22, 23], [], (0, 1, 0), 320),
 }
 
 
@@ -105,6 +116,9 @@ def bake(name, spec):
     x, y, w, h = wrap(layers[0][1])
     body = []
     for layer, fragment in layers:
+        # TechDraw draws visible edges 0.7 units wide on a ~1500-unit sheet: a third of a pixel
+        # once the plate sits on a page. The Fibel's pen is heavier; so is this one.
+        fragment = fragment.replace('stroke-width="0.7"', 'stroke-width="2.6"').replace('stroke-width="0.35"', 'stroke-width="1.3"')
         if layer == "red":
             # The named part: a red fill under its own outline, the Fibel's spot colour.
             fragment = fragment.replace('fill="none"', 'fill="#c8321e" fill-opacity="0.55"').replace('stroke="#000000"', 'stroke="#7a1a0e"')
@@ -114,7 +128,7 @@ def bake(name, spec):
     svg_path = os.path.join(OUT_DIR, f"{name}.svg")
     png_path = os.path.join(OUT_DIR, f"{name}.png")
     open(svg_path, "w").write(svg)
-    subprocess.run(["rsvg-convert", "-w", "2048", "-b", "#00000000", svg_path, "-o", png_path], check=True)
+    subprocess.run(["rsvg-convert", "-w", "1600", "-b", "#00000000", svg_path, "-o", png_path], check=True)
     report = {"schema": "kessel.manual-plate-bake.v1", "name": name, "source": os.path.join(CAD_ROOT, step),
               "source_scale": "1/35 model-kit CAD scaled by 35; dimensions are the kit's, not a measured vehicle",
               "solids": len(solids), "red_solids": red, "exploded": {"axis": axis, "spacing_mm": spacing} if axis else None,
@@ -125,7 +139,8 @@ def bake(name, spec):
     print(f"[plates] {name}: {len(solids)} solids, {report['seconds']} s -> {png_path}")
 
 
-if __name__ == "__main__":
-    wanted = [p for p in os.environ.get("PLATES", "").split(",") if p] or list(PLATES)
-    for name in wanted:
-        bake(name, PLATES[name])
+# FreeCADCmd runs a script file under its own module name, so the usual __main__ guard would
+# skip everything; the bake runs at import, which is the only way this file is ever run.
+WANTED = [p for p in os.environ.get("PLATES", "").split(",") if p] or list(PLATES)
+for plate_name in WANTED:
+    bake(plate_name, PLATES[plate_name])

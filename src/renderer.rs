@@ -11393,6 +11393,12 @@ impl Renderer {
         self.ui.push(text, x, y, size, color, align, false);
     }
 
+    /// Queue a string in a named face (`ui::FACE_*`), the manual's grotesque among them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_face(&mut self, text: &str, x: f32, y: f32, size: f32, color: [f32; 4], align: Align, face: u8) {
+        self.ui.push_face(text, x, y, size, color, align, face);
+    }
+
     /// Queue a bold-weight string (title / headline / menu items). Same coordinate convention.
     pub fn draw_text_bold(
         &mut self,

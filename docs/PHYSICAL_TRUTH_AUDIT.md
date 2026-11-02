@@ -2771,3 +2771,27 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   theatre's site position and logs it. Found by `expedition-loop-review` (2 November 2026),
   which now plays all eight orders through; the receipt is the gate.
 
+### The manual as a Fibel, and the Tiger CAD in the game — 2 November 2026
+
+- **The repair manual's pages are A5 landscape** (`src/repair_manual.rs`: 210 x 148 mm pages,
+  the open book 0.432 m wide, ink at 1536 x 1086), set in the owner's Neue Haas Grotesk
+  (`assets/fonts/NHaasGrotesk-Md/-Blk.otf` under the asset root, loaded at run time into the
+  ink atlas as `ui::FACE_MANUAL`/`FACE_MANUAL_BOLD`; the bundled pixel faces stand in and the
+  log says so when they are absent) with the Tigerfibel's design: letter-spaced capitals
+  titles, a red rule, a red margin label, red lead words, choices as red arrows, the folio at
+  the outer corner. The design is borrowed from D 656/27 (public-domain scans); the words are
+  the game's own diagnosis tree, unchanged in meaning.
+- **The plates are drawings of the owner's kit CAD, not of the vehicle.** `tools/bake_manual_plates.py`
+  scales the 1/35 SolidWorks STEP set by 35 and projects it through FreeCAD TechDraw with hidden
+  lines removed, a red layer for the part a page is about (the Fibel's spot colour), to
+  `assets/manual/plates/<name>.png`; every plate's caption says "1/35 kit CAD, not to scale" and
+  its report names the source. A page whose plate the asset root lacks keeps its schematic.
+- **The Tiger's assemblies as meshes** (`tools/bake_tiger_cad_parts.py`, `_glb.py`):
+  `assets/tanks/tiger/cad/<group>.obj/.glb` in metres (hull tub 3.05 x 1.31 x 5.80 m, engine
+  0.94 x 1.20 x 1.17 m, the gearbox, steering unit, forward drive, final drives, fuel tanks,
+  radiators, fans, sprockets, idlers, side plates, sponsons), tessellated at 4 mm deflection.
+  They are a kit's shapes at 35x: filled solids with no casing thickness, no interior detail,
+  no fasteners the kit omitted; the game may use them as physical parts and the damage solver
+  as component outlines, never as a measured vehicle. Nothing of this is committed; the bake
+  reports carry the provenance.
+
