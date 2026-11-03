@@ -1947,6 +1947,8 @@ impl Range {
             self.dot(p, 0.008, INK);
             self.dot(p, 0.005, BLACK);
         }
+        // The shot's gizmo shows only while the SHOT tab is open (owner, 2026-11-03).
+        if self.open[0] {
         let (aim, dir) = self.aim_line();
         let entry = self.entry();
         let start = entry.map_or(aim, |(p, _)| p);
@@ -1986,6 +1988,10 @@ impl Range {
                 self.dot(p, 0.009, [0.95, 0.15, 0.1, 1.0]);
             }
             self.line(e, e + n * 0.6, [0.6, 0.6, 0.6, 0.8]);
+        }
+        } else {
+            self.shot_az_at = None;
+            self.shot_el_at = None;
         }
         if let Some(plane) = self.section_plane() {
             let n = plane.truncate();
