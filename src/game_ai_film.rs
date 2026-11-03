@@ -193,10 +193,8 @@ impl Director {
         self.hold = hold;
         self.cut = true;
         self.smooth = None;
-        if !matches!(shot, Shot::KillWide(_)) {
-            self.kill_frame = None;
-            self.kill_settled_at = None;
-        }
+        self.kill_frame = None;
+        self.kill_settled_at = None;
     }
 
     fn routine(&self) -> bool {
@@ -210,9 +208,21 @@ impl Director {
     fn on_event(&mut self, event: Event, now: f32) {
         match event {
             Event::Kill { enemy, catastrophic: true } => {
-                if !self.in_kill_wide() {
-                    self.set(Shot::KillWide(enemy), 18.0);
+                if self.in_kill_wide() && self.age < 3.0 {
+                    // The first throw is still in its fireball: this one follows it.
+                    self.queue.insert(0, (Shot::KillWide(enemy), 16.0));
+                    self.queue.insert(1, (Shot::KillNear(enemy), 3.5));
+                } else {
+                    // A penetration's shots cut short by the kill are shown after it.
+                    let mut later: Vec<(Shot, f32)> = match self.shot {
+                        Shot::PenInside(scar, n) => vec![(Shot::PenInside(scar, n), 3.0), (Shot::PlateOutside(scar, n, true), 2.5)],
+                        Shot::PlateOutside(scar, n, pen) => vec![(Shot::PlateOutside(scar, n, pen), 2.5)],
+                        _ => Vec::new(),
+                    };
+                    later.extend(self.queue.drain(..).filter(|(s, _)| matches!(s, Shot::PenInside(..) | Shot::PlateOutside(..))));
+                    self.set(Shot::KillWide(enemy), 16.0);
                     self.queue = vec![(Shot::KillNear(enemy), 3.5)];
+                    self.queue.extend(later);
                 }
             }
             Event::Kill { enemy, catastrophic: false } => {
@@ -223,9 +233,15 @@ impl Director {
             }
             Event::Penetrated { scar } => {
                 self.pens += 1;
-                if let Some(scar) = scar.filter(|_| !self.in_kill_wide()) {
-                    self.set(Shot::PenInside(scar, self.pens), 3.2);
-                    self.queue = vec![(Shot::PlateOutside(scar, self.pens, true), 2.8)];
+                if let Some(scar) = scar {
+                    if self.in_kill_wide() {
+                        // Not over a turret's throw: the hole and its chips after it.
+                        self.queue.push((Shot::PenInside(scar, self.pens), 3.0));
+                        self.queue.push((Shot::PlateOutside(scar, self.pens, true), 2.5));
+                    } else {
+                        self.set(Shot::PenInside(scar, self.pens), 3.2);
+                        self.queue = vec![(Shot::PlateOutside(scar, self.pens, true), 2.8)];
+                    }
                     self.last_plate = now;
                 }
             }
@@ -405,7 +421,8 @@ fn kill_wide_frame(g: &Game, enemy: usize, aspect: f32) -> (Vec3, Vec3, f32) {
     let fov = 46.0f32;
     let tan_v = (0.5 * fov).to_radians().tan();
     let tan_h = tan_v * aspect.max(0.5);
-    let top = apex + (0.3 * apex).max(25.0);
+    // Headroom for the whole load's cloud, which rises above the throw.
+    let top = apex * 1.35 + 30.0;
     let bottom = -8.0;
     let half_v = 0.5 * (top - bottom);
     let distance = (half_v / tan_v).max((0.5 * (land - ring).length() + 35.0) / tan_h).max(110.0);
@@ -442,10 +459,9 @@ fn aim_shot(dir: &mut Director, g: &Game, r: &mut Renderer, active: &[usize]) {
             outside_lens(g, r, e, t, 50.0, 1);
         }
         Shot::Chase => {
-            let f = g.player.forward();
-            let right = g.player.right();
-            let eye = lift(g, tiger - f * 13.0 + right * 5.0 + Vec3::Y * 4.0, 2.0);
-            let target = tiger.lerp(toward, 0.3) + Vec3::Y * 1.0;
+            // Over the Tiger's shoulder toward the nearest T-34, the Tiger kept in the frame.
+            let eye = lift(g, tiger - line * 13.0 + side * 5.0 + Vec3::Y * 4.0, 2.0);
+            let target = tiger + line * 18.0 + Vec3::Y * 1.0;
             let (e, t) = follow(dir, eye, target);
             outside_lens(g, r, e, t, 50.0, 1);
         }
@@ -488,6 +504,9 @@ fn aim_shot(dir: &mut Director, g: &Game, r: &mut Renderer, active: &[usize]) {
                     if launched {
                         dir.kill_frame = Some(frame);
                         dir.cut = true;
+                        // Held for the solved flight (2 vy / g) and 3 s more.
+                        let vy = g.wrecks[enemy].t_body.as_ref().map_or(30.0, |b| b.velocity.y.max(8.0));
+                        dir.hold = dir.hold.min((2.0 * vy / 9.81 + 3.0).clamp(8.0, 16.0));
                     }
                     frame
                 }
@@ -501,7 +520,7 @@ fn aim_shot(dir: &mut Director, g: &Game, r: &mut Renderer, active: &[usize]) {
             let spread = turret.map_or(0.0, |t| t.distance(c));
             let to_tiger = Vec3::new(tiger.x - c.x, 0.0, tiger.z - c.z).normalize_or(Vec3::Z);
             let across = Vec3::new(to_tiger.z, 0.0, -to_tiger.x);
-            let d = (spread * 0.9 + 28.0).clamp(28.0, 170.0);
+            let d = (spread * 0.9 + 28.0).clamp(28.0, 90.0);
             let eye = lift(g, focus + across * d + to_tiger * d * 0.35 + Vec3::Y * (d * 0.22 + 4.0), 3.0);
             outside_lens(g, r, eye, focus + Vec3::Y * 1.5, 45.0, 1);
         }
