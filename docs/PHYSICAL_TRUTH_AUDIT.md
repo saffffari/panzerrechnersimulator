@@ -1,8 +1,44 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## The player's own body seen from his own eyes, 2026-11-02 (`src/first_person_arms.rs`, `fp-body-review`)
+
+The owner's report: looking down, his body was "orange pointy things". Cause, measured: the
+first-person body (the nisu CC0 infantry figure) hung from its neck joint with the camera 8 cm above
+it and 4.5 cm forward, so the eye sat inside the collar and shoulders. Its nearest drawn vertex was
+7 cm from the eye and 207 of 800 lower-hemisphere rays met body surfaces within 15 cm; drawn
+double-sided at a 2.5 cm near plane, those were the screen-filling shards. Skinning was sound
+(every joint index inside the 49-bone skeleton, every weight sum 1, longest posed arm edge 0.112 m).
+
+Now the player's body is the reviewed AdrielCZ Panzertruppe (CC-BY-4.0, black Panzer uniform,
+the crew's own source, face01 = the commander identity), standing at the cupola, loader and
+dismounted posts and seated at the gunner, driver and radio posts. The camera is at its `Eyes_N1`
+joint. Named rules and approximations:
+
+- OWNER_HEAD_HIDDEN: the one source object that is the head (`PanzerTruppe_Head_N1`: skull, face,
+  neck skin; 116 triangles, every vertex weighted wholly to Neck/Head/Eyes) is not drawn for the
+  camera that owns the body. Nothing is shrunk or moved. Every other camera draws the whole man (the
+  commander witness is the same source with its head). The headless first-person pages are still a
+  raster-only shadow caster, so the owner's own shadow lacks a head (an existing limitation).
+- NECK_FLEXION_EYE_TRAVEL: looking down, the neck takes 0.6 of the view's depression, at most
+  0.80 rad, about `Neck_N1`; the eyes' forward travel (4.4 cm at most) moves the body back under the
+  fixed game camera. Its drop is not modelled (the game owns the eye height).
+- Walker stature: out of the tank the same source is scaled uniformly by `foot::EYE` / its eye
+  height (1.70 / 1.415 = 1.20), so its eyes are the walker's simulated eyes and its feet his ground
+  contact. Crew posts keep the reviewed 1.53 m Tiger-interior size. The two statures differ, as the
+  walker eye and the crew bake already did.
+- A crouching walker lowers the whole standing source (no crouch pose); the standing loader's feet
+  stand 12.5 cm under the turret floor at full height (his eye is 1.29 m above it).
+- The arm page now skins every triangle with any arm-joint weight. The former 0.35 single-influence
+  rule left spread-weight palm triangles on the static page, hanging at the thighs.
+
+Gate: `cargo test --bin panzerrechnersystem first_person_arms` (skin joints within the skeleton,
+unit weights, no arm-moved vertex on the static page, head rule equals the head object, eye clear of
+the drawn body by more than 10 cm at 0 to 1.45 rad down, posed arm edges within 1.6x of the source).
+Review: `fp-body-review <prefix>`.
 
 ## Spectral aerosol and the surfaces' clear air, 2026-11-02 (`src/physical_environment.rs`, `shaders/physical_environment.wgsl`, `shaders/rm_medium.wgsl`, `shaders/rm_shade.wgsl` `fog_to`)
 

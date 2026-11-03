@@ -253,6 +253,8 @@ mod solid_city;
 mod enemy_crew;
 #[path = "first_person_arms.rs"]
 mod first_person_arms;
+#[path = "first_person_body_review.rs"]
+pub mod first_person_body_review;
 #[path = "session_telemetry.rs"]
 mod session_telemetry;
 #[path = "player_burn.rs"]
