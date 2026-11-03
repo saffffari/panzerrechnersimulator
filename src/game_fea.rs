@@ -1342,7 +1342,7 @@ impl Game {
         parent * Mat4::from_rotation_translation(rotation, round.tip_local)
     }
 
-    /// Pose every lodged round with its hull or turret.
+    /// Pose every lodged round with its hull or turret, and every cannon round in flight.
     pub(super) fn drive_lodged_rounds(&mut self, r: &mut Renderer) {
         if self.fea.lodged_draw.is_empty() {
             return;
@@ -1356,6 +1356,16 @@ impl Game {
                 continue;
             }
             per_spec[index].push(self.lodged_round_model(round));
+        }
+        // Rounds in flight are drawn as the same body (nose at the round's point, along its
+        // velocity): a cannon round is a real object in the air, not only its tracer's glow.
+        for shot in self.projectiles.iter().filter(|p| p.small_arm.is_none()) {
+            let Some(index) = lodged_spec_index(shot.shell) else { continue };
+            let dir = shot.velocity.normalize_or_zero();
+            if dir == Vec3::ZERO || per_spec[index].len() >= LODGED_DRAW_CAPACITY {
+                continue;
+            }
+            per_spec[index].push(Mat4::from_rotation_translation(Quat::from_rotation_arc(Vec3::Z, dir), shot.pos));
         }
         if overflow && !self.fea.lodged_overflow_logged {
             println!("[fea] more than {LODGED_DRAW_CAPACITY} rounds of one kind are lodged: the extra ones are not drawn (named bound)");

@@ -28,6 +28,18 @@ fn source_port(mesh:&CpuMesh)->anyhow::Result<Port> {
     let eye=inner_center-outward*0.025;
     Ok(Port{inner_center,outward,eye})
 }
+/// A closed glass slab's thickness: the distance between the planes of its largest face and the
+/// largest face opposed to it. A mesh holding several blocks gives its largest block's thickness.
+pub fn slab_thickness(mesh:&CpuMesh)->Option<f32> {
+    let faces:Vec<(Vec3,f32,Vec3)>=mesh.indices.chunks_exact(3).filter_map(|tri| {
+        let [a,b,c]=[0,1,2].map(|i|Vec3::from(mesh.vertices[tri[i] as usize].pos));
+        let cross=(b-a).cross(c-a);let area=cross.length()*0.5;
+        (area>1e-8).then(||(cross.normalize(),area,a))
+    }).collect();
+    let &(n,_,p)=faces.iter().max_by(|x,y|x.1.total_cmp(&y.1))?;
+    let &(_,_,q)=faces.iter().filter(|f|f.0.dot(n)< -0.999).max_by(|x,y|x.1.total_cmp(&y.1))?;
+    Some((p-q).dot(n).abs())
+}
 fn load()->anyhow::Result<[Port;2]> {
     // The remainder is the separate gunner sight lens and stays in its existing renderer route.
     let pages=load_glb_partitioned_roots("assets/tanks/tiger/baked/tiger_port_turret.glb",&NAMES)?;
@@ -54,5 +66,18 @@ pub fn close_view(index:usize)->Option<(Vec3,Vec3,f32)> {
             assert_eq!(eye,port.eye);assert_eq!(axis,port.outward);assert!(fov<0.3);
         }
         assert!(close_view(7).is_none());assert!(close_view(10).is_none());
+    }
+    #[test]fn direct_vision_glass_is_a_measured_closed_slab(){
+        let pages=load_glb_partitioned_roots("assets/tanks/tiger/baked/tiger_port_turret.glb",&NAMES).unwrap();
+        let [right,left]=[&pages[1],&pages[2]].map(|m|slab_thickness(m).expect("closed slit glass"));
+        println!("side port glass: right {right:.4} m, left {left:.4} m");
+        // One mesh carries both blocks, so one block's measure stands for both: 1.5 mm apart on a
+        // ~1 cm slab, under 1% of the slab's absorption (rm_glass.wgsl, 2-3.8 per metre).
+        assert!((right-left).abs()<0.002,"the two slit blocks differ by more than the stated bound");
+        assert!(right>0.005 && right<0.15);
+        let (visor,_,_)=crate::game::tiger_driver_visor::load_optics().unwrap();
+        let visor=slab_thickness(&visor).expect("closed visor glass");
+        println!("driver visor glass: {visor:.4} m");
+        assert!(visor>0.005 && visor<0.15);
     }
 }

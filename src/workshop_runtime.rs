@@ -109,7 +109,7 @@ impl WorkshopRuntime {
         let sight=slots.gunner_sight.iter().map(|&slot|scene[slot].clone()).collect();
         banks.push(make_bank(scene,sight,Some(slots.gunner_sight.to_vec()),Mat4::IDENTITY));
         for (i,part) in source.into_iter().enumerate() {banks.push(make_bank(scene,
-            vec![crate::tank::repaint_german_grey(part)],None,track_models[i].inverse()));}
+            vec![part],None,track_models[i].inverse()));}
         let vision_source=banks[0].meshes.clone();let sight_source=banks[7].meshes.clone();
         let link=crate::gltf_load::load_glb("assets/tanks/tiger/repair_link.glb")?;
         let lamp=crate::hand_prop_models::load_hand_torch()?.to_vec();

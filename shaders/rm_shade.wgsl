@@ -244,9 +244,13 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, ndv: f32) -> vec3<f32> {
 }
 
 // Bank light beyond the froxel grid, front to back over the view ray's [t_near, t_far]: each
-// bank the ray crosses is marched in six samples, lit by the key beam (no cascades out here: the cloud
-// deck's shadow and the banks' own transmittance) through the drops' phase, and by the diffuse
-// light above. Overlapping banks are taken in the order of their entry (up to eight crossings).
+// bank the ray crosses is marched in six samples, lit by the key beam (the depth cascades'
+// occlusion where the far cascade still reaches, some 700 m round the eye; the cloud deck's shadow
+// and the banks' own transmittance) through the drops' phase, and by the diffuse light above.
+// Overlapping banks are taken in the order of their entry (up to eight crossings). Before
+// 3 November 2026 no bank out here took the terrain's or the town's shadow, so at a low Sun a bank
+// lying in the shade of a rise stayed sunlit, white over a darkened field; beyond the far cascade
+// that is still so (named in docs/PHYSICAL_TRUTH_AUDIT.md).
 struct RmLowFar { radiance: vec3<f32>, transmittance: f32 };
 fn rm_low_cloud_far(o: vec3<f32>, d: vec3<f32>, t_near: f32, t_far: f32) -> RmLowFar {
     var out = RmLowFar(vec3(0.0), 1.0);
@@ -286,7 +290,8 @@ fn rm_low_cloud_far(o: vec3<f32>, d: vec3<f32>, t_near: f32, t_far: f32) -> RmLo
             let diffuse = rm_low_cloud_diffuse(deck, tau);
             var source = rm_sky_isotropic() * diffuse.x + diffuse.yzw;
             if (fr.sun_radiance.w > 0.5) {
-                source += fr.sun_radiance.rgb * deck * exp(-tau.x) * rm_phase_dense(dot(d, fr.sun_dir.xyz), g, sigma);
+                source += fr.sun_radiance.rgb * deck * exp(-tau.x) * rm_sun_visibility_maps(p, 1.0)
+                    * rm_phase_dense(dot(d, fr.sun_dir.xyz), g, sigma);
             }
             let t_step = exp(-sigma * dt);
             out.radiance += out.transmittance * albedo * source * (1.0 - t_step);
@@ -393,8 +398,8 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32, surface: bool) -> Fog 
 struct ShadeOut { @location(0) color: vec4<f32>, @location(1) shares: vec4<f32>, @location(2) bounce: vec4<f32>, };
 
 // Stars as single native pixels (2026-10-28, "perfect pixel squares for stars"). The sky's star
-// lattice (physical_environment.wgsl physical_stellar_radiance: 96 cells along each cube face of
-// the celestial sphere, a star in 1.4 % of them) is projected star by star: the one pixel that holds
+// lattice (physical_environment.wgsl physical_stellar_radiance: 170 cells along each cube face of
+// the celestial sphere, a star in 16 % of them) is projected star by star: the one pixel that holds
 // a star's direction carries its whole flux, its irradiance over the pixel's solid angle, so a star
 // is one square at any field of view and never a blur. Air: Kasten-Young airmass at a zenith optical
 // depth of 0.22 (clear winter air, an estimate); cloud: the cached sky's transmittance (the caller).
@@ -410,11 +415,14 @@ fn rm_star_lattice(cell: vec3<i32>, seed: u32) -> f32 {
     return f32(rm_star_hash(h) >> 8u) * (1.0 / 16777216.0);
 }
 // The same lattice, share, magnitude law and irradiance as physical_environment.rs STAR_*.
-const RM_STAR_CELLS: f32 = 96.0;
-const RM_STAR_CEILING: f32 = 3.0;
+const RM_STAR_CELLS: f32 = 170.0;
+const RM_STAR_CEILING: f32 = 5.0;
+// physical_environment.rs STAR_POINT_GAIN: the star's flux in its pixel times this, for the
+// display's smaller field of view (a presentation choice; it lights nothing).
+const RM_STAR_POINT_GAIN: f32 = 4.0;
 const RM_STAR_SHARE: f32 = 0.16;
 const RM_STAR_MAG_BRIGHTEST: f32 = -1.5;
-const RM_STAR_MAG_FAINTEST: f32 = 6.5;
+const RM_STAR_MAG_FAINTEST: f32 = 7.5;
 const RM_STAR_V0_IRRADIANCE: f32 = 3.6e-11;
 fn rm_star_irradiance(x: f32) -> f32 {
     let lo = pow(10.0, 0.5 * RM_STAR_MAG_BRIGHTEST);
@@ -447,7 +455,7 @@ fn rm_pixel_star(dir: vec3<f32>, pixel: vec2<i32>) -> vec3<f32> {
     for (var dy = -1; dy <= 1; dy += 1) {
         for (var dx = -1; dx <= 1; dx += 1) {
             let cell = vec3<i32>(home + vec2(dx, dy), face);
-            if (any(cell.xy < vec2(0)) || any(cell.xy > vec2(95))) { continue; }
+            if (any(cell.xy < vec2(0)) || any(cell.xy >= vec2(i32(RM_STAR_CELLS)))) { continue; }
             let h = rm_star_lattice(cell, 0x53544152u);
             if (h < 1.0 - RM_STAR_SHARE) { continue; }
             let centre = vec2(0.25) + 0.5 * vec2(rm_star_lattice(cell, 0x41520001u), rm_star_lattice(cell, 0x41520002u));
@@ -477,16 +485,17 @@ fn rm_pixel_star(dir: vec3<f32>, pixel: vec2<i32>) -> vec3<f32> {
             let pixel_sr = pow(2.0 * t / fr.res.y, 2.0) * pow(max(dot(w, forward), 0.05), 3.0);
             let elevation = degrees(asin(clamp(w.y, 0.0, 1.0)));
             let airmass = 1.0 / (w.y + 0.50572 * pow(elevation + 6.07995, -1.6364));
-            radiance += tint * irradiance / pixel_sr * exp(-0.22 * airmass);
+            radiance += tint * irradiance * RM_STAR_POINT_GAIN / pixel_sr * exp(-0.22 * airmass);
         }
     }
     // A star's pixel is at most the display's white (2 November 2026, "bright night flashing
     // star flares"): its whole flux in one pixel stood orders above the night's white, the bloom
     // grew a flare round it, and the flare hopped as the star crossed pixels with the head's
-    // sway. The eye sees a point; the display shows a white pixel: the ceiling is three times
-    // the display's white, where AgX reads white and the deltaP bloom adds its half-texel halo
-    // at most (at the white itself a star read grey). Named approximation: the eye's own glare
-    // round a bright star is not drawn.
+    // sway. The eye sees a point; the display shows a white pixel: the ceiling is five times
+    // the display's white (three until 3 November 2026, "make the stars brighter"), past AgX's
+    // white, so the brightest few dozen read full white through the dither and the deltaP bloom
+    // adds its half-texel halo at most (at the white itself a star read grey). Named
+    // approximation: the eye's own glare round a bright star is not drawn.
     let white = rm_display_white();
     if (white > 0.0) { radiance = min(radiance, vec3(white * RM_STAR_CEILING)); }
     return radiance;
@@ -598,6 +607,11 @@ fn fs(in: VsOut) -> ShadeOut {
                     break;
                 }
             }
+        }
+        // The player's vehicle carries its worn edges and gathered grime in its own surface model
+        // once that is installed (rm_vsm.wgsl, from the measured field, not the screen).
+        if (fr.vsm[6].y > 0.5 && fr.vsm[6].w < 254.5 && !terrain && !thin && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5) {
+            vehicle = 0.0;
         }
         if (vehicle > 0.0 && max(mech, max(fr.wear.x, outside_grime)) > 0.0) {
             let dims = vec2<i32>(fr.res.xy) - vec2(1);

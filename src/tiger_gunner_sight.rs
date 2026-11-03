@@ -64,7 +64,7 @@ pub fn load(tube: CpuMesh) -> anyhow::Result<Source> {
     let lens = lens.transformed(Mat4::from_translation(Vec3::Z * rim_offset));
     let _ = entrance_indices(&lens);
     Ok(Source {
-        parts:[gun_local(crate::tank::repaint_german_grey(tube)),gun_local(lens)],
+        parts:[gun_local(tube),gun_local(lens)],
         turret_glass:pages.pop().expect("remaining turret slit glass"),
     })
 }
@@ -99,6 +99,8 @@ pub fn raster_optic_spec(lens: &CpuMesh, mesh: usize) -> crate::renderer::Raster
             eye_relief_m: TZF_EYE_RELIEF_M,
             half_field_rad: TZF_APPARENT_FIELD_RAD * 0.5,
         }),
+        relay_stops: Vec::new(),
+        window_thickness_m: 0.0,
     }
 }
 

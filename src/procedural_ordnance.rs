@@ -17,6 +17,8 @@ pub const LIVE_LENGTH_M: f32 = 0.93;
 pub const LIVE_MAX_DIAMETER_M: f32 = 0.141_302_45;
 pub const CASE_LENGTH_M: f32 = 0.58;
 pub const CASE_MAX_DIAMETER_M: f32 = LIVE_MAX_DIAMETER_M;
+/// The spent case mouth's inner radius (`spent_case_mesh`), m: where its gas leaves (`cabin_fumes`).
+pub const CASE_MOUTH_INNER_RADIUS_M: f32 = 0.0405;
 
 const BRASS: MaterialSample = MaterialSample::new([202, 154, 66], 150, 215);
 const AP_PAINT: MaterialSample = MaterialSample::new([52, 56, 53], 190, 40);
@@ -299,7 +301,7 @@ pub fn spent_case_mesh() -> CpuMesh {
     let half = CASE_LENGTH_M * 0.5;
     let max_radius = CASE_MAX_DIAMETER_M * 0.5;
     let mouth_outer = 0.044;
-    let mouth_inner = 0.0405;
+    let mouth_inner = CASE_MOUTH_INNER_RADIUS_M;
     let cavity_bottom = half - 0.060;
     let mut mesh = MeshBuilder::default();
 

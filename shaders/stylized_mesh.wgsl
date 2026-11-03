@@ -578,9 +578,7 @@ fn shade(in: VsOut) -> SurfaceOutput {
             return glowing(vec4((raw4.rgb * x + raw4.rgb * max(x - 3.0, 0.0) * 0.18) * nf, 1.0));
         }
         if (pc.params.w < 0.5) {
-            let fire_color = mix(vec3(1.0, 0.24, 0.03), raw4.rgb, 0.18);
-            return unoccluded(vec4(fire_color * x * 0.30
-                + vec3(1.0, 0.88, 0.62) * max(x - 6.0, 0.0) * 0.18, 1.0));
+            return unoccluded(vec4(incandescent_glow(x), 1.0));
         }
     }
 
@@ -664,3 +662,16 @@ fn shade(in: VsOut) -> SurfaceOutput {
 }
 
 @fragment fn fs_hover() -> @location(0) vec4<f32> { return vec4(1.0); }
+
+// The one incandescence law (incandescence.rs `fx_kelvin`, `fx_glow`): an effect mesh driven at
+// `x` glows at the Planck colour of 1,500 K plus 150 K per unit of drive (to 2,800 K), red band 1,
+// at 0.30 of the drive.
+fn incandescent_glow(x: f32) -> vec3<f32> {
+    let kelvin = clamp(1500.0 + 150.0 * x, 1500.0, 2800.0);
+    let c2 = 14387769.0;
+    let reference = exp(c2 / (650.0 * kelvin)) - 1.0;
+    let lambda = vec3(650.0, 550.0, 450.0);
+    let ratio = vec3(650.0) / lambda;
+    let chroma = ratio * ratio * ratio * ratio * ratio * reference / (exp(vec3(c2) / (lambda * kelvin)) - vec3(1.0));
+    return chroma * x * 0.30;
+}

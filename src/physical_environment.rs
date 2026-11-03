@@ -1004,6 +1004,36 @@ fn ozone_column_density_m(atmosphere: &AtmosphereParameters, from_altitude_m: f6
     }
 }
 
+/// Chapman's grazing-incidence function: the slant column of an exponential atmosphere of scale
+/// height `scale_m` toward a body at zenith cosine `mu`, seen from radius `radius_m`, relative to
+/// the vertical column; past the local horizon it carries the planet's screening by the identity
+/// Ch(x, chi > 90) = 2 Ch(x sin chi, 90) exp(x - x sin chi) - Ch(x, 180 - chi) (Schueler 2012,
+/// GPU Pro 3). physical_environment.wgsl `physical_chapman`.
+pub fn chapman(radius_m: f64, scale_m: f64, mu: f64) -> f64 {
+    let x = radius_m / scale_m.max(1.0);
+    let c = (0.5 * PI * x).sqrt();
+    if mu >= 0.0 { return c / ((c - 1.0) * mu + 1.0); }
+    let s = (1.0 - mu * mu).max(0.0).sqrt();
+    let c0 = (0.5 * PI * x * s).sqrt();
+    let lift = x * mu * mu / (1.0 + s);
+    2.0 * c0 * lift.min(80.0).exp() - c / ((c - 1.0) * (-mu) + 1.0)
+}
+
+/// The effective cosine of a body for the diffuse field at `altitude_m`: the inverse of Chapman's
+/// function for the molecular scale height. In an exponential atmosphere the light a column takes
+/// from a beam per unit of ground is the beam's irradiance over Ch, so the plane two-stream solve
+/// with this cosine is the sphere's (exactly where Ch varies slowly up the column; the planet's
+/// screening below the horizon, exp(-R delta^2 / 2H) for a depression delta, is constant up it to
+/// first order). Above some 20 deg it is the plain cosine; at the horizon about 1/35, not zero;
+/// 6 deg down about 1/5,000; 18 deg down nothing. A named approximation in
+/// docs/PHYSICAL_TRUTH_AUDIT.md (3 November 2026: the plain cosine cut the twilight sky's higher
+/// orders off the moment the Sun set, and the Earth's shadow rendered black).
+pub fn spherical_cosine(atmosphere: &AtmosphereParameters, altitude_m: f64, mu: f64) -> f64 {
+    1.0 / chapman(atmosphere.planet_radius_m + altitude_m.max(0.0), atmosphere.rayleigh_scale_height_m, mu).max(1.0)
+}
+
+/// `mu0` is the source's effective cosine for a spherical atmosphere (`spherical_cosine`); the
+/// slab's angular shape is taken at no less than 1e-3, the energy it intercepts at the cosine.
 fn upper_atmosphere_diffuse_flux(
     atmosphere: &AtmosphereParameters,
     from_altitude_m: f64,
@@ -1011,6 +1041,7 @@ fn upper_atmosphere_diffuse_flux(
     irradiance: DVec3,
 ) -> DVec3 {
     let mu = mu0.clamp(1.0e-3, 1.0);
+    let intercepted = mu0.clamp(0.0, 1.0);
     let remaining = (atmosphere.atmosphere_top_m - from_altitude_m).max(0.0);
     let rayleigh_column = atmosphere.rayleigh_scale_height_m
         * (-from_altitude_m / atmosphere.rayleigh_scale_height_m.max(1.0)).exp()
@@ -1041,7 +1072,7 @@ fn upper_atmosphere_diffuse_flux(
         };
         let flux = delta_eddington_flux(extinction, omega, effective_g, mu);
         diffuse_flux[channel] = irradiance[channel]
-            * mu
+            * intercepted
             * (flux.transmittance - flux.direct_transmittance).max(0.0);
     }
     diffuse_flux
@@ -1180,8 +1211,9 @@ fn multiple_scattering_radiance(
         }
     } else {
         for (direction, irradiance) in sources {
-            let mu0 = up.dot(direction);
-            if mu0 > 0.0 && irradiance.max_element() > 0.0 {
+            if direction.length_squared() <= 0.0 { continue; }
+            let mu0 = spherical_cosine(atmosphere, altitude, up.dot(direction));
+            if mu0 > 1.0e-9 && irradiance.max_element() > 0.0 {
                 flux += upper_atmosphere_diffuse_flux(atmosphere, altitude, mu0, irradiance);
             }
         }
@@ -1200,9 +1232,18 @@ fn cloud_source_lower_flux(
     quality: IntegrationQuality,
 ) -> DVec3 {
     let direction = direction_to_source.normalize_or_zero();
-    let mu0 = column_up.dot(direction);
-    if mu0 <= 0.0 || irradiance.max_element() <= 0.0 {
+    if direction.length_squared() <= 0.0 || irradiance.max_element() <= 0.0 {
         return DVec3::ZERO;
+    }
+    let mu0 = column_up.dot(direction);
+    // The air above the deck is a sphere's: its diffuse light outlasts the Sun's setting on the
+    // deck's top, which only the plain cosine lights.
+    let spherical = spherical_cosine(atmosphere, atmosphere.cloud.top_altitude_m, mu0);
+    let upper_diffuse_flux = if spherical > 1.0e-9 {
+        upper_atmosphere_diffuse_flux(atmosphere, atmosphere.cloud.top_altitude_m, spherical, irradiance)
+    } else { DVec3::ZERO };
+    if mu0 <= 0.0 {
+        return upper_diffuse_flux * cloud_diffuse_transmittance;
     }
     let top_position = atmosphere.planet_center_m
         + column_up * (atmosphere.planet_radius_m + atmosphere.cloud.top_altitude_m + 2.0);
@@ -1217,12 +1258,6 @@ fn cloud_source_lower_flux(
     let diffuse_transmittance = (flux.transmittance - flux.direct_transmittance).max(0.0);
     let direct_generated_diffuse_flux =
         irradiance * top_transmittance * (mu0 * diffuse_transmittance);
-    let upper_diffuse_flux = upper_atmosphere_diffuse_flux(
-        atmosphere,
-        atmosphere.cloud.top_altitude_m,
-        mu0,
-        irradiance,
-    );
     direct_generated_diffuse_flux + upper_diffuse_flux * cloud_diffuse_transmittance
 }
 
@@ -1406,19 +1441,30 @@ pub fn integrate_environment(
 }
 
 /// The star lattice: `STAR_LATTICE_CELLS` cells along each cube face of the celestial sphere,
-/// a star in `STAR_LATTICE_SHARE` of them (about 8,800 over the sky, the naked-eye count to
-/// magnitude 6.5), its magnitude drawn so that the count brighter than m rises as 10^(0.5 m)
-/// (the real sky's slope: some 15 stars brighter than first magnitude, 500 brighter than
-/// fourth), its irradiance from its magnitude (V = 0 is 3.6e-11 W m^-2 nm^-1 at 550 nm, Vega;
-/// research section 1.4), its colour from blue-white to warm. A seeded distribution with the
-/// real sky's population, not a surveyed catalogue (docs/PHYSICAL_TRUTH_AUDIT.md). The raymarch
-/// shade pass draws each star into one pixel (rm_shade.wgsl `rm_pixel_star`); this reference
-/// and the sky shader draw the same star as a narrow Gaussian where no pixel is known.
-pub const STAR_LATTICE_CELLS: f64 = 96.0;
+/// a star in `STAR_LATTICE_SHARE` of them (about 27,700 over the sky, the count to magnitude 7.5
+/// that a dark-adapted eye reaches under a sky with no artificial light, Bortle class 1, as the
+/// 1940s steppe was; 3 November 2026, "add more stars", from 8,800 to 6.5), its magnitude drawn
+/// so that the count brighter than m rises as 10^(0.5 m) (the real sky's slope: some 15 stars
+/// brighter than first magnitude, 500 brighter than fourth), its irradiance from its magnitude
+/// (V = 0 is 3.6e-11 W m^-2 nm^-1 at 550 nm, Vega; research section 1.4), its colour from
+/// blue-white to warm. A seeded distribution with the real sky's population, not a surveyed
+/// catalogue (docs/PHYSICAL_TRUTH_AUDIT.md). The raymarch shade pass draws each star into one
+/// pixel (rm_shade.wgsl `rm_pixel_star`); this reference and the sky shader draw the same star as
+/// a narrow Gaussian where no pixel is known.
+pub const STAR_LATTICE_CELLS: f64 = 170.0;
 pub const STAR_LATTICE_SHARE: f64 = 0.16;
 pub const STAR_MAGNITUDE_BRIGHTEST: f64 = -1.5;
-pub const STAR_MAGNITUDE_FAINTEST: f64 = 6.5;
+pub const STAR_MAGNITUDE_FAINTEST: f64 = 7.5;
 pub const STAR_V0_IRRADIANCE: f64 = 3.6e-11;
+/// The one-pixel star's flux on the display over its flux in the scene (rm_shade.wgsl
+/// `RM_STAR_POINT_GAIN`; a presentation choice, 3 November 2026, "make the stars brighter").
+/// A star is a point to the eye, seen by its flux over the eye's summation area, not by its
+/// radiance; the display shows the scene's field of view (some 90 deg across) on a panel the
+/// player sees some 50 deg across, so a pixel's flux reaches his eye in about a third of the
+/// scene's solid angle while the sky round it keeps its radiance, and every star reads about three
+/// times fainter against the night than it would outdoors. The gain restores that, and a little
+/// more; it is drawn into the star's pixel only and lights nothing.
+pub const STAR_POINT_GAIN: f64 = 4.0;
 /// A star's visual magnitude from its lattice draw `x` in [0, 1): the inverse of N(<m) ∝ 10^(0.5 m).
 pub fn star_magnitude(x: f64) -> f64 {
     let lo = 10f64.powf(0.5 * STAR_MAGNITUDE_BRIGHTEST);
@@ -1902,7 +1948,7 @@ mod tests {
                 }
             }
         }
-        assert!((8_000..=9_700).contains(&stars), "{stars} stars (the naked-eye sky has about 9,000)");
+        assert!((24_000..=31_000).contains(&stars), "{stars} stars (the sky to magnitude 7.5 has about 25,000)");
         assert!((5..=40).contains(&bright1), "{bright1} brighter than first magnitude (the sky has about 15)");
         assert!((350..=700).contains(&bright4), "{bright4} brighter than fourth (the sky has about 500)");
         assert!((star_irradiance(0.0) - STAR_V0_IRRADIANCE).abs() < 1e-20);
@@ -1916,6 +1962,7 @@ mod tests {
             assert!(shader.contains(&format!("const {prefix}_MAG_FAINTEST: f32 = {STAR_MAGNITUDE_FAINTEST};")), "{prefix} faintest");
             assert!(shader.contains(&format!("const {prefix}_CELLS: f32 = {STAR_LATTICE_CELLS:?};")), "{prefix} cells");
         }
+        assert!(include_str!("../shaders/rm_shade.wgsl").contains(&format!("const RM_STAR_POINT_GAIN: f32 = {STAR_POINT_GAIN:?};")));
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("physical_environment::STAR_*"));
     }
 
@@ -2055,10 +2102,20 @@ mod tests {
         let (horizon, zenith) = (sky(2.0), sky(89.0));
         assert!(horizon.y > 2.0 * zenith.y, "the horizon is brighter: {horizon:?} vs {zenith:?}");
         assert!(horizon.z / horizon.x < zenith.z / zenith.x, "and whiter: {horizon:?} vs {zenith:?}");
-        // The diffuse field is real light from the column above: zero with no source above.
-        let mut night = a;
-        night.sun_direction = DVec3::new(-1.0, -0.2, 0.0).normalize();
-        assert_eq!(multiple_scattering_radiance(&night, origin, IntegrationQuality::REFERENCE), DVec3::ZERO);
+        // The diffuse field is real light from the column above: under a spherical atmosphere it
+        // outlasts sunset (the air overhead still sees the Sun), falls by orders of magnitude
+        // through the twilights and is nothing once the Sun is far below the lit air.
+        let field = |depression_deg: f64| {
+            let mut sky = a;
+            let d = (-depression_deg).to_radians();
+            sky.sun_direction = DVec3::new(-d.cos(), d.sin(), 0.0);
+            multiple_scattering_radiance(&sky, origin, IntegrationQuality::REFERENCE).y
+        };
+        let (day, horizon, civil, nautical, night) = (field(-22.0), field(0.0), field(6.0), field(12.0), field(30.0));
+        assert!(horizon > 1e-3 * day && horizon < day, "sunset {horizon:e} against the day's {day:e}");
+        assert!(civil < 0.02 * horizon && civil > 0.0, "civil dusk {civil:e} against sunset {horizon:e}");
+        assert!(nautical < 1e-3 * civil, "nautical dusk {nautical:e}");
+        assert!(night < 1e-20 * day, "night {night:e}");
         let shader = include_str!("../shaders/physical_environment.wgsl");
         assert!(shader.contains("* physical_multiple_scattering_radiance(environment, position_m);"));
     }

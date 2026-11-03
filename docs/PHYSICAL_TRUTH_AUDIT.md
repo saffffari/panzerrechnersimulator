@@ -1,8 +1,168 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-03 (vision blocks: the relay panes' finite stops, glass on the periscopes, side slits and visor); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+Updated: 2026-11-03 (the radio sets' and driver's Braun-style panels: eleven finite panel lamps on the cabin light list, drawn-only slab fronts, glass panes; the radio operator seated on his cushion; the bow MG eyepiece relayed over its whole lens; vision blocks: the relay panes' finite stops, glass on the periscopes, side slits and visor); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+not "physical," "path traced," or "authoritative" until the shipping code computes it and the
+listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## The radio sets' and the driver's panels, 2026-11-03 (`src/cabin_panels.rs`, `cabin-panels`)
+
+- **What it is:** the owner's design (a 1960s Braun audio set): brushed-silver fronts, black knobs,
+  glass panes over the radio's tuning scales and the driver's two dials and fuel counter, amber
+  pilot lamps and 8 mm red, green and turquoise indicators. Not a reconstruction of the FuG 5 sets
+  or the Tiger's driver's instruments.
+- **Light:** eleven finite cube lenses (`cabin_panels::LAMPS`: four amber pilot lamps, seven
+  indicators) are cabin light registrations 22-32 (`CABIN_LIGHT_REGISTRATIONS` 22 to 33), sampled
+  through `FiniteCubeLamp` like every cabin fixture (visible radiance and transported power from
+  the same lens area; isotropic point approximation conserving power), switched by
+  `set_cabin_lights` (`practical_gain`), shadowed by the scene (raymarch: one any-hit ray per
+  lamp; shader backend: the packed cube maps with the lens excluded as its own emitter). Power is
+  an appearance calibration in the cabin's scale, not a measured bulb: an amber lens emits
+  `PANEL_AMBER` (85, 14 mm; the driver's 12 mm) against the dome lamp's 42 at 28 mm, about half the
+  dome lamp's power each. The indicators' states come from the simulation (engine speed for the
+  driver's oil and charging lamps, coolant at 100 C for the oil lamp); the radio transmitter's red
+  lamp burns at 0.45 on standby with no transmit state wired yet.
+- **Drawn-only geometry (named bound):** each front is a closed slab standing on its source box
+  (`Hull_0355` radio rack, `Hull_0240` driver's panel), 20 mm (supply box), 24 mm (sets) and 32 mm
+  (driver) deep, with knobs, keys and lamps up to a further 20 mm; collision, the damage model and
+  the crew's reach still use the source boxes, so a fragment or ray crosses at most 52 mm of drawn
+  panel before it meets the source face. The source's own relief (knob stubs to 20 mm) lies inside
+  the slabs.
+- **Instruments:** the driver's tachometer (0-3000 rpm) and coolant needle (40-120 C) read
+  `player_powertrain.rpm` and `workshop_coolant_temperature`; the three amber drums read
+  `tank_fuel_liters` as an odometer (each drum carries through the last unit of the one below).
+  The radio's tuning needle and frequency knob are groundwork: `CabinPanels::set_radio_tuning`
+  sets them; nothing in play tunes yet. The digital FUEL/L readout (`driver_panel.rs`, an
+  own-emissive raster-only print with no light registration) is removed.
+- **The radio operator's seat:** `crew_live_model` placed the AI radio operator at the pre-fit
+  (-0.66, 0.38, 1.42): his boots through the belly plate, his seat 0.24 m inside the pedestal,
+  the backrest through his neck. Now (-0.635, 0.635, 1.58), pelvis on the cushion, back on the
+  backrest, eye 1.59 (the player's at that post 1.58). His shins still pass the pedestal's box at
+  this scale, as the driver's do (open).
+- **Bow MG eyepiece:** its relay painted the first two of the lens's 24 triangles (0.9 % of its
+  area). It now paints the whole planar lens. The eyepiece is still a vision-block relay (its
+  field visible from anywhere in front of it), not an `Eyepiece` with an exit pupil as the
+  gunner's sight; as for the TZF, a telescope's eyepiece is no cabin aperture, and no daylight
+  enters through it (named, open).
+
+
+## Vision blocks: the relay panes' finite stops, and glass on every vision block, 2026-11-03 (`shaders/raster_optics.wgsl` `relay_trace`, `src/tiger_periscopes.rs` `relay_stops`, `src/tiger_side_ports.rs` `slab_thickness`, `shaders/rm_glass.wgsl`, `shaders/glass_scratches.wgsl`)
+
+The owner, in the FEA range: the periscopes "shift like a real periscope would", but read as
+screens: full frame from any angle, no glass. Before this change the raymarch backend (and the
+shader backend) drew a cupola block's relay as an opaque image on the prism-side face of its
+closed inner window, admitting every incident direction; past `OFF_AXIS_ACCEPTANCE` the pane
+showed the acceptance boundary's radiance (named vision-block debt), and no glass was drawn
+over it.
+
+Now, for the seven cupola blocks and the loader's periscope (the eight ports with registered
+stop chains):
+- Finite stops. `relay_stops` reads each block's chain off its registered parts by tracing the
+  close-view chief ray: the inner window's two faces, the lower mirror, the four relay lenses,
+  the upper mirror, the objective window's two faces, each with its finite quad. The relay pane
+  carries the eye's ray (and three more over the pixel's footprint) through them in order: Snell
+  at each glass face, the mirrors and ideal thin lenses as the ray backend's `periscope_path`
+  applies them (0.90 per mirror, 0.96 per lens, exact Fresnel and Beer absorption at the
+  objective window's faces). A ray that leaves a stop's outline has met the housing: the pane
+  shows the housing interior there. The cupola image is still sampled along the incident
+  direction (the chain preserves it: exit directions within 4e-5), so the parallax is unchanged;
+  the loader keeps its registered virtual-pupil mapping and takes only the chain's admission.
+  Chained ports' captures are no longer clamped to the acceptance boundary: the capture keeps
+  every incident direction and the chain decides.
+- Named approximation: the housing walls are not traced; a ray inside every stop is taken as
+  clear. Measured against the complete block with its housing triangles
+  (`relay_stop_chain_matches_the_complete_housing`, eyes 0-75 degrees off axis at 3, 12 and
+  45 cm, 225,792 rays): 211 disagree (0.093%), bound 0.15%.
+- Named limitation: the housing interior's radiance is not computed; the relay draws it black.
+  Light reaching the walls through the objective and the cabin is missing (a dark
+  underestimate, never a brightening). The ray backend shades that hit as a surface.
+- Result of the registered geometry, not a choice: the inner window is 4.7 cm tall, the relay
+  lenses and objective pass a 3.5 cm bundle, so even on axis part of the pane shows the housing
+  (51% of the pane admitted from 45 cm, 37% from 12 cm, 12% from 3 cm), falling to under 1% past
+  50 degrees. The relay prescription itself remains the reconstructed one (29 September entry).
+- The inner window's glass. The raymarch glass pass draws the closed 3.892 mm slab (the
+  registered window) over its relay: each face as its own interface with half the slab's path,
+  so the slab's Beer absorption counts once and both faces' Fresnel loss twice, and the second
+  face's reflection appears as a ghost offset by the glass thickness. Its reflection, glints and
+  grime are `rm_glass.wgsl`'s existing law with that pass's named approximations (screen-marched
+  reflection with a ray-query miss, Schlick Fresnel, scalar transmittance in the blend). The
+  relay takes neither face's loss again.
+- Wear on the eye-side face (`glass_scratches.wgsl`, authored, not measured): straight grit
+  grooves 4-40 um wide and 1-12 mm long, about 0.4% of the face. In the glass pass the grooves
+  reflect the sun and the cabin lamps (modeled emitters, with their visibility) into a fan across
+  each groove, and scatter back 20% of the light reaching them. In the relay a groove takes its
+  share of the image out and passes 80% of the exterior light arriving across it, integrated by
+  eight stratified taps over +-0.30 rad, each through the stop chain, from the port's own
+  capture. Named limitation: directions outside the captured field add nothing (an
+  underestimate), and the sun's disk is only found when a tap lands on it in the capture.
+- The pane's sky: a vision block's glass asks the sky-cover map from inside the compartment
+  (`rm_cabin_sky_visibility`), not the lifted open-ground test. That test reached above the
+  cupola roof and lit the glass's reflection and grime with the whole sky; the housing interior
+  read mid-grey by day (`periscope_optics_20261103a_day_*` against `..._b_noglass_*`).
+- Direct-view vision blocks (owner, same day: "lets add that same glass to the side ports as
+  well"): the turret's two side slit blocks and the driver's visor block take the same slab
+  treatment in the glass pass (each face half the slab's path, the second face's ghost, the
+  cabin sky test, the grooves on the faces toward the eye) with their measured thickness
+  (`side_ports::slab_thickness`: slits 9.7 and 11.2 mm, visor 50 mm). Before, the pass took the
+  bounding box's thinnest extent for the slit mesh (both slits in one mesh, across the turret)
+  and every face carried the whole slab's absorption. Named: one mesh carries both slits, so one
+  block's measure stands for both (1.5 mm apart, under 1% of the slab's absorption). What is
+  seen through a direct block is the rendered scene behind it, so its slit walls darken steep
+  views by their own geometry; the image through it is not laterally displaced by refraction
+  (`rm_glass.wgsl`'s existing named approximation; a parallel slab keeps directions, the shift
+  is 3-4 mm through a slit block at 45 degrees and 1.7 cm through the visor), and light turned
+  back by total reflection at the blocks' edges is not traced.
+- Not changed: radio and gunner optics, the driver's roof periscope (no registered chain; prior
+  mapping). The shader backend's pane takes the same chain and grooves but has no glass pass
+  over it.
+- Gates: `relay_stop_chain_matches_the_complete_housing`,
+  `direct_vision_glass_is_a_measured_closed_slab`, the raster optic and raymarch shader
+  validation tests, `periscope-optics PREFIX` stills (held, seat, 30 and 60 degrees off the
+  front block; the right side slit held and 50 degrees off; by day and at night with the cabin
+  lamps on).
+
+Updated: 2026-11-03 (the radio sets' and driver's Braun-style panels: eleven finite panel lamps on the cabin light list, drawn-only slab fronts, glass panes; the radio operator seated on his cushion; the bow MG eyepiece relayed over its whole lens); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+not "physical," "path traced," or "authoritative" until the shipping code computes it and the
+listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## The player's own body seen from his own eyes, 2026-11-02 (`src/first_person_arms.rs`, `fp-body-review`)
+
+The owner's report: looking down, his body was "orange pointy things". Cause, measured: the
+first-person body (the nisu CC0 infantry figure) hung from its neck joint with the camera 8 cm above
+it and 4.5 cm forward, so the eye sat inside the collar and shoulders. Its nearest drawn vertex was
+7 cm from the eye and 207 of 800 lower-hemisphere rays met body surfaces within 15 cm; drawn
+double-sided at a 2.5 cm near plane, those were the screen-filling shards. Skinning was sound
+(every joint index inside the 49-bone skeleton, every weight sum 1, longest posed arm edge 0.112 m).
+
+Now the player's body is the reviewed AdrielCZ Panzertruppe (CC-BY-4.0, black Panzer uniform,
+the crew's own source, face01 = the commander identity), standing at the cupola, loader and
+dismounted posts and seated at the gunner, driver and radio posts. The camera is at its `Eyes_N1`
+joint. Named rules and approximations:
+
+- OWNER_HEAD_HIDDEN: the one source object that is the head (`PanzerTruppe_Head_N1`: skull, face,
+  neck skin; 116 triangles, every vertex weighted wholly to Neck/Head/Eyes) is not drawn for the
+  camera that owns the body. Nothing is shrunk or moved. Every other camera draws the whole man (the
+  commander witness is the same source with its head). The headless first-person pages are still a
+  raster-only shadow caster, so the owner's own shadow lacks a head (an existing limitation).
+- NECK_FLEXION_EYE_TRAVEL: looking down, the neck takes 0.6 of the view's depression, at most
+  0.80 rad, about `Neck_N1`; the eyes' forward travel (4.4 cm at most) moves the body back under the
+  fixed game camera. Its drop is not modelled (the game owns the eye height).
+- Walker stature: out of the tank the same source is scaled uniformly by `foot::EYE` / its eye
+  height (1.70 / 1.415 = 1.20), so its eyes are the walker's simulated eyes and its feet his ground
+  contact. Crew posts keep the reviewed 1.53 m Tiger-interior size. The two statures differ, as the
+  walker eye and the crew bake already did.
+- A crouching walker lowers the whole standing source (no crouch pose); the standing loader's feet
+  stand 12.5 cm under the turret floor at full height (his eye is 1.29 m above it).
+- The arm page now skins every triangle with any arm-joint weight. The former 0.35 single-influence
+  rule left spread-weight palm triangles on the static page, hanging at the thighs.
+
+Gate: `cargo test --bin panzerrechnersystem first_person_arms` (skin joints within the skeleton,
+unit weights, no arm-moved vertex on the static page, head rule equals the head object, eye clear of
+the drawn body by more than 10 cm at 0 to 1.45 rad down, posed arm edges within 1.6x of the source).
+Review: `fp-body-review <prefix>`.
 
 ## Spectral aerosol and the surfaces' clear air, 2026-11-02 (`src/physical_environment.rs`, `shaders/physical_environment.wgsl`, `shaders/rm_medium.wgsl`, `shaders/rm_shade.wgsl` `fog_to`)
 
@@ -67,8 +227,9 @@ Named approximations (limits):
   the beam in the clear air, no secondary body (the Moon while the Sun keys) in it, single
   scattering only, altitude as y above the local planet surface (flat over the map).
 - The weather layer's albedo (0.70 aerosol, 0.92 snow) and asymmetry are the values it had,
-  unsourced; the cabin haze and the plumes keep the (0.94, 0.97, 1) scattering tint (outside this
-  change); both are open.
+  unsourced; the cabin haze and the plumes kept the (0.94, 0.97, 1) scattering tint until 2 November
+  2026, when it was removed as unsourced (it cast the cabin blue): they scatter neutrally. The
+  weather layer's values remain open.
 
 Measured (spring-bridge-v2 copy, 15:28 local solar, looking east across the valley to the hills
 1.8 km away, the locked look; sRGB means over the hill band): before (128, 131, 134 → B-R +6.7);
@@ -520,6 +681,12 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   approximations: the scene's acceleration structure and the sky-cover map keep the bare
   geometry, so shadows, ray-query occlusion and the cover map ignore the lift (at most 6 cm);
   the thickness is a display estimate of a night's fall on a deck, not a deposition model.
+  What rides aboard the player's tank (a part, a batch or a pane whose box is under 2 m across and
+  whose box centre lies inside a vehicle-surface frame's oriented box with 5 cm grace;
+  `is_aboard`, renderer_raymarch.rs) takes no lying snow from the world's load: the lift raised
+  the cabin lamps' top faces off their bodies, green faces floating by the gunner (owner report,
+  2 November 2026). The tank's own snow is its catch, of which none is kept. Named approximation:
+  a box-centre test, so a small object under the hull between the tracks is counted aboard.
 - The winter running gear (2026-11-02; `snow_cover::step_pack`, `Renderer::set_running_gear_snow`,
   `snow_gear_crust`). Nothing packed the tracks before: the Tiger's belt carried only
   centimetre flecks (`track_snow`), the enemies' nothing, and lying snow stays off every
@@ -573,16 +740,45 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   (2026-11-02): 2.5 % at 1,100 K, 1.3e-4 at 900 K, 4e-7 at 750 K of the 1,300 K band's, so the
   pages' display scale (lifted and drawn hotter for legibility) no longer lights the cabin's dust
   orange from a floor of resting dull-red chips.
+- The behind-armour flash (2026-11-02; `behind_armour_flash_peak`, the owner: a flash of light
+  as the round bursts through, seen from inside). A perforation of the player's vehicle lights a
+  modelled emitter 12 cm inside the hole: 1 % of the steel the round displaces (the calibre's
+  disc over the oblique path) leaves as fine dust and burns in the compartment's air to magnetite
+  (6.7 MJ/kg) over a 20 ms time constant, 30 % of the power radiated at a luminous efficacy of
+  18 lm/W at about 2,800 K (its colour on the shared Planck law). A 76 mm round through 80 mm
+  peaks near 4 Mcd, about five times the 88's muzzle flash light; a 14.5 mm bullet's is a
+  fiftieth of a unit. Each frame shows the flash's mean over its own exposure, so it is equally
+  bright at every frame rate. Named estimates: the 1 % fine share, the burn time, the radiant
+  share and the efficacy; it lights through the scene's shadow rays like any lamp.
+- Inside a perforation (2026-11-02, the owner): sparks thrown inward from the back face (the
+  exterior strike's 0.6 % share of the plate's work, as incandescent dust along the shot line);
+  an armour-piercing round with no filler that comes through above 60 m/s draws its base tracer
+  across the compartment as the tracer strip, exposed over exactly the time the round takes to
+  reach the first surface on its line (a few milliseconds, so one frame holds its whole path, as
+  a camera records it; named: a tracer is assumed on every such round); the authored fragment
+  sizes reach 1.2-1.8 cm instead of 7-9 mm (behind-armour debris has a centimetre tail; the drawn
+  body is the physical one, so the larger pieces are heavier and hit harder), and a cooled chip's
+  colour is a reddish-brown oxide (sRGB 104, 66, 52) instead of plain grey.
+- Every wound glows with a radial temperature falloff (2026-11-02): where the lattice solved the
+  strike, its own field; otherwise the rim estimate's temperature at the bore falling outward
+  exponentially over a third of the hole's radius (0.3 R from a dent's centre; named), drawn,
+  like the chips, at 1.7 times its temperature from 750 K up, so the bore reads white-yellow and
+  the colour runs through orange, red and deep red to raw steel instead of one flat colour.
+- A penetration's trapped interior smoke is a third as dense as its exterior vent (0.55 against
+  1.6) and clears in six seconds instead of ten (2026-11-02): at the vent's density the six
+  puffs were opaque across the turret, and an interior camera saw only sky-lit fog for ten
+  seconds. A compartment does fill with smoke; the density is a named presentation value, not a
+  vented-gas model.
 - A penetration's interior smoke stays at the hole (above) and a fire's smoke is its own soot
   (2026-11-02, the owner: fires need time to build up smoke, much darker, absorbing the light).
   The soot is a uniform load in the cabin air (`Game::interior_soot`, 0-1), built at 0.38 per
   second times the burning surfaces' enclosure heat (`CabinFire::enclosure_diagnostics`) and
-  drained by the fan and an open hatch as the gun fumes are; at a full load its extinction is
+  drained linearly by the fan and an open hatch (`update_haze`); at a full load its extinction is
   1.5 /m (`SOOT_EXTINCTION_PER_M`: a lamp two metres off all but hidden), single-scattering albedo
   0.2 (fresh black carbon's order) and asymmetry 0.5, added to the cabin medium in
   `rm_medium.wgsl` inside the cabin domain only. The build rate, the extinction scale and the
-  uniform spread are authored (named: no soot transport, no stratified hot layer, no deposition);
-  the gun fumes' light haze only drains.
+  uniform spread are authored (named: no soot transport, no stratified hot layer, no deposition).
+  The gun's fumes are their own two-zone model since 2026-11-03 (`cabin_fumes`, below).
 - Spall and shrapnel carry tracers, and the solved chips glow by their temperature on the one
   law (2026-11-02; the owner). A flying fragment's tail is still a frame of its own measured
   motion (no rod drawn through a wall; a ricochet starts a new segment), now bounded at 0.45 m
@@ -1087,6 +1283,46 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   whole vehicle), unlabelled in play (it is the replay's view, not a claim about the vehicle).
   The plate's thickness is measured along the shot through the tank's own source triangles (0.1 m
   if they are not met; named).
+- **FEA range** (`fea-range`, the owner's review editor, `src/game_fea_range.rs`, 2026-11-03): a
+  window on the snow field (Canyon v2 winter workshop, act 1) with the player's Tiger and its solo
+  crew, the shipping raymarch renderer and the game's own update. Its shots are real rounds through
+  `Game::debug_launch_round` (9 m short of the first source surface on the chosen line, so the
+  round meets every surface on it; impact velocity is the shell's own `v0·e^(−kx)` at the chosen
+  range, a chosen velocity sets that range). Disclosed review actions, as in `fea-film`: the Tiger
+  is placed and reset by state, enemies are banished and hold fire, the racks may be emptied, the
+  cabin lamps switched, the sky clock is held at the chosen date and time, the eye's exposure may
+  be held (a camera setting), and the section is the film section above (camera only, labelled on
+  screen). Recorded frames are the renderer's own frames read back; "live here" re-runs the same
+  shot step for step on a fresh Tiger. Measured (`fea-range --shots`, 2026-11-03): the game does
+  not repeat bit for bit (the chain and scars agreed; the crew's tissue and the surface blood
+  differed between the recording and the re-run, and between two re-runs), so "live here" is a
+  sibling outcome, not a copy, and says so on screen. Cause not found (reset state or iteration
+  order are candidates).
+  **Tissue knobs** (`crew_tissue::TissueTuning`): a review-only override of the crew lattice's
+  authored constants (tear energies, critical stretches, momentum shares, active reach, the piece
+  landing-breakup factor), set only by `fea-range` while it differs from the authored values; with
+  no override (both shipping presets, every play path) `tissue_tuning()` is exactly the constants
+  (`crew_tissue` test `the_tissue_tuning_is_authored_unless_the_review_range_sets_it`, which also
+  pins the only setter to `game_fea_range.rs`). Bonds keep the law `k = 2E/(ε_c·r)²`; a tuned class
+  scales its bonds' stiffness and critical stretch at solve time instead of rebuilding the model.
+  **Lamp power** (2026-11-03, the owner: a cut-open interior too dark to read): a review-only
+  factor on the cabin lamps' radiant power (`game_fea_range::review_lamp_gain`, the dome, TPZ
+  illuminator and ignition lamps' light and their glowing bulbs alike, through the one
+  `practical_gain` the lamp switch sets), shown on the sidebar as "LAMP POWER xN * (REVIEW)". It is a
+  brighter real emitter, not fill light: the lamps' light is still occluded and shadowed by the
+  closed tank. 1 in every other path (test `the_lamp_power_is_one_unless_the_range_sets_it`). The
+  range's LOOK dials are the display reproduction (look mode, exposure compensation, saturation,
+  warmth, gamma, dither, palette, retro strength, white balance), not light; its fog dial sets the
+  physical medium's density. Its focal length is a 35 mm-format field of view. Impact smoke (2026-11-03,
+  the owner: it hid the strike): `weapon_vfx::impact_smoke_build`, an authored envelope for the
+  `Impact`, `ArmorImpact` and `PenetrationSmoke` bursts in every path: none for 0.12 s, a smooth
+  build over 0.5 s, 0.4 of the earlier density (earlier: full within 0.08 s). Authored, not
+  combustion or dust modelling. The range's EFFECTS dials scale it (review-only; test pins the
+  setter). Cannon rounds in flight (2026-11-03, the owner: the tracer was wider than the
+  shell and hid it): drawn as their penetrator body (`drive_lodged_rounds`, the lodged rounds' own
+  pools: APCR as its core alone, named), nose at the round's point; the tracer's glow a third of the
+  calibre across (authored), its streak from the body's base. No depth of field:
+  the renderer has no lens model, and a screen-space blur would not be one.
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
   game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
   SVG/PNG frames about 1/1000 of real time apart, with a contact sheet and a 12 fps clip per case.
@@ -2012,7 +2248,8 @@ are presented as ray tracing, GI or a combustion/solver result:
   `cabin_medium.rs`); the exterior grey swatch on a cabin-facing surface is read as the ivory there
   (a reclassification by exact swatch, not per-part source data).
 - Crew compartment paint, grime, lamps (2026-10-28; `tank.rs` `tiger_paint_finish`,
-  `rm_gbuffer.wgsl` `cabin_grime` and `lamp_lens`, `surface_wear::CAMPAIGN_START`): ivory from a
+  `surface_wear::CAMPAIGN_START`; `cabin_grime` and the `lamp_lens` profile were removed on 2
+  November 2026, superseded by the vehicle surface model and unreached): ivory from a
   common RAL 1001 conversion, not a measured surviving interior; grime an authored mask (dust up,
   oil low, soot high) at one scalar load, 0.65 at the start (an estimate of weeks in the cauldron);
   lamp lenses an authored profile (core, rim, glint, cage) carrying the cube face's emission (the
@@ -2074,7 +2311,9 @@ are presented as ray tracing, GI or a combustion/solver result:
   (`lamp_mounts::SIGHT`), real emitters at the
   cabin lamps' power, driven by the reload machine's state, never by the player's selection. The
   APCR lens never lights because the reload machine chambers APCR as the armour-piercing round.
-- Winter whitewash (2026-10-28; `rm_gbuffer.wgsl` `apply_whitewash`, `Renderer::whitewash`): in
+- Winter whitewash (2026-10-28; removed 2 November 2026 with its frame lane, its renderer field and
+  `KESSEL_WHITEWASH`: the owner keeps the Tiger grey in every season, and the vehicle surface model
+  has no whitewash layer; the description below is the former coat): in
   winter acts the player's Tiger's exterior paint (recognised by its exact swatch) takes a chalky
   white coat (linear 0.56-0.72), thin where the brush ran dry, worn through on the decks, streaked
   down the sides; an authored mask in the mesh frame, raymarch backend only. Gate: `raymarch-cabin`
@@ -2146,8 +2385,9 @@ are presented as ray tracing, GI or a combustion/solver result:
   banks; the shader and physical backends draw none (the editor shows them with
   `KESSEL_RENDERER=raymarch`). Gate: `KESSEL_RM_SKIP=4194304` (debug A/B, removes the banks);
   `cargo test -- low_clouds` (extinction law, absent block, round trip, drift, optical depth).
-- Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`, `rm_gbuffer.wgsl`
-  `apply_wear`, the shade pass's worn edges and cavity grime, the glass film): four scalar loads,
+- Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`; its `apply_wear` noise was
+  removed on 2 November 2026 and the loads now set the vehicle surface model's amounts; the shade
+  pass's worn edges and cavity grime serve the other vehicles; the glass film): four scalar loads,
   mechanical wear (+0.4 % of the remainder per round), interior grime (toward full over 40 min
   crewed, +3 % per round), exterior grime (toward full over 3 km driven), glass grime (+2 % per
   round, over 8 km, toward full over an hour of full snowfall; a wipe leaves 0.05), starting at
@@ -2547,8 +2787,8 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 
 | System | Live truth | Remaining debt / release gate |
 |---|---|---|
-| Sky from an ephemeris (`ephemeris`, `celestial_sky`) | The Sun and the Moon come from Meeus: the Sun by chapter 25, the Moon by chapter 47 (the full 60 + 60 term series), four-term nutation, apparent sidereal time (ch. 12), topocentric parallax (ch. 40), the phase (ch. 48), Espenak-Meeus Delta T. Tests: Meeus examples 25.a and 47.a; Espenak's phases November 1942 - February 1943 within 2 min; 15:00 local apparent time on 21 Dec 1942 at Stalingrad (48.708 N, 44.513 E) puts the Sun at 7.41 deg, compass 220.9 deg. Each act has a place (Stalingrad; the Oderbruch and Halbe for the homeland acts) and a clock (`SkyClock`) that runs with simulated time; the named phases (Dawn, Day, Dusk, Night) are instants of it: noon, the Sun 3 deg rising or setting, and the act's historical night (1942-12-24T23:00Z, 1945-04-16T01:00Z, 1945-04-28T22:00Z). An authored lighting record (version 2) carries a UTC instant and the weather, never a sun direction or an exposure; a version-1 record's sun and exposure are ignored with a warning. The workshops were migrated by `tools/apply_ephemeris_lighting_20260929.py` to the instants their authored sun heights stood for (courtyard, "15:00 during Wintergewitter": 1942-12-21T12:00Z; urban intro 1943-01-15T12:27Z; staged encounter 1943-01-26T09:15Z; the ruined-house courtyard's 48 deg sun cannot stand over Stalingrad in winter, so noon on the solstice, 17.9 deg). The editor steps the clock by 10 min, 1 h and 1 day. Removed: the forced courtyard sun, the DayPhase sun and moon directions (93 deg from where the 15:00 Sun stood, research 3.6), the Night phase's Sun at 20 % of its irradiance (`night` 0.80, `solar_irradiance *= 1 - night`), the night fog multiplier (x1.10). | Named approximations: (1) one directional source carries the beam and the shadows: the Sun above -1 deg, otherwise the Moon when it is up; (2) while the Moon keys, the Sun lights only the air and the cloud (a secondary source without a beam) until it sinks below -21.5 deg, the altitude below which it lights no air seen from within 1 km of the datum; (3) while the Sun keys, the Moon is dropped: at most 1.5e-3 of the Sun's horizontal illuminance over the campaign window, tested every 10 min from 19 Nov 1942 to 5 Feb 1943; (4) the key changes discontinuously when the Sun crosses -1 deg; (5) twilight is single scattering: civil dusk (Sun -6 deg, clear) gives 4.4 lx against USNO 171's 2.99 (research 2.1); (6) no refraction of the bodies' directions, no eclipse. Gate: `ephemeris::tests`, `celestial_sky::tests`, `environment_authoring::tests`, `renderer::tests::named_phases_carry_no_light_and_the_night_has_no_floor`. |
-| Moon, night sky and airglow (`physical_environment`) | The Moon is a second finite disc in the same atmosphere: its top-of-atmosphere illuminance is USNO 171's phase law P(E) scaled by the inverse square of its distance, spectrally the Sun's irradiance times the lunar reflectance ratio (1.22/1.00/0.80 at 680/550/440 nm), and it passes through the same Rayleigh, aerosol, ozone and cloud transport as the Sun. The night sky (airglow, zodiacal light and the unresolved stars) is an emitting layer at 90 km: zenith radiance (3.4, 2.7, 2.3)e-9 RU (research 2.4, Benn & Ellison 1998 at sunspot minimum) with van Rhijn brightening, attenuated along the view ray; the cloud boundary receives its hemispheric flux 2 pi L0 (1 - sqrt(1 - k^2)) / k^2. Measured (horizontal illuminance of the model): clear, Sun 7.41 deg: 10,187 lx against USNO 7,202 (cloudless, clean air); under the act's cloud deck 1,195 lx against USNO dark stratus ~720; the Moon on 24 Dec 1942 23:00 UT, clear: 0.102 lx against USNO 0.111; clear and moonless 0.90 mlx against the research's 0.5-0.8 mlx; overcast and moonless 0.17 mlx against 0.03-0.2. A night with no moon and no fires carries no other light: no floor, no night palette. Under cloud the cauldron's fires are a named source (2026-10-28, `KESSEL_FIRE_GLOW_FLUX`, the raymarch list above): about 1 mlx on the snow under the act's deck. | Named approximations: (1) the lunar reflectance ratio is one colour for every phase and libration; (2) the night-sky layer is one smooth emitter: no resolved stars, no Milky Way, zodiacal light folded into the zenith value, no solar-cycle variation; (3) the Moon's disc is uniform (no limb darkening, maria or phase terminator on the disc); (4) earthshine is omitted. Gate: `physical_environment::tests`, `celestial_sky::tests`. |
+| Sky from an ephemeris (`ephemeris`, `celestial_sky`) | The Sun and the Moon come from Meeus: the Sun by chapter 25, the Moon by chapter 47 (the full 60 + 60 term series), four-term nutation, apparent sidereal time (ch. 12), topocentric parallax (ch. 40), the phase (ch. 48), Espenak-Meeus Delta T. Tests: Meeus examples 25.a and 47.a; Espenak's phases November 1942 - February 1943 within 2 min; 15:00 local apparent time on 21 Dec 1942 at Stalingrad (48.708 N, 44.513 E) puts the Sun at 7.41 deg, compass 220.9 deg. Each act has a place (Stalingrad; the Oderbruch and Halbe for the homeland acts) and a clock (`SkyClock`) that runs with simulated time; the named phases (Dawn, Day, Dusk, Night) are instants of it: noon, the Sun 3 deg rising or setting, and the act's historical night (1942-12-24T23:00Z, 1945-04-16T01:00Z, 1945-04-28T22:00Z). An authored lighting record (version 2) carries a UTC instant and the weather, never a sun direction or an exposure; a version-1 record's sun and exposure are ignored with a warning. The workshops were migrated by `tools/apply_ephemeris_lighting_20260929.py` to the instants their authored sun heights stood for (courtyard, "15:00 during Wintergewitter": 1942-12-21T12:00Z; urban intro 1943-01-15T12:27Z; staged encounter 1943-01-26T09:15Z; the ruined-house courtyard's 48 deg sun cannot stand over Stalingrad in winter, so noon on the solstice, 17.9 deg). The editor steps the clock by 10 min, 1 h and 1 day. Removed: the forced courtyard sun, the DayPhase sun and moon directions (93 deg from where the 15:00 Sun stood, research 3.6), the Night phase's Sun at 20 % of its irradiance (`night` 0.80, `solar_irradiance *= 1 - night`), the night fog multiplier (x1.10). | Named approximations: (1) one directional source carries the beam and the shadows: the Sun above -1 deg, otherwise the Moon when it is up; (2) while the Moon keys, the Sun lights only the air and the cloud (a secondary source without a beam) until it sinks below -21.5 deg, the altitude below which it lights no air seen from within 1 km of the datum; (3) while the Sun keys, the Moon is dropped: at most 1.5e-3 of the Sun's horizontal illuminance over the campaign window, tested every 10 min from 19 Nov 1942 to 5 Feb 1943; (4) the key changes discontinuously when the Sun crosses -1 deg; (5) twilight's higher orders are the two-stream field under Chapman's effective cosine (3 November 2026, "The sky through the day"): civil dusk (Sun -6 deg, clear) gives 5.2 lx against USNO 171's 2.99 (research 2.1); (6) no refraction of the bodies' directions, no eclipse. Gate: `ephemeris::tests`, `celestial_sky::tests`, `environment_authoring::tests`, `renderer::tests::named_phases_carry_no_light_and_the_night_has_no_floor`. |
+| Moon, night sky and airglow (`physical_environment`) | The Moon is a second finite disc in the same atmosphere: its top-of-atmosphere illuminance is USNO 171's phase law P(E) scaled by the inverse square of its distance, spectrally the Sun's irradiance times the lunar reflectance ratio (1.22/1.00/0.80 at 680/550/440 nm), and it passes through the same Rayleigh, aerosol, ozone and cloud transport as the Sun. The night sky (airglow, zodiacal light and the unresolved stars) is an emitting layer at 90 km: zenith radiance (3.4, 2.7, 2.3)e-9 RU (research 2.4, Benn & Ellison 1998 at sunspot minimum) with van Rhijn brightening, attenuated along the view ray; the cloud boundary receives its hemispheric flux 2 pi L0 (1 - sqrt(1 - k^2)) / k^2. Measured (horizontal illuminance of the model): clear, Sun 7.41 deg: 10,187 lx against USNO 7,202 (cloudless, clean air); under the act's cloud deck 1,195 lx against USNO dark stratus ~720; the Moon on 24 Dec 1942 23:00 UT, clear: 0.102 lx against USNO 0.111; clear and moonless 0.90 mlx against the research's 0.5-0.8 mlx; overcast and moonless 0.17 mlx against 0.03-0.2. A night with no moon and no fires carries no other light: no floor, no night palette. Under cloud the cauldron's fires are a named source (2026-10-28, `KESSEL_FIRE_GLOW_FLUX`, the raymarch list above): about 1 mlx on the snow under the act's deck. | Named approximations: (1) the lunar reflectance ratio is one colour for every phase and libration; (2) the night-sky layer is one smooth emitter: no resolved stars, no Milky Way, zodiacal light folded into the zenith value, no solar-cycle variation; (3) the Moon's disc carries no limb darkening and no maria (its phase terminator and earthshine are drawn since 3 November 2026, "The sky through the day"); (4) earthshine lights the Moon's disc only, not the ground. Gate: `physical_environment::tests`, `celestial_sky::tests`. |
 | **Reproduction transform (not physics): the crewman's eye** (`observer`, `shaders/exposure.wgsl`, `shaders/crush.wgsl`) | The fixed camera exposure is gone. On every presented frame of both backends and both presets, one compute pass meters the transported HDR (photopic and scotopic luminance from research 1.2's weights, a log-average of a 2 deg fovea, a 20 deg Gaussian and the field, 0.5/0.3/0.2) and advances the eye by the frame's simulated time: the pupil (Watson & Yellott 2012, age 25; constricting 0.3 s, dilating 2 s plus a 15 s tail), rate-limited pigment regeneration (Mahroo & Lamb 2004: cones 0.5/min, rods 0.045/min) with bleaching threshold rise, neural adaptation (cones 0.1 s up / 1 s down, rods 0.2 s / 3 s), Ferwerda 1996 threshold-versus-intensity curves, the CIE 191 mesopic weight, and flash blindness from the 1968 review's recovery fit (coverage-weighted energy, 180 s memory). The display shows the visibility-matching scale TVI(100 cd/m^2)/TVI(A) at the ACES key 0.18: the cones in colour, the rods as an achromatic signal weighted by (1 - m) that saturates at 1,700 scotopic trolands. The constants are generated from `observer.rs` into the shader, identical in both presets. The eye reads only the HDR and writes only its own state and the crush's exposure lanes. Measured with the CPU statement of the model: hatch closed from a 210 cd/m^2 dusk into a 0.5 cd/m^2 cabin shows the cabin at 1.3e-4 of white after 0.05 s, 0.0016 after 1 s, 0.0072 after 5 s, 0.0177 after 30 s (steady 0.0182); a muzzle flash over moonlit snow takes it from 0.0078 to 0.0007 half a second later and back after 30 s; a moonless scene maps under 2 % of display white. | This is a reproduction transform like ACES and the audio tone map, not physics: it models how an adapted observer would see the scene and cannot add light to it. Named limits: (1) the time course of dark adaptation is late: after a total bleach the rod-cone break comes at 29 min (classical 7-12 min) and the rods reach threshold at 39 min; the rod regeneration rate is chosen so the research's own statement (a full bleach to 10 % in about 30 min) holds; (2) flash blindness is global, not a retinal afterimage map; (3) no veiling glare (research 6.8: an owner decision; it would need its own gate); (4) no acuity loss, colour loss beyond the mesopic weight, or Purkinje shift beyond the scotopic weights; (5) a frame that is never metered (the LAN menu turntable) is shown by an eye adapted to 41 cd/m^2; (6) the meter reads the HDR after the camera's bloom halo. Debug gate: `KESSEL_CAMERA_EXPOSURE` (a fixed exposure without rods) opens only in a debug build on an explicit opt-in. Gate: `observer::tests` (the time courses, monotonic mapping, the moonless 2 % bound), `renderer::tests::the_eye_is_the_display_and_never_touches_transport`, `tests/exposure_clock_abi.rs`, `debug_gates::tests`. |
 | HDR precision (2026-10-04) | The HDR frame and the radiance targets that feed it (light layers, accumulation, volume estimate, reconstruction, passthrough) are binary32 (Rgba32Float) wherever the adapter can blend, filter and four-sample-resolve that format (`renderer::choose_hdr_format`); the light, the shaders and both presets are otherwise unchanged. Measured on the steppe under a full Moon: the field read exactly 0 cd/m^2 in binary16 and reads 0.0006-0.0012 cd/m^2 now; a daylight frame's displayed mean is unchanged (0.24318 against 0.24317). | An adapter without those format features keeps binary16 and the old loss: its smallest subnormal is 6e-8 RU (about 0.004 cd/m^2), so a moonlit field stores as zero. `KESSEL_HDR_HALF=1` forces binary16 for comparison. The G-buffer albedo target, the texel-probe targets and the bloom chain stay binary16. The optic layer dump (`raster_optics`) still assumes 8 bytes a texel and needs `KESSEL_HDR_HALF=1`. |
 | Twilight (2026-10-04) | `physical_first_planet_hit` in `shaders/physical_environment.wgsl` read the empty interval of a ray that misses the planet as a hit at infinity, so every sample whose ray toward the Sun cleared the planet was in the planet's shadow: all air above (R sin^2 h)/2 under a Sun at altitude h (3.9 km at 2 deg, 300 m at 0.5 deg) and all of it once the Sun set. The CPU reference never had the fault. Corrected: across sunset on the steppe the frame mean now falls 880, 529, 262, 77, 6.8, 0.21, 0.075 cd/m^2 for the Sun at +7.8, +4.8, +2.0, -0.8, -3.5, -6.0, -8.3 deg (before: 879, 487, 86, 0.0001, 0.005, 0.008, 0.07). | Low-Sun daylight is brighter than every earlier capture (the upper air is lit again). Gate: `celestial_sky::tests::the_light_falls_steadily_through_dusk` states the CPU reference's dusk; there is no GPU-against-CPU sky regression yet. |
@@ -4129,11 +4369,11 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   "this should be like the whole night"). The Sun
   and the Moon stand where the ephemeris puts them at every instant; only the clock's rate
   changes, and with it the eye's pigment rate. A pacing choice that changes no light.
-- **The discs are 1.6 times their angular size** (`celestial_sky::DISC_DISPLAY_SCALE`,
+- **The discs are 1.6 times their angular size** (2.1 since 3 November 2026, below; `celestial_sky::DISC_DISPLAY_SCALE`,
   `KESSEL_DISC_SCALE`; 1 is the real sky): the irradiance is untouched, so the light on the ground
   and the disc's total light are unchanged, the disc's radiance falls by the square of the scale
   and the penumbrae widen with it. A presentation choice.
-- **The stars have the real sky's population** (`physical_environment::STAR_*`): a star in 16 %
+- **The stars have the real sky's population** (to magnitude 7.5 since 3 November 2026, below; `physical_environment::STAR_*`): a star in 16 %
   of the lattice's 55,296 cells, about 8,800 to magnitude 6.5, the count brighter than m rising as
   10^(0.5 m) (the real slope), each star's irradiance from its magnitude (V = 0 is 3.6e-11
   W m^-2 nm^-1 at 550 nm), drawn into one internal pixel by the raymarch pass as before. A seeded
@@ -4148,17 +4388,22 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   choice that changes no light; the baseline showed the fully adapted night blue-grey and the
   moonlit night bright, so the black the owner saw was the unadapted eye.
 - **The night's hue is deeper outdoors** (`observer::ROD_DISPLAY_HUE`, 0.675/1.022/1.738,
-  luminance-neutral) and **the cabin keeps its hue** (`observer::CABIN_ROD_DISPLAY_HUE`, the former
-  0.80/1.00/1.45; `crush.wgsl` mixes the two by the buttoned-up view's eye_range_strength as it
+  luminance-neutral); the cabin's own hue (`CABIN_ROD_DISPLAY_HUE`, the former 0.80/1.00/1.45,
+  removed 2 November 2026, see below) was kept at first (`crush.wgsl` mixes the two by the buttoned-up view's eye_range_strength as it
   does the rod gain), so the interior's look is untouched; the interior stills' photometry before
-  and after is in the sky note.
+  and after is in the sky note. Since 2 November 2026 the cabin's hue is removed (the owner: "the interior
+  now has a very blue hue", once the compartment's paint became a white; "i think we can remove
+  this"): inside the hull the rod term is drawn achromatic, as the rod signal is.
 - **The display tonemap is AgX** (`crush.wgsl` `agx`, `tonemap`; `KESSEL_TONEMAP=aces` keeps the
   former fit): Sobotka's AgX in its minimal form (the inset, a 16.5-stop log2 encoding, the
   sigmoid, the outset, the 2.2 decode), chosen because bright colours desaturate toward white
   instead of skewing hue, which is what the owner's "oversaturated, deep fried" sunset was: the
   ACES fit turning the orange of a three-band sunset yellow. A reproduction transform like the fit
   it replaces; it changes no light. The CPU reference `observer::aces` stays as the mapping's
-  monotonic reference in the tests.
+  monotonic reference in the tests. The exposure into the curve, ×1.3, is the named
+  `observer::AGX_KEY_TRIM` (the key at about 0.27 display-linear as under the former fit; AgX
+  alone gives 0.21), a reproduction choice kept on 2 November 2026 when the leftover constants were
+  reviewed.
 - **The aerosol is a winter continental background** (`AtmosphereParameters::default`:
   Mie scattering 4.0e-5 and extinction 4.444e-5 per metre at sea level over the 1,200 m scale
   height, optical depth about 0.05 at 550 nm, single-scattering albedo 0.9; first set at 0.08,
@@ -4178,6 +4423,80 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   The point samples absorbed the green band three times more than the red through the long
   twilight paths and painted the civil twilight magenta; the averages keep it blue-grey. The
   three-band model's own approximation, stated; the illuminance gates still pass.
+
+### The sky through the day — 3 November 2026 (`docs/SKY_DAYNIGHT_20261103.md`)
+
+The owner's direction of 2 November carried on: the sky and environment lighting, the day and
+night cycle, the sunrise and sunset transitions; more and brighter stars at one pixel each;
+bigger discs; the Moon's phases over a ten-day month.
+
+- **Twilight's higher orders in a spherical atmosphere** (`physical_environment::spherical_cosine`,
+  `chapman`; `shaders/physical_environment.wgsl` `physical_spherical_cosine`, `physical_chapman`).
+  A named approximation in place of a fault. The multiple-scattering field (the two-stream
+  estimate of the clear column above a point, and the deck's diffuse source) took the plain cosine
+  of the body's zenith angle and was zero wherever the body stood below the point's horizon, so
+  the instant the Sun set every second-order photon vanished: the Earth's shadow and the whole
+  antisolar sky after sunset rendered from single scattering alone, black at the horizon (the
+  spring bridge at 16:45Z), and under the canyon's deck the cloud base lost its sunlit air above
+  at the same instant. The two-stream solve now takes the effective cosine 1/Ch, Chapman's
+  grazing-incidence function for the molecular scale height (Schueler's 2012 approximation, with
+  the planet's screening past the horizon by Ch(x, chi > 90) = 2 Ch(x sin chi, 90)
+  exp(x - x sin chi) - Ch(x, 180 - chi)). In an exponential atmosphere the energy a column takes
+  from a beam per unit of ground is the irradiance over Ch, so the plane solve with this cosine
+  is the sphere's while Ch varies slowly up the column; below the horizon the screening,
+  exp(-R delta^2 / 2H) for a depression delta, is constant up the column to first order. It is the
+  plain cosine above some 20 deg, about 1/35 at the horizon, 1/5,000 at -6 deg and nothing by
+  -18 deg. The deck's own top still takes the plain cosine (a surface the Sun has set on). Measured
+  (clear, the new Moon of 6 Jan 1943 at Stalingrad, CPU reference): 920 lx at sunset, 134.5 at
+  -3 deg, 5.16 at -6, 0.093 at -9, 0.0024 at -12 against USNO 171's 984, 66.4, 2.99, 0.116, 0.0044,
+  every value within a factor of two and falling steadily; the antisolar sky a degree up at -3 deg
+  28 cd/m^2, blue over red 2.0, against the zenith's 23. Limits: one scale height for the
+  column (the aerosol's is shorter, its share at grazing light overstated); no refraction of the
+  grazing beam; the ground's upward flux still left out. Gate: `celestial_sky::tests::
+  twilight_falls_as_measured_and_the_earths_shadow_is_lit`, `physical_environment::tests::
+  a_hazy_sky_whitens_toward_the_horizon_away_from_the_sun`.
+- **The Moon's disc shows its phase** (rm_common.wgsl `rm_moon_disc`, `celestial_sky::MoonDisc`,
+  `CelestialLighting::moon_disc`). Before, the disc was one flat circle whose brightness alone
+  followed the phase. A point of the disc is now a point of the lunar sphere facing the eye, sunlit
+  where its normal faces the Sun (the Sun's direction from the Moon taken as from the Earth, within
+  0.15 deg); the sunlit part carries the ephemeris' whole irradiance at one radiance (named: the
+  lunar surface's weak limb darkening taken as none, the Lommel-Seeliger law's mean); the drawn
+  sunlit share is (1 - m.s)/2 from the two directions, tested against the ephemeris' illuminated
+  fraction to 0.01 through a ten-day month that waxes and wanes. The night side shows the
+  earthshine: the full Moon's radiance times the Earth's geometric albedo (0.367), its solid angle
+  from the Moon and its Lambert phase at the supplement of the Moon's (about 1e-4 of the full Moon
+  beside a crescent, tested): the ashen disc. The disc is drawn whichever slot carries the Moon's
+  light and by day too (its light is still dropped while the Sun keys, `MOON_DROPPED_BOUND`; its
+  disc had vanished with it and popped in as the Sun crossed -1 deg). The shader renderer's
+  `physical_disc_radiance` (reflections there, not the shipping raymarch) keeps the flat disc.
+- **The discs are 2.1 times their angular size** (`celestial_sky::DISC_DISPLAY_SCALE`, from 1.6;
+  "a bit bigger again"): the Moon about twelve internal pixels across at 1024 x 576 so the phase
+  reads; irradiance untouched as before. A presentation choice.
+- **More stars, to magnitude 7.5** (`physical_environment::STAR_*`): 170 cells a cube face, a star
+  in 16 %, about 27,700 over the sky with the same 10^(0.5 m) count law, the count to 7.5 that a
+  dark-adapted eye reaches under a sky with no artificial light (Bortle class 1, as the 1940s
+  steppe was; the real sky has some 25,000). Still one internal pixel each. Physical, not a choice.
+- **The one-pixel star's flux times 4 on the display** (`physical_environment::STAR_POINT_GAIN`,
+  rm_shade.wgsl `RM_STAR_POINT_GAIN`). A presentation choice: a star is a point, seen by its
+  flux over the eye's summation area; the scene's 90 deg field is shown on a panel the player sees
+  some 50 deg across, so a pixel's flux reaches him in about a third of the scene's solid angle
+  while the sky round it keeps its radiance, and every star reads about three times fainter
+  against the night than outdoors. Drawn into the star's pixel only; it lights nothing (the
+  diffuse starlight in the night-sky layer is unchanged). The star pixel's ceiling rises from 3 to
+  5 times the display's white (`RM_STAR_CEILING`), past AgX's white so the brightest few dozen read
+  full white through the dither; the deltaP bloom adds its half-texel halo at most.
+- **The clock's pace changes smoothly** (`renderer::blended_clock_rate`, `PACE_BLEND_HALF_DEG` 2):
+  the four phases' rates are blended in their logarithm by a smoothstep 2 deg either side of each
+  edge (-14, -6, +8 deg). The spring bridge runs its blue hour some seventy times slower than the
+  night beside it; the former linear blend over one degree made the blue hour's end a lurch, and
+  the eye's pigment rate, which follows the clock, lurched with it. The phases' play times move by
+  a few per cent. A pacing choice that changes no light. Gate: `renderer::atmosphere_tests::
+  the_clocks_pace_passes_between_phases_without_a_step`.
+- **The far cloud banks take the cascades' shadow** (rm_shade.wgsl `rm_low_cloud_far`): beyond the
+  froxel grid the banks' key beam is now occluded by the depth cascades as far as the far cascade
+  reaches (some 700 m), so at a low Sun a bank in the lee of a rise or the town is shaded with the
+  field under it instead of standing sunlit and white over it. Beyond the far cascade a bank still
+  takes no terrain shadow (named; the open item is a horizon map of the terrain).
 
 ### The frame after the first kill — 2 November 2026
 
@@ -4497,3 +4816,125 @@ Gates: `observer::tests::fire_lit_ground_keeps_its_cones_colour_and_the_dark_fie
 (CPU statement and the shader's use of it), `renderer::tests` (the crush uniform's 208 bytes, the
 eye lane at 192, the three lane copies on both backends), `observer::spatial_meter_tests`
 (shader validation). Identical in both presets.
+
+## Effect glow on the one incandescence law, 2026-11-02 (`incandescence::fx_kelvin`, `fx_glow`; the shaders' `incandescent_glow`)
+
+An emissive effect mesh (gunfire, an impact, a burning box) and its light were drawn in a
+hand-tinted orange, (1, 0.24, 0.03) mixed 18 % toward the mesh's colour, with an added white-hot term
+above a drive of 6, in five places (`rm_gbuffer.wgsl`, `mesh.wgsl`, `gbuf.wgsl`, `stylized_mesh.wgsl`,
+`combine.wgsl`) and three CPU copies (the main flash's light, the volumetric flash colour, the
+ray-traced emission tint). Now each is the Planck colour (red band 1) of 1,500 K plus 150 K per unit
+of drive, to 2,800 K, at 0.30 of the drive: the old orange was that law at about 1,800 K, so a low
+drive looks as before and a strong one turns white-hot by the same law the fire, the sparks and the
+glowing metal use (test: `an_effect_glows_on_the_planck_law_and_matches_the_old_orange_at_a_low_drive`).
+The drive-to-temperature map is an estimate. In the raymarch backend an own-colour glowing instance
+batch is now pushed as kind 2 (its authored colour, `set_batch_own_emissive`), not kind 0.
+
+## The vehicle surface model, 2026-11-02 (`src/vehicle_surface.rs`, `shaders/rm_vsm.wgsl`; `docs/VEHICLE_SURFACE_MODEL_20261102.md`)
+
+Every material layer on the player's Tiger is placed by its cause. Phase 1 measures the causes the
+geometry carries; phase 2 builds the paint and steel on them; phase 3 simulates the processes that
+act on a vehicle in the field. With the field installed, the player's hull, turret, gun, roof
+hatches, visor holder and guides, cupola grip and lid, periscope housings, deck plate and fuel caps
+take this finish in place of the plain fallback paint (`paint_source_metal`, drawn only until the
+field is installed or with it switched off, at the same grey and white) and the shade pass's
+screen-space worn edges and corner grime (which stand down for every pixel near the player's
+vehicle). The former noise layers (`apply_whitewash`, `apply_wear`, `cabin_grime`) were removed on 2
+November 2026. `KESSEL_VSM_LAYERS=N` keeps layers 1..N for review; 255 shows the fallback paint. The
+old swatches were aligned the same day so the friendly Tigers, the German wrecks and every part off
+the field match: exterior sRGB 105/108/115 (satin), compartment 221/216/206, basket floor a neutral
+93/93/91 (it took the source's green-grey 58/70/64). The cupola's lid is its own bake, added to the
+turret's field at its hinge, closed. Within a marked part the finish replaces only pixels whose
+authored base colour is one the field repaints (the fallback grey and white, the floor paint, track
+and cable steel, or the source's metal at metallic 0.5 and above; `vsm_repaints`, rm_gbuffer.wgsl):
+a painted instrument face, a dial's white back and a lamp keep their own material. A 1 cm cell's
+class cannot resolve a 4 cm dial in the gunner's contact zone; the turret position indicator's white
+face read as worn steel until this gate (owner report, 2 November 2026).
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| The field | A sparse grid of 1 cm cells (the kit-CAD frame's units, 1.112 cm of the real vehicle while the true-scale gate is off) on the surfaces of the hull, turret and gun GLBs, in 4x4x4 bricks with a 64-bit occupancy mask: 7.94 M cells, 212 MB on the GPU with the process and snow channels, baked in 168 s on 16 threads and cached by the meshes' hash. Each surface point's record sits 9 mm off it along its visible normal (the two faces of a thin sheet in different cells); the shader blends the eight records round the point by trilinear weight, leaving missing ones out. | One representative surface point per cell (the sample nearest the cell's centre), so a cell straddling two faces carries one face's measures. Turret at zero traverse and gun level for the occluders; the field does not follow a turned turret's shadowing of the hull. Hatch lids, periscopes and other separate meshes are occluders where the GLBs hold them at rest but do not sample the field yet. |
+| Openness | At reaches of 0.6, 2 and 6 cm: the share of 24 rays (a Fibonacci sphere, rotated per cell by a hash of its key) cast from half the reach off the surface that run the reach unblocked. Flat 0.75, convex above, creases below (test: `openness_reads_a_face_an_edge_and_a_crease`). | A geometric accessibility measure, the standard proxy for where paint chips and grime packs; 24 rays give a sampling noise of about 0.1 per cell before the trilinear blend. |
+| Sky and enclosure | 32 cosine-weighted hemisphere rays from 0.3 mm off the surface against all three meshes and the ground plane: the share free for 25 cm (enclosure) and the share reaching 40 m upward (sky). | The vehicle's own geometry only: terrain, buildings and other vehicles do not occlude. |
+| Thickness | The first hit straight into the surface within 25 cm. | The wall behind the face, not the plate's nominal thickness: a bracket on a plate reads the bracket. |
+| Sharp convex edges | Mesh edges welded at 0.05 mm (99.7 % of the meshes' edges join exactly two triangles) whose faces meet at more than 12 degrees and convexly; per cell the nearest such edge within 2.5 cm of a face that borders it, stored as a point on its line (0.1 mm units) and an octahedral direction (about 1.4 degrees), with its dihedral angle. The shader measures the pixel's distance to that line exactly. | Corners use the two nearest records of different direction among the eight round the point. Coarsely tessellated curves (a barrel's facets) read as shallow edges, kept with their angle so later layers can weight them. |
+| Material class | From the source material name, the reviewed node lists (`TRACK_STEEL`, `CABLE_EXHAUST_STEEL`, `PAINTED`), the running gear's envelope, and the CAD registration's assembly folders where at least 60 % of a node's mass candidates agree (`catalog/tiger_surface_cad_folders.v1.json`, `tools/vsm_cad_folders.py`). | The folders come from SolidWorks mass candidates (several parts can share a mass), so only the running gear's and the barrel's folders are used; road wheel tyres are not separated from their discs yet. |
+| Review views | `KESSEL_VSM_VIEW=class|open_fine|open_mid|open_coarse|sky|enclosure|edge|thickness|cells|albedo|roughness|metallic|rounding|flow|rust_carried|dirt_carried|mud|heat|soot|oil|standing_water` draws the channel as unlit false colour on the marked meshes (`KESSEL_VSM_VIEW_GAIN`); fx-review part `materials` (`KESSEL_VSM_REVIEW=field` the channels, default the layer progression lit and as unlit albedo); `tools/vsm_contact_sheet.py`. The progression's interior stills open the roof hatches for daylight (a disclosed harness action). | A debug view, off unless set (test: `the_review_view_is_off_unless_asked`); it writes emission only to show placement and is never a shipping finish. The finish writes albedo, roughness, metallic and the shading normal only (test: `the_vehicle_surface_finish_writes_no_light`). |
+| Paint and steel (layers 1-3) | Substrate by class (rolled plate or sheet by measured thickness 12 mm, oxidised manganese track, heat-scaled exhaust, blackened breech steel where the gun's wall is 2 cm or more inside); red-oxide primer RAL 8012 linear (0.156, 0.039, 0.034) from the RAL CIELAB values; the exterior topcoat a medium grey (0.142, 0.151, 0.170; L* 46) matched in lightness to the owner's reference image (its lit faces sRGB ~135 and mid faces ~95 under studio light) and given the slight blue lean of the period's German greys so that it reads neutral under the low winter sun (sunlit snow measures R/G 1.05, B/G 0.95 on the display) — the owner's choice over RAL 7021's blue-black (0.041, 0.045, 0.051; L* 25) (2 November 2026: "too dark and blue and green ... more neutral"; "see this reference for the grey approx"; "exterior still looks green can we make it neutral grey"); outside the paint is satin (roughness 0.50, chalking to 0.70) with a small metallic share 0.15 and the bared steel smoother (0.30, dark steel 0.42), the owner's choice ("a bit shinier") over a flat field paint, a departure from a dielectric paint named here; bare steel neutral; inside, a white at RAL 9010's slightly warm chromaticity (0.72, 0.688, 0.62), the owner's choice over the period's Elfenbein RAL 1001 (2 November 2026: "a neutral white and we'll play with lighting instead"; the cool neutral first tried read blue in the compartment's daylight); the machinery (engine, radiators, fans, transmission, steering: `Class::Mechanical`, by the CAD folders and the engine bay's and gearbox's regions) is bare metal under oil, the owner's choice where the period finish is undocumented (sources give a blue-grey or grey-green engine bay and a satin black Maybach, none all red); spray thickness varying the topcoat by +/-5 % over tens of centimetres. | The CIELAB values are the standards' nominal colours converted to linear sRGB (D65), not measured wartime paint; steel and oxide reflectances (bare 0.48-0.56, blackened 0.14, rust 0.155/0.045/0.012 to 0.06/0.022/0.01) are published-range estimates. The topcoat no longer depends on the environment: the whitewash is not applied to the player's vehicle. |
+| Edge rounding (layer 4) | Within the edge record's reach the shading normal turns toward the neighbouring face by up to half the dihedral angle over a fillet of 3.5 mm outside, 2.5 mm inside, plus 3 mm where the crew's contact wears it, for the nearest edge and a corner's second. | A normal approximation of a geometric round: the triangles stay sharp, silhouettes are unchanged. The radii are estimates of paint build-up and wear. |
+| Wear (layers 5-6) | Chips: a wear depth through topcoat (primer halo) to steel from the edge's distance (e-folding 7 mm inside, 10-25 mm outside), angle (25-80 degrees), prominence (6 cm openness), height and forward position on the hull, the crew's contact, the mechanical-wear load and a 12 cm field of runs along each edge; shaped by value noise at 9 and 25 mm in the vehicle's frame. Scattered chips on open faces outside. Contact: the crew's hand zones and floors (stations from `cabin_medium`, the commander's eye, the loader's arc from rack to breech), the roof hatches' rims and the deck lanes outside, wearing through on edges and high points and polishing steel. Running gear wears through to steel. | The calibration (bands, rates, noise) is an estimate from service photographs, not a measured wear law; chip shapes are noise inside cause-placed regions; contact zones are fixed points and capsules, not tracked crew motion. |
+| Corrosion, deposits, weather (layers 7-9) | Rust on bared steel by wetness (outside: the sky and trapped water; inside: dry but the floor), creeping under the paint's broken edge; grime by openness and enclosure (a months-in-service floor plus the campaign loads), hands' grime; inside and on the machinery a dulling film over every surface and an oil-and-grime coat gathering in corners and enclosed spaces and toward the floor (below 1.6 m in the hull frame); dust on up-facing interior faces away from contact, propellant soot under the turret roof; UV chalking of exterior paint by sky exposure. | Amounts are scaled by the existing whole-vehicle loads (`surface_wear`), not accumulated per cell over the campaign. |
+| Snow on the vehicle (phase 4; `vehicle_surface::snow_catch`, rm_vsm_core.wgsl) | Per cell a byte of how much of the lying snow a surface keeps: the sky it sees (0.08-0.5 smoothstep), less the exhaust's heat and the engine deck over the radiators (to 15 %), less the crew's routes outside (the roof hatches' rims, measured from the source GLBs' hatch subtrees, and the deck lane beside the turret; to 15 %). The depth programs and the G-buffer read the same byte at a vertex's nearest cell, so both lift a face identically; the lying share and the relief normal take it too. The whitewash is not applied to the player's vehicle in any environment; the lying snow's load is the vehicle's own (`snow_cover`). `SNOW_KEPT` = 0: the crew keep their vehicle brushed clear and snow slides off the barrel, so no lying snow is drawn on it (the owner, 2 November 2026: keep the Tiger grey; snow on it is to come from the particle system); the catch stays in the field for that work. The running gear's packed snow is unaffected. The replacement deck plate (`tiger_refuel`), the roof hatches, the visor holder and guides, the cupola grip and the periscope housings take the field like the hull. | The snow is the earlier lying-snow relief and noise, now placed by the field; it is not deposited by a simulated fall with wind, does not slide off steep faces by a snow mechanics model, and does not melt by a heat balance (the deck's warmth is a fixed share). The nearest-cell lookup at a vertex steps at 1 cm. |
+| Processes (layers 10-14; `vehicle_surface::processes`, 25 s at bake) | Water: three drops from every cell the sky reaches walk the surfaces under gravity in 6 mm steps (re-projected by ray casts, rounding edges whose next face overhangs less than about 53 degrees, dripping otherwise, meandering on flats), depositing flow, picking up dirt where they stand and rust where they cross sharp exposed edges, laying both down as they run. Track throw: clods from every link cell at eight speeds (-4.5 to 10 m/s) with the run's velocity (top forward, wraps turning, bottom still) flown ballistically to their strike. Exhaust: heat by distance from the pipes (e-folding 6 cm); 120,000 buoyant random-walk gas parcels with varied wind leaving soot where they touch. Oil: drops from each sprocket's hub until they reach the track. Barrel heat and propellant soot by position along the gun. Each channel is a byte, saturating over its own 99th percentile. | Geometric particle models, not fluid dynamics: no film thickness, evaporation, freezing or wind field; one gravity direction (the vehicle level); the throw ignores air drag and clod size; the plume is a random walk, not a solved flow; the oil sources are the sprockets' hubs only. The renderer draws the results as streak, spatter and stain patterns shaped by noise inside the simulated amounts. |
+
+## The eye adapts place by place, and a step into daylight is a second, 2026-11-03 (`shaders/eye_local.wgsl`, `crush.wgsl`, `exposure.wgsl`, `observer::LOCAL_*`, `observer::outside_rise_tau`)
+
+The owner: "we need to improve this auto exposure setting its horrible. can't see anything
+interesting because its either too dark or screen is entirely white ... the exposure effect is just
+so blinding its ruining the whole game". Measured with `eye-review` (headless, live 60 Hz frames,
+the locked look; the numbers are in the change's report and `captures/agent-...-eye_*_frames.jsonl`).
+No grade, no tint, no change to any emitter: both changes are to the eye's reproduction transform.
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| Local adaptation (`LOCAL_POOLING_SIGMA_DEG`, `LOCAL_SIMULTANEOUS_RANGE_LOG`, `LOCAL_ADAPTATION_STRENGTH`) | After the meter, each meter cell's mean photopic luminance (up to 4 x 4 pixels, 256 x 144 cells) is taken as log10 and pooled by a separable Gaussian of 0.428 deg (`eye_local.wgsl`, CPU twin `pool_log_luminance`). In the crush each pixel's cone term is scaled by Ferwerda's visibility-matching law at a local adaptation luminance log La = log A + k clamp(P - log Lm, -1.85, 1.85) instead of at the eye's A: TVI(A) / TVI(La) (`local_cone_gain`, generated into the shaders as `obs_local_cone_gain`). A eye's cone adaptation (lane 12), Lm the luminance metered this frame (lane 15), P the pooled log luminance, k = 0.5. A region at the metered level is shown as before; a decade darker is lifted 10^k, a decade brighter held down as much, never reordered. The rods keep their own local response (`rod_response`). Off under a fixed debug exposure. Identical in both presets. | Spatial extent: Vangorp, Myszkowski, Graf & Mantiuk 2015 (ACM TOG 34(6) 166), the wide term of their best model (sigma 0.428 deg, weight 0.654), pooled in the log domain as their model #7 does (their best model pools through fitted sigmoids; the 0.0824 deg term is below a pixel here; a cell is 4 x 4 pixels). Range: 3.7 log units of simultaneous range (Kunkel & Reinhard 2010, APGV; Jiang & Fairchild 2021 measured 3.3): a neighbourhood beyond half of it from the adapted level adapts no further. Strength k: a reproduction choice, the owner's to set. Single cones adapt on their own (MacLeod, Williams & Makous 1992) so at a fixated point in daylight it approaches 1, but the whole picture is shown at once while a crewman's gaze would have moved over it. `KESSEL_EYE_LOCAL=sigma_deg,strength` overrides both for review (strength 0: the single-state eye); no launcher sets it. The cone TVI is flat below 10^-2.6 cd/m^2, so at night the local cone term fades by itself (the site of adaptation moves to broader post-receptoral pools at low light, Dunn, Lankheet & Rieke 2007). Tests: `local_adaptation_tests`. |
+| A step into daylight (`OUTSIDE_DAZZLE_FROM_LOG` 0.2, `OUTSIDE_DAZZLE_RAMP_LOG` 0.3, `OUTSIDE_DAZZLE_MESOPIC_FROM` 0.75) | Outside the hull and at the optics the neural adaptation rising toward a target more than 0.2 decades above it relaxes toward the dazzle time constant (0.6 s, full from 0.5 decades), in proportion to how photopic the target is (the CIE 191 mesopic coefficient from 0.75, about 0.9 cd/m^2, to 1, 5 cd/m^2); inside the hull the 2026-10-28 rule stands (from 0.5 decades, full at 1.0). Below the onset, and toward a mesopic or scotopic target, the owner's comfortable 4.5 s stands, so an outdoor glance between sky and snow does not swing the picture and a fire's glow over the night field does not cost the night for seconds after it dies. Before: climbing out of the cupola into the noon snow held 60 % of the frame at white a quarter second out, 47 % at one second, 26 % at three, 11 % at six. | Light adaptation to a photopic step up does most of its work in the first second (Crawford 1947, Proc. R. Soc. B 134:283; Baker 1949, J. Opt. Soc. Am. 39:172), measured with photopic fields; the 0.6 s is the existing dazzle constant. The onset and the mesopic gate are design bounds named here; outdoors no `inside_meter` damping stands in front of the rate. Test: `a_flash_dazzles_briefly_and_a_step_into_daylight_recovers_within_seconds`. |
+| A weapon's flash acts through its afterimage only | While the meter registers a flash (a transient source, a field-energy onset and bright cells 30 times the adaptation), the neural rise keeps the comfortable rate: the dazzle rate is not applied on top of the flash-blindness fit (lanes 10-11). | The recovery fit of the 1968 flash-blindness review already is the eye's response to a flash of that energy; under the dazzle rate a night muzzle flash's 83 ms raised the neural state 0.45 decades, which then fell at the 6 s dark rate (counted twice). |
+| The snap holds a quarter second (`SNAP_HOLD_S` 0.25, lane 31) | A view's snap to its field (its first frame; an optic's eye returned to after `OPTIC_RESNAP_GAP_S`) repeats for 0.25 s of frames. | Scheduling of the snap only (`Eye::adapted` of each frame). A view's first frames come from temporal histories as old as its last use: the TZF at night first metered 2.8 cd/m^2 of the noon it last saw, snapped and bleached its cones to it (adaptation 2,000 cd/m^2 falling to 25 and held there by the bleach) and stayed black for the minute (eye-review, 2026-11-03). |
+
+The 2026-10-04 draw-in of the closed cabin view (`eye_range`, the "Eye: range drawn in" row above, an
+owner-directed presentation of local adaptation) still runs after the local adaptation; with the
+cabin's dark lifted and its ports held down by the eye itself, fewer regions reach its 2-stop knee.
+Retiring it is the owner's call. Neither changes any light: the meter, the transport and the
+emitters are untouched; the strength 0 (`KESSEL_EYE_LOCAL=0.428,0`) reproduces the single-state eye.
+
+Measured (`eye-review`, Canyon v2 seed 29 and spring-bridge-v2, 1024x576, deltap-real 15,15,7; share
+of the crushed frame at black, luma code <= 2, and at white, >= 250; "local off" is this change with
+`KESSEL_EYE_LOCAL=0.428,0`, the time course alone):
+
+| Scenario | Before | After | Local off |
+| --- | --- | --- | --- |
+| Head out of the cupola into noon snow: seconds over 10 % white / recovered | 6.3 s / 7.5 s (60, 47, 26, 11 % white at 0.25, 1, 3, 6 s) | 0.5 s / 0.6 s (27 % at 0.25 s, 0 % from 1 s) | 0.8 s / 1.2 s |
+| Head back in: peak black / recovered | 58 % / 10 s | 4 % / at once | 62 % / 12.5 s |
+| Loader's compartment by day, a hatch open: black / near black (<= 10) | 12.6 % / 41.7 % | 0.0 % / 12.1 % | 14.4 % / 46.8 % |
+| Commander buttoned by day: near black / white | 1.2 % / 1.3 % | 0.0 % / 0.06 % | 16.8 % / 0.8 % |
+| Driver's visor by day: black / near black | 4.8 % / 39.8 % | 0.2 % / 24.9 % | 25.4 % / 73.9 % |
+| TZF by day (the dark cabin round the eyepiece): black | 11.4 % | 1.9 % | 17.4 % |
+| TZF at night, a shot fired: recovered | 9.2 s (snapped to its stale noon, held dark by the bleach) | 1.2 s | - |
+| Main gun at night, head out: seconds over 50 % black / recovered | 1.45 s / 6.1 s | 1.1 s / 4.4 s | - |
+| Noon head out, four bearings: black | 0.0-1.5 % | 0.0-0.1 % | 0.0-1.5 % |
+| Blue hour, spring bridge, toward the burning town: black | 56.7 % | 55.7 % | - |
+
+By day the gun and an HE strike do not move the eye (white under 0.2 %). The blue hour is unchanged:
+below about 1 cd/m^2 the cone TVI flattens and the rods carry the picture, so the local cone term
+is small there by the law, and the dark ground beside the fires stays dark (the fires' veil, 2
+November). Cost: `eye-local` 0.012 ms a frame (gfxbench-drive, 1200 frames, KESSEL_GPU_PROFILE=1),
+`crush` +0.001 ms, `exposure` unchanged at 0.415 ms.
+
+## The gun's fumes in the crew compartment, 2026-11-03 (`src/cabin_fumes.rs`; `rm_medium.wgsl` `rm_fume_density`, `rm_case_plume`, `rm_gas_density`)
+
+The owner, of a range still with sunlit haze in the turret: a lighter haze should leave the breech as
+the spent case is pulled, the case should go on venting for about three seconds wherever it is, many
+shots should stack as in a real Tiger, and the fan up top should draw the haze out slowly. Before
+this a shot added a flat 0.11 of the cabin haze at the trigger (with the breech shut) and the breech's
+opening 0.035, drained linearly at 0.03 a second: one shot was gone in a few seconds and nothing
+stacked. Those kicks are removed; `interior_haze` now carries only a hit's residue.
+
+Sources. Foreign Military Studies P-002 "Tank ventilation" (via kamenn.eu): in the Tiger, roof
+ventilator drawing, hatches shut, empties left inside, carbon monoxide stood at 0.05-0.1 % after each
+shot and fell to practically nothing one to two minutes after firing stopped; lidding each case as it
+came out improved it; the powder gas is about half carbon monoxide. The turret ventilator is rated at
+12 m³ a minute (the Tiger turret manual, via tiger1.info). It runs while the engine turns, as its hum
+does (`game_acoustics`).
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| Two zones | Litres of undiluted fume in an upper layer (the turret air above 2.00 turret-frame units, a little over the breech, `LAYER_Y`) and a lower one, in the 10 m³ of free air (`fea_damage::compartment::TIGER_CREW_AIR_M3`, named there). Fresh fume is hot and rises into the upper layer; the fan's 0.2 m³/s and the hull's leakage draw from it while the same flow comes in low and rises through the interface; 0.05 m³/s exchanges the layers; an open hatch exchanges 0.05 m³/s with the outside on its layer (the cupola, loader's and escape hatches upper, driver's and radio operator's lower; open past half travel). Integrated in 50 ms steps. The upper layer's share of the air is measured from the source compartments (`cabin_medium::Medium::volume_split`). | A zone model: each layer well mixed, a fixed interface 15 cm thick, the fume a passive tracer once in a layer (no cooling of the layer, no deposition on the walls). Estimates: the interface height, the exchange 0.05 m³/s, the leakage half an air change an hour, the hatch exchange (buoyant exchange through a 0.5 m opening with Δρ/ρ 0.15, 0.035 m³/s, rounded up for wind). Test: a shot's fume is of P-002's measured carbon monoxide (0.04 % against 0.05-0.1 %, a factor of two allowed); five shots stack; the fan clears them to 5 % in 45-150 s (P-002: one to two minutes); buttoned with the engine off they stay; an open hatch clears faster; the fume is conserved until the air carries it out. |
+| The breech puff | Nothing leaves while the block stays shut after the shot (the owner, 2026-11-03): the bore's gas is released only once the block is open (the loader's lever past its open threshold, the solo crew's opening, the lone survivor's fumble), the case's venting only as it is drawn out (test `fume_leaves_only_an_opened_breech`). When the block opens on a fired case, 5 L of the bore's gas leave the breech; the drawn puff (`rm_gas_density`, the shape's axes unchanged) carries the fume not yet spread, at its centre the fume over the shape's volume-weighted fill (`PUFF_PROFILE_MOMENT`, its profile integrated), at most undiluted; the fume passes to the upper layer with a 0.7 s e-folding as the puff spreads. The fan's sink flow (0.2 m³/s through a hemisphere about the intake under the roof, `sink_velocity`) carries the puff toward the intake by its age. The former fixed envelope (0.30 cap, a fade from 1.2 to 2.2 s) is removed. | Estimates: 5 L (the 8.8 cm L/56 bore, 30 L, and a 4 L chamber of gas at ambient pressure near 1,000 K is about 10 L at 293 K; half leaves rearward), the 0.7 s spreading time. The puff's shape and growth stay authored; the sink is a point sink in a flat open roof. The puffs' shared saturation at 0.6 /m (`rm_puff_extinction`) still holds it, so its first second is drawn lighter than its fume (up to 17 /m). |
+| The case venting | Each case drawn out of the breech (the loader's pull and the crew's ejection) carries 3 L of fume and vents it from its mouth with a 1 s e-folding, ended at 3.5 s, wherever its body is: in the hands, the rack, on the floor; inside the hull's box its fume joins the upper layer. It is drawn as a pure buoyant plume from the mouth (Morton, Taylor and Turner: half-width 1.2 alpha (z + z0) with alpha 0.1, centreline concentration (z0 / (z + z0))^(5/3) of the mouth's, Gaussian across), its strength at the mouth the undiluted fume's extinction times the source flux to the two-thirds, leaning with the fan's sink flow against a 0.3 m/s rise, ending where it meets the upper layer. | Estimates: 3 L (the case's 5.5 L of hot gas, about 1.6 L at 293 K, and its residue's first seconds), the 1 s e-folding (the owner's three seconds; a buoyant exchange through the 81 mm mouth is of that order), the rise speed. Similarity profiles from the mouth, a straight leaning axis; a case thrown out of the hull vents into the open, undrawn. The reload fixture (`debug_reload`) never opens the block and releases no fume. |
+| Visibility | The layers and plumes add to the cabin haze's extinction inside the cabin domain (its scattering: albedo 0.8, asymmetry 0.55); the undiluted fume's extinction is 17 /m. | Estimate; no measured smoke yield of the propellant was found. The chain: 0.5 % of the Pzgr 39's 2.5 kg charge (JH.Dv. 481/60, via Wikipedia) taken as smoke-forming (the flash reducer's potassium salts and residue; flash-reducer patents note those salts make the smoke), 12.5 g a shot; the compartment's share is its 8 L of the charge's ~2,200 L of gas at 293 K, 0.36 %, about 45 mg; a fine salt smoke's mass extinction taken as 3 m²/g. A case mouth's 8 cm of fume is nearly opaque; one shot spread through the compartment is 0.014 /m, under the roof right after it about ten times that. |
+
+Not yet: the hit residue (`interior_haze`) and a fire's soot (`interior_soot`) still drain linearly
+at the old fan and hatch rates, not through this zone model; machine-gun fumes are not modelled.
+No render has checked the look yet (the owner's editor holds the GPU); `cargo run -- haze` and
+`fx-review` stills will.

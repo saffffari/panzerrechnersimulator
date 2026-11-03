@@ -1,12 +1,23 @@
 // Raymarch backend depth-only raster: sun cascades, the sky-cover map and point-light faces all
 // use this one program; the push constant selects the view matrix. Grass cards take the
 // alpha-tested, wind-bent entry points (vs_grass/fs_grass) with the material bound at group 1.
-struct ShadowViews { vp: array<mat4x4<f32>, 16>, };
+struct ShadowViews { vp: array<mat4x4<f32>, 16>, vsm: array<vec4<f32>, 8>, };
 @group(0) @binding(0) var<uniform> shadow_views: ShadowViews;
+// The vehicle surface model's bricks and snow catch (rm_vsm_core.wgsl), so the lying snow lifts a
+// marked mesh here exactly as the G-buffer lifts it.
+@group(0) @binding(2) var<storage, read> vsm_index: array<u32>;
+@group(0) @binding(3) var<storage, read> vsm_snow: array<u32>;
+fn depth_snow_catch(pos: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let frame_id = (u32(pc.extra.z + 0.5) >> 1u) & 3u;
+    let v = shadow_views.vsm;
+    if (frame_id == 0u || v[6].y < 0.5 || v[6].w > 254.5) { return 1.0; }
+    let f = frame_id - 1u;
+    return vsm_snow_catch_at(v[f], v[3u + f], v[6].x, pos + pc.vehicle.xyz, normalize(normal));
+}
 @group(1) @binding(0) var albedo_tex: texture_2d<f32>;
 @group(1) @binding(3) var samp: sampler;
 
-struct Push { model: mat4x4<f32>, params: vec4<f32>, extra: vec4<f32>, scars: vec4<u32>, }; // params.x = view index
+struct Push { model: mat4x4<f32>, params: vec4<f32>, extra: vec4<f32>, scars: vec4<u32>, vehicle: vec4<f32>, }; // params.x = view index
 var<push_constant> pc: Push;
 @group(0) @binding(1) var<storage, read> scars: array<Scar>;
 
@@ -18,7 +29,7 @@ fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) 
     let linear = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
     let n = normalize(inverse_transpose_3x3(linear) * normal);
     let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
-    world += vec4(n * rm_snow_lift(pos * metric, n, clamp(pc.extra.x, 0.0, 1.0), snow_gear_unpack(pc.scars.w)), 0.0);
+    world += vec4(n * rm_snow_lift(pos * metric, n, clamp(pc.extra.x, 0.0, 1.0), snow_gear_unpack(pc.scars.w), depth_snow_catch(pos, normal)), 0.0);
     return shadow_views.vp[u32(pc.params.x)] * world;
 }
 
@@ -31,7 +42,7 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
     var world = model * vec4(pos, 1.0);
     let linear = mat3x3<f32>(i0.xyz, i1.xyz, i2.xyz);
     let n = normalize(inverse_transpose_3x3(linear) * normal);
-    world += vec4(n * rm_snow_lift(world.xyz, n, clamp(pc.extra.x, 0.0, 1.0), vec3(0.0)), 0.0);
+    world += vec4(n * rm_snow_lift(world.xyz, n, clamp(pc.extra.x, 0.0, 1.0), vec3(0.0), 1.0), 0.0);
     return shadow_views.vp[u32(pc.params.x)] * world;
 }
 

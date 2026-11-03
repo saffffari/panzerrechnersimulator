@@ -56,6 +56,61 @@ const DAMPING: f32 = 0.001;
 /// A fragment slower than this has stopped in the tissue (lodged).
 const STOPPED_MPS: f32 = 2.0;
 
+/// The lattice's authored constants as one set, and a review-only override of it (`fea-range`, the
+/// owner's hand tuning on the range). No shipping path sets the override: `tissue_tuning()` is
+/// then exactly the constants above. Bonds are baked at allocation; a solve scales each bond's
+/// stiffness and critical stretch by tuned/authored for its strength class (the law
+/// `stiffness = 2·energy / (critical·rest)²` kept), so a change acts on the next strike without
+/// rebuilding the model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TissueTuning {
+    /// Tearing energy per volume (J/m³): skin, muscle, bone, fluid.
+    pub tear_j_m3: [f32; 4],
+    /// Critical stretch: skin, muscle, bone, fluid.
+    pub critical_stretch: [f32; 4],
+    /// Shares of a fragment's lost momentum pushed along its path and outward from it.
+    pub forward: f32,
+    pub outward: f32,
+    /// Cells this far from a fragment's path move in the solve (m).
+    pub active_reach_m: f32,
+    /// A landing piece breaks into grains when ½·m·vn² exceeds this times its bonds' cohesion.
+    pub landing_breakup: f32,
+    /// The radius a fragment's lost momentum is shared over, as a factor (with `Tune::spread`).
+    pub spread: f32,
+}
+
+impl TissueTuning {
+    pub(crate) const AUTHORED: Self = Self { tear_j_m3: TEAR_J_M3, critical_stretch: CRITICAL_STRETCH, forward: FORWARD,
+        outward: OUTWARD, active_reach_m: ACTIVE_REACH_M, landing_breakup: 1.0, spread: 1.0 };
+}
+
+static REVIEW_TUNING: std::sync::RwLock<Option<TissueTuning>> = std::sync::RwLock::new(None);
+
+/// Review-only (`fea-range`): replace the authored lattice constants, or `None` to restore them.
+pub(crate) fn set_review_tuning(tuning: Option<TissueTuning>) {
+    *REVIEW_TUNING.write().unwrap_or_else(|e| e.into_inner()) = tuning;
+}
+
+/// Whether the range's review override is set.
+fn review_tuning_active() -> bool {
+    REVIEW_TUNING.read().unwrap_or_else(|e| e.into_inner()).is_some()
+}
+
+/// The lattice constants in force: the authored ones unless a review override is set.
+pub(crate) fn tissue_tuning() -> TissueTuning {
+    REVIEW_TUNING.read().unwrap_or_else(|e| e.into_inner()).unwrap_or(TissueTuning::AUTHORED)
+}
+
+/// Per strength class, the (stiffness, critical stretch) factors of the tuning against the
+/// authored constants the bonds were built with.
+fn bond_law_scale(t: &TissueTuning) -> [(f32, f32); 4] {
+    std::array::from_fn(|k| {
+        let energy = t.tear_j_m3[k] / TEAR_J_M3[k];
+        let critical = t.critical_stretch[k] / CRITICAL_STRETCH[k];
+        (energy / (critical * critical), critical)
+    })
+}
+
 /// Labels for drawing: 1..=SKIN_LABELS are the figure's own colours (the corpse renderer's
 /// palette), then two shades of muscle and the bone.
 pub(super) const SKIN_LABELS: u8 = 12;
@@ -69,7 +124,7 @@ pub(super) const LABELS: usize = BONE_LABEL as usize + MAX_ANATOMY_ID as usize;
 /// Review-only tuning (`KESSEL_TISSUE_TUNE="tear=2,stretch=1.5,outward=0.3,forward=0.95,grain=1"`):
 /// scales on the bonds' tearing energy and critical stretch, the momentum shares a fragment gives
 /// the cells about it, and the energy a landing piece needs to break into grains. Read only after
-/// `allow_review_tune` (the `fea-film` review harness calls it); play and both shipping presets
+/// `allow_review_tune` (the `fea-film` and `fea-range` review tools call it); play and both shipping presets
 /// never do, so every scale is 1 and the shares their constants there (test
 /// `the_tune_is_the_constants_unless_the_review_allows_it`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -170,6 +225,8 @@ struct Bond {
     rest_m: f32,
     stiffness: f32,
     critical: f32,
+    /// The weaker cell's strength class (`Tissue::index`), whose law the bond follows.
+    class: u8,
 }
 
 pub(super) struct TissueModel {
@@ -574,7 +631,7 @@ fn finish_model(cell_m: f32, anatomy: Option<String>, origin: Vec3, dims: [usize
             let energy = TEAR_J_M3[weaker] * tune().tear * cell_m.powi(3) / 18.0;
             let critical = CRITICAL_STRETCH[weaker] * tune().stretch;
             let stiffness = 2.0 * energy / (critical * rest_m).powi(2);
-            bonds.push(Bond { a: a as u32, b: b as u32, rest_m, stiffness, critical });
+            bonds.push(Bond { a: a as u32, b: b as u32, rest_m, stiffness, critical, class: weaker as u8 });
         }
     }
     let mut counts = vec![0u32; model.cells.len() + 1];
@@ -691,6 +748,13 @@ impl CasualtyTissue {
         }
         // Cells near a fragment's path, and every cell of a part a burst works on, move; the rest of
         // him holds them (anchored).
+        let tuning = tissue_tuning();
+        let law = bond_law_scale(&tuning);
+        // A bond's (stiffness, critical stretch) under the tuning in force.
+        let bond_law = |bond: &Bond| {
+            let (k, c) = law[bond.class as usize];
+            (bond.stiffness * k, bond.critical * c)
+        };
         let mut active = vec![false; n];
         for strike in strikes.iter().filter(|s| s.work_j.is_finite() && s.work_j > 0.0) {
             let dir = strike.dir.normalize_or_zero();
@@ -702,7 +766,7 @@ impl CasualtyTissue {
                 let d = model.cells[c].at - strike.at;
                 let along = d.dot(dir);
                 if dir == Vec3::ZERO || strike.speed_mps <= STOPPED_MPS
-                    || (along > -ACTIVE_REACH_M && (d - dir * along).length() < ACTIVE_REACH_M) {
+                    || (along > -tuning.active_reach_m && (d - dir * along).length() < tuning.active_reach_m) {
                     active[c] = true;
                 }
             }
@@ -716,7 +780,7 @@ impl CasualtyTissue {
             let dir = strike.dir.normalize_or_zero();
             if dir == Vec3::ZERO || strike.speed_mps <= STOPPED_MPS {
                 self.push_pressure(model, strike, &active, mass, &mut vel);
-            } else if self.push_fragment(model, strike, dir, &active, mass, &mut vel, &mut crushed) {
+            } else if self.push_fragment(model, strike, dir, &active, mass, &mut vel, &tuning, &mut crushed) {
                 out.lodged += 1;
             }
         }
@@ -740,8 +804,9 @@ impl CasualtyTissue {
         let mut stiffness = vec![0.0f32; n];
         for &b in &live {
             let bond = model.bonds[b as usize];
-            stiffness[bond.a as usize] += bond.stiffness;
-            stiffness[bond.b as usize] += bond.stiffness;
+            let (k, _) = bond_law(&bond);
+            stiffness[bond.a as usize] += k;
+            stiffness[bond.b as usize] += k;
         }
         let period = (0..n).filter(|&c| active[c] && stiffness[c] > 0.0)
             .map(|c| (mass[c] / stiffness[c]).sqrt()).fold(f32::INFINITY, f32::min);
@@ -798,18 +863,19 @@ impl CasualtyTissue {
                                 continue;
                             }
                             let bond = model.bonds[bonds[i] as usize];
+                            let (bond_stiffness, bond_critical) = bond_law(&bond);
                             let at = |cell: u32| {
                                 let m = slot[cell as usize];
                                 model.cells[cell as usize].at + if m == u32::MAX { Vec3::ZERO } else { mdisp_ref[m as usize] }
                             };
                             let d = at(bond.b) - at(bond.a);
                             let length = d.length();
-                            if ((length - bond.rest_m) / bond.rest_m).abs() > bond.critical {
+                            if ((length - bond.rest_m) / bond.rest_m).abs() > bond_critical {
                                 alive[i] = false;
                                 forces[i] = Vec3::ZERO;
                                 continue;
                             }
-                            forces[i] = d / length.max(1.0e-9) * (bond.stiffness * (length - bond.rest_m));
+                            forces[i] = d / length.max(1.0e-9) * (bond_stiffness * (length - bond.rest_m));
                         }
                     });
                 }
@@ -901,8 +967,8 @@ impl CasualtyTissue {
                         let bond = model.bonds[b as usize];
                         !self.broken[b as usize] && bond.a == c && inside.contains(&bond.b)
                     }).map(|(_, b)| {
-                        let bond = model.bonds[b as usize];
-                        0.5 * bond.stiffness * (bond.critical * bond.rest_m).powi(2)
+                        let (k, c) = bond_law(&model.bonds[b as usize]);
+                        0.5 * k * (c * model.bonds[b as usize].rest_m).powi(2)
                     }).sum();
                 out.chunks.push(Chunk { part, cells, centre, velocity, spin: momentum / inertia.max(1.0e-9), cohesion_j });
             }
@@ -916,12 +982,14 @@ impl CasualtyTissue {
     /// A fragment through the part's cells: Newtonian drag in the tissue it crosses, its lost
     /// momentum given to the cells about it. True when it stopped inside.
     fn push_fragment(&self, model: &TissueModel, strike: &Strike, dir: Vec3, active: &[bool], mass: &[f32], vel: &mut [Vec3],
-        crushed: &mut Vec<usize>) -> bool {
+        tuning: &TissueTuning, crushed: &mut Vec<usize>) -> bool {
         let body = 2.0 * strike.work_j / (strike.speed_mps * strike.speed_mps);
         let side = (body / STEEL_DENSITY).cbrt();
         let area = side * side;
+        // The range's live dials when set, else the review tune (constants outside the reviews).
+        let (forward, outward_share) = if review_tuning_active() { (tuning.forward, tuning.outward) } else { (tune().forward, tune().outward) };
         let cell_m = model.cell;
-        let reach = (0.5 * side + 0.5 * cell_m) * tune().spread;
+        let reach = (0.5 * side + 0.5 * cell_m) * tune().spread * tuning.spread;
         // The track: cells whose centre the fragment's own section passes within a quarter cell of.
         let crush = 0.5 * side + 0.25 * cell_m;
         let step = 0.25 * cell_m;
@@ -938,7 +1006,7 @@ impl CasualtyTissue {
             }
             // Poncelet's form: the tissue's own resistance (its tearing energy per volume, authored)
             // and Newtonian drag.
-            let tearing = TEAR_J_M3[cell.tissue.index()] * area * step;
+            let tearing = tuning.tear_j_m3[cell.tissue.index()] * area * step;
             let kinetic = 0.5 * body * speed * speed - tearing;
             let resisted = if kinetic > 0.0 { (2.0 * kinetic / body).sqrt() } else { 0.0 };
             let density = mass[here] / cell_m.powi(3);
@@ -975,7 +1043,7 @@ impl CasualtyTissue {
             for c in near {
                 let q = model.cells[c].at;
                 let outward = ((q - p) - dir * (q - p).dot(dir)).normalize_or_zero();
-                vel[c] += (dir * tune().forward + outward * tune().outward) * (share / mass[c]);
+                vel[c] += (dir * forward + outward * outward_share) * (share / mass[c]);
             }
         }
         speed <= STOPPED_MPS
@@ -1187,6 +1255,34 @@ pub(super) fn integrate_chunks(corpses: &std::cell::RefCell<Option<crew_corpse_r
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The review override (`fea-range`'s tissue knobs) is never a shipping default: without it the
+    /// lattice runs on exactly the authored constants, a bond's law is unscaled, and no source but
+    /// the review range sets it.
+    #[test]
+    fn the_tissue_tuning_is_authored_unless_the_review_range_sets_it() {
+        let t = TissueTuning::AUTHORED;
+        assert_eq!((t.tear_j_m3, t.critical_stretch, t.forward, t.outward, t.active_reach_m, t.landing_breakup, t.spread),
+            (TEAR_J_M3, CRITICAL_STRETCH, FORWARD, OUTWARD, ACTIVE_REACH_M, 1.0, 1.0));
+        assert_eq!(*REVIEW_TUNING.read().unwrap(), None, "no override at start");
+        assert!(bond_law_scale(&t).iter().all(|&(k, c)| k == 1.0 && c == 1.0));
+        // Doubling skin's tearing energy at its stretch doubles its bonds' stiffness.
+        let mut tuned = t;
+        tuned.tear_j_m3[0] *= 2.0;
+        tuned.critical_stretch[1] *= 2.0;
+        let law = bond_law_scale(&tuned);
+        assert!((law[0].0 - 2.0).abs() < 1e-6 && law[0].1 == 1.0);
+        assert!((law[1].0 - 0.25).abs() < 1e-6 && (law[1].1 - 2.0).abs() < 1e-6);
+        let needle = ["set_review_tuning", "(Some"].concat(); // not this file's own text
+        let mut setters = Vec::new();
+        for entry in std::fs::read_dir("src").unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "rs") && std::fs::read_to_string(&path).unwrap().contains(&needle) {
+                setters.push(path.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+        assert_eq!(setters, vec!["game_fea_range.rs".to_string()], "only the review range overrides the tissue");
+    }
 
     #[test]
     fn the_classes_hold_in_order_and_keep_their_2_cm_energies() {

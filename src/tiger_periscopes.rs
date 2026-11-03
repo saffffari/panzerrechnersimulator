@@ -165,6 +165,12 @@ const HOUSINGS: [&str; 12] = [
 ];
 // This is the modeled lens recess, not a claimed historical laminate thickness.
 const WINDOW_THICKNESS_M: f32 = 0.003892;
+/// Measured bound (`relay_stop_chain_matches_the_complete_housing`) on the share of rays across
+/// a pane, from on-axis to 75 degrees off it, whose admission by the stop chain alone differs
+/// from a trace through the complete block with its housing triangles. Measured 2026-11-03:
+/// 211 of 225,792 rays (0.093%) disagree; rays both admit leave in directions within 4e-5.
+#[cfg(test)]
+const RELAY_STOP_CHAIN_ERROR: f32 = 0.0015;
 
 fn bounds(mesh: &mut CpuMesh) {
     mesh.min = Vec3::splat(f32::INFINITY);
@@ -309,7 +315,7 @@ fn loader_optical_parts(mut housing: CpuMesh, pane: CpuMesh) -> anyhow::Result<V
         OpticalPart::lens(rectangle(&housing, center, Vec3::X*0.055, Vec3::Z*0.0215, Vec3::Y), LOADER_RELAY_FOCAL_M)
     });
     housing=retained;
-    let mut parts=vec![OpticalPart::new(crate::tank::repaint_german_grey(housing),0),OpticalPart::new(mirrors,MIRROR),
+    let mut parts=vec![OpticalPart::new(housing,0),OpticalPart::new(mirrors,MIRROR),
         OpticalPart::new(close_window(pane,-Vec3::Z*WINDOW_THICKNESS_M)?,WINDOW),
         OpticalPart::new(close_window(objective,Vec3::Z*WINDOW_THICKNESS_M)?,WINDOW)];
     parts.extend(lenses);
@@ -318,11 +324,16 @@ fn loader_optical_parts(mut housing: CpuMesh, pane: CpuMesh) -> anyhow::Result<V
 
 /// The remaining turret, articulated roof lid, and independently shaded source optical parts.
 fn first_hit(parts: &[OpticalPart], origin: Vec3, direction: Vec3) -> Option<(usize, f32, Vec3)> {
+    first_face(parts, origin, direction).map(|(part, _, distance, normal)| (part, distance, normal))
+}
+
+/// The closest hit with its triangle index in the part's mesh.
+fn first_face(parts: &[OpticalPart], origin: Vec3, direction: Vec3) -> Option<(usize, usize, f32, Vec3)> {
     let mut best = None;
     let mut limit = 2.0f32;
     for (part, optical) in parts.iter().enumerate() {
         let mesh=&optical.mesh;
-        for tri in mesh.indices.chunks_exact(3) {
+        for (index, tri) in mesh.indices.chunks_exact(3).enumerate() {
             let [a,b,c] = [0,1,2].map(|i| Vec3::from(mesh.vertices[tri[i] as usize].pos));
             let e1=b-a; let e2=c-a; let h=direction.cross(e2); let det=e1.dot(h);
             if det.abs() < 1e-10 { continue; }
@@ -330,7 +341,7 @@ fn first_hit(parts: &[OpticalPart], origin: Vec3, direction: Vec3) -> Option<(us
             let v=direction.dot(q)/det; let distance=e2.dot(q)/det;
             if u>=0.0 && v>=0.0 && u+v<=1.0 && distance>0.00005 && distance<limit {
                 limit=distance;
-                best=Some((part,distance,e1.cross(e2).normalize()));
+                best=Some((part,index,distance,e1.cross(e2).normalize()));
             }
         }
     }
@@ -395,6 +406,81 @@ fn cupola_relay(block:&[OpticalPart],index:usize)->anyhow::Result<Vec<OpticalPar
     Ok(lenses)
 }
 
+/// The planar quad a hit triangle belongs to. Every optical face here is two triangles stored
+/// as a consecutive pair (close_window, rectangle, and the source mirror pairs 26/27, 44/45).
+fn face_quad(mesh: &CpuMesh, triangle: usize) -> anyhow::Result<([Vec3; 4], Vec3)> {
+    let first = triangle & !1;
+    anyhow::ensure!(mesh.indices.len() >= (first + 2) * 3, "optical face is not a triangle pair");
+    let mut points: Vec<Vec3> = Vec::new();
+    for &i in &mesh.indices[first * 3..(first + 2) * 3] {
+        let p = Vec3::from(mesh.vertices[i as usize].pos);
+        if !points.iter().any(|q| q.distance(p) < 1e-6) { points.push(p); }
+    }
+    anyhow::ensure!(points.len() == 4, "optical face is not a quadrilateral");
+    let p = |k: usize| Vec3::from(mesh.vertices[mesh.indices[first * 3 + k] as usize].pos);
+    let normal = (p(1) - p(0)).cross(p(2) - p(0)).normalize();
+    let q = |k: usize| Vec3::from(mesh.vertices[mesh.indices[first * 3 + 3 + k] as usize].pos);
+    anyhow::ensure!((q(1) - q(0)).cross(q(2) - q(0)).normalize().dot(normal).abs() > 0.99999,
+        "optical face triangles are not coplanar");
+    let center = points.iter().copied().sum::<Vec3>() * 0.25;
+    let u = (points[0] - center).normalize();
+    let v = normal.cross(u);
+    points.sort_by(|a, b| {
+        let angle = |p: &Vec3| (*p - center).dot(v).atan2((*p - center).dot(u));
+        angle(a).total_cmp(&angle(b))
+    });
+    let corners: [Vec3; 4] = [points[0], points[1], points[2], points[3]];
+    anyhow::ensure!((0..4).all(|i| (corners[(i+1)%4] - corners[i]).cross(corners[(i+2)%4] - corners[(i+1)%4]).dot(normal) > 0.0),
+        "optical face is not convex");
+    Ok((corners, normal))
+}
+
+/// The ordered stop chain of one block, read off its registered parts by tracing the block's
+/// close-view chief ray: every face that ray crosses, in order, with its finite outline. A ray
+/// crossing the same faces inside their outlines is the block's admitted bundle; the housing
+/// lies outside them (`relay_stop_chain_matches_the_complete_housing` measures how well).
+pub(crate) fn relay_stops(block: &[OpticalPart], index: usize) -> anyhow::Result<Vec<crate::renderer::RelayStop>> {
+    use crate::renderer::{RelayStop, STOP_LENS, STOP_MIRROR, STOP_PANE, STOP_WINDOW};
+    let (eye, forward, _) = close_view(index);
+    let mut p = eye;
+    let mut d = forward.normalize();
+    let mut stops = Vec::new();
+    let (mut inside, mut windows, mut mirrors) = (None, 0, 0);
+    for _ in 0..crate::renderer::MAX_RELAY_STOPS {
+        let (part, triangle, distance, _) = first_face(block, p, d)
+            .ok_or_else(|| anyhow::anyhow!("block {index} chief ray leaves its casing"))?;
+        p += d * distance;
+        let (corners, normal) = face_quad(&block[part].mesh, triangle)?;
+        let n = if normal.dot(d) > 0.0 { -normal } else { normal };
+        let kind = match block[part].kind {
+            WINDOW => {
+                let exiting = inside.is_some();
+                anyhow::ensure!(!exiting || inside == Some(part), "block {index} window overlap");
+                let eta = if exiting { 1.52 } else { 1.0 / 1.52 };
+                let cosine = -n.dot(d);
+                let k = 1.0 - eta * eta * (1.0 - cosine * cosine);
+                anyhow::ensure!(k > 0.0, "block {index} chief ray internally reflects");
+                d = (eta * d + (eta * cosine - k.sqrt()) * n).normalize();
+                if exiting { inside = None; windows += 1; } else { inside = Some(part); }
+                if part == 2 { STOP_PANE } else { STOP_WINDOW }
+            }
+            MIRROR => { d = (d - 2.0 * d.dot(n) * n).normalize(); mirrors += 1; STOP_MIRROR }
+            RELAY_LENS => {
+                let axis = -n;
+                let height = p - block[part].mesh.center();
+                d = (d / d.dot(axis) - (height - axis * height.dot(axis)) / block[part].focal_m).normalize();
+                STOP_LENS
+            }
+            _ => anyhow::bail!("block {index} chief ray meets retained casing"),
+        };
+        stops.push(RelayStop { corners, normal, kind, center: block[part].mesh.center(),
+            focal_m: if kind == STOP_LENS { block[part].focal_m } else { 0.0 } });
+        p += d * 0.0001;
+        if windows == 2 && mirrors == 2 && inside.is_none() { return Ok(stops); }
+    }
+    anyhow::bail!("block {index} stop chain is incomplete")
+}
+
 pub fn load_turret() -> anyhow::Result<(CpuMesh, CpuMesh, Vec<OpticalPart>, CpuMesh, CpuMesh, CpuMesh)> {
     let mut pages = crate::gltf_load::load_glb_partitioned_roots_with_source_transforms(
         "assets/tanks/tiger/baked/tiger_turret.glb", &HOUSINGS,
@@ -424,7 +510,7 @@ pub fn load_turret() -> anyhow::Result<(CpuMesh, CpuMesh, Vec<OpticalPart>, CpuM
         let objective_normal = face_normal(&objective);
         let entry_outward = -face_normal(&pane);
         let retained = select_triangles(&housing, |t| !matches!(t, 26 | 27 | 44 | 45 | 76 | 77));
-        let mut block=vec![OpticalPart::new(crate::tank::repaint_german_grey(retained), 0),
+        let mut block=vec![OpticalPart::new(retained, 0),
             OpticalPart::new(mirrors, MIRROR)];
         // The exported pane is the inner recess face; extend toward the eye, not into its holder.
         block.push(OpticalPart::new(close_window(pane, -entry_outward * WINDOW_THICKNESS_M)?, WINDOW));
@@ -470,6 +556,8 @@ pub fn raster_optic_specs(parts: &[OpticalPart], first_slot: usize) -> anyhow::R
             objective:objective.center(),objective_outward,
             preserve_ray_direction: index < LOADER_INDEX,
             eyepiece: None,
+            relay_stops: relay_stops(block, index)?,
+            window_thickness_m: WINDOW_THICKNESS_M,
         })
     }).collect()
 }
@@ -528,6 +616,71 @@ mod tests {
             if windows==2 && mirrors==2 && inside.is_none() { return Some((p,d)); }
         }
         None
+    }
+
+    /// The relay pane admits a ray by the stop chain alone (raster_optics.wgsl `relay_trace`).
+    /// Measure it against the complete block (housing triangles included, `source_path`) for
+    /// eyes from on-axis to 75 degrees off it, near and far, over the whole pane. The measured
+    /// disagreement is the named error bound of treating the housing as lying outside the stops.
+    #[test]
+    fn relay_stop_chain_matches_the_complete_housing() {
+        let (_,_,parts,_,_,_)=load_turret().unwrap();
+        let (mut samples,mut admitted,mut mismatched,mut worst_direction)=(0,0,0,0.0_f32);
+        let mut admitted_by_angle=[0usize;16];let mut total_by_angle=[0usize;16];
+        let mut on_axis_by_distance=[(0usize,0usize);3];
+        for (index,block) in parts.chunks_exact(CUPOLA_PART_COUNT).enumerate() {
+            let stops=relay_stops(block,index).unwrap();
+            assert_eq!(stops.iter().map(|s|s.kind).collect::<Vec<_>>(),
+                [0,0,2,3,3,3,3,2,1,1],"block {index} stop order");
+            let (eye,forward,_)=close_view(index);
+            let chief=crate::renderer::relay_trace(&stops,eye,forward).expect("chief ray admitted");
+            assert!(chief.direction.distance(forward)<1e-4,"block {index} relay turns the chief ray");
+            let pane=&stops[0];
+            let center=pane.corners.iter().copied().sum::<Vec3>()*0.25;
+            let mut toward_eye=pane.normal;if toward_eye.dot(eye-center)<0.0 {toward_eye=-toward_eye;}
+            let side=toward_eye.cross(Vec3::Y).normalize();let up=side.cross(toward_eye).normalize();
+            for polar in (0..16).map(|k|k as f32*5.0) {
+                for azimuth in (0..12).map(|k|k as f32*30.0) {
+                    for (di,distance) in [0.03,0.12,0.45].into_iter().enumerate() {
+                        let (sp,cp)=polar.to_radians().sin_cos();let (sa,ca)=azimuth.to_radians().sin_cos();
+                        let eye=center+(toward_eye*cp+(side*ca+up*sa)*sp)*distance;
+                        for v in 0..7 { for u in 0..7 {
+                            let a=pane.corners[0].lerp(pane.corners[1],(u as f32+0.5)/7.0);
+                            let b=pane.corners[3].lerp(pane.corners[2],(u as f32+0.5)/7.0);
+                            let target=a.lerp(b,(v as f32+0.5)/7.0);
+                            let d=(target-eye).normalize();
+                            // Start both just before the eye-side face: what lies between the eye
+                            // and the pane is the rendered scene's business (depth-tested).
+                            let t=(pane.corners[0]-eye).dot(pane.normal)/d.dot(pane.normal);
+                            let start=eye+d*(t-0.0005);
+                            let chain=crate::renderer::relay_trace(&stops,start,d);
+                            let full=source_path(block,start,start+d);
+                            samples+=1;total_by_angle[(polar/5.0) as usize]+=1;
+                            if polar==0.0 {on_axis_by_distance[di].1+=1;if chain.is_some() {on_axis_by_distance[di].0+=1;}}
+                            match (chain,full) {
+                                (Some(c),Some((_,fd)))=>{admitted+=1;admitted_by_angle[(polar/5.0) as usize]+=1;
+                                    worst_direction=worst_direction.max(c.direction.distance(fd));}
+                                (None,None)=>{}
+                                _=>mismatched+=1,
+                            }
+                        }}
+                    }
+                }
+            }
+        }
+        let fraction=mismatched as f32/samples as f32;
+        println!("relay stop chain vs complete housing: {samples} rays, {admitted} admitted by both, \
+            {mismatched} disagree ({:.4}%), worst exit-direction difference {worst_direction:.2e}",fraction*100.0);
+        for (k,(a,t)) in admitted_by_angle.iter().zip(total_by_angle).enumerate() {
+            println!("  {:>2} deg off the pane normal: {:.1}% admitted",k*5,100.0*(*a as f32)/t as f32);
+        }
+        for ((a,t),d) in on_axis_by_distance.iter().zip([0.03,0.12,0.45]) {
+            println!("  on axis, eye {d} m from the pane: {:.1}% of the pane admitted",100.0*(*a as f32)/(*t as f32));
+        }
+        assert!(worst_direction<1e-3,"admitted rays leave in different directions");
+        assert!(fraction<RELAY_STOP_CHAIN_ERROR,"stop chain disagrees with the housing on {fraction}");
+        assert!(admitted_by_angle[0]>0 && admitted_by_angle[15]<admitted_by_angle[0],
+            "steep views must lose the field to the housing");
     }
 
     #[test]

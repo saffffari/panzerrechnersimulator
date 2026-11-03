@@ -20,7 +20,8 @@
 // [24] glare veil over the field cd/m^2, [25] over the Gaussian (diagnostics), [27] last frame's
 // log-average photopic cd/m^2, [28] share of cells above GLARE_RATIO times it, [29] the scotopic
 // background (observer::GLARE_*), [30] 1 while the first-frame snap waits for that background.
-// Lanes 26 and 31 remain reserved (32 allocated).
+// [31] the clock time until which a fresh snap repeats (observer::SNAP_HOLD_S). Lane 26 remains
+// reserved (32 allocated).
 @group(0) @binding(1) var<storage, read_write> state: array<f32>;
 
 struct ExposureClock {
@@ -157,8 +158,15 @@ fn rod_adaptation() -> f32 {
 fn relax(value: f32, goal: f32, tau: f32, dt: f32) -> f32 {
     return value + (goal - value) * (1.0 - exp(-dt / tau));
 }
-fn rise_tau(base_tau: f32, excess_log: f32) -> f32 {
-    return mix(base_tau, OBS_DAZZLE_TAU, smoothstep(OBS_DAZZLE_FROM_LOG, OBS_DAZZLE_FROM_LOG + 0.5, excess_log));
+// Inside the hull from OBS_DAZZLE_FROM_LOG; outside (and at an optic) from the lower
+// OBS_OUTSIDE_DAZZLE_FROM_LOG, where no inside damping stands in front of it, and only toward a
+// photopic target: the cones' share `m_target` of it (CIE 191) from OBS_OUTSIDE_DAZZLE_MESOPIC_FROM
+// to 1 (observer::rise_tau, observer::outside_rise_tau).
+fn rise_tau(base_tau: f32, excess_log: f32, inside: bool, m_target: f32) -> f32 {
+    let onset = select(OBS_OUTSIDE_DAZZLE_FROM_LOG, OBS_DAZZLE_FROM_LOG, inside);
+    let ramp = select(OBS_OUTSIDE_DAZZLE_RAMP_LOG, OBS_DAZZLE_RAMP_LOG, inside);
+    let photopic = select(smoothstep(OBS_OUTSIDE_DAZZLE_MESOPIC_FROM, 1.0, m_target), 1.0, inside);
+    return mix(base_tau, OBS_DAZZLE_TAU, smoothstep(onset, onset + ramp, excess_log) * photopic);
 }
 
 fn bleach_step(b: f32, retinal: f32, regeneration: f32, photosensitivity: f32, dt: f32) -> f32 {
@@ -181,20 +189,24 @@ fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: 
     let retinal_ratio = log10(area / pupil_area(goal));
     let cone_target = log10(lp) + retinal_ratio;
     let rod_target = log10(ls) + retinal_ratio;
-    // Rising: the comfortable rate; inside the hull, falling to the dazzle rate for a cabin decades
-    // brighter (observer::rise_tau).
-    let cone_rise = select(0.0, cone_target - state[8], inside);
-    let rod_rise = select(0.0, rod_target - state[9], inside);
-    state[8] = relax(state[8], cone_target,
-        select(OBS_CONE_TAU_DOWN, rise_tau(OBS_CONE_TAU_UP, cone_rise), cone_target > state[8]), dt);
-    state[9] = relax(state[9], rod_target,
-        select(OBS_ROD_TAU_DOWN, rise_tau(OBS_ROD_TAU_UP, rod_rise), rod_target > state[9]), dt);
     // Contrast alone mistakes a steady window for a new flash every frame. Detect onset
     // from threshold-independent field energy so changing adaptation cannot re-arm that window.
     let rising = field > OBS_FLASH_ONSET_RATIO * state[21];
     state[21] = relax(state[21], field, OBS_FLASH_ONSET_TAU, dt);
     let flashing = transient_source && rising && coverage > OBS_FLASH_MIN_COVERAGE
         && bright > OBS_FLASH_ABOVE_ADAPTATION * cone_adaptation();
+    // Rising: the comfortable rate, falling to the dazzle rate for a step far up: inside the hull
+    // a cabin decades brighter (observer::rise_tau), outside a step into daylight
+    // (observer::outside_rise_tau). Not during a weapon's flash: what a flash of tens of
+    // milliseconds leaves is its afterimage (the recovery fit, lanes 10-11), and the dazzle rate
+    // on top of it counted the flash twice (observer::Eye::substep).
+    let cone_rise = select(cone_target - state[8], 0.0, flashing);
+    let rod_rise = select(rod_target - state[9], 0.0, flashing);
+    let m_target = mesopic_coefficient(lp, ls);
+    state[8] = relax(state[8], cone_target,
+        select(OBS_CONE_TAU_DOWN, rise_tau(OBS_CONE_TAU_UP, cone_rise, inside, m_target), cone_target > state[8]), dt);
+    state[9] = relax(state[9], rod_target,
+        select(OBS_ROD_TAU_DOWN, rise_tau(OBS_ROD_TAU_UP, rod_rise, inside, m_target), rod_target > state[9]), dt);
     state[10] = state[10] * exp(-dt / OBS_FLASH_MEMORY_TAU);
     if (flashing) {
         state[10] += coverage * bright * area * dt;
@@ -432,7 +444,13 @@ fn finish_meter(li: u32, sum: MeterSum) {
     // A view's first observed frame: the crewman is already adapted to what he sees, as a real
     // observer is before the first presented frame. An optic's own eye snaps too when the eye
     // comes back to it (observer::OPTIC_RESNAP_GAP_S).
-    if (state[1] < 0.0 || state[30] > 0.5 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP)) {
+    // The snap repeats for OBS_SNAP_HOLD seconds of frames (lane 31): a view returned to after a
+    // gap shows its first frames from transport histories that are minutes stale (the TZF at night
+    // first metered 2.8 cd/m^2 of the noon it last saw, snapped and bleached its cones to it, and
+    // stayed black: 2026-11-03, eye-review), so the eye takes its field once the frames are fresh.
+    let fresh = state[1] < 0.0 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP);
+    if (fresh) { state[31] = clock.time_s + OBS_SNAP_HOLD; }
+    if (fresh || state[30] > 0.5 || (clock.time_s < state[31] && state[1] >= 0.0)) {
         state[22] = log10(metered_p);
         state[23] = log10(metered_s);
         let pupil = pupil_diameter(lp, monocular);

@@ -9,6 +9,7 @@
 mod smoke_support;
 #[path="renderer_world_state.rs"]
 mod renderer_world_state;
+use crate::eye_local::EyeLocal;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -601,6 +602,24 @@ fn day_phase(sun_altitude_deg: f64) -> usize {
     if sun_altitude_deg < BLUE_FROM_DEG { 0 } else if sun_altitude_deg < TWILIGHT_FROM_DEG { 1 }
     else if sun_altitude_deg < TWILIGHT_TO_DEG { 2 } else { 3 }
 }
+/// Half the width of the band over which the clock's pace passes from one phase's to the next.
+const PACE_BLEND_HALF_DEG: f64 = 2.0;
+/// The clock's rate at a Sun altitude from the four phases' rates (night, blue hour, twilight,
+/// day): their logarithms blended by a smoothstep `PACE_BLEND_HALF_DEG` either side of each edge,
+/// so the pace never changes at a step. The bridge's authored pacing runs its blue hour some
+/// seventy times slower than the night beside it; the former linear ramp over one degree turned
+/// the blue hour's end into a lurch the eye's pigment rate (which follows the clock) lurched with
+/// (3 November 2026). The phases' play times move by a few per cent; named in
+/// docs/PHYSICAL_TRUTH_AUDIT.md with the day cycle.
+fn blended_clock_rate(rates: [f64; 4], sun_altitude_deg: f64) -> f64 {
+    let step = |edge: f64| {
+        let t = ((sun_altitude_deg - edge) / (2.0 * PACE_BLEND_HALF_DEG) + 0.5).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let ln = rates.map(|r| r.max(1.0e-6).ln());
+    (ln[0] + (ln[1] - ln[0]) * step(BLUE_FROM_DEG) + (ln[2] - ln[1]) * step(TWILIGHT_FROM_DEG)
+        + (ln[3] - ln[2]) * step(TWILIGHT_TO_DEG)).exp()
+}
 /// On in play. Off for unit tests and wherever `KESSEL_DAY_NIGHT=0` asks for the real-time clock
 /// (stills and films that must hold their authored light).
 fn day_night_cycle_enabled() -> bool {
@@ -818,9 +837,10 @@ const MENU_RIGHT_SHIFT: f32 = 3.7; // world metres along the camera's right → 
 /// flashes and fire glow are the working set; cheap at internal resolution.
 pub const N_LIGHTS: usize = 32;
 
-/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources
-/// and one optional work lamp. This is not the active packed-light budget or a shader array size.
-pub const CABIN_LIGHT_REGISTRATIONS: usize = 22;
+/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources,
+/// one optional work lamp and the radio sets' and driver's eleven panel lamps (`cabin_panels`).
+/// This is not the active packed-light budget or a shader array size.
+pub const CABIN_LIGHT_REGISTRATIONS: usize = 33;
 
 /// A modeled compact spherical emitter. `source_radius` is the physical luminous radius in metres,
 /// used only to regularize the near field of the inverse-square law; it is never an illumination
@@ -1184,7 +1204,9 @@ struct CrushUniform {
     debug: [f32; 4],
     /// The eye's field state for the display (byte 192, copied from the view's eye state every
     /// metered frame): x = the CIE 191 mesopic coefficient of the field's adaptation (lane 14), the
-    /// floor of each pixel's local mesopic weight (`observer::local_rod_weight`). Appended lane.
+    /// floor of each pixel's local mesopic weight (`observer::local_rod_weight`); y = the cone
+    /// adaptation (lane 12, byte 196), z = the metered luminance (lane 15, byte 200), w = the local
+    /// adaptation's strength (`observer::local_cone_gain`). Appended lane.
     eye: [f32; 4],
 }
 
@@ -1330,7 +1352,10 @@ mod environment_probe;
 #[path = "raster_optics.rs"] mod raster_optics;
 #[path = "raster_ssao.rs"] mod raster_ssao;
 #[path = "renderer_aa.rs"] mod renderer_aa;
-pub use raster_optics::{Eyepiece, RasterOpticSpec};
+pub use raster_optics::{Eyepiece, RasterOpticSpec, RelayStop, MAX_RELAY_STOPS,
+    STOP_LENS, STOP_MIRROR, STOP_PANE, STOP_WINDOW};
+#[cfg(test)]
+pub use raster_optics::relay_trace;
 #[path = "daylight_sampling.rs"]
 mod daylight_sampling;
 #[path = "protective_glass.rs"]
@@ -1673,7 +1698,7 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
-    /// A lamp lens (`mark_lamp_lens`): 0 none, 1 bare, 2 behind a wire cage; 4 an indicator cube,
+    /// A lamp: 0 none; 4 an indicator cube (`mark_indicator_lamp`),
     /// uniformly lit, dark glass when off (`mark_indicator_lamp`).
     lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
@@ -1689,8 +1714,14 @@ struct MeshGpu {
     vehicle_finish: [f32; 4],
     /// A clear cover over an instrument dial (`mark_instrument_cover`).
     instrument_cover: bool,
+    /// A direct-view vision block's closed glass slab, its measured thickness (`mark_vision_glass`;
+    /// 0: an ordinary pane).
+    vision_glass_m: f32,
     /// The source model's default metal on this mesh is painted steel (`mark_painted_steel`).
     painted_steel: bool,
+    /// The player's vehicle surface model frame this mesh samples (`mark_vsm_frame`): 0 none, 1 the
+    /// hull, 2 the turret, 3 the gun (`vehicle_surface.rs`, rm_vsm.wgsl).
+    vsm_frame: u8,
     /// Left out of the sky-visibility atlas (`exclude_from_relay_visibility`).
     sky_visibility_excluded: bool,
     /// A small-arms muzzle flash (`mark_small_arms_flash`).
@@ -2837,9 +2868,6 @@ pub struct Renderer {
     /// Wear on the player's vehicle (`surface_wear`): interior grime, exterior grime, glass grime,
     /// mechanical wear, each 0..1; set by the game each update (raymarch backend).
     pub wear: [f32; 4],
-    /// The player's Tiger's winter whitewash, 0 (none) to 1 (a full field coat): the raymarch
-    /// G-buffer lays it over the exterior paint (`rm_gbuffer.wgsl` `apply_whitewash`).
-    pub whitewash: f32,
     /// The film/review section plane (world normal xyz into the removed half, offset w), set only
     /// through `set_film_section`; None in play and in both shipping presets.
     film_section: Option<[f32; 4]>,
@@ -3056,6 +3084,10 @@ pub struct Renderer {
     exp_binds: Vec<wgpu::BindGroup>,
     exp_bufs: Vec<wgpu::Buffer>,
     exp_clock_buf: wgpu::Buffer,
+    /// The eye's local adaptation (`eye_local.wgsl`, `observer::local_cone_gain`): the cell,
+    /// horizontal and vertical pooling passes, their bind group and parameters, and the setting
+    /// in use (pooling sigma in degrees, strength).
+    eye_local: EyeLocal,
     replay_previous_elapsed: Option<f32>,
     replay_exposure_time: Option<f32>,
     continuous_camera_translation: bool,
@@ -3172,6 +3204,9 @@ pub struct Renderer {
     // ---- volumetric muzzle-blast smoke (ray-marched over the HDR target, before bloom) ----
     smoke_puffs: [PuffGpu; MAX_PUFFS],
     breech_gas: PuffGpu,
+    /// The gun's fumes in the player's crew compartment (`Game` drives `cabin_fumes::CabinFumes`;
+    /// raymarch backend only).
+    pub cabin_fumes: [[f32; 4]; crate::cabin_fumes::LANES],
     cabin_medium: Option<std::sync::Arc<cabin_medium::Medium>>,
     cabin_medium_texture: wgpu::Texture,
     cabin_medium_view: wgpu::TextureView,
@@ -3180,6 +3215,10 @@ pub struct Renderer {
     atmo_enabled: bool, // spatial cabin medium exists independently of the current camera
     atmo_haze: f32,     // 0..1 interior hazy-atmosphere density (0 = pass skips it)
     atmo_soot: f32,     // 0..1 a fire's soot load in the cabin air (dark, absorbing)
+    /// The vehicle surface model's review view (`KESSEL_VSM_VIEW`, `vehicle_surface::VIEWS`; 0 off)
+    /// and its layer switches (`KESSEL_VSM_LAYERS`, a bit mask; 0 all on).
+    pub(crate) vsm_view: u32,
+    pub(crate) vsm_layers: u32,
     atmo_dust: f32,     // 0..1 dust-mote sparkle inside the cabin haze
     atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame with a slow cabin-local drift
     smoke_buf: wgpu::Buffer,
@@ -3823,7 +3862,9 @@ fn make_mesh_gpu(
         running_gear: 0,
         vehicle_finish: [0.0; 4],
         instrument_cover: false,
+        vision_glass_m: 0.0,
         painted_steel: false,
+        vsm_frame: 0,
         sky_visibility_excluded: false,
         small_arms_flash: false,
         legacy_small_arms_fx: false,
@@ -5998,6 +6039,8 @@ impl Renderer {
             wgpu::Extent3d{width:64,height:64,depth_or_array_layers:1});
         let blue_noise_view=blue_noise_texture.create_view(&Default::default());
 
+        let eye_local = EyeLocal::new(device, &hdr_view);
+
         let crush_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("crush-bgl"),
             entries: &[
@@ -6022,6 +6065,8 @@ impl Renderer {
                     ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Uint,
                         view_dimension:wgpu::TextureViewDimension::D2,multisampled:false},count:None},
                 tex_entry(8), // the sub-pixel emitters' radiance (rod pooling)
+                tex_entry(9), // the eye's pooled neighbourhood luminance (local adaptation)
+                sampler_entry(10),
             ],
         });
         let crush_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -6054,6 +6099,8 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {binding:7,resource:wgpu::BindingResource::TextureView(&blue_noise_view)},
                 wgpu::BindGroupEntry {binding:8,resource:wgpu::BindingResource::TextureView(&point_view)},
+                wgpu::BindGroupEntry {binding:9,resource:wgpu::BindingResource::TextureView(&eye_local.pooled_view)},
+                wgpu::BindGroupEntry {binding:10,resource:wgpu::BindingResource::Sampler(&eye_local.sampler)},
             ],
         });
         let crush_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -6277,7 +6324,6 @@ impl Renderer {
             player_snow_load: 0.0,
             world_snow_load: 0.0,
             wear: [0.0; 4],
-            whitewash: 0.0,
             film_section: None,
             section_window: [0.0; 4],
             worn_vehicles: Vec::new(),
@@ -6373,6 +6419,7 @@ impl Renderer {
                 strength: 0.0,
                 shape: [0.0;4],
             },
+            cabin_fumes: [[0.0; 4]; crate::cabin_fumes::LANES],
             cabin_medium: Some(cabin_medium),
             cabin_medium_texture,cabin_medium_view,
             cabin_medium_uniform: bytemuck::Zeroable::zeroed(),
@@ -6380,6 +6427,8 @@ impl Renderer {
             atmo_enabled: false,
             atmo_haze: 0.0,
             atmo_soot: 0.0,
+            vsm_view: crate::vehicle_surface::view_from_env(),
+            vsm_layers: std::env::var("KESSEL_VSM_LAYERS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0),
             atmo_dust: 0.0,
             atmo_origin: glam::Vec3::ZERO,
             smoke_buf,
@@ -6426,6 +6475,7 @@ impl Renderer {
             exp_binds,
             exp_bufs,
             exp_clock_buf,
+            eye_local,
             replay_previous_elapsed: None,
             replay_exposure_time: None,
             continuous_camera_translation: false,
@@ -6528,7 +6578,7 @@ impl Renderer {
             optic_mask, loupe, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
-            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
+            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas, cabin_fumes,
             atmo_enabled, atmo_haze, atmo_soot, atmo_dust, atmo_origin, pixel_particle_field,
             pressure_fronts, heat_sources, ui, held_map_surface, order_receipt_surfaces, repair_manual_surfaces,
             repair_manual_presentation);
@@ -6668,12 +6718,7 @@ impl Renderer {
                 [dark, dark, rate(2, 2.0 * TWILIGHT_S), rate(3, FULL_DAY_S)]
             }
         };
-        // Blend across a degree at each boundary so the clock never jumps.
-        let altitude = self.celestial.sun_altitude_deg();
-        let ramp = |edge: f64| ((altitude - edge) / 1.0 + 0.5).clamp(0.0, 1.0);
-        let (above_night, above_blue, above_twilight) = (ramp(BLUE_FROM_DEG), ramp(TWILIGHT_FROM_DEG), ramp(TWILIGHT_TO_DEG));
-        (rates[0] * (1.0 - above_night) + rates[1] * (above_night - above_blue).max(0.0)
-            + rates[2] * (above_blue - above_twilight).max(0.0) + rates[3] * above_twilight) * self.sky_time_scale as f64
+        blended_clock_rate(rates, self.celestial.sun_altitude_deg()) * self.sky_time_scale as f64
     }
 
     pub fn advance_sky_clock(&mut self, dt_s: f32) {
@@ -6765,6 +6810,10 @@ impl Renderer {
         self.meshes.iter().enumerate()
             .filter(|(_, m)| m.visible && m.model.w_axis.truncate().distance(point) <= radius)
             .map(|(i, _)| i).collect()
+    }
+    /// Review harness: a mesh's world bounds as last placed.
+    pub fn debug_mesh_world_bounds(&self, idx: usize) -> Option<(glam::Vec3, glam::Vec3)> {
+        self.meshes.get(idx).map(|g| (g.world_min, g.world_max))
     }
     pub fn debug_mesh_state(&self, idx: usize) -> Option<(bool, glam::Mat4)> {
         self.meshes.get(idx).map(|g| (g.visible, g.model))
@@ -7022,6 +7071,18 @@ impl Renderer {
             && !(m.emissive > 0.0 && !m.emissive_own && !m.emissive_win)
             && m.world_min.cmpge(lo).all() && m.world_max.cmple(hi).all()).map(|(i, _)| i).collect()
     }
+    /// Every scene mesh whose bounds' middle lies inside `lo..hi` and which is smaller than
+    /// `max_extent_m` across: a vehicle's whole content for the review range's section (glass
+    /// panes, periscope screens, lamp lenses, crew and effects with it), terrain and large world
+    /// pages left out. `solid_meshes_within` is the film's narrower set (solid parts only).
+    pub fn meshes_centred_within(&self, lo: glam::Vec3, hi: glam::Vec3, max_extent_m: f32) -> Vec<usize> {
+        self.meshes.iter().enumerate().filter(|(_, m)| {
+            let centre = (m.world_min + m.world_max) * 0.5;
+            !m.track_recv && centre.cmpge(lo).all() && centre.cmple(hi).all()
+                && (m.world_max - m.world_min).max_element() < max_extent_m
+        }).map(|(i, _)| i).collect()
+    }
+
     /// Mesh `idx` is a hull with running gear in its frame's envelope |x| >= `inner_m`, y <=
     /// `top_m`: `pack` (0..1) of the gear is crusted with the snow it ran through
     /// (`snow_cover::step_pack`; rm_snow_lift.wgsl `snow_gear_crust`).
@@ -7045,6 +7106,32 @@ impl Renderer {
             g.painted_steel = true;
         }
     }
+    /// Mesh `idx` samples the player's vehicle surface model in `frame` (1 hull, 2 turret, 3 gun;
+    /// `vehicle_surface.rs`). The raymarch backend installs the field once its bake is ready.
+    pub fn mark_vsm_frame(&mut self, idx: usize, frame: u8) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.vsm_frame = frame.min(3);
+        }
+    }
+    /// A separate part of the player's vehicle (a hatch lid, the visor holder) samples the surface
+    /// model in `frame` at its own vertices plus `rest_offset` (the frame's units): the part's
+    /// paint moves with it when it opens. The offset rides the push's vehicle lane, unused on the
+    /// player's meshes.
+    pub fn mark_vsm_part(&mut self, idx: usize, frame: u8, rest_offset: glam::Vec3) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.vsm_frame = frame.min(3);
+            g.vehicle_finish = [rest_offset.x, rest_offset.y, rest_offset.z, 0.0];
+        }
+    }
+    /// The vehicle surface model's review view (`vehicle_surface::VIEWS`; 0 off).
+    pub fn set_vsm_view(&mut self, view: u32) { self.vsm_view = view; }
+    /// Review aid: the visible meshes whose bounds contain `p` (index, triangles, vsm frame, flags).
+    pub fn debug_meshes_at(&self, p: glam::Vec3) -> Vec<String> {
+        self.meshes.iter().enumerate().filter(|(_, m)| m.visible && p.cmpge(m.world_min - glam::Vec3::splat(0.05)).all() && p.cmple(m.world_max + glam::Vec3::splat(0.05)).all())
+            .map(|(i, m)| format!("mesh {i}: tris {} vsm {} painted {} snow_vehicle {} emissive {:.2} raster_only {} bounds {:.2?}..{:.2?}",
+                m.index_count / 3, m.vsm_frame, m.painted_steel, m.snow_vehicle, m.emissive, m.raster_only, m.world_min, m.world_max)).collect()
+    }
+    pub fn set_vsm_layers(&mut self, layers: u32) { self.vsm_layers = layers; }
     /// On the raymarch backend the sky-visibility atlas serves only the periscope relays' views of
     /// the outside: leave the player's own tank out of it, so its turret and hull moving do not
     /// force the atlas's whole static layer (66 tiles of the scene, 88 ms) to be redrawn every
@@ -7074,6 +7161,11 @@ impl Renderer {
     }
     /// Flag glass mesh `idx` as a clear cover over an instrument dial: the raymarch glass pass
     /// gives it a broad sheen of the cabin's lamps and a faint fixed dust (`rm_glass.wgsl`).
+    /// A direct-view vision block's closed glass of `thickness_m`: the raymarch glass pass draws
+    /// its faces as the slab's interfaces with the wiped-glass wear (rm_glass.wgsl).
+    pub fn mark_vision_glass(&mut self, idx: usize, thickness_m: f32) {
+        if let Some(g) = self.meshes.get_mut(idx) { g.vision_glass_m = thickness_m; }
+    }
     pub fn mark_instrument_cover(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.instrument_cover = true;
@@ -7084,13 +7176,6 @@ impl Renderer {
     pub fn mark_indicator_lamp(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.lamp_lens = 4;
-        }
-    }
-    /// Flag own-colour emissive mesh `idx` as a lamp: the raymarch G-buffer draws each face as a
-    /// round lens in a dark bezel (`rm_gbuffer.wgsl` `lamp_lens`), behind a wire cage if `caged`.
-    pub fn mark_lamp_lens(&mut self, idx: usize, caged: bool) {
-        if let Some(g) = self.meshes.get_mut(idx) {
-            g.lamp_lens = if caged { 2 } else { 1 };
         }
     }
     /// Flag mesh `idx` as an OWN-COLOUR emissive that is NOT night-gated: a warm interior bulb or a
@@ -8822,9 +8907,14 @@ impl Renderer {
             loupe: self.loupe,
             real: self.real,
             debug: [if std::env::var("KESSEL_POINT_LAYER_VIEW").as_deref() == Ok("1") { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-            eye: [unmetered.mesopic_m as f32, 0.0, 0.0, 0.0],
+            // y, z: the cone adaptation and the metered luminance, copied from the eye's lanes 12
+            // and 15 on metered frames; 0 here, so an unmetered frame has no local adaptation.
+            // w: the local adaptation's strength (none under a fixed debug exposure).
+            eye: [unmetered.mesopic_m as f32, 0.0, 0.0,
+                if self.exposure_override.is_some() { 0.0 } else { self.eye_local.strength }],
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
+        self.eye_local.upload(queue, self.camera.fov_y, self.camera.aspect);
         if let Some(surface) = &self.rt_surface_gpu {
             let triangles = self.meshes.iter().filter(|m| m.glass && m.visible)
                 .flat_map(|m| {
@@ -9500,6 +9590,7 @@ impl Renderer {
             encoder.copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8);
             // The field's mesopic coefficient (lane 14) for the pixels' local mesopic weight.
             encoder.copy_buffer_to_buffer(eye, 56, &self.crush_buf, 192, 4);
+            self.encode_eye_local(encoder, eye);
             if let Some(optics) = &self.raster_optics {
                 // Port images take the same eye (one frame later, as they render first).
                 optics.copy_eye_mapping(encoder, eye);
@@ -9759,7 +9850,7 @@ impl Renderer {
                 GpuInstanceMaterialState::disabled(regular_object_custom_data(slot, mesh.temporal_dynamic), SurfaceId(surface))
             } else {
                 let tint = if mode == InstanceEmissionMode::RasterFxOrange {
-                    [1.0, 0.24, 0.03]
+                    crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(mesh.emissive))
                 } else {
                     [1.0; 3]
                 };
@@ -9812,7 +9903,7 @@ impl Renderer {
                     let (mode, tint) = if own_colour {
                         (InstanceEmissionMode::BaseColorUngated, [1.0; 3])
                     } else {
-                        (InstanceEmissionMode::RasterFxOrange, [1.0, 0.24, 0.03])
+                        (InstanceEmissionMode::RasterFxOrange, crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(batch.emissive)))
                     };
                     GpuInstanceMaterialState::emissive(
                         custom_data,
@@ -11121,6 +11212,52 @@ impl Renderer {
         Ok(state)
     }
 
+    /// The eye's local adaptation for the frame just metered (both backends call it right after
+    /// the meter): pool the HDR's neighbourhood luminance (`eye_local.wgsl`) and give the crush
+    /// the eye's cone adaptation (lane 12) and metered luminance (lane 15) it is drawn between.
+    pub(crate) fn encode_eye_local(&self, encoder: &mut wgpu::CommandEncoder, eye: &wgpu::Buffer) {
+        encoder.copy_buffer_to_buffer(eye, 48, &self.crush_buf, 196, 4);
+        encoder.copy_buffer_to_buffer(eye, 60, &self.crush_buf, 200, 4);
+        self.eye_local.encode(encoder, self.gpu_profile.as_ref().and_then(|p| p.compute("eye-local")));
+    }
+
+    /// Read one view's whole eye state (the 32 lanes `exposure.wgsl` documents) for the opt-in
+    /// headless eye review (`eye-review`). A pure GPU-buffer readback, as above; shipping frames
+    /// never call it.
+    pub fn debug_read_eye_lanes(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: usize,
+    ) -> anyhow::Result<[f32; EYE_STATE_LANES]> {
+        let bytes = (EYE_STATE_LANES * std::mem::size_of::<f32>()) as u64;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("eye-lanes-readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("eye-lanes-diagnostic"),
+        });
+        let view = view.min(self.exp_bufs.len().saturating_sub(1));
+        encoder.copy_buffer_to_buffer(&self.exp_bufs[view], 0, &readback, 0, bytes);
+        queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        rx.recv()??;
+        let mapped = slice.get_mapped_range();
+        let mut lanes = [0.0f32; EYE_STATE_LANES];
+        lanes.copy_from_slice(&bytemuck::cast_slice::<u8, f32>(&mapped)[..EYE_STATE_LANES]);
+        drop(mapped);
+        readback.unmap();
+        Ok(lanes)
+    }
+
     /// Re-arm the active view's first-measurement sentinel after a headless transport pre-roll.
     ///
     /// The shipping render loop never calls this. A deterministic screenshot can temporarily pause
@@ -12379,6 +12516,25 @@ mod atmosphere_tests {
     use super::*;
 
     #[test]
+    fn the_clocks_pace_passes_between_phases_without_a_step() {
+        // The spring bridge's authored pacing: a slow blue hour between a fast night and twilight.
+        let rates = [25.0, 0.33, 3.5, 26.0];
+        assert!((blended_clock_rate(rates, -40.0) - 25.0).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, -10.0) - 0.33).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, 0.0) - 3.5).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, 30.0) - 26.0).abs() < 1e-9);
+        // A tenth of a degree never changes the pace by more than a few per cent.
+        let mut worst: f64 = 0.0;
+        let mut altitude = -30.0;
+        while altitude < 20.0 {
+            let (a, b) = (blended_clock_rate(rates, altitude), blended_clock_rate(rates, altitude + 0.1));
+            worst = worst.max((b / a).ln().abs());
+            altitude += 0.1;
+        }
+        assert!(worst < 0.25, "the pace steps by {:.0} % in a tenth of a degree", (worst.exp() - 1.0) * 100.0);
+    }
+
+    #[test]
     fn replay_capture_policies_isolate_history_from_exposure() {
         let parameters = |policy| replay_policy_parameters(Some(1.4), 1.5, 123.0, policy);
         assert_eq!(parameters(ReplayCapturePolicy::Legacy), (1.5, false, false, 123.0));
@@ -13544,7 +13700,10 @@ mod atmosphere_tests {
         // source-contract module, after the actual renderer implementation and GPU copies.
         let shipping = renderer.split("\n#[cfg(test)]\nmod atmosphere_tests").next().unwrap();
         let copies: Vec<_> = shipping.match_indices("copy_buffer_to_buffer(eye,").collect();
-        assert_eq!(copies.len(), 3, "cone, rod and mesopic lanes into crush");
+        assert_eq!(copies.len(), 5, "cone, rod and mesopic lanes, and the local adaptation's cone and metered lanes, into crush");
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 48, &self.crush_buf, 196, 4)"));
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 60, &self.crush_buf, 200, 4)"));
+        assert!(include_str!("renderer_raymarch.rs").contains("r.encode_eye_local(encoder, eye);"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 56, &self.crush_buf, 192, 4)"));
@@ -13556,8 +13715,10 @@ mod atmosphere_tests {
         // A view starts adapted to its first frame; an optic's own eye also when it is returned to
         // (observer::OPTIC_RESNAP_GAP_S), and only then. Lane 30 holds an outdoor first snap one
         // frame for the glare split's background (the small-bright-source veil, 2 Nov 2026).
-        assert!(eye.contains("if (state[1] < 0.0 || state[30] > 0.5 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP))"),
+        assert!(eye.contains("let fresh = state[1] < 0.0 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP);"),
             "a view starts adapted to its first frame");
+        // The snap repeats for SNAP_HOLD_S of frames so stale histories cannot become the eye.
+        assert!(eye.contains("if (fresh || state[30] > 0.5 || (clock.time_s < state[31] && state[1] >= 0.0)) {"));
         // An authored lighting record cannot expose the camera; only the debug gate can fix it.
         let authored = renderer.split("pub fn apply_authored_lighting").nth(1).unwrap()
             .split("pub fn apply_campaign_atmosphere").next().unwrap();
@@ -13580,10 +13741,11 @@ mod atmosphere_tests {
         // The cone channel is the frame plus a fixated sub-pixel point's foveal concentration.
         assert!(crush.contains("let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));"));
         // The rods' local share (observer::local_rod_weight) scales the display rod term only.
-        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;"),
-            "owner-directed cabin reproduction still acts only on the display rod term");
-        assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));"),
-            "the night's hue outdoors, the cabin's own hue inside");
+        // The eye's local adaptation (observer::local_cone_gain) scales the cone term only.
+        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure * local_gain + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;"),
+            "the display's rod reproduction acts only on the rod term");
+        assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));"),
+            "the night's hue outdoors, achromatic rods inside the hull");
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(!mesh.contains("let spring_fill"));

@@ -42,7 +42,9 @@ struct Crush {
     // Debug only: x 1 shows the point layer (KESSEL_POINT_LAYER_VIEW, the rod pooling check).
     debug: vec4<f32>,
     // The eye's field state, copied from its lanes every metered frame: x = the CIE 191 mesopic
-    // coefficient of the field's adaptation (lane 14). Appended lane.
+    // coefficient of the field's adaptation (lane 14), y = the cone adaptation cd/m^2 (lane 12),
+    // z = the luminance metered this frame cd/m^2 (lane 15); w = the local adaptation's strength
+    // (observer::LOCAL_ADAPTATION_STRENGTH, 0 = the single-state eye). Appended lane.
     eye: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
@@ -62,6 +64,10 @@ struct EnvironmentWhite { lanes: array<vec4<f32>, 68>, };
 @group(0) @binding(7) var blue_noise: texture_2d<u32>;
 // The sub-pixel emitters' radiance at their pixel (the raymarch backend's firefly lanterns).
 @group(0) @binding(8) var point_layer: texture_2d<f32>;
+// The eye's pooled neighbourhood luminance, log10 cd/m^2 over the meter's cells (eye_local.wgsl),
+// sampled bilinearly: the local adaptation of each region (observer::local_cone_gain).
+@group(0) @binding(9) var local_pooled: texture_2d<f32>;
+@group(0) @binding(10) var local_samp: sampler;
 
 // A camera white point, not a change to scene lighting. Use the diffuse sky irradiance that
 // already lights the scene; a red flash, painted wall or warm cabin lamp cannot drive this meter.
@@ -112,11 +118,11 @@ fn eye_response(radiance: vec3<f32>, point: vec3<f32>, uv: vec2<f32>) -> vec3<f3
     // The outdoor night-visibility boost is unnecessary in a cabin with practical lamps and
     // local range compression. Retain normal rod vision without washing out the lamps' colour.
     let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));
-    // The rod term is achromatic in the eye; it is reproduced in the cool mesopic hue,
-    // luminance-neutral: the deep blue of the night outdoors (observer::ROD_DISPLAY_HUE), the
-    // cabin's own hue inside the hull (observer::CABIN_ROD_DISPLAY_HUE, unchanged since
-    // 2026-10-04, so the cabin keeps its look). Cones keep every source's own colour.
-    let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));
+    // The rod term is achromatic in the eye: outdoors it is reproduced in the deep blue of the
+    // night, luminance-neutral (observer::ROD_DISPLAY_HUE); inside the hull it is drawn as it is,
+    // grey (the cabin's own cool hue was removed on 2 November 2026). Cones keep every source's
+    // own colour.
+    let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));
     // The lifted rod channel reaches the display's key at most (observer::rod_display): an eye
     // adapted to the moonlit field, or dark-adapted beyond it, showed the whole sight white
     // (2 November 2026); mid-grey is what a night field is to a locally adapted eye.
@@ -129,13 +135,18 @@ fn eye_response(radiance: vec3<f32>, point: vec3<f32>, uv: vec2<f32>) -> vec3<f3
     let photopic = dot(radiance, vec3(OBS_PHOTOPIC_R, OBS_PHOTOPIC_G, OBS_PHOTOPIC_B));
     let scotopic_px = dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B));
     let local_rods = mix(obs_local_rod_weight(photopic, scotopic_px, cr.eye.x), 1.0, clamp(cr.eye_range_strength, 0.0, 1.0));
-    return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;
+    // The eye adapts place by place (observer::local_cone_gain): each region's cones are shown
+    // through an adaptation drawn from the eye's state toward its own neighbourhood's luminance.
+    let local_gain = obs_local_cone_gain(cr.eye.y, cr.eye.z,
+        textureSampleLevel(local_pooled, local_samp, uv, 0.0).r, cr.eye.w);
+    return cone_seen * camera_white_gain() * cr.exposure * local_gain + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;
 }
 
 // The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright
-// field through a port, each region on its own gain. The single exposure above cannot do that,
-// so parts of the picture more than EYE_RANGE_KNEE_STOPS from the adapted level are drawn in
-// toward it: the dark is lifted and the bright is held down, with colour kept. Within the knee
+// field through a port, each region on its own gain. Since 2026-11-03 the eye does that itself
+// (`local_gain` above, observer::local_cone_gain); this older presentation still follows it in a
+// closed cabin view: parts of the picture more than EYE_RANGE_KNEE_STOPS from the adapted level are
+// drawn in toward it: the dark is lifted and the bright is held down, with colour kept. Within the knee
 // the picture is untouched. OWNER-DIRECTED PRESENTATION of local adaptation
 // (docs/PHYSICAL_TRUTH_AUDIT.md); it changes no light in the scene.
 // Knee and slope are generated from observer.rs (OBS_EYE_RANGE_*; `KESSEL_EYE_RANGE=knee,slope`
@@ -174,9 +185,9 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
         vec3(-0.0529716355144438, -0.0980434501171241, 1.15107367264116));
     let min_ev = -12.47393;
     let max_ev = 4.026069;
-    // The exposure trim that puts the eye's key where the former fit put it (0.18 scene to
-    // about 0.27 display-linear; AgX alone lands it at 0.21), so midday is as bright as before.
-    var v = inset * max(x * 1.3, vec3(1.0e-10));
+    // The display's exposure into the curve (observer::AGX_KEY_TRIM: the key lands about 0.27
+    // display-linear, AgX alone puts it at 0.21).
+    var v = inset * max(x * OBS_AGX_KEY_TRIM, vec3(1.0e-10));
     v = clamp(log2(v), vec3(min_ev), vec3(max_ev));
     v = (v - min_ev) / (max_ev - min_ev);
     if (cr.look.x > 5.5) {
@@ -184,7 +195,11 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
         // the trim), the film-gamma kind of contrast, before the sigmoid keeps its roll-off at both
         // ends. A reproduction choice: it changes no light.
         let pivot = (log2(0.18 * 1.3) - min_ev) / (max_ev - min_ev);
-        v = clamp((v - vec3(pivot)) * cr.real.x + vec3(pivot), vec3(0.0), vec3(1.0));
+        // Inside the buttoned-up view (cr.eye_range_strength) the slope eases back to AgX's own:
+        // there the eye's draw-in lifts a dark cabin beside bright ports, and a steeper slope
+        // pushed it back to black (median code 8 under the standard look, 1 at 1.35; 2 November 2026).
+        let contrast = mix(cr.real.x, 1.0, clamp(cr.eye_range_strength, 0.0, 1.0));
+        v = clamp((v - vec3(pivot)) * contrast + vec3(pivot), vec3(0.0), vec3(1.0));
     }
     let v2 = v * v;
     let v4 = v2 * v2;

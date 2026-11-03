@@ -60,6 +60,7 @@ mod ai_doctrine;
 mod anti_infantry_ai;
 mod armor_damage;
 mod fea_damage;
+mod periscope_optics_review;
 mod cabin_heat;
 #[cfg(test)]
 mod asset_catalog;
@@ -117,6 +118,8 @@ mod radio_llm;
 mod platoon_proof;
 mod wreck_fire_review;
 mod raymarch_showcase;
+mod eye_review;
+mod eye_local;
 mod fx_review;
 mod canyon_director;
 mod playtest_mode;
@@ -173,6 +176,7 @@ mod panzerfaust;
 mod pixel_particles;
 mod pressure_front;
 mod incandescence;
+mod cabin_fumes;
 mod heat_haze;
 mod world_doors;
 mod prims;
@@ -202,6 +206,7 @@ mod static_wreck_support;
 mod static_wreck_ownership;
 mod snow_cover;
 mod surface_wear;
+mod vehicle_surface;
 mod exhaust_plume;
 mod explosion_volumes;
 mod powertrain;
@@ -725,6 +730,31 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         g.prepare_world_survey(&mut r, 1.0 / 60.0);
         println!("[grass] survey {}", g.world_survey_grass_stats());
     }
+    // KESSEL_SHOT_AIM=sun|moon|antisun[:PITCH_OFFSET_DEG] turns the recon camera to face that
+    // body's compass bearing (the antisolar point's for `antisun`) at its altitude plus the offset
+    // (`sun:8` puts the setting Sun low in the frame), for the sky's look-development stills;
+    // KESSEL_SHOT_FOV=DEG narrows the view. Headless only; the bodies are where the clock puts them.
+    if let (Some(_), Ok(aim)) = (cam, std::env::var("KESSEL_SHOT_AIM")) {
+        let mut parts = aim.split(':');
+        let body = parts.next().unwrap_or("");
+        let offset = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+        let state = r.celestial().state;
+        let (position, flip) = match body {
+            "sun" => (state.sun, false),
+            "moon" => (state.moon, false),
+            "antisun" => (state.sun, true),
+            other => anyhow::bail!("unknown KESSEL_SHOT_AIM {other:?}; use sun, moon or antisun"),
+        };
+        let azimuth = if flip { position.azimuth_deg + 180.0 } else { position.azimuth_deg };
+        let altitude = if flip { 0.0 } else { position.altitude_deg };
+        r.camera.yaw = (azimuth as f32).to_radians();
+        r.camera.pitch = (altitude as f32 + offset).to_radians();
+        println!("[sky] aim {body}: azimuth {azimuth:.2} altitude {:.2} (sun {:+.2}, moon {:+.2}, lit {:.3})",
+            position.altitude_deg, state.sun.altitude_deg, state.moon.altitude_deg, state.moon_phase.illuminated_fraction);
+    }
+    if let Some(fov) = std::env::var("KESSEL_SHOT_FOV").ok().and_then(|v| v.parse::<f32>().ok()) {
+        r.camera.fov_y = fov.clamp(1.0, 120.0).to_radians();
+    }
     if std::env::var("KESSEL_DEMOLISH_BUILDING").is_ok() {
         // The build hook exercised the real damage/state/render path. The requested aftermath frame
         // is deliberately after its short-lived masonry impact beat, with persistent grounded rubble
@@ -787,7 +817,12 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     if let Ok(dump) = std::env::var("KESSEL_DUMP_HDR") {
         r.debug_dump_crush_input(&device, &queue, &dump, &photometry.to_json())?;
     }
-    let shown = image::open(capture_target(path))?.to_rgba8();
+    // Under KESSEL_CAPTURE_4K_JPG=1 the renderer writes the still as a JPEG beside the PNG name.
+    let written = {
+        let routed = capture_target(path);
+        if std::path::Path::new(&routed).exists() { routed } else { routed.replace(".png", ".jpg") }
+    };
+    let shown = image::open(&written)?.to_rgba8();
     let display = displayed_mean_luminance(&shown);
     let mut report = photometry.to_json();
     report["display_mean_linear"] = serde_json::json!(display);
@@ -8002,7 +8037,7 @@ fn run_haze() -> anyhow::Result<()> {
     g.commander_outside = false;
     g.aim_at_enemy();
     g.update(&TankInput::default(), dt, &mut r);
-    let h0 = g.haze_level();
+    let h0 = g.gun_fume_level();
     r.render_to_png(&device, &queue, &format!("{base}/haze_clean.png"), cw, ch)?;
 
     // Fire a rapid string (debug_fire → on_fired puffs the breech each time).
@@ -8012,7 +8047,7 @@ fn run_haze() -> anyhow::Result<()> {
             g.update(&TankInput::default(), dt, &mut r);
         }
     }
-    let h_fired = g.haze_level();
+    let h_fired = g.gun_fume_level();
     g.aim_at_enemy();
     g.update(&TankInput::default(), dt, &mut r);
     r.render_to_png(&device, &queue, &format!("{base}/haze_smoked.png"), cw, ch)?;
@@ -8021,7 +8056,7 @@ fn run_haze() -> anyhow::Result<()> {
     for _ in 0..180 {
         g.update(&TankInput::default(), dt, &mut r);
     }
-    let h_fanned = g.haze_level();
+    let h_fanned = g.gun_fume_level();
 
     // Refill, then vent through the OPEN hatch (should clear far faster than the fan alone).
     for _ in 0..5 {
@@ -8030,19 +8065,19 @@ fn run_haze() -> anyhow::Result<()> {
             g.update(&TankInput::default(), dt, &mut r);
         }
     }
-    let h_refill = g.haze_level();
+    let h_refill = g.gun_fume_level();
     g.dbg_open_hatch();
     for _ in 0..90 {
         g.update(&TankInput::default(), dt, &mut r);
     } // 1.5 s vented
-    let h_vented = g.haze_level();
+    let h_vented = g.gun_fume_level();
 
     println!("[haze] ── RESULT ─────────────────────────────");
     println!(
         "[haze] start {:.2} → after 5 rounds {:.2}: rises {}",
         h0,
         h_fired,
-        if h_fired > h0 + 0.3 { "YES" } else { "NO" }
+        if h_fired > h0 + 0.004 { "YES" } else { "NO" }
     );
     println!(
         "[haze] fan drains it (3 s: {:.2} → {:.2}): {}",
@@ -8055,7 +8090,7 @@ fn run_haze() -> anyhow::Result<()> {
         h_refill,
         h_vented,
         h_refill - h_vented,
-        if h_refill - h_vented > 0.5 {
+        if h_refill - h_vented > (h_fired - h_fanned) * 0.5 {
             "YES"
         } else {
             "NO"
@@ -8125,7 +8160,7 @@ fn run_atmo(prefix: &str) -> anyhow::Result<()> {
     for _ in 0..30 {
         g.update(&input, dt, &mut r);
     }
-    let fumes = g.haze_level();
+    let fumes = g.gun_fume_level();
 
     let role = lan::LanRole::Loader;
     let (eye, forward, fov, mask, reticle) = g.coop_view_camera(role);
@@ -8174,7 +8209,7 @@ fn run_atmo(prefix: &str) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("bad atmosphere comparison image"))?
         .save(&compare_path)?;
 
-    println!("[atmo] frozen Loader view at gameplay fumes={fumes:.3}");
+    println!("[atmo] frozen Loader view at gameplay fumes={fumes:.4} /m");
     println!("[atmo] OFF  (left): {off_path}");
     println!("[atmo] ON  (right): {on_path}");
     println!("[atmo] comparison: {compare_path} ({}x{})", cw * 2, ch);
@@ -17338,6 +17373,10 @@ fn main() -> anyhow::Result<()> {
             game::combined_battle_review::run(&prefix, seed, seconds, t34, tiger)
         };
     }
+    if early_args.get(1).is_some_and(|arg| arg == "fp-body-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!("usage: fp-body-review <new-prefix>"))?;
+        return game::first_person_body_review::run(prefix);
+    }
     if early_args.get(1).is_some_and(|arg| arg == "expedition-lookdown-review") {
         let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
             "usage: expedition-lookdown-review <new-prefix>"))?;
@@ -17397,6 +17436,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.get(1).is_some_and(|s| s == "raymarch-exhaust") {
         return raymarch_showcase::run_exhaust(&capture_arg(&args, 2, "raymarch_exhaust"));
+    }
+    if args.get(1).is_some_and(|s| s == "eye-review") {
+        return eye_review::run(&capture_arg(&args, 2, "eye_review"), args.get(3).map(String::as_str).unwrap_or("canyon"));
     }
     if args.get(1).is_some_and(|s| s == "raymarch-cabin") {
         return raymarch_showcase::run_cabin(&capture_arg(&args, 2, "raymarch_cabin"));
@@ -17460,9 +17502,24 @@ fn main() -> anyhow::Result<()> {
         // GPU: review clips of the spring meadow by day and at dusk (KESSEL_RENDERER=raymarch).
         return meadow_film::run(&capture_arg(&args, 2, "meadow_film"));
     }
+    if args.len() >= 2 && args[1] == "ai-film" {
+        // GPU: an AI-against-AI battle filmed by an event-following director (KESSEL_RENDERER=raymarch).
+        return game::game_ai_film::run(&args[2..]);
+    }
     if args.len() >= 2 && args[1] == "fea-film" {
         // GPU: video clips of the layered damage model in play (KESSEL_RENDERER=raymarch).
         return game::game_fea_film::run(&capture_arg(&args, 2, "fea_film"));
+    }
+    if args.len() >= 2 && args[1] == "fea-range" {
+        // GPU window: the owner's FEA range (shot, run and timeline, section, sky, tissue knobs);
+        // `fea-range --shots PREFIX` renders it headless with its agreement check.
+        let shots = (args.get(2).map(String::as_str) == Some("--shots")).then(|| capture_arg(&args, 3, "fea_range"));
+        return game::game_fea_range::run(shots.as_deref());
+    }
+    if args.len() >= 2 && args[1] == "cabin-panels" {
+        // GPU: the radio operator's sets and the driver's panel at dusk, cabin lamps on
+        // (KESSEL_RENDERER=raymarch; KESSEL_CABIN_SHOTS / KESSEL_CABIN_CLOCK / KESSEL_CABIN_LAMPS).
+        return game::game_cabin_panels_review::run(&capture_arg(&args, 2, "cabin_panels"));
     }
     if args.len() >= 2 && args[1] == "fea-play" {
         // GPU: the layered damage model in play (KESSEL_RENDERER=raymarch): lodged rounds, the
@@ -17490,6 +17547,10 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "asset-trace" {
         return run_asset_trace();
+    }
+    if args.len() >= 2 && args[1] == "vsm-bake" {
+        // The vehicle surface model's measured field: bake (or read the cache) and report.
+        return vehicle_surface::report();
     }
     if args.len() >= 2 && args[1] == "lan-ifaces" {
         net_ifaces::print_report(lan::DEFAULT_PORT, lan::DISCOVERY_PORT);
@@ -17692,6 +17753,10 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or("assets/tanks/tiger/baked/tiger_hull.glb");
         let prefix = capture_arg(&args, 3, "texel");
         return texelsplat::run_texel(glb, &prefix);
+    }
+    if args.len() >= 2 && args[1] == "periscope-optics" {
+        let prefix = capture_arg(&args, 2, "periscope_optics");
+        return periscope_optics_review::run(&prefix);
     }
     if args.len() >= 2 && args[1] == "cupola" {
         let prefix = capture_arg(&args, 2, "cupola");

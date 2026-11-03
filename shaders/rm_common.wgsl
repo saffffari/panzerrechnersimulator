@@ -32,7 +32,6 @@ struct Frame {
     cloud: vec4<f32>,             // cloud shadow map centre x, z, half extent m, w on
     fog: vec4<f32>,               // fog banks: extinction inside /m, coverage, depth m, floor y
     optic_eye: vec4<f32>,         // xy the eye's offset from the sight's axis (screen heights)
-    livery: vec4<f32>,            // x the player's Tiger's winter whitewash 0..1
     samples: vec4<f32>,           // x sample budget; y theatre climate flag; zw actual world weather displacement xz
     stars: vec4<f32>,             // the star lattice's frame: sin lat, cos lat, sidereal angle, gain
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
@@ -72,6 +71,19 @@ struct Frame {
     // The section's window (Renderer::set_replay_cutaway): centre xyz and radius w; with a radius
     // only what lies within it of the line through the centre along the plane's normal is cut.
     section_window: vec4<f32>,
+    // The player's vehicle surface model (rm_vsm.wgsl, vehicle_surface.rs): per frame the brick
+    // grid's origin xyz and cell edge w (0-2), its dims xyz and first brick w (3-5); the mask base,
+    // cell count, review view and layer switches (6); x the review view's gain (7).
+    vsm: array<vec4<f32>, 8>,
+    // The Moon's disc (renderer_raymarch.rs FrameUniform::moon; rm_moon_disc): direction xyz +
+    // display radius rad w (0 none); the sunlit part's irradiance at the eye rgb + the slot that
+    // carries its light w (1 key, 2 secondary, 0 neither); the earthlit disc's rgb; to the Sun xyz.
+    moon: array<vec4<f32>, 4>,
+    // The gun's fumes in the crew compartment (cabin_fumes.rs `CabinFumes::lanes`; rm_medium.wgsl
+    // `rm_fume_density`): the layers' extinction (lower x, upper y /m), the interface's turret-frame
+    // height z and half thickness w; the fan's intake xyz and the vents drawn w; per venting case its
+    // mouth xyz and extinction there w, then its drift per metre of rise xz, reach y, mouth radius w.
+    fumes: array<vec4<f32>, 10>,
 };
 // True where a camera pass must leave `world` out: beyond the film's section plane (within its
 // window, when it has one).
@@ -225,14 +237,44 @@ fn rm_sky_cache_uv(dir: vec3<f32>) -> vec2<f32> {
 fn rm_sky_discs(dir: vec3<f32>) -> vec3<f32> {
     var radiance = vec3(0.0);
     if (dir.y > -0.002) {
-        if (fr.sun_radiance.w > 0.5 && dot(dir, fr.sun_dir.xyz) >= cos(fr.optic.w)) {
+        // The Moon in either slot is drawn by rm_moon_disc instead, with its phase.
+        let moon_slot = fr.moon[1].w;
+        if (fr.sun_radiance.w > 0.5 && moon_slot != 1.0 && dot(dir, fr.sun_dir.xyz) >= cos(fr.optic.w)) {
             radiance += fr.sun_radiance.rgb / max(2.0 * RM_PI * (1.0 - cos(fr.optic.w)), 1.0e-12);
         }
-        if (fr.secondary_radiance.w > 0.5 && dot(dir, fr.secondary_dir.xyz) >= cos(fr.secondary_dir.w)) {
+        if (fr.secondary_radiance.w > 0.5 && moon_slot != 2.0 && dot(dir, fr.secondary_dir.xyz) >= cos(fr.secondary_dir.w)) {
             radiance += fr.secondary_radiance.rgb / max(2.0 * RM_PI * (1.0 - cos(fr.secondary_dir.w)), 1.0e-12);
         }
+        radiance += rm_moon_disc(dir);
     }
     return radiance;
+}
+// The Moon's disc with its phase (3 November 2026, "moon should have phases"; before, the disc
+// was one flat circle whose brightness alone followed the phase). A point of the disc is a point
+// of the lunar sphere facing the eye; it is sunlit where its normal faces the Sun (the Sun's
+// direction from the Moon is the Sun's from the Earth to 0.15 deg), and the sunlit part carries
+// the Moon's whole irradiance at one radiance (named: the lunar surface's lack of limb darkening
+// taken as uniform, the Lommel-Seeliger law's mean). The night side shows the earthshine: the
+// full Moon's radiance times the Earth's albedo, solid angle from the Moon and phase
+// (celestial_sky.rs `moon_disc`), the ashen disc beside a crescent.
+fn rm_moon_disc(dir: vec3<f32>) -> vec3<f32> {
+    let radius = fr.moon[0].w;
+    if (radius <= 0.0) { return vec3(0.0); }
+    let m = fr.moon[0].xyz;
+    let c = dot(dir, m);
+    if (c < cos(radius)) { return vec3(0.0); }
+    let solid = max(2.0 * RM_PI * (1.0 - cos(radius)), 1.0e-12);
+    // The point of the disc in units of its radius, and the sphere's normal there toward the eye.
+    let p = (dir - m * c) / sin(radius);
+    let n = p - m * sqrt(max(1.0 - dot(p, p), 0.0));
+    let s = fr.moon[3].xyz;
+    // The sunlit share of the disc's area: (1 + cos phase angle) / 2, the phase angle the
+    // supplement of the elongation.
+    let lit_share = clamp(0.5 * (1.0 - dot(m, s)), 1.0e-3, 1.0);
+    if (dot(n, s) > 0.0) {
+        return fr.moon[1].rgb / (solid * lit_share);
+    }
+    return fr.moon[2].rgb / solid;
 }
 // The 88's muzzle brake, for the first fraction of a second after the gun's report
 // (fr.report, fr.report_dir): gas and light leave as a forward jet and two lateral lobes, not a
