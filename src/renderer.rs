@@ -6776,6 +6776,10 @@ impl Renderer {
             .filter(|(_, m)| m.visible && m.model.w_axis.truncate().distance(point) <= radius)
             .map(|(i, _)| i).collect()
     }
+    /// Review harness: a mesh's world bounds as last placed.
+    pub fn debug_mesh_world_bounds(&self, idx: usize) -> Option<(glam::Vec3, glam::Vec3)> {
+        self.meshes.get(idx).map(|g| (g.world_min, g.world_max))
+    }
     pub fn debug_mesh_state(&self, idx: usize) -> Option<(bool, glam::Mat4)> {
         self.meshes.get(idx).map(|g| (g.visible, g.model))
     }
