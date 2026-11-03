@@ -39,6 +39,8 @@ struct Crush {
     // shipped); z = dithered steps of red and green (8 = deltaP's); w = blue's (0: as z; 3 with
     // z 7 is the 8-bit 3-3-2 split, 256 colours). Appended lane.
     real: vec4<f32>,
+    // Debug only: x 1 shows the point layer (KESSEL_POINT_LAYER_VIEW, the rod pooling check).
+    debug: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 
@@ -55,6 +57,8 @@ fn tzf_field_distance(q: vec2<f32>) -> f32 {
 struct EnvironmentWhite { lanes: array<vec4<f32>, 68>, };
 @group(0) @binding(6) var<uniform> environment_white: EnvironmentWhite;
 @group(0) @binding(7) var blue_noise: texture_2d<u32>;
+// The sub-pixel emitters' radiance at their pixel (the raymarch backend's firefly lanterns).
+@group(0) @binding(8) var point_layer: texture_2d<f32>;
 
 // A camera white point, not a change to scene lighting. Use the diffuse sky irradiance that
 // already lights the scene; a red flash, painted wall or warm cabin lamp cannot drive this meter.
@@ -77,9 +81,31 @@ fn camera_white_gain() -> vec3<f32> {
 // src/observer.rs): the cones keep the pixel's colour, the rods add an achromatic signal that
 // saturates, each scaled by the eye's current adaptation. Looking from snow into a closed turret
 // leaves it black until the eye adapts; a muzzle flash leaves an afterimage that fades.
-fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
-    let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
-    let rods = obs_rod_response(scotopic, cr.rod_exposure, cr.rod_inverse_saturation);
+fn eye_response(radiance: vec3<f32>, point: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    // A sub-pixel emitter's rod signal is pooled over the rods' summation disc (observer.rs
+    // ROD_SUMMATION_DIAMETER_DEG): at its pixel the rods see its luminance times the pixel's share
+    // of that disc; the cones take the pixel whole. Near the line of sight (the screen's centre,
+    // where the eye fixates) the point falls on the rod-free fovea: no rod signal there at all,
+    // rising to the full pooled share by a few degrees out (observer.rs ROD_FREE_RADIUS_DEG,
+    // ROD_FULL_DEG). Extended fields have no point layer and are unchanged.
+    let pixel_deg = degrees(2.0 * cr.dither_up.w / max(f32(textureDimensions(hdr).y), 1.0));
+    let disc = 3.14159265 * 0.25 * OBS_ROD_SUMMATION_DEG * OBS_ROD_SUMMATION_DEG;
+    let tangent = vec2((uv.x * 2.0 - 1.0) * cr.dither_right.w, (1.0 - uv.y * 2.0) * cr.dither_up.w);
+    let eccentricity = degrees(atan(length(tangent)));
+    let rods_here = smoothstep(OBS_ROD_FREE_RADIUS_DEG, OBS_ROD_FULL_DEG, eccentricity);
+    let share = clamp(pixel_deg * pixel_deg / disc, 0.0, 1.0) * rods_here;
+    let rod_seen = max(radiance - point * (1.0 - share), vec3(0.0));
+    // The foveal cones see a fixated point concentrated in the eye's point spread (about two
+    // arcminutes at a night pupil, observer.rs POINT_PSF_ARCMIN), not spread over the pixel: its
+    // cone stimulus is the pixel's luminance times the pixel's area over the spread's.
+    let concentrate = max(pixel_deg * 60.0 / OBS_POINT_PSF_ARCMIN, 1.0);
+    let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));
+    let scotopic = max(dot(rod_seen, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
+    // Where a point falls on the rod-free fovea there are no rods at all: its pixel takes no rod
+    // signal, not even from the glare round the point (a pixel without a point keeps the
+    // whole-field rod model; the eye's central night blind spot is not drawn).
+    let fovea_point = select(0.0, 1.0 - rods_here, dot(point, vec3(1.0)) > 0.0);
+    let rods = obs_rod_response(scotopic, cr.rod_exposure, cr.rod_inverse_saturation) * (1.0 - fovea_point);
     // The outdoor night-visibility boost is unnecessary in a cabin with practical lamps and
     // local range compression. Retain normal rod vision without washing out the lamps' colour.
     let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));
@@ -91,7 +117,7 @@ fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     // The lifted rod channel reaches the display's key at most (observer::rod_display): an eye
     // adapted to the moonlit field, or dark-adapted beyond it, showed the whole sight white
     // (2 November 2026); mid-grey is what a night field is to a locally adapted eye.
-    return radiance * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);
+    return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);
 }
 
 // The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright
@@ -511,7 +537,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         + textureSample(hdr, samp, in.uv - vec2(radius.x, 0.0)).rgb * 0.15
         + textureSample(hdr, samp, in.uv + vec2(0.0, radius.y)).rgb * 0.15
         + textureSample(hdr, samp, in.uv - vec2(0.0, radius.y)).rgb * 0.15;
-    var c = eye_response(mix(centre, blur, concussion));
+    let point = textureLoad(point_layer, clamp(vec2<i32>(in.uv * hd), vec2(0), vec2<i32>(hd) - vec2(1)), 0).rgb;
+    var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion), in.uv);
+    if (cr.debug.x > 0.5) { c = vec3(select(0.0, 4.0, dot(point, vec3(1.0)) > 0.0), dot(centre, vec3(1.0)) * cr.exposure, 0.0); }
     // Explicit user camera/display reproduction. Identity by default; black stays black.
     c *= cr.display_grade.x * vec3(1.0 + 0.2 * cr.display_grade.z, 1.0, 1.0 - 0.2 * cr.display_grade.z);
     c = eye_range(c);

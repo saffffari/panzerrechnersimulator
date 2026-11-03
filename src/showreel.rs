@@ -357,7 +357,7 @@ pub fn run_train_tiger(
     );
     ensure!(sigma > 0.0, "train-tiger mutation sigma must be positive");
 
-    let t34_brain = ai::Mlp::load(t34_weights)
+    let t34_brain = ai::Mlp::load_t34(t34_weights)
         .with_context(|| format!("loading evolved T-34 policy {t34_weights}"))?;
     let instance = super::create_instance();
     let adapter = super::request_adapter(&instance, None);
@@ -674,7 +674,7 @@ pub fn run_gauntlet(
 ) -> anyhow::Result<()> {
     ensure!(seed_count > 0, "ai-gauntlet needs at least one seed");
     let t34_brain =
-        ai::Mlp::load(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
+        ai::Mlp::load_t34(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
     let tiger_brain = ai::Mlp::load(tiger_weights)
         .with_context(|| format!("loading Tiger policy {tiger_weights}"))?;
     let instance = super::create_instance();
@@ -2767,7 +2767,7 @@ pub fn run_ai_showreel(
     }
     std::fs::create_dir_all(outdir)?;
     let t34_brain =
-        ai::Mlp::load(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
+        ai::Mlp::load_t34(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
     let tiger_brain = ai::Mlp::load(tiger_weights)
         .with_context(|| format!("loading Tiger policy {tiger_weights}"))?;
     let instance = super::create_instance();
@@ -2841,7 +2841,7 @@ pub fn run_ai_take(
         "ai-take T-34 count must be 1..=6"
     );
     let t34_brain =
-        ai::Mlp::load(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
+        ai::Mlp::load_t34(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
     let tiger_brain = ai::Mlp::load(tiger_weights)
         .with_context(|| format!("loading Tiger policy {tiger_weights}"))?;
     let instance = super::create_instance();
@@ -2896,7 +2896,7 @@ pub fn run_ai_campaign_wave_preflight(
         final_geometry_m,
     };
     let t34_brain =
-        ai::Mlp::load(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
+        ai::Mlp::load_t34(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
     let tiger_brain = ai::Mlp::load(tiger_weights)
         .with_context(|| format!("loading Tiger policy {tiger_weights}"))?;
     let instance = super::create_instance();
@@ -2939,7 +2939,7 @@ pub fn run_ai_campaign_wave_take(
         "campaign-wave take needs at least 30 seconds"
     );
     let t34_brain =
-        ai::Mlp::load(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
+        ai::Mlp::load_t34(t34_weights).with_context(|| format!("loading T-34 policy {t34_weights}"))?;
     let tiger_brain = ai::Mlp::load(tiger_weights)
         .with_context(|| format!("loading Tiger policy {tiger_weights}"))?;
     let instance = super::create_instance();

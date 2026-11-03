@@ -181,6 +181,11 @@ struct PartResistance {
     pulverize_work_j: f32,
 }
 
+/// The work that pulverizes `part` (the voxel tissue scales its cells to it: `game::crew_tissue`).
+pub fn pulverize_work_j(part: CrewBodyPart) -> f32 {
+    part_resistance(part).pulverize_work_j
+}
+
 fn part_resistance(part: CrewBodyPart) -> PartResistance {
     // These are destructive work thresholds, not shell muzzle energies. Distal parts fail before
     // proximal limbs; thighs and the central body require substantially more work. The values also

@@ -1,8 +1,140 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Spectral aerosol and the surfaces' clear air, 2026-11-02 (`src/physical_environment.rs`, `shaders/physical_environment.wgsl`, `shaders/rm_medium.wgsl`, `shaders/rm_shade.wgsl` `fog_to`)
+
+The owner: "more blue haze in the atmosphere its just white scatter right now". Two causes, both
+transport, not colour: the aerosol was one wavelength-independent coefficient (grey), and on the
+raymarch backend a surface's aerial perspective crossed only the map's weather layer
+(`fog_density`): no Rayleigh and no atmospheric aerosol reached a hill, only the sky had them.
+
+What the code computes now:
+
+- **The aerosol is spectral** by the Angstrom law, beta(lambda) = beta_550 (lambda / 550 nm)^-alpha,
+  for scattering and extinction alike, in the CPU reference, the shared WGSL atmosphere (sky, sky
+  cache, the shader/physical backends' aerial perspective and media, the solar transmittance, the
+  upper-atmosphere diffuse flux) and the raymarch backend's clear air. Default winter background
+  alpha 1.0 at AOD 0.05 (550 nm; the 550 nm band is unchanged); the spring campaign profiles
+  (acts 2, 3) alpha 1.5. Sources: AERONET fine-mode continental/urban alpha(440-870) about 1.2-2.0
+  (Eck et al. 1999, JGR 104 D24; Dubovik et al. 2002, JAS 59); Moscow MSU monthly AOD(500 nm) 0.08
+  in December-January to 0.3 in August (Chubarova et al. 2016, AMT 9, 313). The winter alpha is an
+  estimate at the low end (humid winter growth enlarges the particles), not a measurement.
+- **A map's aerosol** (`environment_lighting.aerosol: {"aod_550", "angstrom", "scale_height_m"}`,
+  `environment_authoring::AerosolTuning`; absent: the campaign's) replaces the atmosphere's column
+  (extinction = AOD / scale height at the local planet surface, y = -256 m; the albedo 0.9 and g 0.80
+  kept) for every consumer above, and gives the weather layer's aerosol its exponent.
+- **Raymarch surfaces cross the clear air** (`fog_to(..., surface = true)`): molecules (Rayleigh
+  phase) and the atmosphere's aerosol (Henyey-Greenstein) at the frame's altitude profile, per band,
+  lit by the isotropic sky and the key beam through the cloud shadow, with per-band transmittance.
+  Sky pixels add none (the sky cache holds that whole path already).
+- **The weather layer (`fog_density`) is the near-ground haze/snow extinction at 550 nm**: its snow
+  share (the layer's snow fraction) is grey, the rest is aerosol with the map's Angstrom factor, in
+  the froxel grid's scattering and the far march's extinction and scattering. The painted tint it
+  carried, (0.94, 0.97, 1), is gone from the weather layer.
+
+- **The air's higher scattering orders** (fixed the same day, after the merge): with the spring
+  bridge's proposed block (AOD 0.2, alpha 1.6) the sky away from the afternoon Sun went slate grey
+  and darker at the horizon than at the zenith. The atmosphere was single-scattering only: away
+  from the Sun the aerosol's Henyey-Greenstein backscatter lobe is weak (0.006 /sr at g 0.8) while
+  the horizontal path's optical depth saturates, so a hazier sky went darker where a real one
+  whitens. Every view sample now also scatters the diffuse field, taken isotropic in each
+  hemisphere: (F_down_diffuse) / (2 pi), the downward diffuse flux being the delta-Eddington
+  two-stream transmission of the Rayleigh/aerosol/ozone column above the point for the key and
+  secondary body, or under a cloud the diffuse flux leaving the measured cloud column
+  (`multiple_scattering_radiance`, WGSL `physical_multiple_scattering_radiance`). CPU reference,
+  AOD 0.2 alpha 1.6, Sun 22 degrees up, looking away: horizon (2 deg) / zenith green radiance 1.5
+  before, 2.7 after, and the horizon whiter than the zenith; the default winter sky is 11 % (green)
+  to 24 % (blue) brighter at the zenith and up to 1.3x/1.65x at the horizon. Gate:
+  `physical_environment::tests::a_hazy_sky_whitens_toward_the_horizon_away_from_the_sun`.
+
+Named approximations (limits):
+
+- The diffuse field is isotropic in each hemisphere and only the downward flux from the column
+  above enters it: the upward flux (the air below the point, the ground's reflection, snow's 0.8
+  included) is left out, so hazy skies over bright ground, snow most, are still too dark low down;
+  the cloud's column is evaluated at the sample's own footprint; no diffuse field once the bodies
+  are below the horizon (twilight multiple scattering stays open).
+- The three bands are point samples at 680, 550 and 440 nm (as the Rayleigh coefficients); the
+  aerosol's single-scattering albedo and asymmetry are the same in every band.
+- The froxel grid stores one extinction: inside its 320 m the medium's transmittance is the 550 nm
+  band's (grey) while its scattering is spectral; the far march and the sky are spectral.
+- The clear air inside the grid's reach is two steps composited behind the grid's media (smoke,
+  weather, banks dim its in-scatter whole, second order in the two optical depths); beyond the grid
+  six steps of weather plus air, then four steps of air alone to 40 km. No geometric occlusion of
+  the beam in the clear air, no secondary body (the Moon while the Sun keys) in it, single
+  scattering only, altitude as y above the local planet surface (flat over the map).
+- The weather layer's albedo (0.70 aerosol, 0.92 snow) and asymmetry are the values it had,
+  unsourced; the cabin haze and the plumes keep the (0.94, 0.97, 1) scattering tint (outside this
+  change); both are open.
+
+Measured (spring-bridge-v2 copy, 15:28 local solar, looking east across the valley to the hills
+1.8 km away, the locked look; sRGB means over the hill band): before (128, 131, 134 → B-R +6.7);
+after, the map unchanged: (127, 138, 153 → B-R +25.7); with the proposed block (AOD 0.2, alpha 1.6,
+1,500 m): (137, 148, 158 → B-R +20.8, hazier). Winter Canyon v2 at its authored noon: frame mean
+red -2.2, blue +2.2 sRGB codes (the layer is mostly snow there). Cost: `rm-shade` 0.739 → 0.762 ms
+(4090, 1024x576, `gfxbench day 240` on the bridge copy). Gates:
+`physical_environment::tests::the_aerosol_is_spectral_by_the_angstrom_law_in_every_consumer`,
+`a_bluer_aerosol_makes_a_distant_view_bluer_and_its_transmittance_redder`,
+`environment_authoring::tests::a_map_aerosol_round_trips_and_absent_means_the_campaign`.
+
+## Owner-directed effects of the cigarette, and the walking bob, 2026-11-02 (`src/cigarette.rs`, `src/hand_items.rs`, `src/foot.rs`, `src/renderer.rs`)
+
+These are game effects the owner chose, not physiological models, named so they are never read as
+simulation:
+
+- While a smoked boost lasts (`cigarette::State`, seconds per toke) the man on foot moves 1.5 times as
+  fast (`cigarette::BOOST_FOOT_SPEED`, `FootSoldier::speed_scale`); the tank is unaffected.
+- The same boost already raised the display's exposure (x1.9) and saturation (x1.18)
+  (`boosted_display_grade`); it now also doubles the rods' gain (`VISION_BOOST_NIGHT`), so it is felt as
+  better night vision. The rod signal stays capped at the display's key in `crush.wgsl`.
+- Walking and running move the camera and the held Luger with a gait bob (about 1 cm walking, 2.5 cm
+  running, a sway once per stride pair, a third of it when aiming), from a gait clock advanced by the
+  distance actually walked (`FootSoldier::gait_bob`). Presentation only: the man's eye for sight, the
+  stealth model and collision use the unbobbed eye.
+
+## Spring meadow, butterflies and fireflies, 2026-11-02 (`src/meadow.rs`, `src/meadow_fauna.rs`, `src/renderer_meadow.rs`, `shaders/rm_meadow.wgsl`)
+
+On a map whose terrain block says `grass_season: "spring"` and on the raymarch backend, the three
+legacy grass layers (`grass.rs`) are replaced by a GPU-generated meadow; winter maps, maps without
+a season and the other backends keep the legacy grass unchanged (`Grass::enable_meadow` returns
+before touching anything; `KESSEL_MEADOW=0` restores the legacy grass on a spring map for
+comparison). What each part computes and what it does not:
+
+| Part | What the code computes | Named approximation and source |
+| --- | --- | --- |
+| Ground cover | Grass presence is the map's grass mask, the ground class's red channel (3 x 3 smoothed), since 2 November 2026 (the owner paints the earth under the grass as earth); where a map has no ground class, the authored ground material's green (green over blue, not redder than green: `meadow::greenness`) stands in. Zero where the ground lies below a river's water surface (manifest `river` centreline, 5 cm margin). Stand height (lushness) from world-fixed 23 m and 7 m noise. | The mask is authored, not a vegetation survey. Test: `green_material_is_grass_and_soil_road_and_water_are_not`. |
+| Blade geometry | Every blade is a closed-shading ribbon of 1-3 quadratic segments (5, 3 or 1 triangles), 0.30-0.60 m tall, 7 mm mean width tapering to a point, leaning 6-30 deg, rounded shading normal across its width. Roots sit on the drawn terrain grid's triangles (the same split as `Heightfield::grade_at`). | Not a leaf model: no midrib fold, no twist, no seed heads; the rounded normal is a shading device. Optics in the next row. |
+| Leaf shading (kind 5) | A bi-Lambertian sheet with cuticle specular: the beam lights the face it falls on with the blade's diffuse reflectance rho and passes to the other face with its diffuse transmittance tau, both through the sun's visibility; a GGX cuticle lobe at n = 1.47 (f0 0.036, roughness 0.4) on the lit face; lamps (and firefly lanterns) the same way; diffuse sky on both faces, (rho + tau) x the environment. rho and tau are PROSPECT-D (Feret et al. 2017 after Jacquemoud & Baret 1990; its published coefficients at 680/550/440 nm, `leaf_optics.rs`) for three leaf states: fresh (N 1.5, Cab 40, Car 9 ug/cm^2, Cw 0.010 cm, Cm 0.004 g/cm^2: rho 0.036/0.153/0.041, tau 0.005/0.153/0.001), pale (Cab 20) and senescent (Cab 2, brown 0.8, Cw 0.002), mixed in world-fixed patches, on thin ground and toward old tips, every live blade at least 0.45 pale; 30 % of the blades are last year's standing dead (senescent straw, 0.6 of the live height, lodged further), as a May steppe sward carries its litter (since 2 November 2026, the owner: "a bit too saturated, a bit dryer"; the share is an estimate); each blade's vigour scales rho by 0.85-1.15. Canopy visibility: a uniform turbid canopy (spherical leaf angles, G = 0.5) with leaf area index density x width x mean height (conserved by the LOD), leaf area above a point L = LAI (1 - h/H); sky gap fraction 2 E3(G L) replaces the screen gather and the former 70 % lift; past the near cascade (24 m) the sun is also attenuated exp(-G L / cos theta_sun). | The sheet is Lambertian on both faces (no anisotropic sheen along the blade, no subsurface spread); the leaf parameters are estimates inside Jacquemoud & Ustin's (2019) ranges for grasses, not a measured species; flower petals take tau = 0.4 rho (an estimate). Beer-Lambert canopy visibility, not blade-resolved beyond the cascade; within it the drawn blades at the cascade's texel LOD shadow each other. Shading model after Baranoski & Rokne's survey (1998). The winter straw (kind 4) keeps its named wrap and lift unchanged. Tests: `leaf_optics::tests`. |
+| Density and placement | 1200 blades/m^2 near the eye (since 2 November 2026, the owner: thick enough not to see the earth beneath; leaf area index ~3, gap fraction ~0.2 straight down, none at the oblique views from eye and commander height); a stand is full once the grass mask passes one half. Each 2 m world tile is seeded by an integer hash; blade j sits at the j-th point of an R2 low-discrepancy sequence, so every prefix of a tile is evenly spread and thinning never moves a root. | 900/m^2 is an estimate for a lush spring sward, not a field count. Placement is not ecological (no tussock structure). Tests: `meadow::tests::placement_is_world_fixed_and_counter_seeded`, `every_prefix_of_a_tiles_blades_is_evenly_spread`. |
+| Level of detail | Footprint LOD: a blade is drawn at least 1.5 pixels (camera) or 1.5 texels (shadow maps) wide; where that is wider than the blade, the blade is widened and the density divided by the same factor, conserving blade area per ground area (hence the canopy's coverage). Tiles take the coarsest of 9 levels whose capacity holds their need; blades past the local count sink smoothly into the ground (no pop). 2 m tiles to 100 m, then 8 m tiles with their own seeds (cross-faded over 88-100 m) fading out by 140 m, where the canopy slab (next row) has risen over 90-140 m. | A geometry LOD, not a canopy BRDF: a widened far blade (0.3 m at 140 m) stands for many real ones; far tiles draw no flowers and cast no shadow. Tests: `lod_conserves_blade_area_and_never_exceeds_near_density`, `a_tiles_level_always_holds_the_density_it_needs`. |
+| Far field: canopy slab | Past the blades the meadow is a 1-D homogeneous turbid canopy slab (SAIL-type: Verhoef 1984/1998; spherical leaf angles, G = 0.5, extinction G LAI / H) drawn as a shell at the canopy top (32 m tiles of 4 m quads to 600 m, 128 m tiles of 8 m quads to 3 km, no overlap), G-buffer kind 6 carrying the stand's PROSPECT rho, tau and LAI in the blades' mean mix (litter share, pale share, dry tips) with the flowers' petals mixed in by their area fraction (heads per m^2 x a head's area); it rises from the ground over 90-140 m while the blades fade. Shading: single scattering of the beam by the area scattering phase function Gamma of bi-Lambertian spherical leaves (Ross 1981; tabulated at 17 angles, `leaf_optics::gamma_tables`, energy-checked) integrated over the leaf area in eight steps with Kuusk's hotspot joint gap probability (hotspot parameter 0.02, leaf width over height), the soil (albedo 0.12) through both gaps, and multiple scattering as the Kubelka-Munk deep-canopy reflectance (two-stream, Sellers 1985) less a first-order share of omega/4; diffuse sky by the same two-stream reflectance. Bare ground (cover LAI < 0.1) discards the shell so roads and soil show the terrain. | Single-scatter plus a two-stream estimate, not SAIL's full four-stream solution; no cuticle specular in the far field; no lamps on the slab; the shell is the canopy top only where the terrain is its pixel (its 0.3-0.6 m rise above a distant ridge line is drawn as geometry, its side faces are not); T-junction cracks of centimetres where 4 m and 8 m quads meet at 600 m. The shell is drawn with a depth bias toward the eye (constant -16, slope -4): a 0.3-0.6 m rise above terrain hundreds of metres off is below the depth buffer's resolution there, and lost to the terrain without it. Tests: `the_canopy_phase_function_conserves_energy_and_backscatters_the_reflection`, `the_far_canopy_reads_as_a_green_meadow_with_a_hotspot`. |
+| Sun exposure | Per 5-10 m cell (512 x 512 over the map, computed at install from the drawn terrain and the manifest's tree placements), the growing season's direct-sun dose on the slope over the dose on open flat ground: mid-May hourly sun directions at the act's site from the ephemeris (`ephemeris::CelestialState`), each through the slope's cosine, the beam thinned by exp(-0.2 x air mass), and blocked where the terrain or a tree crown (12 m deciduous / 14 m pine, 3.5 m radius, times its placement scale) stands above the line to the sun within 240 m; weighted 0.8, plus the sky view factor (mean cos^2 of the horizon over eight azimuths) weighted 0.2. Exposure drives the leaf state: below 0.6 (shade, far slopes) live blades stay green, toward 1.1 (open ground in full sun, sun-facing slopes) up to 0.7 of a live blade is senescent straw (drought and radiation load dry exposed steppe swards first, sun-facing slopes most: Holland & Steyn 1975, J. Biogeogr. 2:179). The far slab takes the same mix. | One representative day, no clouds, no soil water model; tree heights and crowns are estimates (the placements carry no crown size); buildings and wrecks are not occluders; the dose-to-dryness mapping's numbers are estimates chosen with the owner ("high sun exposure regions lean towards tan and shaded regions green"). Test: `exposure_is_high_on_sun_slopes_and_low_on_far_slopes_and_under_trees`. |
+| Tussocks | A world-fixed Voronoi tessellation of jittered seeds 0.9 m apart (after the clump attributes of Ghost of Tsushima's grass, Wohllaib, GDC 2021): each blade takes its clump's height (0.80-1.15, lower toward the clump's rim), fans out from the clump's centre with a lean growing toward the rim, and shifts its leaf state with the clump; its R2 root is unchanged. Flowers favour the gaps between clumps (0.45 of the rate inside one, 1.25 on a gap), on the CPU (`meadow::flower_at`, where butterflies land) and the GPU alike. The canopy's mean blade height is taken as 0.75 of the stand height for its leaf area index. | A visual clump structure, not a tiller or rhizome model; tussock size is one constant. Test: `tussocks_are_world_fixed_and_flowers_favour_their_gaps`. |
+| Wind | A 64 x 64 grid of 4 m cells around the eye integrates a spring per cell (1.4 Hz, damping ratio 0.3) toward a drag deflection proportional to u^2 (capped at 0.34 m for a 0.48 m reference blade), driven by the act's wind times a gust factor: world-fixed noise of 28 m and 9 m carried downwind at the mean wind (Taylor's frozen turbulence; the finer octave at 0.8 of it), streamwise intensity 0.28. Pressure fronts kick the cells as before. Each blade adds a flutter at a hashed 2.5-4.5 Hz, amplitude proportional to wind speed. | Frequencies and damping are estimates in the range of cereal and meadow canopies (Py, de Langre & Moulia 2006, J. Fluid Mech. 568, honami); the gust field is a frozen-turbulence model, not a solved boundary layer; the flutter is a harmonic per blade, not an oscillator; blade length is kept by renormalising the tip. Test: `the_wind_grid_bends_downwind_rings_down_and_keeps_its_state_when_recentred`. |
+| Treads | The grass contact memory (`grass_filament::TrackMemory`, 25 cm cells with the tread's heading) is mirrored page by page into a GPU page table and atlas; a blade on a contacted cell lies along the heading (spread +-26 deg), its tip 3-6 cm above the ground; flowers there are crushed (not drawn). | Flattening is permanent (no recovery); tread contact is the existing two-strip footprint; 4096 atlas pages (262 000 m^2 of tread) at most, further pages counted and not drawn flattened. Test: `tread_pages_get_stable_atlas_slots`. |
+| Hulls and walkers | Every hull in the meadow (the player's, enemies', allies', moving or standing, by its `hull_half_extents`) and every man on foot press a grid of 0.5 m cells, 80 m across round the eye: blades under a hull and within 0.35 m of its sides lie away from its nearest side (tip displaced up to 0.40 m on the 0.48 m reference blade), those within 0.45 m of a walker away from him; once free they spring back by Hooke's law, critically damped at 1.5 rad/s (about 3 s), as Jahrmann & Wimmer (2017, I3D, "Responsive real-time grass rendering for general 3D scenes") recover bent blades; treads lodge them for good (the row above). | The recovery rate is an estimate for unbroken stems; no blade breaks; the hull is its footprint box, not its mesh; walkers are a 0.45 m disc; cells beyond 40 m of the eye are not pressed. Test: `a_hull_lays_the_grass_aside_and_it_springs_back`. |
+| Shadows and secondary rays | Blades cast into the near sun cascade and the sky-cover map within 24 m of the eye, at those maps' own texel LOD. The ray queries see the meadow as the same turbid medium: a grid of ground height, canopy height H and leaf area index per terrain node (`meadow::canopy_grid`) is bound to the shade and reflection passes; an occlusion (ambient) ray that escapes the scene, a lamp's shadow ray, and an off-screen reflection ray are multiplied by exp(-G LAI / H x the path inside the canopy) over their first 12 m (six samples), the reflection taking the deep canopy's two-stream radiance under the sun and sky for the share it hides. | The blades are not in the TLAS: the meadow is statistically present to the rays (Beer-Lambert in a homogeneous slab, no blade-resolved occlusion, the slab's stand averaged over a 4.9 m node); only the first 12 m of a ray are tested; the point-light faces take no meadow; flowers cast no shadow. Test: `the_canopy_grid_carries_the_stand_and_nothing_on_bare_ground`. |
+| Flowers | Five species (poppy, cornflower, chamomile, buttercup, meadow sage), each with its own clump field (world-fixed two-octave noise through a band); a slot takes species s with probability = its clump density / 1 per m^2, so species clump; since 2 November 2026 (the owner: "too many flowers ... a spec here and there") the clumps are rare (the noise band 0.71-0.88) and sparse (0.3-0.7 heads per m^2 at a clump's heart, at most four per 2 m tile): about 0.05 heads per m^2 over the meadow, most of it none; a two-segment stem and a six-triangle head (centre colour to petal colour) tilted 30-55 deg, swaying with the wind grid. Beyond the footprint the head is widened to 1.5 px and the slots thinned by the square of the widening (coloured area conserved); drawn to 60 m. | Display-equivalent pigment albedos, not measured petal spectra; geometry is a fan, not petals; no phenology. Test: `flowers_clump_by_species_and_respect_bare_ground`. |
+| Butterflies | Four species, two real wing meshes each (raster only, no shadow, no body), flapping at 9-11 Hz (small pierids and nymphalids beat at ~8-12 Hz; Dudley 2000, The Biomechanics of Insect Flight); flight bouts of 2-10 s at 1.4-2.6 m/s with a heading that turns by a new hashed rate every 0.25 s, staying within 15 m of home; then the nearest real flower head of the meadow within 6 m, approached and perched on for 3-15 s. Spawned per 12 m world cell (0-6, from the cell's flower density) within 40 m of the eye; wings drawn double-sided; only with the Sun above 3 deg, no rain; a wind over 7 m/s keeps them perched. | A behavioural model, not flight aerodynamics; no collision with vehicles or people; outside 40 m and at night they are not simulated. Test: `butterflies_fly_and_land_on_flowers`. |
+| Fireflies: spectrum | A Gaussian peaking at 560 nm with 22 / 24 nm half-widths (~54 nm FWHM; firefly emission maxima span 552-582 nm, Photinus pyralis in vivo near 560-562 nm, Seliger & McElroy 1964, PNAS 52:75). It enters the three lanes as its display-equivalent triplet (CIE 1931 colour matching, Wyman, Sloan & Shirley 2013 fit, to linear sRGB primaries, negative blue clipped) scaled to the spectrum's photopic luminance: (0.56, 1.00, 0.00), chromaticity x 0.403, y 0.587. | Point samples at 680/550/440 nm would put the 560 nm band on the 550 lane alone (pure green). With the triplet the rods see about 1.8 times (estimated) the true scotopic share of such a band (named; the lane model cannot match photopic, scotopic and chromaticity at once). The curve's shape is an estimate. Test: `the_lantern_is_yellow_green_and_its_power_is_silvers_count`. |
+| Fireflies: power | 1e11 photons per flash, the top of the 1e8-1e11 of Silver 2026 ("How bright is a firefly? Resolving a century of overestimation", Am. J. Phys., doi:10.1119/5.0325834, which corrects Coblentz's 1912 1/50-1/400 candle; the top is his ceiling of every luciferase turning over once with unit yield), a 0.12 s sin^2 pulse, isotropic: about 3e-5 cd at the peak. | The photon count is Silver's upper bound, not a per-species measurement; isotropy is assumed (the lantern is ventral). |
+| Fireflies: transport | Each lit lantern is a one-pixel emitter in the HDR frame before bloom and the crush (`rm_points.wgsl` kind 3): pixel radiance = I / d^2 x focal^2 (its irradiance at the eye over the pixel's solid angle), times the froxel medium's transmittance, hidden by any nearer depth (a blade in front hides it). The 32 nearest lit lanterns are also point lights in the clustered light list with the shared range cut-off. | Lanterns take no point-shadow cube (six scene depth faces for tens of micro-candela; named cost bound) and so their light is unoccluded; at 3e-5 cd (5e-10 lane units) their light reaches the shared 2e-7 cut-off at 5 cm, the minimum range; that is the physical scale (3e-5 lx at 1 m, against ~1e-3 lx of starlight on the grass), so their light on the meadow does not show. The eye (see the rod pooling row): the display shows a lantern's pixel-averaged luminance (about 1.5 cd/m^2 at 3 m, 0.03 at 20 m at 1280x720); before the pooling the observer added a full rod signal to that pixel and a lantern read pale at night. `KESSEL_FIREFLY_PROBE=1` (debug only) holds one lantern lit 3 m before the eye, `KESSEL_FIREFLY_PROBE_GAIN` scales it, for this check; `KESSEL_BUTTERFLY_PROBE=1` (debug only) holds a 3x wing pair 1.5 m before the eye. |
+| The eye: rod pooling of sub-pixel emitters | The observer (`observer.rs`, `crush.wgsl` `eye_response`) takes a sub-pixel emitter's rod signal as its pixel's scotopic luminance times the pixel's share of the rods' summation disc, half a degree across (complete spatial summation of dark-adapted rods, Ricco's area; Barlow 1958, J. Physiol. 141:337): 3 % at 1280x720 and 55 deg; the cones take the pixel whole (foveal summation is a few arcminutes, under the 4.6 arcmin pixel). The emitters' own radiance is written to a point layer (`rm_points.wgsl` `fs_layer`, the firefly lanterns only) that the display stage reads; transport buffers are unchanged. | A reproduction transform, not transport. The pooled rod signal is dropped at the pixel rather than spread over the disc (the faint rod halo round a lantern is not drawn). Only the lanterns use the layer: the stars, embers, sparks and tracers are unchanged, so the stars keep their 3x display-white ceiling and stay calm. Seen on spring-bridge-v2 (2 November 2026): the layer carries the lanterns (debug view `KESSEL_POINT_LAYER_VIEW=1`, debug only), yet at night a lantern still reads as a pale blue-white point, not yellow-green: even 5 % of its scotopic luminance, under the night eye's rod gain (doubled by the owner's cigarette boost), outweighs its cone signal at a pixel-averaged 0.03 cd/m^2 (20 m). Open: a rod-free fovea for fixated points, or a point-source cone response, is the eye model's to decide; the lanterns' power and spectrum are not raised. Tests: `observer::rod_pooling_tests`, `renderer_meadow::tests::the_crush_with_rod_pooling_validates`. |
+| The eye: the rod-free fovea for points | Near the line of sight (the screen's centre, where the eye fixates) a sub-pixel emitter falls on the fovea, which has no rods: its pooled rod share is scaled by the rods' presence, 0 within 0.6 deg of the centre rising (smoothstep) to full by 5 deg (the rod-free foveola is about 1.25 deg across; rod density climbs steeply beyond it: Curcio, Sloan, Kalina & Hendrickson 1990, J. Comp. Neurol. 292:497), so a lantern looked at shows its cones' yellow-green and one in the periphery stays pale, as a dark-adapted eye sees them. Where a point falls in that rod-free region its pixel takes no rod signal at all (not even from the glare round it), and its foveal cones see it concentrated in the eye's point spread, about 2 arcminutes at a night pupil (Campbell & Gubisch 1966, J. Physiol. 186:558): the cone stimulus is the pixel's luminance times (pixel width / spread)^2, 8x at 1024x576, fading with the rods' return. Seen on spring-bridge-v2 at night in the locked look: a lantern fixated at 6 m is a yellow-green point (19,55,11); the same lantern 20 deg off the line of sight a faint grey (10,12,9); at 10 m fixated (probe) (42,78,14). A lantern beyond about 15 m is faint even fixated: 1e11 photons per flash is about a fourth-magnitude star at 20 m, whose colour an eye does not see either. | Point layer only (the lanterns): extended fields keep the whole-field rod model, so the eye's central night blind spot is not drawn; fixation is assumed at the screen's centre (no eye tracking); the transition's shape is a smoothstep, not the measured density curve. Stars are not in the layer and keep their 3x display-white ceiling. |
+| Fireflies: flash pattern and swarms | Photinus carolinus, the measured clustered flasher: groups of more than 15 flash synchronously every 0.55 s in bursts repeating every 12 s, each member taking 3-8 consecutive slots with onsets within +-30 ms, dark between bursts; smaller groups and lone males burst 1-4 flashes at irregular times (a 50 % chance per 6 s bin) (Sarfati, Hayes & Peleg 2020 J. R. Soc. Interface 17:20200179; 2021 Sci. Adv. 7:eabg9259). Swarms (one per 32 m world cell with probability 0.8 x grass cover, 8-79 males, radius 3.5-7.5 m) wander slowly (< 0.4 m/s) about their home; members orbit within the swarm radius; altitude rises from 0.45 m to 1.75 m as the Sun goes from -3 to -9 deg, members emerging one by one through that dusk. | P. carolinus is North American: its measured clustered behaviour stands in for the lower Volga's Luciola and Lampyris (named). Orbits are smooth Lissajous paths, not flight dynamics. Tests: `a_large_swarm_flashes_in_synchronous_bursts`, `a_small_group_flashes_irregularly_and_each_flash_is_a_short_pulse`, `a_swarm_moves_together`, `no_fireflies_by_day_and_a_dark_meadow_has_some`. |
+
+Debug gate: `KESSEL_MEADOW_SKIP=1` skips the meadow's draws (profiling only); `KESSEL_MEADOW=0` keeps the
+legacy grass. Neither is set by any preset.
+## Berlin 1945 map: authored landmark colliders and standing water, 2026-11-02 (`docs/BERLIN_REICHSTAG_1945.md`)
+
+| Item | Live truth | Named approximation / limit |
+| --- | --- | --- |
+| Authored landmark colliders (`src/authored_colliders.rs`, `tools/berlin1945/bl_kit.py`) | A custom landmark GLB (the Reichstag, the Brandenburg Gate, the Kroll, the ministry, the city shells, the bridge) collides through a sidecar `<model>.colliders.json` written by the same Blender generator that builds the mesh: each box is a modelled solid part (a wall pier, a sill, a lintel, a column, a plinth, a pier of the bridge), so the shells' window openings, the gate's passages and the courtyards stay open to tanks, men, shells and sight. A model without a sidecar keeps the old path vocabulary (`worldgen::manifest_structure_proxies`). Unit tests: `authored_colliders::tests`. | (1) A curved or sloped part (a column drum, a pediment, the portico stair, a mansard) is boxed by its own model-frame bounds; each sidecar records the parts so boxed and the worst excess (the Reichstag's portico stair 3.2 m in two steps, a column 0.36 m, a mansard 1.04 m). (2) Collision boxes are world axis-aligned: a model turned off a quarter turn (the Dorotheenstadt's 6.3 deg grid, the Moltke Bridge's 137 deg) has each box split until no piece's world box reaches more than 0.4 m (`MAX_ROTATION_EXCESS_M`) beyond the turned piece; a large solid keeps its rim pieces and one inner box only when that box's world bounds are checked to stay inside the same bound. (3) The Reichstag's and the roofed shells' interiors are not modelled: their collision is the solid mass behind the walls (the Reichstag's windows were bricked up in 1939; the roofed shells' glazed and boarded windows are closed to fire and sight). (4) The landmarks are static: no part of them is brought down by the push or by shells (the grammar houses on In den Zelten keep the building runtime's damage). |
+| Standing water in the Koenigsplatz cut and the Humboldthafen (`ditch_water_1945.glb`) | A flat slab at the water level, the same opaque smooth finish as the river's surface (the river water row). | The river water row's limits (no transmission, refraction, flow or wading depth); the slab is a scaled box, so its ends overlap the cut's banks under the ground. |
+| The Moltke Bridge | The deck's top is a `floor_ceiling_` walk surface for people on foot; the barricades at both ends (Beevor 2002) are its collision against a tank; the blown arch is a gap with the upstream third still spanning. | A tank cannot drive onto the deck: the engine's tank-bearing bridges (`src/river_crossings.rs`) run along world X only, and this bridge runs at 137 deg. The barricades stand where a tank would meet that limit; they are static (not shot away). |
 
 ## Tiger visual size: an open debt, 2026-11-02 (the owner's decision pending)
 
@@ -227,10 +359,15 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   puffs born at the hole 0.45 s apart over 2.3 s, about the hole's size, leaving along the
   normal (1.6 m x (1 - e^(-age / 0.6 s))) and rising, fading over 6 s. Both are authored plumes
   on the event's origin and normal, not a vented-gas or detonation-products model; the hole's
-  glow is the existing hot rim. Inside the hull the same event fills the compartment: six puffs
-  born over the first second inward along the normal, trapped (no buoyant rise), spreading
-  slowly and thinning over ten seconds; an authored stand-in for the round's smoke, the spall's
-  dust and the burning paint behind the plate, not a vented-gas model. The `fx-review` part
+  glow is the existing hot rim. Inside the hull the same event leaves its own smoke at the hole
+  (2026-11-02, the owner: rapid like an explosion's aftermath, light and scattering, more for
+  heavier hits, emanating from the impact rather than filling the compartment): eight puffs
+  born over the first tenth of a second, blown 0.12-0.57 m inward along the normal and held near
+  the hole, single-scattering albedo about 0.8, gone in five seconds; their reach, size and
+  density scale with (plate work / 1 MJ)^(1/3) bounded to 0.5-1.6 (a 45 mm round about 0.7, a
+  76 mm about 1, a 152 mm about 1.4); the exterior vent's puffs scale the same way and are lighter
+  too (albedo about 0.6). An authored puff envelope for the round's smoke, the spall's dust and
+  the burnt paint behind the plate, not a vented-gas model. The `fx-review` part
   `cabin_hit` (an observer inside behind the radio operator, the crew-solo fixture's wounding
   lane through the hull side) is its evidence. The spall bodies' trails (`HOT_FRAGMENT_TAIL_MAX_LENGTH`
   0.04 m, was 0.145 m) are capped at about one frame of the slow end of their motion: on the
@@ -461,6 +598,16 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   puffs were opaque across the turret, and an interior camera saw only sky-lit fog for ten
   seconds. A compartment does fill with smoke; the density is a named presentation value, not a
   vented-gas model.
+- A penetration's interior smoke stays at the hole (above) and a fire's smoke is its own soot
+  (2026-11-02, the owner: fires need time to build up smoke, much darker, absorbing the light).
+  The soot is a uniform load in the cabin air (`Game::interior_soot`, 0-1), built at 0.38 per
+  second times the burning surfaces' enclosure heat (`CabinFire::enclosure_diagnostics`) and
+  drained by the fan and an open hatch as the gun fumes are; at a full load its extinction is
+  1.5 /m (`SOOT_EXTINCTION_PER_M`: a lamp two metres off all but hidden), single-scattering albedo
+  0.2 (fresh black carbon's order) and asymmetry 0.5, added to the cabin medium in
+  `rm_medium.wgsl` inside the cabin domain only. The build rate, the extinction scale and the
+  uniform spread are authored (named: no soot transport, no stratified hot layer, no deposition);
+  the gun fumes' light haze only drains.
 - Spall and shrapnel carry tracers, and the solved chips glow by their temperature on the one
   law (2026-11-02; the owner). A flying fragment's tail is still a frame of its own measured
   motion (no rod drawn through a wall; a ricochet starts a new segment), now bounded at 0.45 m
@@ -1060,6 +1207,161 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   only a pool full of it (768 bodies, named bound) gives up its oldest. The authored population
   still retires with its body's life. Resting steel draws in the fragment pages, which are
   raster-only: a cold chip casts no shadow in the ray tracing tier (named).
+- **The dead as voxel bodies, solved on their cells** (2026-11-02, `game::crew_tissue`,
+  `game::crew_corpse_tissue`, `game::crew_skeleton`). The skeleton is the owner's rigged
+  low-poly PSX skeleton (its asset folder is named licence-unconfirmed: licence and author are not
+  recorded, pending the owner), cut by its joints into the eleven body parts and fitted inside the
+  relaxed figure (per part a principal-axis turn, 0.78 of the length ratio, shrinks to 70 % while a
+  vertex lies outside by winding number, then each vertex still outside set 4–25 mm inside the
+  skin; measured: none more than 3 mm outside, the most moved 43 mm). A fitted, not anatomically
+  registered skeleton (named). The figure and the skeleton share one grid of 2 cm cells (built
+  in about 100 ms at start): skin within a cell of the figure's surface (the clothing is this
+  layer, named), muscle deeper (organs not told apart, named), bone where a skeleton triangle
+  passes through a cell (the skeleton is a surface: its quads are voxelised, so a skull or ribcage
+  is a shell). Only organic matter is cells (the owner, 2026-11-02): the steel helmet is a rigid
+  body, below. A man a strike kills is drawn as his cells only (coloured from the figure's atlas
+  by a 12-colour palette over the five faces, two authored muscle shades, the skeleton's mean
+  albedo), never as the figure's triangles or the skeleton page; his helmet stays its own mesh.
+  The strike is solved on the cells as a bond-based lattice (peridynamic in form, not a
+  finite-element model): each cell a mass bonded to its 18 nearest neighbours by a spring that
+  fails past a critical stretch in tension or compression (crushing, named). A fragment contact is
+  a steel cube of its mass moving along its own path through the part's cells, slowed by the
+  tissue's resistance and Newtonian drag (Poncelet's form: R·A + ρ·Cd·A·v²/2, Cd 1, R the tissue's
+  tearing energy per volume; named); the momentum it loses goes to the cells within its half-size
+  plus half a cell of its path, 0.95 along the path and 0.3 outward (authored). A burst's pressure
+  work on a part (the existing crew model's) becomes kinetic energy of the part's surface cells
+  facing it, shared by how squarely they face it (authored mapping). The lattice then runs 8 ms
+  (symplectic Euler at a tenth of the stiffest moving cell's period, 0.1 % velocity damping per
+  step: named numerical damping); only cells within 12 cm of a fragment's path, or of a part a
+  burst works on, move, the rest of him holding them. Each struck part keeps its largest piece
+  still bonded; every other piece comes away with its mass-weighted velocity and spin. Bond
+  strengths are authored game-level values in the owner's order: tearing a cell free costs 0.4 J
+  (skin), 1 J (muscle), 3.2 J (bone), at critical stretches 0.6 / 0.35 / 0.05; a bond takes its
+  weaker cell's values (so a bone tears from the muscle before it breaks). The scale makes tearing all of a
+  part's soft cells cost about its existing pulverizing work; not measured tissue strengths.
+  Measured on the figure: a 3.14 kg 57 mm shot at 377 m/s through the torso tears 265 cells
+  (a channel about 10 cm wide); a 20 g fragment at 700 m/s 27; a 2 g one at 400 m/s stops in him
+  after 2; about 10 ms a solve (40–70 ms for a man several fragments crossed). A fragment's energy
+  in the existing damage model (which decides death and the ragdoll's impulses) is unchanged. In
+  solo play a pulverizing outcome removes a part from the articulated simulation only when less
+  than 20 % of its soft cells remain; a part's mass is not reduced by the cells it loses, and the
+  cells of a removed part ride the nearest retained segment, with no mass (named). The pieces fly
+  under gravity and meet the vehicle's own surfaces (`FragmentWorld`) as a sphere of their
+  bounding radius about their centre (named: not their cells), with no rotational response to a
+  contact (named), restitution 0.25 and tangential keep 0.55 (authored: wet tissue), and rest on a
+  face turned up below 0.35 m/s or after ten bounces; at most 4,096 cells in pieces (the oldest at
+  rest go first). A piece that lands harder than its own bonds hold (half its mass times the
+  square of its speed into the surface, against the breaking energy of its intact bonds) breaks
+  into single grains, each leaving with the piece's motion at its place plus a hashed scatter of up
+  to 0.3 m/s (authored); a falling piece also meets the grains already at rest (each a sphere of
+  half a cell) and rests on them, so grains pile. Every visible cell is drawn as its own closed
+  cube of one colour (cells of one colour blend; only cells with a face open to air or to a wound
+  are submitted, about 3,600 for a whole man); cells within 3.5 cells of a joint are drawn
+  between the two segments' poses (linear blend skinning of the drawn cell only; the lattice and
+  the ragdoll do not see it; named), and only while that joint holds. All of it is ordinary moving
+  instanced geometry (one page per colour, 8,192 cubes each, allocated at start so a save's draw
+  layout keeps its shape): it casts shadows and is in the ray-traced scene, in both presets. The
+  old under-body pool slabs are not drawn for a solved body (its blood is the droplets' film).
+  The helmet (`game::crew_helmet_body`) rides the head segment while its strap holds. A fragment
+  whose path crosses its shell first (two-sided ray against the helmet's own triangles) punches a
+  plug out of it: shear plugging work ½·P·t²·τ over the fragment cube's perimeter P, with the
+  shell 1.1 mm thick and 600 MPa in shear (authored game-level values, not a measured helmet
+  steel), the residual speed by Recht and Ipson's momentum form with the plug flying on with the
+  fragment (named); one below the plug's ballistic limit stops in the shell. The momentum the
+  fragment loses goes to the helmet. A burst's work on the head reaches the shell in proportion
+  to the shell's mean projected area (its mesh area over four, Cauchy's relation as the part boxes
+  use it; named for an open shell) and drives it at its own speed; its push against the head is
+  that momentum less the head's own. Past 1 N·s against the head (authored: a leather strap's
+  breaking force, about a kilonewton, over about a millisecond), or once less than 20 % of the
+  head's soft cells remain, the helmet comes away: a rigid body of its own mesh (1 kg authored,
+  mass spread over its shell by area, the exact lamina inertia), under gravity, meeting the
+  vehicle's surfaces (`FragmentWorld`) at 32 support points farthest-point sampled from its
+  vertices (named: not its whole surface), with sequential contact impulses, restitution 0.3 above
+  0.5 m/s closing and Coulomb friction 0.45 (authored, steel on painted steel), resting once quiet
+  for 0.3 s. Limits (named): the shell's exit side and the hole a fragment leaves are not
+  modelled or drawn; a loose helmet does not meet bodies, grains or other helmets; the parts are
+  rigid segments, so at a bent joint two parts' cells interpenetrate at an angle; cells finer than 2 cm (a small fragment's
+  track) are not resolved; only the strike that kills a man is solved on him; the living crew's
+  wounds keep the existing rules; the couch co-op renderer draws a part whole or as bone as before;
+  the solved state is not saved (a restored body is whole); dragging and picking a body still use
+  its whole flesh triangles.
+- **The compartment's heat, the ammunition's cook-off and the thrown turret** (2026-11-02,
+  `cabin_heat`, `game::game_cookoff`; the owner: model the internal temperature; any live round,
+  racked, chambered, loose or carried, ignites from the heat or from flames reaching it; one
+  burning round sets off the rest and blows the turret off within a second or two; a direct hit
+  on the racks goes at once). It replaces the earlier exposure fuse (a dimensionless flame
+  exposure past 0.65 lit a 3 s fuse). One well-mixed gas zone in the burst model's 10 m³ of free
+  air (ideal gas, γ 1.4): its mass and internal energy, heated by the burning surfaces (45 kW per
+  surface patch at full intensity: about 0.12 m of burning oil, paint and stowage at 1 MW/m²,
+  authored) and by burning propellant (2.5 kg a cartridge, `propellant_charge_kg`; heat of
+  explosion 3.7 MJ/kg and the mass of its gas), losing heat to the hull's steel held at ambient by
+  its mass (600 W/K: about 15 W/m²K over 40 m², authored), trading air through what is open
+  (Kawagoe's ventilation factor 0.5·A·√H with H 0.5 m, authored for roof hatches), pushed out by its
+  pressure through the openings and 0.01 m² of leaks (authored) by the burst model's orifice flow,
+  never hotter than the propellant's flame (2,600 K, authored within 2,500-3,000 K); a closed hatch
+  whose latch the gauge pressure beats is thrown open (the burst model's 20 kN). Ambient is the
+  burst model's 293 K (the weather's air temperature is not used; named). No oxygen balance: a
+  fire is not limited by its ventilation (named). Each case wall with the propellant heated behind
+  it is one lumped areal heat capacity (9 kJ/m²K: 1.5 mm of brass and about a millimetre of
+  propellant, authored), heated by convection from the gas (25 W/m²K, authored), the gas's
+  radiation (emissivity 0.3 clean to 0.7 sooty, authored), the flames in sight of it (80 kW/m² at
+  contact falling as (0.2/(0.2 + d))², from burning patches within 1.5 m with a clear line through
+  the tank's own triangles, re-measured every 0.2 s; authored within impinging flames' 50-100
+  kW/m²) and the flame of any burning neighbour (12 MW/m² at contact while it burns, falling as
+  (0.05/(0.05 + gap))² with the gap between the cases: a case it touches ignites in about 0.2 s;
+  authored). At 453 K (nitrocellulose's ignition, about 170-180 °C) its propellant ignites and
+  burns in 0.3 s at atmospheric pressure, faster under pressure by Vieille's law with exponent 0.8
+  (authored within 0.7-0.9). The turret (11 t, the Tiger I's turret with its gun; ring 1.85 m, real
+  size) sits on its ring under its weight (no hold-down; named): the gauge pressure on the ring's
+  area lifts it, the gap round the ring vents only once its skirt has risen 6 cm (authored), and
+  once that gap is as large as the ring (a quarter of its diameter further up) it flies with the
+  speed it has; while it is still over the open ring the leaving gas pushes it on, the gauge
+  pressure on the ring's area falling as (D/(D + 2h))² with its height (authored). The thrown
+  turret is the wreck turret's rigid body (`wreck_turret::Body::thrown`) built from the player's
+  own Tiger at real size, its support samples kept one per 12 cm cube (3,485 of 233,288; the gap
+  bound rises to 0.21 m; named), its thin-shell mass estimate (41 t) not the real 11 t (named: its
+  flight is the same; contact impulses scale with it); everything authored in the turret's frame
+  goes with it (`Tank::turret_thrown`), the dead in that frame are detached into the world first.
+  The first round's bang kills the crew inside (the compartment at the propellant's flame: every
+  man inside, not solved per body; the blast that throws them is the struck rounds' fillers and
+  their propellant's TNT equivalent, 0.36 kg a kilogram); each later round is its own bang and
+  flash and a flame from every opening. A round that ignites leaves the live inventory (its burst
+  case and its shell are not drawn after; named). An HE shell's filler (the SprGr's 0.9 kg)
+  detonates when a strike crosses it, when another HE shell within 0.2 m of it (centre to centre,
+  about two shell diameters; authored) detonates, or when its steel body (36 kJ/m²K: about 10 mm,
+  authored), heated like the case and by its own burning charge, reaches 570 K (TNT's cook-off,
+  about 300 °C; authored): its energy (the burst model's TNT equivalence) and products go into
+  the gas at once (the gas held at the flame's temperature at most; named) and its own charge is
+  lit. An armour-piercing round's bursting charge (under 0.2 kg) is not counted (named); no shell
+  fragments are thrown by a detonation in the chain (named). A strike that crosses a round sets
+  off every round within 0.2 m of the crossings at once (authored reach of its flame and
+  fragments). Measured (unit tests on the game's stowage at real
+  size, two groups of 32 2.5 m apart): a round in a 60 kW/m² flame under a 300 kW fire ignites in
+  about 20 s; its group pops over about 0.5 s; the turret goes 0.5-0.6 s after the first round at
+  7-8 m/s (about 3 m up); a struck rack throws it within 0.6 s. In the game (fea-film,
+  `cookoff_fire` and `cookoff_struck`): a flame staged on the rack's fitting ignites the first case
+  in 12-13 s; the turret was thrown at 3.4-3.9 m/s (about 1 m) by the heated chain, at 2.8-6.9 m/s
+  (0.5-3.6 m) by a 122 mm round into a rack of armour-piercing rounds, and at 17.6 m/s (about
+  16 m) by one into the right sponson's twelve HE shells, which all detonated together (2.2 MPa).
+  The death's outside shot frames the throw's whole height (the camera draws back on the cook-off's
+  clock toward the turret's height plus v²/2g while it rises). Historical scale (2026-11-02 search): no measured heights; a
+  T-34-76's full load set off in 1944 Soviet tests threw the turret roof about 30 m; Tiger wrecks
+  show turrets beside the hull; a 122 mm hit in a Soviet trial moved a Tiger's turret 0.5 m. Not
+  saved: the compartment's heat and the thrown turret (a restored tank is cold, its turret on its
+  ring; named).
+- **Blood droplets and film** (2026-11-02, `surface_blood`; the owner: droplets too large, and
+  blood should form a continuous film where enough lands). A droplet's edge comes from its seed,
+  1.5–6 mm with most under 3 mm (an authored distribution, not a measured spatter one), and the
+  film it leaves is its own volume over a fresh stain's thickness of 0.3 mm (authored): one 5 mm
+  cell for the smallest, about nine (1.5 cm) for a 4 mm one, at most about 29. Before, every
+  droplet grew a fixed 49-cell (3.5 cm) square. Film that lands on film joins it, so where enough
+  collects it is continuous. On a face steeper than about 45° a pool spreads downhill first (an
+  authored flow bias, not a fluid solve), so collected blood runs down a wall. The film now
+  carries over an edge onto a neighbouring face turned by less than 25° (a curved wall is flat
+  facets; the film used to stop at every facet edge, leaving lines of clean paint along the mesh):
+  that one cell stands on its own centre's probe and may overhang the edge by up to half a cell
+  (named). A flying droplet is still drawn at least 1.4 pixels across (the existing readable
+  minimum, now from its own size).
 - **Steel in hand** (`game_fea::fea_grab_fragment`): at the loader's station a resting fragment
   under the crosshair within 2.2 m can be taken with the left button when it is no hotter than
   343 K (a gloved hand, named) and, if embedded, when one man's 400 N pull beats its grip (the
@@ -1573,6 +1875,26 @@ are presented as ray tracing, GI or a combustion/solver result:
   boundary-layer solve; beyond 320 m the medium is marched in six steps without geometric
   occlusion. The cloud does not shadow the skylight. Gate: `KESSEL_SHOWCASE_SET=clouds` with and
   without `KESSEL_RM_SKIP=131072`.
+- Low cloud and mist banks inside the map (2026-11-02; `src/low_clouds.rs`, a map's
+  `manifest_edits.json` `low_clouds` block, `rm_common.wgsl` `rm_low_*`, `rm_low_clouds.wgsl`,
+  docs/RAYMARCHING_ENGINE.md "Low cloud and mist banks inside the map"). Computed: extinction from
+  the authored liquid water content and effective drop radius, sigma = 3 W / (2 rho_w r_e)
+  (extinction efficiency 2, Hansen and Travis 1974; Stephens 1978); Mie albedo 0.9999 and
+  asymmetry 0.85 of water drops; the banks are a term of the one world medium, lit in the froxel
+  grid, and every key-beam query takes their transmittance, so they shadow ground, vehicles, the
+  medium and themselves. Named approximations: the shape is an authored ellipsoid with a noise
+  edge (no condensation, growth or decay); multiple scattering is the two-stream transmission of
+  a conservative layer, T = 1 / (1 + 3/4 (1 - g) tau) (Bohren 1987), added as isotropic sky and
+  diffused key-beam radiance (no angular structure, no exchange between banks, lamps scatter once);
+  optical depths and extinction come from a 176 x 64 x 176 grid of 4 m texels round the eye,
+  trilinearly interpolated, half its slabs refreshed a frame while it holds still (update
+  cadence); beyond 320 m six samples per bank crossing, the weather haze between the grid's edge
+  and a bank applied behind it; the drift is the world wind times the gust, integrated per frame,
+  wrapping in the authored area with a one-radius fade at its edge; the base follows the mean
+  ground under the footprint. Open: the simulation (AI sight, perception) does not read the
+  banks; the shader and physical backends draw none (the editor shows them with
+  `KESSEL_RENDERER=raymarch`). Gate: `KESSEL_RM_SKIP=4194304` (debug A/B, removes the banks);
+  `cargo test -- low_clouds` (extinction law, absent block, round trip, drift, optical depth).
 - Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`, `rm_gbuffer.wgsl`
   `apply_wear`, the shade pass's worn edges and cavity grime, the glass film): four scalar loads,
   mechanical wear (+0.4 % of the remainder per round), interior grime (toward full over 40 min
@@ -1911,7 +2233,7 @@ Full, not this deliberately simplified opt-in gameplay profile.
 | High surface lighting | High is raster-primary, then reconstructs exact committed secondary triangles, barycentrics, transforms, level-zero source texels and material state from the hardware TLAS. One diffuse/GGX secondary bounce receives shadowed source and shared-environment lighting. The exact path has compiled and rendered on Hal/RTX 4090. | This is not a full camera path tracer. P0: replace the fixed one-bounce branch with a shared bounded-depth path loop, robust geometric-normal ray origins, appropriate texture filtering and declared convergence/error gates. |
 | Indirect GI and reflections | A material-driven stochastic secondary bounce and environment miss are live; there is no screen-space color gather, ambient floor, camera fill, campaign exposure lift or aperture light. A secondary ray that meets direct-view Schutzglas follows the same bounded entry/exit dielectric path as a camera ray. | P0: deeper interreflection and unbounded dielectric path depth remain incomplete. Presets may change samples/cadence/resolution, not transport law. |
 | Volumetrics | High traces source visibility against the scene TLAS and integrates Beer–Lambert extinction plus normalized Henyey–Greenstein single scattering for compact local media. Visible sky, surface misses and volume source terms use the same physical environment query. The finite-disk/environment/emitter Monte Carlo estimate lands in a dedicated premultiplied target and is converged with per-view reverse reprojection plus a same-surface/opacity-aware spatial estimate; only effective source radiance is filtered, while current Beer–Lambert opacity (including tiny world-space cabin motes) is preserved exactly. Act-I blowing snow is a bounded -128..128 m effective bulk layer with neutral 0.995 albedo and 0.76 HG endpoint; its blue cast can come only from physical incident sky radiance. Horizontal `sigma_t` remains 0.0068 m^-1. High primary and exact-secondary surface endpoints retain directional Beer transmission and add only the scattered remainder from a constant-cost delta-Eddington hemispheric closure using the actual receiver column, albedo and asymmetry. The finite Sun remains a disjoint directional beam. High's world-volume estimator additionally samples orders 2–5 with exponential free flights, HG continuation, finite-Sun/environment/emitter NEE, exact slab exits, TLAS segment termination and Russian roulette; the uncollided camera term remains analytic Beer–Lambert. A ray refracted through direct-view glass continues through the same host-supplied slab. | The surface closure is plane-parallel flux transport, not full 3D angular transport; local-obstacle/ground coupling, positioned-emitter scattering and snow/atmosphere coupling remain unresolved. The spatiotemporal volume filter is a finite-resolution denoiser, not additional transport. P0: higher volume orders stop at five; binary volume TLAS hits terminate without evaluating their material, so ground/steel reflected or emitted radiance is absent. Overlapping local media and resolved aggregates are still composed as separate layers. Laptop contributes no higher orders until exact software-triangle visibility exists. Never replace missing transport with an authored tint, white sky, cone, halo or brightness floor. |
-| Atmosphere / environment | One shared numerical spherical atmosphere integrates Rayleigh, aerosol/Mie, ozone, liquid-water extinction, a finite solar disk and Beer-Lambert direct/single scattering for visible sky, surface paths and volumes. Below a real cloud-base crossing, a measured structured liquid-water column now uses delta-Eddington direct and diffuse two-stream solves. True uncollided solar radiance remains separate; upper-atmosphere Rayleigh/Mie/ozone diffuse flux supplies the physical faint-blue component. Live cloud coverage is the campaign `overcast` state in both presets. | P0: the local plane-parallel hemispheric flux closure is not a solved atmospheric medium in exact 3D/multistream form; side leakage, broken-cloud angular structure, Rayleigh/aerosol multiple scattering and ground contribution remain. Validate against DISORT/high-sample references and Hal before widening the claim. No authored gradient, gray overcast, circumsolar curve or brightness floor is permitted. |
+| Atmosphere / environment | One shared numerical spherical atmosphere integrates Rayleigh, aerosol/Mie, ozone, liquid-water extinction, a finite solar disk and Beer-Lambert direct/single scattering for visible sky, surface paths and volumes. Below a real cloud-base crossing, a measured structured liquid-water column now uses delta-Eddington direct and diffuse two-stream solves. True uncollided solar radiance remains separate; upper-atmosphere Rayleigh/Mie/ozone diffuse flux supplies the physical faint-blue component. Live cloud coverage is the campaign `overcast` state in both presets. | P0: the local plane-parallel hemispheric flux closure is not a solved atmospheric medium in exact 3D/multistream form; side leakage, broken-cloud angular structure, the angular structure of Rayleigh/aerosol multiple scattering (an isotropic downward two-stream field since 2026-11-02) and ground contribution remain. Validate against DISORT/high-sample references and Hal before widening the claim. No authored gradient, gray overcast, circumsolar curve or brightness floor is permitted. |
 | Snow / spindrift | A declared bounded fine-grain suspension supplies whiteout extinction/scattering and receives the physically spectral cloud multiple-scattered environment through its directional estimator. At surface endpoints, exact directional Beer energy is supplemented only by the delta-Eddington scattered flux after subtracting a fixed quadrature of the analytic `2 E3(tau)` hemispheric uncollided term; the live `sigma_t`, slab geometry, neutral albedo and HG asymmetry drive the solve. High samples one temporally accumulated world-volume path per pixel: an exponential camera collision followed by HG sourceward continuation resolves snow-to-snow orders 2–5 with neutral albedo, NEE and roulette, while exact Beer–Lambert still owns uncollided opacity. High additionally resolves a 32 m large-aggregate population from immutable Lagrangian world cells: finite-shutter ray-cone filtering conserves each crystal's cross-section, scene depth clips the camera segment, and exact triangle rays gate its finite-Sun/environment sources. The premultiplied result enters HDR before bloom/exposure/crush. `snow.wgsl` contains no white-alpha particle, camera shell, veil, or depth-derived ground ribbon. | P0: the endpoint closure lacks exact 3D angular redistribution, geometry coupling and ground return. Volume orders above five, material response at opaque continuation hits, ground-reflected incident radiance, turbulent trajectories, accumulation/resuspension and coupling between resolved aggregates and the effective bulk remain unresolved. Laptop keeps the bulk suspension's extinction/order one but omits higher-order paths and resolved grains until exact software-triangle visibility exists; it may not restore a sprite/ribbon proxy. |
 | Compact emitters | Surface and volume consumers share source position, physical source radius, RGB radiance scale, inverse-square falloff and visibility. Apertures are not emitters. Dynamic incandescent penetration chips contribute at most one shadowed aggregate per moving hull/turret frame: total RGB power is summed from every live cube's six-face area and current heat page, position is the emitted-power centroid, and the spherical source support encloses every contributing cube. | The fragment emitter preserves total authored RGB power and has an explicit source-support bound, but clustering loses the real near-field angular distribution. Replace it with direct dynamic emissive-triangle sampling; convert remaining hand-tuned source powers to one documented radiometric calibration. |
 | Materials / emission | Base-color textures use sRGB decoding without runtime gamma/readability lifts. Crew, blood, loot, maps, foam, tools, brass, scars and wreck steel are not emitters. High/Vulkan direct-view Tiger Schutzglas now retains its real raster entry surface, finds the second interface in the exact triangle TLAS, applies Snell refraction at IOR 1.52, exact unpolarized Fresnel reflection/transmission and Beer–Lambert absorption over the traced thickness, then traces the exterior surface/environment and bounded world medium. It does not sample the screen or an RTT. | P0: archive-validate the provisional smooth-glass IOR/absorption coefficients; couple refracted glass paths into source-side illumination of the compartment; add rough dielectric scattering and internal multi-reflection; implement the full periscope optical path. Hot FX still use an authored orange mode instead of temperature/spectral emissive state. Current render-to-texture periscope is forbidden shipping debt. |
@@ -1990,7 +2312,7 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | Exterior cannon flight | Authoritative projectile pool with fixed substeps, `ShellSpec` velocity loss/gravity and swept contacts is being integrated; focused moving-target/range/frame-schedule tests pass. | Unified game tests and a playable delayed-impact capture must pass after renderer integration. No trigger-time outcome or forced landing may remain. |
 | Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. Since 2026-11-02 a kinetic round on the player's Tiger is followed layer by layer behind the struck plate through the CAD-measured components (casing, interior, liquids, live rounds, far wall), each with a named law, and lodges where it stops (see "Layered damage model"). | P0: damage forecasts the fragment bodies immediately against frozen targets, while their later visible paths meet moving state. Interior fragments meet the vehicle's own source triangles since 2026-11-02 (no perforation of any surface by a fragment, named; see "Layered damage model"); scars weaken resistance; on the raymarch backend they are drawn as cut and displaced geometry (see "Armor scars, 2026-10-27") but the retained collision triangles are not perforated. The layered chain's laws behind the plate, the component casings and masses, and the stopped-round depth rule are named reduced models, not validated terminal ballistics. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. |
 | Vehicle loss | Module/fire states and crew bodies exist. | P0: enemy penetration currently collapses too readily to an instant kill; random turret-pop/cook-off decisions are not derived from ammo/fuel/module energy. Replace with the shared vehicle damage state. |
-| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. Since 2026-11-02 a residual penetrator's own path reaches crew through the same anatomical boxes as fragments, with its real mass and speed. | P0: crew bodies (ragdolls) still meet a proxy floor and compartment bounds rather than the visible interior, so a thrown body can pass through the gun; a body part's tissue is drawn whole or as bare bone, with no graded state; hot steel fragments meet the visible triangle interior since 2026-11-02; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations (the layered damage model did not change them). Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
+| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. Since 2026-11-02 a residual penetrator's own path reaches crew through the same anatomical boxes as fragments, with its real mass and speed. | P0: crew bodies (ragdolls) still meet a proxy floor and compartment bounds rather than the visible interior, so a thrown body can pass through the gun; since 2026-11-02 a casualty in solo play is drawn as voxel cells and the strike that killed him is solved on them as a bonded lattice (see "The dead as voxel bodies" under the layered damage model), while the living, the couch co-op renderer and a restored save still draw a part whole or as bare bone; hot steel fragments meet the visible triangle interior since 2026-11-02; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations (the layered damage model did not change them). Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
 | World collision/destruction | Tank/tank separation, trees, destructible structures, rubble and drive-over classes work; since 2026-09-29 the Tiger's contacts go through the push model (tank push row) and the manifest's walls, piers, doorways and sheds are destruction records. | P0: AABBs/yawed footprints, hard-coded infantry cover cylinders and several authored structure shapes are proxies. Replace them with source-derived triangle/convex data; no invisible blocker may contradict the rendered object. |
 | Campaign outcomes | Route, resources, AI navigation/combat and authoritative telemetry run headlessly. | P0: Act-III allied hits/kills and civilian/town loss counters include scripted scalars. Outcomes must come only from simulated entities/events. |
 | First level: campaign Act 1 on the urban district (2026-09-29, `docs/ACT1_FIRST_LEVEL.md`) | Campaign Act 1 plays the urban-intro workshop: the route starts at the district spawn (the level design's entry gate) and leaves by its west exit gate; the district's defenders (the winter session's street encounter: two T-34 platoons on street beats, two 45 mm guns sited by the field-of-fire probe) are fielded at the start and the director raises no route contact until their armour is destroyed or the Tiger has left the district (450 m from the spawn); survivors keep their slots and fight on under the ordinary campaign AI, and route contacts take the free slots. It is a gate on when contacts spawn; no outcome is scripted. | Named limits: (1) the breakout radius is a distance from the spawn, not the district's outline. (2) `campaign-ai-run`, which proves the level headlessly, plays with an omniscient scripted crewman (it knows where unseen crews are; it lays by setting the gunner's desired lay, the turret following at its real traverse rate), and its field track repair takes the kit and is set down at the break instead of walking there; the ritual itself is the player's. (3) `KESSEL_CAMPAIGN_AI_INVINCIBLE=1` is a named debug gate for traversal proofs: it suppresses every mutation of the Tiger by hits. None of these run in play. |
@@ -2010,7 +2332,7 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | Rubble (2026-09-29, solid city, `building_rubble`, `building_set`) | A failed module's rubble is one mound: a heightfield (nodes 0.3 m apart, coarser on the largest modules: at most 48 cells a side) of a frustum at the angle of repose of brick rubble, 37° [I, R1 §8.5], measured as Euclidean distance from its core, with an apron below its base and seeded relief lumps of up to 0.10 m, holding exactly its solid volume times a bulking of 1.5 for masonry and concrete, 0.6 for timber and 0.05 for sheet iron and steel (P G17 [I]). It is laid where the module fell, on whatever lies under it: the ground, the floors under it, or the mounds already laid there, the base found by bisection so the volume added above them equals the budget (within 1 %). The union of the laid surfaces keeps every flank at the repose slope plus relief (measured steepest drawn flank less relief: 1.074 tan 37°). The mesh drawn and the surface queried are the same triangles (measured: 7.2e-7 m); burned-floor layers (the grammar's Debris modules) are heightfields generated from their mesh's top at 0.01 m cells (measured 0.017 m in the asset frame). Rubble carries tank tracks (row above) and feet, which climb it a 0.45 m step at a time (the buildings' step-up); a round entering it loses 47 mm of penetration per metre crossed (the brick transit's 35 mm per wall of about 0.5 m, by the density of loose rubble, 1/1.5 [I]), with 0.4 per metre of yaw disruption and 20 mrad per metre of deflection [I]; HE bursts at its surface; small arms stop in it. The weight on rubble reaches the floors it lies on. Its sight occluder rises from its building's ground to the lowest point of its crest region. Rubble that starts above a track's or a foot's reach (a burned-floor layer on an upper floor) is not their ground and not a round's medium below it (before, a layer 10 m up read as a 9.9 m step to a tank in the street). On the district at build: TLAS demand 45,597 of 65,536. | Named simplifications: (1) a mound is one rigid heightfield surface: no overhangs, voids or single chunks; it does not slump, compact under a track or slide, and a tank does not displace it; (2) mounds are laid in failure order; when a floor, foundation or stair carrying a mound fails, the building's whole pile is laid again in the same order at once (the rubble drops with it; it does not fall), as it is when a snapshot restores a module; (3) the rubble of a failed module in a sealed cellar stays buried (no mound); (4) the repose angle, bulking factors and ballistic costs are engineering estimates [I], not measurements of Stalingrad rubble; (5) AI infantry and AI tanks do not meet rubble (the tank row's (8)). Gate: `building_rubble::tests` (volume, stacking, flank, render against collision, layer surface), `building_render::tests`, `game::solid_city::tests`. |
 | Authored terrain: the drawn triangles are the collision surface (2026-09-29, solid city; was the verifier's P1 of 2026-09-29) | Both presets draw authored terrain from its full collision grid (Act I revisions 1024², 2.09 M triangles; the homeland acts 1536² and 1280², 4.71 M and 3.27 M), every vertex a source sample and every quad split along its (i+1, j)-(i, j+1) diagonal (`terrain_opening::build_mesh`, which also clips the opened cellars and trenches out of it: terrain openings row; its refinement round them is moot on the full grid), and `Heightfield::height_at`, which grounds tanks, feet, pads, props and rounds, interpolates on those same triangles (it was bilinear, a quarter of a cell's twist off the drawn triangles: up to 0.2 m on the urban-intro streets). Measured: `tools/worldgen/terrain_render_gap.py` reports 0.000 m on building perimeters, pads and streets; `terrain::tests::height_at_is_the_drawn_triangle_surface` (a twisted, stepped grid) and the campaign terrain test (every 101st triangle of all three acts) hold the drawn surface to the collision surface within 1e-4 m and 2e-3 m (float rounding at world coordinates). Before, the 4090 preset drew a stride-sampled 512² mesh and the laptop 256², up to -0.44..+0.37 m (4090) and -1.32..+1.42 m (laptop) off building bases and -1.25..+1.01 m off the streets, and the two presets drew different occluders. | (1) The raster and ray-scene cost of the full grid is paid on both presets: on this RTX 4090 about 3 ms more on the shader backend at the Act I spawn and no difference within the noise on the ray-traced backend or the laptop preset's raster (docs/URBAN_INTRO_20260928.md, solid city); a real laptop GPU was not measured; (2) the decimated mesh survives only as the debug gate `KESSEL_DEBUG_TERRAIN_RENDER_RES` (debug builds, explicit opt-in; `debug_gates::tests` proves it closed in both shipping presets); (3) manifest operations placed offline by the worldgen tools still take bilinear heights (`world_authoring.sample_height`): an authored op on a twisted cell sits up to a quarter of that cell's twist off the surface (0.019 m at most on the district's pads and building perimeters, up to 0.2 m at a few street cells); (4) the district's flattened pads and 0.15 m pad-to-street steps are one-cell (4.29 m) ramps of the grid, as the collision always was; (5) the legacy non-manifest paths (the Gaea probe, the homeland fallback, the DEM window) keep their own meshes. Gate: `terrain::tests`, `debug_gates::tests`, `python3 tools/worldgen/terrain_render_gap.py` (0 on the live configuration). |
 | Terrain openings: cellars and trenches (cellars and scenes, 2026-09-29, `terrain_opening`, `terrain`, `building_runtime`, `game::open_cellars`) | A cellar a live stair reaches, and an excavation a tableau digs, is an axis-aligned world rectangle (`TerrainOpening`; a cellar's lies midway inside the thickness of its foundation walls, tested for every typology at four yaws) in which the heightfield has no surface of its own: `Heightfield::height_at` answers the host's cellar floor (or the trench's floor), and every consumer that grounds on it (feet, soldiers, tanks, tableau pieces, debris) meets that floor. The render mesh is clipped exactly on the terrain's own planes (a 3 x 3 half-plane partition per opening, canonical crossings, bit-exact vertex dedup and edge points inserted into neighbouring triangles: watertight, tested), its soil faces stand from the cut edge down to the footings, a trench's earth floor is drawn, and the region round each opening is drawn from the collision grid on both presets (terrain render row). Every mover meets an excavation face as the step it is: feet climb at most 0.45 m (a jump clears more), AI soldiers without navigation neither climb nor drop more than 0.45 m (they stop at a rim), tanks climb at most the Tiger's 0.762 m step and bridge an opening narrower than its 2.50 m trench, the solid city's sourced limits (`tank_support::TIGER_STEP_M`, `TIGER_TRENCH_M`; the cellars branch's 0.79 m and 2.3 m were unified to them in the merge of 2026-09-29): an AI tank through `Heightfield::vehicle_height_at` and the rim gate, the player's Tiger through the solid city's rigid track contact, whose tracks meet the rims and the cellar floor as supports, and only the player's Tiger drives over a rim into a pit (`Tank::drops_into_pits`; AI tanks are kept out). The floor over a cellar fails under the Tiger by the solid city's one rule (a suspended floor, landing or stair that carries the tank gives way; tank ground contact row); the cellars branch's second rule, which broke every floor box the hull's footprint met, is not taken. On the urban-intro district: 60 cellars opened, one trench dug, 15,366 m² of terrain cut, 2,590 source triangles clipped, 2,029 soil faces (build log). | Named simplifications: (1) openings are axis-aligned rectangles (building yaws are quarter turns by the placement contract; a trench must be authored axis-aligned in its host's frame); (2) an AI tank's hull height is the pit floor or the grade under its centre (kinematic, no pitch); the player's Tiger falls under gravity onto its supports and tips at the rate of the tank ground contact row, with no bounce or damage; a tank in a pit climbs out only where a face is at most 0.762 m; (3) the gates are applied to each move's segment against the faces it crosses; since 2026-09-29 an AI walker heads for the first corner of the shortest way round the openings near its straight line (an exact visibility graph over their corners grown 0.8 m, `TerrainOpenings::walk_toward`), but it never paths down a stair into a pit; in mixed combat a soldier without a contact is walked to his post by the doctrine (the learned policies see every objective as a contact and halt at their engagement distance) and, when the movement gate stops a step into cover, steps round it by the first free heading turned 15 degrees at a time: a local rule that finds its way round a pier, a wall end or a wreck, not a path planner (a concave trap can still hold him). Before, a pier in a gateway held a rifleman sent to a 45 mm gun 14 m short; (4) soil faces and the trench floor are drawn earth-coloured without snow, and no snow drifts into a trench or cellar; (5) debris, casings and blood land on `height_at`, so inside an opening they land on its floor, and on a building's upper floors they still land on the terrain rule (the brief's item (e) for building floors is not done); (6) the dugout (tableaux row, item 3) is not re-dug. Gate: `terrain_opening::tests`, `terrain::tests`, `building_runtime::grammar_tests` (`soldiers_walk_down_the_cellar_stair_once_the_opening_is_cut`, `a_cellar_opening_is_cut_inside_its_foundation_walls`), `python3 tools/worldgen/terrain_render_gap.py --refine FILE`. |
-| River water and declared bridges (spring bridge map, 2026-11-02, `river_crossings`, `tools/worldgen/spring_bridge.py`) | A map's `river` block draws a water surface along its centreline at the authored level, falling downstream; the channel, its 66-degree cut banks and the floodplain are the heightfield itself. A map's `crossings` are deck, pier and rail boxes; the deck's exact box is the support for the player's Tiger, AI tanks, wrecks and feet through the same queries as the expedition theatre's bridges, and the boxes are cover. A tank is kept out of the river only by the banks exceeding its sourced limits (35 deg gradient, 0.762 m step, `tank_support`). | Named simplifications: (1) the water is an opaque, smooth (roughness 0.16), flat-coloured surface: no transmission, refraction, absorption with depth, flow, waves or wetting, the same as the theatre's river; (2) there is no buoyancy, wading depth, engine flooding or drowning: a vehicle that reaches the bed drives on it; (3) the water level is a smoothed, monotone profile of the ground along the course, not a hydraulic solution; (4) decks are axis-aligned along world X and indestructible. Gate: `river_crossings::tests`. |
+| River water and declared bridges (spring bridge map, 2026-11-02, `river_crossings`, `tools/worldgen/spring_bridge.py`) | A map's `river` block draws a water surface along its centreline at the authored level, falling downstream; the channel, its 66-degree cut banks and the floodplain are the heightfield itself. A map's `crossings` are deck, pier and rail boxes; the deck's exact box is the support for the player's Tiger, AI tanks, wrecks and feet through the same queries as the expedition theatre's bridges, and the boxes are cover. A tank is kept out of the river only by the banks exceeding its sourced limits (35 deg gradient, 0.762 m step, `tank_support`). | Named simplifications: (1) the water is an opaque, smooth (roughness 0.16 by default; a map may set its own colour and roughness, the spring bridge v2 map 0.05 and a clear blue), flat-coloured surface: no transmission, refraction, absorption with depth, flow, waves or wetting, the same as the theatre's river; (2) there is no buoyancy, wading depth, engine flooding or drowning: a vehicle that reaches the bed drives on it; (3) the water level is a smoothed, monotone profile of the ground along the course, not a hydraulic solution; (4) decks are axis-aligned along world X and indestructible; (5) a crossing's steel trusses (through truss over the deck, deck truss under it) are drawn and their chords are cover, but no member collides with a vehicle: the carriageway inside them is the deck's full width and 6 m clear, tested. Gate: `river_crossings::tests`. |
 
 ## Audio (sound levels, 2026-09-28)
 
@@ -3547,6 +3869,15 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   times faster). Its phase, rising, setting, distance and illuminance stay consistent with each
   other and with the Sun; only the month is shorter, as the day already is (`KESSEL_DAY_CYCLE_SCALE`).
   A named approximation of the day cycle's kind, tested against the real ephemeris at the real month.
+- **A map may pace its own day** (`environment_lighting.day_cycle` {night_s, blue_s, twilight_s,
+  day_s}, `Renderer::day_cycle_play_s`; absent is the campaign's 300 s night with its blue hours,
+  150 s each twilight, 300 s day): the sky clock's rate in each band (night below -14 deg, blue
+  hour -14 to -6, twilight -6 to +8, day) is the date's real seconds in that band over its play
+  seconds, as before. The spring bridge map runs each blue hour for 1,500 play seconds, each
+  twilight for 240 and the deep night for 120 (owner, 2 Nov 2026, of the blue-hour meadow film:
+  "this should be like the whole night"). The Sun
+  and the Moon stand where the ephemeris puts them at every instant; only the clock's rate
+  changes, and with it the eye's pigment rate. A pacing choice that changes no light.
 - **The discs are 1.6 times their angular size** (`celestial_sky::DISC_DISPLAY_SCALE`,
   `KESSEL_DISC_SCALE`; 1 is the real sky): the irradiance is untouched, so the light on the ground
   and the disc's total light are unchanged, the disc's radiance falls by the square of the scale
@@ -3583,7 +3914,8 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   which whitened the day sky until the clouds lost contrast): AERONET continental
   winter climatologies run 0.05 to 0.10, and the cauldron's smoke adds; Bruneton's 0.005 was a
   clear mountain sky, under which the three-band sunset was the saturated orange of a
-  monochromatic transmittance. A sourced estimate, not a measurement of the day.
+  monochromatic transmittance. A sourced estimate, not a measurement of the day. Spectral since
+  2 November 2026 (Angstrom alpha 1.0; see "Spectral aerosol and the surfaces' clear air").
 - **The pastel palette** (`KESSEL_LOOK=deltap-pastel`, `crush.wgsl` `DP_PASTEL`, mode 4): thirty-two
   display-sRGB entries authored for the owner's taste (green-blues and teals, creams, two warm
   dawn tones, snow, steel, fire), dithered by the look's OKLab best-pair search as the PICO-8 mode
@@ -3673,8 +4005,8 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   is the ground band, not resolved geometry; the acceptance is symmetric per axis; a relay's thin
   lens passes a ray straight on the energy path (its imaging stays the relay captures'); without
   ray queries the record is open and unrestricted on the piece's shortest axis and no fitting
-  shadows the pane (the raymarch backend's portable fallback). The key beam through a slot is
-  unchanged: the shadow cascades'. Gate for the A/B: `KESSEL_RM_SKIP=2097152` leaves the term
+  shadows the pane (the raymarch backend's portable fallback). The key beam through a slot was
+  the shadow cascades' here; since the same day it is traced (below, "Sun shafts through the openings"). Gate for the A/B: `KESSEL_RM_SKIP=2097152` leaves the term
   out; `KESSEL_RM_PROBE` prints the measure (`[rm-aperture]`). Cost: the measure's ~200 ray
   queries per pane run on one thread each and cost 1.07 ms a frame every frame (gfxbench, the
   merged line of 2 November 2026, the largest single pass); it now runs every eighth frame or
@@ -3729,6 +4061,64 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
 - **The tinted look's pull outdoors only** (`crush.wgsl`): a presentation change back to the
   2 November morning state; the cabin stills the owner preferred had been rendered that way.
 
+### Sun shafts through the openings — 2 November 2026 (raymarch backend)
+
+The owner: "we need light shafts coming from the ports inside the tank". Engineering note:
+`docs/RAYMARCHING_ENGINE.md`, "Sun shafts through the openings".
+
+- **Removed: the cascades as the compartment's key beam** (with ray queries). They let the beam
+  through every vision block at full strength (glass casts no depth), let none down a periscope
+  (its windows and mirrors cast), resolved a port's 1.2 cm slot with one 1.2 cm texel under a
+  3 x 3 filter, and leaked: with the loader's hatch open under a 35 degree Sun they lit an arc
+  along the turret ring and a bar beside the hatch that no line to the Sun reaches
+  (`captures/agent-ab9914c8cec360e9c-shafts_20261102x_cascades_sky_shafts_loader_hatch_smoke.jpg`
+  against `..._shafts_20261102x_sky_shafts_loader_hatch_smoke.jpg`).
+- **Live: the beam traced through the vehicle** (`rm_rt.wgsl` `rm_beam_trace`, `rm_vehicle_beam`;
+  `rm_medium.wgsl` `rm_cabin_beam`; `rm_shade.wgsl`, `rm_volume.wgsl`). A compartment surface
+  facing the Sun and each cell of the cabin's air trace toward the body through the scene's own
+  triangles: opaque stops it; a direct-view pane (rt optic kind 3, `OPTIC_PANE`; every other ray
+  still counts it as cover) passes it at the pane material's throughput, the same numbers as the
+  apertures' records (`pane_transmittance`: entry 0.96, absorption 3.4/2.0/3.8 per metre along
+  the path between the two faces, the glass load's share); a periscope window or thin lens
+  passes it at 0.957 a face (uncoated crown glass, n 1.52); a mirror folds it at 0.90 (silvered
+  or aluminised glass, 0.85-0.95). Beyond 8 m the cascades at the exit point and the cloud deck's
+  and low banks' transmittance. A periscope out of parallel is found by a second trace along the
+  met mirrors' inverse fold. The surface's Lambert and GGX terms take the direction the beam
+  arrives from; no screen-space contact march for it.
+- **Live: the shaft's sampling in the cabin's air.** Four stratified points through each cabin
+  cell's depth (`RM_BEAM_STRATA`): a beam thinner than a cell (8 cm deep at 1 m, 15 cm at 2 m) is
+  held as the share of the cell it crosses. Sampling, not transport. The froxel slicing
+  (0.25..320 m) is unchanged.
+- **The cabin medium, sourced** (values unchanged): dust floor 1.3e-3 /m (about 0.4 mg/m^3 of
+  fine dust at 3 m^2/g, Hand & Malm 2007, JGR 112 D16203), 4.5e-3 /m a round fired and 1.4e-3 /m
+  a breech venting, saturating at 0.042 /m (about 5 mg/m^3 of smoke at 8.7 m^2/g, Mulholland &
+  Croarkin 2000, Fire and Materials 24, 227); albedo 0.80, g 0.55. The dust and smoke loads per
+  round are estimates of a mass, not measured for the KwK 36.
+- **Named approximations**: a point Sun (the disc's penumbra, about 5 mm per metre behind an
+  edge, not drawn); refraction in a pane not followed (the path in the glass along the
+  unrefracted line, a few per cent long obliquely; one entry face for direct glass, as the pane
+  material and the records); periscope faces and mirrors at normal incidence; a fold whose
+  straight trace never meets its mirror is not searched for; twelve segments; beyond 8 m the
+  cascades. Portable path and A/B: without ray queries, or with `KESSEL_RM_SKIP=8388608`
+  (`SKIP_BEAM_TRACE`), the cascades as before.
+- **Verified** (headless `sky-review` stills in the locked look, deltap-real 15/15/7 at
+  1024x576, `captures/agent-ab9914c8cec360e9c-shafts_20261102x_sky_*`): the loader's hatch open
+  under a 35 degree mid-March Sun throws a patch on the far wall and, after four rounds' smoke,
+  a shaft from the hatch to it; shut, no beam; the driver's visor toward a 6 degree Sun lights
+  his fittings, away from it nothing. Not shown in a picture: a beam through a side port's slot
+  (it admits the Sun within about 1.1-1.6 degrees of its axis, i.e. only at sunrise or sunset
+  across the hull, and lands on the breech; the port stills found none in the frame), the cupola
+  periscopes (their lower windows still measure closed, above), the gunner's seat (the AI
+  gunner's body fills that eye in the harness). Cost not measured. Gate: `beam_tests` (a CPU
+  replica of the trace over a slot, a glass block and a periscope with parallel and skewed
+  mirrors; the shader's constants against it and `pane_transmittance`),
+  `every_raymarch_shader_validates_with_and_without_ray_queries`.
+- **Open, found on the way**: the cabin air's apertures' sky term (`rm_volume.wgsl`) has no
+  occlusion ray, so a periscope's upper window outside the compartment lights the cabin's air
+  through its housing; with the hatch shut the smoke reads grey-lit (`..._shafts_loader_hatch_shut`).
+  The sky-review interior stills ran under the act's own weather, which can shade the tank with
+  a cloud; the shaft stills set clear air.
+
 ### The Tiger at the real vehicle's size — 2 November 2026 (`docs/TIGER_SCALE_20261102.md`)
 
 - **The bake was 1.112 times the kit's 1:35** (the damage session's registration: the GLBs are the
@@ -3760,3 +4150,28 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   `moonlight_and_the_moonless_night_are_as_dark_as_measured`): its liquid water content is
   0.38 g/m^3 (0.25 before), which keeps the deck's water path at 0.32 kg/m^2 and lies within
   winter stratus's 0.2-0.5 g/m^3.
+
+## Spring 1943 vegetation assets, 2026-11-02 (`tools/vegetation/spring1943.py`, `tools/vegetation/leaf_optics.py`)
+
+Generated GLB trees, shrubs and war-damaged trees (docs/VEGETATION_SPRING1943.md). They use only
+the existing mesh path (no renderer change); what they are and are not:
+
+| Part | What the asset carries | Named approximation and source |
+| --- | --- | --- |
+| Foliage geometry | Single-triangle leaves, 3-5 per twig, about 3 x real leaf length (0.12-0.38 m), on the skin of clumps on the crown shell, each clump fed by a drawn twig, limb and trunk. Opaque triangles: what is drawn is exactly what shadows and occludes (no alpha cards; the raymarch G-buffer alpha-tests only grass). | Leaves are enlarged about 3 x and far fewer than a real crown's (leaf area is bounded by the triangle budget, 4,000-11,000 leaf triangles per tree), so crowns are more open than a measured leaf area index would give; the gaps are a property of the generator, not a measured gap fraction. |
+| Leaf reflectance | Base colour = PROSPECT-D leaf reflectance rho at 680/550/440 nm (the meadow's model and lanes, `src/leaf_optics.rs`, ported line for line), spring pigment estimates per species, three chlorophyll tones; scorched and wilted leaves from the same model with brown pigment and low water. Cuticle roughness 0.45. | Leaf transmittance tau is computed but NOT rendered: GLB surfaces shade as opaque one-sided reflectors, so back-lit foliage lacks its transmitted share (for a spring leaf tau about equals rho at 550 nm). Pigment parameters are estimates inside Jacquemoud & Ustin (2019) ranges, not species measurements. |
+| Bark, char, wood, soil, petals | Constant albedos from published reflectance ranges (birch periderm 0.5, furrowed bark 0.07-0.13, charcoal 0.034, fresh sapwood splinters 0.46/0.37/0.25, chernozem 0.085, white petals 0.65). | Estimates, not spectra of these specimens; one constant per material, no texture. |
+| Destructible trunk | `tree_*` names are live trees in `src/trees.rs`; the trunk contact radius is measured from the drawn mesh at the bow's height as for every tree; the generator keeps foliage and hanging broken limbs clear of the trunk below 1.35-2.2 m so that section is the trunk. | The trees' fall is the existing rigid-body release; no fracture of the generated limbs. Shrubs, fallen trunks and stumps are static dressing with no collision (as the library's logs, ferns and stumps): a tank drives through them visually. |
+
+## Small bright sources and the eye's adaptation, 2026-11-02 (`shaders/exposure.wgsl`, `observer::GLARE_*`)
+
+In the blue hour (spring-bridge-v2, 1943-05-12T18:20Z) any view with the burning town in frame
+went nearly black, sky included: lit windows and fires at ~100 cd/m^2 covering 0.3 % of a frame
+whose log-average is 0.002 cd/m^2 entered the meter's arithmetic field, Gaussian and fovea
+averages at their share and set the adaptation 300 times above the rest of the field (metered
+0.59 cd/m^2 on commander_approach against 0.0007 on column_east). The authored lights are
+unchanged; no grade.
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| Glare treatment of the meter | Outdoors, a meter cell brighter than `GLARE_RATIO` (100) times the previous frame's log-average luminance enters the fovea, Gaussian and field windows at that log-average (photopic; scotopic shifted by the field's S/P) and adds its disability-glare veil L_v = 10 E / theta^2 to each window: the 252 E deg^2 integral over 0.5..30 deg spread over the field or weighted by the Gaussian at the source, and over the fovea its disc mean 20 ln((R^2 - theta^2) / (0.1 R)) / R^2 (10 / theta^2 outside). E is the cell's luminance above the background times its solid angle. The treatment stands down while such cells cover more than `GLARE_MAX_COVERAGE` (25 %) of the field. The first outdoor snap waits one frame for the background (lane 30). Result: commander_approach metered 0.59 -> 0.067 cd/m^2 (now mostly the veil of the fire it fixates), field_west -> 0.023; column_east and grass_close unchanged (mean pixel difference 0.1-0.2 of 255). | Local retinal adaptation reduced to one adaptation state plus the CIE 146:2002 / Stiles-Holladay veil (no age factor, no wavelength dependence). `GLARE_RATIO` = two decades: Naka-Rushton (n = 1) response at 100 x semi-saturation is 99 % of maximum, semi-saturation tracking adaptation (Valeton & van Norren 1983). The background is one frame late; each 4x4-pixel cell is one point source at its centre; the fovea's veil from a source outside it is taken at its centre; `GLARE_MAX_COVERAGE` is a design bound. CPU reference and test: `observer::glare_cell`, `observer::fovea_veil_per_lux`, `a_small_bright_source_adapts_the_field_through_its_veil_not_its_share_of_the_average`. Identical in both presets. |

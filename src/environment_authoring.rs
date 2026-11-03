@@ -288,6 +288,76 @@ pub struct LightingTuning {
     pub fog_density: f32,
     pub overcast: f32,
     pub storm: f32,
+    /// The map's aerosol (`"aerosol": {"aod_550", "angstrom", "scale_height_m"}`); `None` keeps
+    /// the campaign's aerosol. It replaces the atmosphere's aerosol column (sky, sky cache,
+    /// surfaces' aerial perspective) and sets the spectrum of the local `fog_density` layer.
+    #[serde(default)]
+    pub aerosol: Option<AerosolTuning>,
+    /// The map's pacing of the accelerated day (`"day_cycle": {"night_s", "blue_s",
+    /// "twilight_s", "day_s"}`): play seconds of the night (Sun below -14 deg), of each blue hour
+    /// (-14 to -6), of each twilight (-6 to +8) and of full day. Only the clock's rate changes;
+    /// the Sun and Moon stand where the ephemeris puts them. `None` keeps the campaign's 300 s
+    /// night (blue hours included) / 150 / 300.
+    #[serde(default)]
+    pub day_cycle: Option<[f32; 4]>,
+}
+
+/// One aerosol population as a map authors it. Optical depth at 550 nm through the whole column,
+/// the Angstrom exponent of its spectral extinction, beta(lambda) = beta_550 (lambda/550 nm)^-alpha,
+/// and the exponential scale height of its profile. Typical values (AERONET): a winter
+/// continental background 0.05-0.10 at alpha about 1.0; a central-European/Russian summer
+/// 0.15-0.30 at alpha 1.3-1.8 (fine-mode haze, Eck et al. 1999; Dubovik et al. 2002; Moscow MSU
+/// monthly AOD at 500 nm 0.08 in December to 0.3 in August, Chubarova et al. 2016); desert dust
+/// alpha 0-0.5. Scale heights 1-2 km (a mixed boundary layer).
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AerosolTuning {
+    pub aod_550: f32,
+    pub angstrom: f32,
+    pub scale_height_m: f32,
+}
+
+impl AerosolTuning {
+    pub fn validate(self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.aod_550.is_finite() && (0.0..=3.0).contains(&self.aod_550),
+            "aerosol aod_550 {} is outside 0..3", self.aod_550);
+        anyhow::ensure!(self.angstrom.is_finite() && (-0.5..=3.0).contains(&self.angstrom),
+            "aerosol angstrom {} is outside -0.5..3", self.angstrom);
+        anyhow::ensure!(self.scale_height_m.is_finite() && (100.0..=10_000.0).contains(&self.scale_height_m),
+            "aerosol scale_height_m {} is outside 100..10000", self.scale_height_m);
+        Ok(())
+    }
+
+    pub fn column(self) -> crate::renderer::physical_environment::AerosolColumn {
+        crate::renderer::physical_environment::AerosolColumn {
+            aod_550: self.aod_550 as f64,
+            angstrom: self.angstrom as f64,
+            scale_height_m: self.scale_height_m as f64,
+        }
+    }
+
+    pub fn to_json(self) -> serde_json::Value {
+        serde_json::json!({ "aod_550": self.aod_550, "angstrom": self.angstrom,
+            "scale_height_m": self.scale_height_m })
+    }
+
+    /// Absent or null: `None` (the campaign's aerosol). Missing fields take the winter
+    /// background's (AOD 0.05, alpha 1.0, 1,200 m).
+    pub fn from_json(value: &serde_json::Value) -> anyhow::Result<Option<Self>> {
+        match value {
+            serde_json::Value::Null => Ok(None),
+            serde_json::Value::Object(_) => {
+                let tuning = Self {
+                    aod_550: json_f32_or(&value["aod_550"], 0.05),
+                    angstrom: json_f32_or(&value["angstrom"],
+                        crate::renderer::physical_environment::DEFAULT_AEROSOL_ANGSTROM as f32),
+                    scale_height_m: json_f32_or(&value["scale_height_m"], 1_200.0),
+                };
+                tuning.validate()?;
+                Ok(Some(tuning))
+            }
+            other => anyhow::bail!("environment_lighting aerosol must be an object, not {other}"),
+        }
+    }
 }
 
 pub const LIGHTING_VERSION: u64 = 2;
@@ -300,6 +370,8 @@ impl Default for LightingTuning {
             fog_density: 0.02,
             overcast: 0.90,
             storm: 0.72,
+            aerosol: None,
+            day_cycle: None,
         }
     }
 }
@@ -317,6 +389,8 @@ impl LightingTuning {
             fog_density: fog_density.clamp(0.0, 0.25),
             overcast: overcast.clamp(0.0, 1.0),
             storm: storm.clamp(0.0, 1.0),
+            aerosol: None,
+            day_cycle: None,
         }
     }
 
@@ -343,11 +417,18 @@ impl LightingTuning {
         anyhow::ensure!((0.0..=0.25).contains(&self.fog_density));
         anyhow::ensure!((0.0..=1.0).contains(&self.overcast));
         anyhow::ensure!((0.0..=1.0).contains(&self.storm));
+        if let Some(aerosol) = self.aerosol { aerosol.validate()?; }
+        if let Some(cycle) = self.day_cycle {
+            for (name, s) in ["night_s", "blue_s", "twilight_s", "day_s"].iter().zip(cycle) {
+                anyhow::ensure!(s.is_finite() && (10.0..=36_000.0).contains(&s),
+                    "day_cycle {name} {s} is outside 10..36000 play seconds");
+            }
+        }
         Ok(())
     }
 
     pub fn to_json(self) -> serde_json::Value {
-        serde_json::json!({
+        let mut record = serde_json::json!({
             "schema": SCHEMA,
             "version": LIGHTING_VERSION,
             "enabled": self.enabled,
@@ -355,7 +436,14 @@ impl LightingTuning {
             "fog_density": self.fog_density,
             "overcast": self.overcast,
             "storm": self.storm,
-        })
+        });
+        if let Some(aerosol) = self.aerosol {
+            record["aerosol"] = aerosol.to_json();
+        }
+        if let Some([night, blue, twilight, day]) = self.day_cycle {
+            record["day_cycle"] = serde_json::json!({ "night_s": night, "blue_s": blue, "twilight_s": twilight, "day_s": day });
+        }
+        record
     }
 
     pub fn from_edits(edits: Option<&serde_json::Value>) -> anyhow::Result<Self> {
@@ -382,6 +470,17 @@ impl LightingTuning {
             fog_density: json_f32_or(&value["fog_density"], 0.02),
             overcast: json_f32_or(&value["overcast"], 0.90),
             storm: json_f32_or(&value["storm"], 0.72),
+            aerosol: AerosolTuning::from_json(&value["aerosol"])?,
+            day_cycle: match &value["day_cycle"] {
+                serde_json::Value::Null => None,
+                serde_json::Value::Object(_) => Some([
+                    json_f32_or(&value["day_cycle"]["night_s"], 300.0),
+                    json_f32_or(&value["day_cycle"]["blue_s"], 150.0),
+                    json_f32_or(&value["day_cycle"]["twilight_s"], 150.0),
+                    json_f32_or(&value["day_cycle"]["day_s"], 300.0),
+                ]),
+                other => anyhow::bail!("environment_lighting day_cycle must be an object, not {other}"),
+            },
         };
         tuning.validate()?;
         Ok(tuning)
@@ -2775,6 +2874,47 @@ mod tests {
         assert_eq!(edits[LIGHTING_KEY]["utc"], "1942-12-21T12:00:00Z");
         assert_eq!(edits[LIGHTING_KEY]["version"], 2);
         assert_eq!(LightingTuning::from_edits(Some(&edits)).unwrap(), dated);
+    }
+
+    #[test]
+    fn a_map_day_cycle_round_trips_and_is_validated() {
+        let mut edits = serde_json::json!({});
+        edits[LIGHTING_KEY] = serde_json::json!({"schema": SCHEMA, "version": 2, "enabled": true,
+            "fog_density": 0.001, "overcast": 0.1, "storm": 0.0,
+            "day_cycle": {"night_s": 120, "blue_s": 1500, "twilight_s": 240, "day_s": 300}});
+        let tuning = LightingTuning::from_edits(Some(&edits)).unwrap();
+        assert_eq!(tuning.day_cycle, Some([120.0, 1500.0, 240.0, 300.0]));
+        let mut again = serde_json::json!({});
+        again[LIGHTING_KEY] = tuning.to_json();
+        assert_eq!(LightingTuning::from_edits(Some(&again)).unwrap(), tuning);
+        edits[LIGHTING_KEY]["day_cycle"]["night_s"] = serde_json::json!(1.0);
+        assert!(LightingTuning::from_edits(Some(&edits)).is_err());
+        edits[LIGHTING_KEY].as_object_mut().unwrap().remove("day_cycle");
+        assert_eq!(LightingTuning::from_edits(Some(&edits)).unwrap().day_cycle, None);
+    }
+
+    #[test]
+    fn a_map_aerosol_round_trips_and_absent_means_the_campaign() {
+        let plain = serde_json::json!({ LIGHTING_KEY: { "version": 2, "enabled": true,
+            "utc": "1943-05-12T14:10:00Z", "fog_density": 0.00045, "overcast": 0.06, "storm": 0.0 } });
+        assert_eq!(LightingTuning::from_edits(Some(&plain)).unwrap().aerosol, None);
+        assert!(LightingTuning::from_edits(Some(&plain)).unwrap().to_json().get("aerosol").is_none(),
+            "a record without a block is saved without one");
+        let mut hazy = plain.clone();
+        hazy[LIGHTING_KEY]["aerosol"] = serde_json::json!({"aod_550": 0.2, "angstrom": 1.6, "scale_height_m": 1500});
+        let tuning = LightingTuning::from_edits(Some(&hazy)).unwrap();
+        assert_eq!(tuning.aerosol, Some(AerosolTuning { aod_550: 0.2, angstrom: 1.6, scale_height_m: 1500.0 }));
+        let mut saved = serde_json::json!({});
+        saved.as_object_mut().unwrap().insert(LIGHTING_KEY.into(), tuning.to_json());
+        assert_eq!(LightingTuning::from_edits(Some(&saved)).unwrap(), tuning);
+        // The column it becomes: 0.2 / 1,500 m at 550 nm.
+        let column = tuning.aerosol.unwrap().column();
+        assert!((column.aod_550 - 0.2).abs() < 1e-6 && (column.scale_height_m - 1500.0).abs() < 1e-9);
+        let mut bad = hazy.clone();
+        bad[LIGHTING_KEY]["aerosol"]["aod_550"] = serde_json::json!(-0.1);
+        assert!(LightingTuning::from_edits(Some(&bad)).is_err());
+        bad[LIGHTING_KEY]["aerosol"] = serde_json::json!(0.2);
+        assert!(LightingTuning::from_edits(Some(&bad)).is_err());
     }
 
     #[test]

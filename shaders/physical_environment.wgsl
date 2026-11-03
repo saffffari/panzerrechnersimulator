@@ -67,13 +67,14 @@ struct PhysicalEnvironment {
     airglow_zenith_altitude: vec4<f32>,
     cloud_motion: vec4<f32>,
     star_frame: vec4<f32>,
-    // Upward diffuse flux under the cloud base from the battlefield's fires (xyz; w unused).
+    // Upward diffuse flux under the cloud base from the battlefield's fires (xyz); w the
+    // aerosol's Angstrom exponent (physical_aerosol_band_factor).
     ground_glow: vec4<f32>,
 };
 
 struct PhysicalMediumCoefficients {
     rayleigh_scattering_m_inv: vec3<f32>,
-    mie_scattering_m_inv: f32,
+    mie_scattering_m_inv: vec3<f32>,
     cloud_scattering_m_inv: f32,
     extinction_m_inv: vec3<f32>,
 };
@@ -276,6 +277,14 @@ fn physical_cloud_relative_density(
     return clamp(base * dome * occupied, 0.0, 1.0);
 }
 
+// The aerosol's Angstrom law per band, beta(lambda) / beta(550 nm) = (lambda / 550)^-alpha, at
+// the bands' representative wavelengths 680, 550 and 440 nm (the Rayleigh coefficients'
+// samples); physical_environment.rs `aerosol_band_factor`.
+fn physical_aerosol_band_factor(environment: PhysicalEnvironment) -> vec3<f32> {
+    let alpha = environment.ground_glow.w;
+    return vec3(pow(680.0 / 550.0, -alpha), 1.0, pow(440.0 / 550.0, -alpha));
+}
+
 fn physical_medium_coefficients(
     environment: PhysicalEnvironment,
     position_m: vec3<f32>,
@@ -290,13 +299,16 @@ fn physical_medium_coefficients(
     );
     let cloud_density = physical_cloud_relative_density(environment, position_m);
     let rayleigh = environment.rayleigh_scatter_ozone_center.xyz * rayleigh_density;
-    let mie_scattering = environment.mie_scatter_extinction_g_ozone_half.x * mie_density;
-    let mie_extinction = environment.mie_scatter_extinction_g_ozone_half.y * mie_density;
+    let aerosol_band = physical_aerosol_band_factor(environment);
+    let mie_scattering = environment.mie_scatter_extinction_g_ozone_half.x * mie_density
+        * aerosol_band;
+    let mie_extinction = environment.mie_scatter_extinction_g_ozone_half.y * mie_density
+        * aerosol_band;
     let cloud_extinction = physical_cloud_extinction_m_inv(environment) * cloud_density;
     let cloud_scattering = cloud_extinction
         * clamp(environment.ozone_absorption_cloud_albedo.w, 0.0, 1.0);
     let extinction = max(
-        rayleigh + vec3(mie_extinction + cloud_extinction)
+        rayleigh + mie_extinction + vec3(cloud_extinction)
             + environment.ozone_absorption_cloud_albedo.xyz * ozone_density,
         vec3(0.0),
     );
@@ -856,13 +868,17 @@ fn physical_upper_atmosphere_diffuse_flux(
     let ozone_column = physical_ozone_column_density_m(environment, from_altitude_m);
     let rayleigh_scattering = environment.rayleigh_scatter_ozone_center.xyz
         * rayleigh_column;
-    let mie_scattering = environment.mie_scatter_extinction_g_ozone_half.x * mie_column;
-    let mie_extinction = environment.mie_scatter_extinction_g_ozone_half.y * mie_column;
+    let aerosol_band = physical_aerosol_band_factor(environment);
+    let mie_scattering_bands = environment.mie_scatter_extinction_g_ozone_half.x * mie_column
+        * aerosol_band;
+    let mie_extinction_bands = environment.mie_scatter_extinction_g_ozone_half.y * mie_column
+        * aerosol_band;
     let ozone_absorption = environment.ozone_absorption_cloud_albedo.xyz * ozone_column;
     var diffuse_flux = vec3(0.0);
     for (var channel = 0u; channel < 3u; channel = channel + 1u) {
+        let mie_scattering = mie_scattering_bands[channel];
         let scattering = rayleigh_scattering[channel] + mie_scattering;
-        let extinction = rayleigh_scattering[channel] + mie_extinction
+        let extinction = rayleigh_scattering[channel] + mie_extinction_bands[channel]
             + ozone_absorption[channel];
         if (extinction <= 1.0e-12) { continue; }
         let omega = clamp(scattering / extinction, 0.0, 1.0);
@@ -979,6 +995,54 @@ fn physical_cloud_diffuse_boundary(
         lower_boundary_radiance,
         1u,
     );
+}
+
+// Mean radiance over the sphere of the multiply scattered field at a point, isotropic in each
+// hemisphere: (F_down_diffuse + F_up) / (2 pi); physical_environment.rs
+// `multiple_scattering_radiance`. The downward diffuse flux is the two-stream transmission of the
+// clear column above (key and secondary body), or under a cloud the diffuse flux leaving the
+// measured cloud column. The upward flux (air below, the ground) is left out (named).
+fn physical_multiple_scattering_radiance(
+    environment: PhysicalEnvironment,
+    position_m: vec3<f32>,
+) -> vec3<f32> {
+    let up = normalize(position_m - environment.planet_center_radius.xyz);
+    let altitude = max(physical_altitude_m(environment, position_m), 0.0);
+    let key_direction = environment.sun_direction_water_density.xyz;
+    let key_irradiance = environment.solar_irradiance_angle.xyz;
+    let second_direction = environment.secondary_direction.xyz;
+    let second_irradiance = environment.secondary_irradiance_angle.xyz;
+    var cloud_depth = 0.0;
+    if (environment.cloud_top_lwc_radius_coverage.w > 0.0
+        && altitude < environment.cloud_top_lwc_radius_coverage.x) {
+        cloud_depth = physical_cloud_column_optical_depth(environment, position_m);
+    }
+    var flux = vec3(0.0);
+    if (cloud_depth > 1.0e-8) {
+        let cloud_diffuse = physical_delta_eddington_diffuse_flux(
+            cloud_depth,
+            environment.ozone_absorption_cloud_albedo.w,
+            environment.cloud_optics_scales.y,
+        );
+        flux = physical_cloud_source_lower_flux(environment, up, cloud_depth,
+                cloud_diffuse.transmittance, key_direction, key_irradiance)
+            + physical_cloud_source_lower_flux(environment, up, cloud_depth,
+                cloud_diffuse.transmittance, second_direction, second_irradiance);
+    } else {
+        if (dot(key_direction, key_direction) > 0.0) {
+            let mu0 = dot(up, normalize(key_direction));
+            if (mu0 > 0.0 && max(max(key_irradiance.x, key_irradiance.y), key_irradiance.z) > 0.0) {
+                flux += physical_upper_atmosphere_diffuse_flux(environment, altitude, mu0, key_irradiance);
+            }
+        }
+        if (dot(second_direction, second_direction) > 0.0) {
+            let mu0 = dot(up, normalize(second_direction));
+            if (mu0 > 0.0 && max(max(second_irradiance.x, second_irradiance.y), second_irradiance.z) > 0.0) {
+                flux += physical_upper_atmosphere_diffuse_flux(environment, altitude, mu0, second_irradiance);
+            }
+        }
+    }
+    return max(flux, vec3(0.0)) / (2.0 * PHYSICAL_ENV_PI);
 }
 
 // Diffuse flux leaving the cloud base that one directional source feeds into the column.
@@ -1239,17 +1303,17 @@ fn physical_environment_transport(
             );
             let scattering = medium.rayleigh_scattering_m_inv
                     * physical_rayleigh_phase(cos_theta)
+                + medium.mie_scattering_m_inv
+                    * physical_henyey_greenstein_phase(
+                        cos_theta,
+                        environment.mie_scatter_extinction_g_ozone_half.z,
+                    )
                 + vec3(
-                    medium.mie_scattering_m_inv
-                            * physical_henyey_greenstein_phase(
-                                cos_theta,
-                                environment.mie_scatter_extinction_g_ozone_half.z,
-                            )
-                        + cloud_scattering
-                            * physical_henyey_greenstein_phase(
-                                cos_theta,
-                                environment.cloud_optics_scales.y,
-                            ),
+                    cloud_scattering
+                        * physical_henyey_greenstein_phase(
+                            cos_theta,
+                            environment.cloud_optics_scales.y,
+                        ),
                 );
             source += environment.solar_irradiance_angle.xyz
                 * source_transmittance
@@ -1271,23 +1335,26 @@ fn physical_environment_transport(
             );
             let scattering = medium.rayleigh_scattering_m_inv
                     * physical_rayleigh_phase(cos_theta)
+                + medium.mie_scattering_m_inv
+                    * physical_henyey_greenstein_phase(
+                        cos_theta,
+                        environment.mie_scatter_extinction_g_ozone_half.z,
+                    )
                 + vec3(
-                    medium.mie_scattering_m_inv
-                            * physical_henyey_greenstein_phase(
-                                cos_theta,
-                                environment.mie_scatter_extinction_g_ozone_half.z,
-                            )
-                        + cloud_scattering
-                            * physical_henyey_greenstein_phase(
-                                cos_theta,
-                                environment.cloud_optics_scales.y,
-                            ),
+                    cloud_scattering
+                        * physical_henyey_greenstein_phase(
+                            cos_theta,
+                            environment.cloud_optics_scales.y,
+                        ),
                 );
             source += secondary_irradiance * source_transmittance * scattering;
         }
         if (cloud_boundary.handled_cloud_scattering != 0u) {
             source += cloud_boundary.transported_radiance * medium.cloud_scattering_m_inv;
         }
+        // The air's higher scattering orders: its scattering of the diffuse field.
+        source += (medium.rayleigh_scattering_m_inv + medium.mie_scattering_m_inv)
+            * physical_multiple_scattering_radiance(environment, position_m);
         let segment_weight=(vec3(1.0)-exp(-medium.extinction_m_inv*weight_m))/max(medium.extinction_m_inv,vec3(1e-12));
         inscattered += view_transmittance * source * segment_weight;
         optical_depth += medium.extinction_m_inv * weight_m;

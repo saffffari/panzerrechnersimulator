@@ -63,6 +63,18 @@ fn display_stats(image: &image::RgbaImage) -> serde_json::Value {
     })
 }
 
+/// Whether KESSEL_SKY_REVIEW_STILLS (when set) names any still of a section, so a filtered run
+/// builds only the worlds it takes stills in (each build holds its own GPU resources).
+fn section_wanted(names: &[&str]) -> bool {
+    match std::env::var("KESSEL_SKY_REVIEW_STILLS") {
+        Ok(list) => list.split(',').any(|n| names.contains(&n.trim())),
+        Err(_) => true,
+    }
+}
+const SHAFT_STILLS: [&str; 12] = ["shafts_driver_visor_in", "shafts_driver_visor_out", "shafts_driver_hatch_in", "shafts_driver_hatch_smoke",
+    "shafts_driver_hatch_shut", "shafts_loader_hatch_in", "shafts_loader_hatch_smoke", "shafts_loader_hatch_smoke_lamps", "shafts_loader_hatch_shut",
+    "shafts_loader_seat_smoke", "shafts_loader_port_in", "shafts_loader_port_out"];
+
 struct Still<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
@@ -156,7 +168,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let mut cap = Still { device: &device, queue: &queue, prefix: &prefix, receipts: Vec::new() };
 
     // The exterior: act 1 with the player's Tiger, the camera over it.
-    {
+    if section_wanted(&["dawn_m8", "dawn_m4", "sunrise", "dawn_p3", "noon", "dusk_p3", "sunset", "dusk_m4", "dusk_m8",
+        "night_moon", "night_moonless", "stars_moonless", "stars_moon", "noon_clouds", "sunset_clouds", "night_moon_clouds", "night_moon_overcast"]) {
         let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(1))?;
         g.mute_audio();
         g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
@@ -208,7 +221,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     // The interior in the world (not the editor's hall): the loader's seat, the gunner's sight
     // and the buttoned-up commander at noon and at night, the lamps on, and the loader with
     // them off, so daylight through the ports and the sight shows against the lamps.
-    {
+    if section_wanted(&["interior_noon", "interior_night", "interior_noon_dark", "interior_noon_hatch_dark", "interior_noon_hatch",
+        "gunner_noon", "gunner_night", "commander_noon", "commander_night"]) {
         let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(1))?;
         g.mute_audio();
         g.set_defer_rtt_to_render(true);
@@ -235,6 +249,98 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
             let settle = if g.hatch_open != hatch { 150 } else { 3 };
             g.hatch_open = hatch;
             for _ in 0..settle { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
+            cap.take(&mut r, name, note)?;
+        }
+    }
+    // Light shafts through the openings (2 November 2026, the owner: "we need light shafts coming
+    // from the ports inside the tank"): the hull turned so the Sun stands in an opening's line of
+    // sight, and turned away so it does not. The beam is traced through the vehicle
+    // (rm_medium.wgsl `rm_cabin_beam`); the cabin's air scatters it. December's Sun at Stalingrad
+    // climbs to 18 degrees, too low to reach far down the loader's hatch, so the hatch stills take
+    // the mid-March Sun (35 degrees: snow still lay at Kharkov).
+    if section_wanted(&SHAFT_STILLS) {
+        #[derive(Clone, Copy)]
+        enum Facing { SunAhead, SunBehind, SunAtPlusX, SunAtMinusX }
+        // Where the eye looks: a point of the hull (0) or turret (1) frame moved `back` metres down
+        // the beam (away from the Sun), or the driver's eye moved so; or the eye moved to a point
+        // of the turret frame (the first) looking at another (the second) moved so.
+        #[derive(Clone, Copy)]
+        enum Aim { Frame(u8, Vec3, f32), DriverEye(f32), FromTurret(Vec3, Vec3, f32) }
+        use crate::game::ROOF_APERTURE_CENTERS as HATCH;
+        // The loader's side port's glass in the turret frame (the bake's turret page, `pane_quads`'s test).
+        const PORT_MINUS_X: Vec3 = Vec3::new(-1.005, 2.04, 0.425);
+        // An eye in the turret behind the breech on the commander's side, clear of the crew.
+        const BEHIND_BREECH: Vec3 = Vec3::new(0.4, 1.9, -0.7);
+        let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(1))?;
+        g.mute_audio();
+        g.set_defer_rtt_to_render(true);
+        for _ in 0..3 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
+        let march = |alt: f64| instant_at_sun_altitude(UtcInstant::from_calendar(1943, 3, 15, 0, 0, 0.0), site, alt, true);
+        let low = dawn(6.0);
+        let sunrise = dawn(0.5);
+        // (name, the seat the eye is at, instant, facing, driver's lid, loader's lid, visor open,
+        // smoke load, aim, note). The smoke load is the cabin's propellant-smoke state (0..1):
+        // 0.4 is about four rounds' (each round adds 0.11, the fan drains 0.03/s).
+        for (name, station, instant, facing, driver_hatch, loader_hatch, visor, haze, aim, note) in [
+            ("shafts_driver_visor_in", Station::Radioman, low, Facing::SunAhead, false, false, true, 0.2, Aim::DriverEye(0.4), "from the radio operator's seat, the driver's visor open toward a Sun 6 deg up"),
+            ("shafts_driver_visor_out", Station::Radioman, low, Facing::SunBehind, false, false, true, 0.2, Aim::DriverEye(-0.4), "the same, the Sun behind the tank: no beam"),
+            ("shafts_driver_hatch_in", Station::Radioman, march(35.0), Facing::SunAhead, true, false, false, 0.0, Aim::Frame(0, HATCH[0], 0.9), "from the radio operator's seat, the driver's hatch open under a Sun 35 deg up, the cabin's dust only"),
+            ("shafts_driver_hatch_smoke", Station::Radioman, march(35.0), Facing::SunAhead, true, false, false, 0.4, Aim::Frame(0, HATCH[0], 0.9), "the same after firing: the propellant smoke of about four rounds"),
+            ("shafts_driver_hatch_shut", Station::Radioman, march(35.0), Facing::SunAhead, false, false, false, 0.4, Aim::Frame(0, HATCH[0], 0.9), "the same with the hatch shut: no beam"),
+            ("shafts_loader_hatch_in", Station::Loader, march(35.0), Facing::SunAhead, false, true, false, 0.0, Aim::FromTurret(BEHIND_BREECH, HATCH[1], 0.9), "the turret from behind the breech, the loader's hatch open under a Sun 35 deg up, the cabin's dust only"),
+            ("shafts_loader_hatch_smoke", Station::Loader, march(35.0), Facing::SunAhead, false, true, false, 0.4, Aim::FromTurret(BEHIND_BREECH, HATCH[1], 0.9), "the same after firing: the propellant smoke of about four rounds"),
+            ("shafts_loader_hatch_smoke_lamps", Station::Loader, march(35.0), Facing::SunAhead, false, true, false, 0.4, Aim::FromTurret(BEHIND_BREECH, HATCH[1], 0.9), "the same with the cabin's lamps on"),
+            ("shafts_loader_hatch_shut", Station::Loader, march(35.0), Facing::SunAhead, false, false, false, 0.4, Aim::FromTurret(BEHIND_BREECH, HATCH[1], 0.9), "the same with the hatch shut: no beam"),
+            ("shafts_loader_seat_smoke", Station::Loader, march(35.0), Facing::SunAhead, false, true, false, 0.4, Aim::Frame(1, HATCH[1], 1.6), "from the loader's own eye under his open hatch, where the beam lands (the shaft runs past his head)"),
+            ("shafts_loader_port_in", Station::Loader, sunrise, Facing::SunAtMinusX, false, false, false, 0.4, Aim::Frame(1, PORT_MINUS_X, 0.6), "from the loader's seat, the -x side port toward a Sun half a degree up"),
+            ("shafts_loader_port_out", Station::Loader, sunrise, Facing::SunAtPlusX, false, false, false, 0.4, Aim::Frame(1, PORT_MINUS_X, -0.6), "the same, the Sun on the other side"),
+        ] {
+            // The cabin's lamps off (but where the name says otherwise), so the beam and the
+            // daylight through the openings are the cabin's light.
+            g.set_cabin_lights(name.ends_with("_lamps"));
+            g.hatch_open = false;
+            g.debug_set_roof_hatches(driver_hatch, loader_hatch, true);
+            g.debug_set_driver_visor(visor, true);
+            r.set_sky_clock(SkyClock::new(instant, site));
+            let s = r.celestial().key.direction;
+            let sun = Vec3::new(s.x as f32, s.y as f32, s.z as f32).normalize();
+            let (sx, sz) = (sun.x, sun.z);
+            g.player.heading = match facing {
+                Facing::SunAhead => sx.atan2(sz),
+                Facing::SunBehind => sx.atan2(sz) + std::f32::consts::PI,
+                Facing::SunAtPlusX => (-sz).atan2(sx),
+                Facing::SunAtMinusX => sz.atan2(-sx),
+            };
+            g.player.turret_yaw = 0.0;
+            let mut driver_eye = Vec3::ZERO;
+            if let Aim::DriverEye(_) = aim {
+                g.jump_station(Station::Driver);
+                for _ in 0..3 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
+                driver_eye = r.camera.pos;
+            }
+            if station == Station::Commander { g.jump_station(Station::Loader); }
+            g.jump_station(station);
+            // A second and a half at the seat: the crewman settles into his pose whatever still came before.
+            for _ in 0..90 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
+            g.debug_set_interior_haze(haze);
+            g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+            let target = match aim {
+                Aim::Frame(frame, local, back) => {
+                    let model = if frame == 0 { g.player.hull_model() } else { g.player.turret_model() };
+                    model.transform_point3(local) - sun * back
+                }
+                Aim::DriverEye(back) => driver_eye - sun * back,
+                Aim::FromTurret(eye, local, back) => {
+                    r.camera.pos = g.player.turret_model().transform_point3(eye);
+                    g.player.turret_model().transform_point3(local) - sun * back
+                }
+            };
+            // Clear winter air: the act's own weather can put the tank under a cloud's shadow.
+            clear_weather(&mut r);
+            r.camera.set_forward((target - r.camera.pos).normalize());
+            r.camera.fov_y = 80f32.to_radians();
+            println!("[sky-review] {name}: eye {:.3?} in the turret frame {:.3?}, in the hull frame {:.3?}", r.camera.pos,
+                g.player.turret_model().inverse().transform_point3(r.camera.pos), g.player.hull_model().inverse().transform_point3(r.camera.pos));
             cap.take(&mut r, name, note)?;
         }
     }

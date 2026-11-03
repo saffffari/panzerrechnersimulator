@@ -29,8 +29,14 @@ pub struct AtmosphereParameters {
     /// Sea-level volume coefficients in m^-1. Values follow the standard Earth atmosphere used by
     /// Bruneton-style spectral models, sampled into three visible bands.
     pub rayleigh_scattering_m_inv: DVec3,
+    /// Aerosol (Mie) scattering and extinction at the 550 nm reference band, m^-1 at the local
+    /// planet surface. The other bands follow the Angstrom law below (`aerosol_band_factor`).
     pub mie_scattering_m_inv: f64,
     pub mie_extinction_m_inv: f64,
+    /// Angstrom exponent alpha of the aerosol: beta(lambda) = beta_550 (lambda / 550 nm)^-alpha,
+    /// the same exponent for scattering and extinction (a wavelength-independent single-scattering
+    /// albedo). 0 is a grey aerosol (coarse dust, cloud drops).
+    pub mie_angstrom_exponent: f64,
     pub ozone_absorption_m_inv: DVec3,
     pub mie_asymmetry: f64,
 
@@ -73,6 +79,66 @@ pub struct AtmosphereParameters {
 /// transmittance of that clear 2.4 km site (about 0.9 at 550 nm in this atmosphere) to give the
 /// layer's emission above the air. 1942-43 lay near the minimum of solar cycle 17.
 pub const NIGHT_SKY_ZENITH_RADIANCE: DVec3 = DVec3::new(3.4e-9 / 0.9, 2.7e-9 / 0.9, 2.3e-9 / 0.9);
+/// The three bands' representative wavelengths, nm: the red, green and blue samples of the
+/// Rayleigh coefficients above (Bruneton's 680, 550 and 440 nm).
+pub const BAND_WAVELENGTH_NM: DVec3 = DVec3::new(680.0, 550.0, 440.0);
+/// Angstrom exponent of the default (winter continental background) aerosol.
+pub const DEFAULT_AEROSOL_ANGSTROM: f64 = 1.0;
+
+/// The Angstrom law's factor per band, beta(lambda) / beta(550 nm) = (lambda / 550)^-alpha, at
+/// the bands' representative wavelengths (point samples, as the Rayleigh coefficients are; over
+/// each band's width the mean of a power law differs from its point value by under 2 % for
+/// alpha up to 2).
+pub fn aerosol_band_factor(angstrom: f64) -> DVec3 {
+    let alpha = if angstrom.is_finite() { angstrom } else { 0.0 };
+    DVec3::new(
+        (BAND_WAVELENGTH_NM.x / 550.0).powf(-alpha),
+        1.0,
+        (BAND_WAVELENGTH_NM.z / 550.0).powf(-alpha),
+    )
+}
+
+/// One aerosol population's column description, the form a map authors it in
+/// (`environment_lighting.aerosol`): optical depth at 550 nm from the local planet surface to
+/// space, Angstrom exponent, exponential scale height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AerosolColumn {
+    pub aod_550: f64,
+    pub angstrom: f64,
+    pub scale_height_m: f64,
+}
+
+impl AtmosphereParameters {
+    /// The aerosol column these parameters hold (optical depth = extinction x scale height).
+    pub fn aerosol_column(&self) -> AerosolColumn {
+        AerosolColumn {
+            aod_550: self.mie_extinction_m_inv * self.mie_scale_height_m,
+            angstrom: self.mie_angstrom_exponent,
+            scale_height_m: self.mie_scale_height_m,
+        }
+    }
+
+    /// Replace the aerosol's amount, spectrum and profile, keeping its single-scattering albedo
+    /// and asymmetry.
+    pub fn set_aerosol_column(&mut self, column: AerosolColumn) {
+        let albedo = if self.mie_extinction_m_inv > 0.0 {
+            (self.mie_scattering_m_inv / self.mie_extinction_m_inv).clamp(0.0, 1.0)
+        } else {
+            0.9
+        };
+        let height = column.scale_height_m.max(1.0);
+        self.mie_scale_height_m = height;
+        self.mie_extinction_m_inv = column.aod_550.max(0.0) / height;
+        self.mie_scattering_m_inv = albedo * self.mie_extinction_m_inv;
+        self.mie_angstrom_exponent = column.angstrom;
+    }
+
+    /// Aerosol band factor of these parameters (`aerosol_band_factor`).
+    pub fn aerosol_band_factor(&self) -> DVec3 {
+        aerosol_band_factor(self.mie_angstrom_exponent)
+    }
+}
+
 /// Height of the airglow layer, m (research section 2.4).
 pub const AIRGLOW_LAYER_ALTITUDE_M: f64 = 90_000.0;
 /// The Stalingrad cauldron's fire glow (named in docs/PHYSICAL_TRUTH_AUDIT.md): the upward diffuse
@@ -140,6 +206,15 @@ impl Default for AtmosphereParameters {
             // against it (the owner: "we need the clouds back"), hence the low end.
             mie_scattering_m_inv: 4.0e-5,
             mie_extinction_m_inv: 4.444e-5,
+            // Spectral (2 November 2026, the owner: "more blue haze in the atmosphere its just
+            // white scatter right now"): the aerosol was one wavelength-independent coefficient,
+            // grey. Continental aerosol is fine-mode and scatters blue more than red by the
+            // Angstrom law (Angstrom 1929); AERONET climatologies give alpha(440-870 nm) of about
+            // 1.2-2.0 for fine-mode urban and continental aerosol in summer (Eck et al. 1999,
+            // JGR 104 D24; Dubovik et al. 2002, JAS 59), lower where humid growth or coarse
+            // particles enlarge the size distribution. The winter background is set at 1.0, the
+            // low end, so the default winter sky (AOD 0.05) is almost unchanged.
+            mie_angstrom_exponent: DEFAULT_AEROSOL_ANGSTROM,
             // Ozone (the Chappuis band, peak near 600 nm) averaged over each band's width
             // (600-760, 500-600, 400-500 nm) instead of Bruneton's point samples at 680, 550
             // and 440 nm (0.650, 1.881, 0.085 e-6). The point samples absorbed the green band
@@ -264,7 +339,7 @@ impl EnvironmentTransport {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MediumCoefficients {
     pub rayleigh_scattering_m_inv: DVec3,
-    pub mie_scattering_m_inv: f64,
+    pub mie_scattering_m_inv: DVec3,
     pub cloud_scattering_m_inv: f64,
     pub extinction_m_inv: DVec3,
 }
@@ -431,13 +506,15 @@ pub fn medium_coefficients_at(
     let cloud_density = cloud_relative_density(atmosphere, position_m);
 
     let rayleigh_scattering = atmosphere.rayleigh_scattering_m_inv * rayleigh_density;
-    let mie_scattering = atmosphere.mie_scattering_m_inv * mie_density;
-    let mie_extinction = atmosphere.mie_extinction_m_inv * mie_density;
+    let aerosol_band = atmosphere.aerosol_band_factor();
+    let mie_scattering = atmosphere.mie_scattering_m_inv * mie_density * aerosol_band;
+    let mie_extinction = atmosphere.mie_extinction_m_inv * mie_density * aerosol_band;
     let cloud_extinction = atmosphere.cloud.extinction_m_inv() * cloud_density;
     let cloud_scattering =
         cloud_extinction * atmosphere.cloud.single_scattering_albedo.clamp(0.0, 1.0);
     let extinction = rayleigh_scattering
-        + DVec3::splat(mie_extinction + cloud_extinction)
+        + mie_extinction
+        + DVec3::splat(cloud_extinction)
         + atmosphere.ozone_absorption_m_inv * ozone_density;
 
     MediumCoefficients {
@@ -943,13 +1020,16 @@ fn upper_atmosphere_diffuse_flux(
         * (1.0 - (-remaining / atmosphere.mie_scale_height_m.max(1.0)).exp());
     let ozone_column = ozone_column_density_m(atmosphere, from_altitude_m);
     let rayleigh_scattering = atmosphere.rayleigh_scattering_m_inv * rayleigh_column;
-    let mie_scattering = atmosphere.mie_scattering_m_inv * mie_column;
-    let mie_extinction = atmosphere.mie_extinction_m_inv * mie_column;
+    let aerosol_band = atmosphere.aerosol_band_factor();
+    let mie_scattering_bands = atmosphere.mie_scattering_m_inv * mie_column * aerosol_band;
+    let mie_extinction_bands = atmosphere.mie_extinction_m_inv * mie_column * aerosol_band;
     let ozone_absorption = atmosphere.ozone_absorption_m_inv * ozone_column;
     let mut diffuse_flux = DVec3::ZERO;
     for channel in 0..3 {
+        let mie_scattering = mie_scattering_bands[channel];
         let scattering = rayleigh_scattering[channel] + mie_scattering;
-        let extinction = rayleigh_scattering[channel] + mie_extinction + ozone_absorption[channel];
+        let extinction = rayleigh_scattering[channel] + mie_extinction_bands[channel]
+            + ozone_absorption[channel];
         if extinction <= 1.0e-12 {
             continue;
         }
@@ -1062,6 +1142,51 @@ fn cloud_diffuse_boundary(
         transported_radiance: lower_boundary_radiance,
         handled_cloud_scattering: true,
     }
+}
+
+/// Mean radiance over the sphere of the multiply scattered (diffuse) field at `position_m`, taken
+/// as isotropic in each hemisphere: (F_down_diffuse + F_up) / (2 pi). The downward diffuse flux is
+/// the delta-Eddington two-stream transmission of the Rayleigh/aerosol/ozone column above the
+/// point (`upper_atmosphere_diffuse_flux`) for the key and the secondary body; under a cloud it is
+/// the diffuse flux leaving the measured cloud column (`cloud_source_lower_flux`). The upward flux
+/// (air below the point, the ground's reflection) is left out: a named approximation. In-scattering
+/// this field into a view ray is the second and higher orders the single-scattering march misses;
+/// without it a thick aerosol seen away from the Sun goes dark toward the horizon, where a real
+/// hazy sky whitens (2 November 2026).
+fn multiple_scattering_radiance(
+    atmosphere: &AtmosphereParameters,
+    position_m: DVec3,
+    quality: IntegrationQuality,
+) -> DVec3 {
+    let up = (position_m - atmosphere.planet_center_m).normalize_or_zero();
+    let altitude = altitude_m(atmosphere, position_m).max(0.0);
+    let sources = [
+        (atmosphere.sun_direction.normalize_or_zero(), atmosphere.solar_irradiance),
+        (atmosphere.secondary_direction.normalize_or_zero(), atmosphere.secondary_irradiance),
+    ];
+    let cloud = atmosphere.cloud;
+    let cloud_depth = if cloud.coverage > 0.0 && altitude < cloud.top_altitude_m {
+        cloud_column_optical_depth(atmosphere, position_m, quality.cloud_column_steps)
+    } else {
+        0.0
+    };
+    let mut flux = DVec3::ZERO;
+    if cloud_depth > 1.0e-8 {
+        let cloud_diffuse = delta_eddington_diffuse_flux(
+            cloud_depth, cloud.single_scattering_albedo, cloud.asymmetry);
+        for (direction, irradiance) in sources {
+            flux += cloud_source_lower_flux(atmosphere, up, cloud_depth,
+                cloud_diffuse.transmittance, direction, irradiance, quality);
+        }
+    } else {
+        for (direction, irradiance) in sources {
+            let mu0 = up.dot(direction);
+            if mu0 > 0.0 && irradiance.max_element() > 0.0 {
+                flux += upper_atmosphere_diffuse_flux(atmosphere, altitude, mu0, irradiance);
+            }
+        }
+    }
+    flux.max(DVec3::ZERO) / TAU
 }
 
 /// Diffuse flux leaving the cloud base that one directional source feeds into the column.
@@ -1214,11 +1339,11 @@ pub fn integrate_environment(
         };
         let scattering = |cos_theta: f64| {
             medium.rayleigh_scattering_m_inv * rayleigh_phase(cos_theta)
+                + medium.mie_scattering_m_inv
+                    * henyey_greenstein_phase(cos_theta, atmosphere.mie_asymmetry)
                 + DVec3::splat(
-                    medium.mie_scattering_m_inv
-                        * henyey_greenstein_phase(cos_theta, atmosphere.mie_asymmetry)
-                        + cloud_scattering
-                            * henyey_greenstein_phase(cos_theta, atmosphere.cloud.asymmetry),
+                    cloud_scattering
+                        * henyey_greenstein_phase(cos_theta, atmosphere.cloud.asymmetry),
                 )
         };
         let mut source = DVec3::ZERO;
@@ -1253,6 +1378,9 @@ pub fn integrate_environment(
         if cloud_boundary.handled_cloud_scattering {
             source += cloud_boundary.transported_radiance * medium.cloud_scattering_m_inv;
         }
+        // The air's higher scattering orders: its scattering of the diffuse field.
+        source += (medium.rayleigh_scattering_m_inv + medium.mie_scattering_m_inv)
+            * multiple_scattering_radiance(atmosphere, position, quality);
         let segment_weight=(DVec3::ONE-exp_neg(medium.extinction_m_inv*ds))/medium.extinction_m_inv.max(DVec3::splat(1e-12));
         inscattered += view_transmittance * source * segment_weight;
         optical_depth += medium.extinction_m_inv * ds;
@@ -1372,7 +1500,8 @@ pub struct GpuPhysicalEnvironment {
     pub airglow_zenith_altitude: [f32; 4],
     pub cloud_motion: [f32;4],
     pub star_frame: [f32;4],
-    /// Upward diffuse flux under the cloud base from below (xyz); w unused.
+    /// Upward diffuse flux under the cloud base from below (xyz); w the aerosol's Angstrom
+    /// exponent (`physical_aerosol_band_factor`).
     pub ground_glow: [f32;4],
 }
 
@@ -1462,7 +1591,7 @@ impl GpuPhysicalEnvironment {
                 atmosphere.ground_glow_flux.x as f32,
                 atmosphere.ground_glow_flux.y as f32,
                 atmosphere.ground_glow_flux.z as f32,
-                0.0,
+                atmosphere.mie_angstrom_exponent as f32,
             ],
         }
     }
@@ -1846,6 +1975,92 @@ mod tests {
             assert!(result.integrated_distance_m.is_finite());
             assert!(result.integrated_distance_m >= 0.0);
         }
+    }
+
+    #[test]
+    fn the_aerosol_is_spectral_by_the_angstrom_law_in_every_consumer() {
+        // beta(lambda) = beta_550 (lambda/550)^-alpha at the bands' 680, 550, 440 nm.
+        let band = aerosol_band_factor(1.6);
+        assert!((band.y - 1.0).abs() < 1e-12);
+        assert!((band.x - (680.0f64 / 550.0).powf(-1.6)).abs() < 1e-12);
+        assert!((band.z - (440.0f64 / 550.0).powf(-1.6)).abs() < 1e-12);
+        assert!(band.z > 1.4 && band.x < 0.72, "fine-mode haze scatters blue over red: {band:?}");
+        assert_eq!(aerosol_band_factor(0.0), DVec3::ONE, "alpha 0 is the old grey aerosol");
+        // The default winter background keeps its 550 nm amount (AOD about 0.05).
+        let winter = AtmosphereParameters::default();
+        assert!((winter.aerosol_column().aod_550 - 0.0533).abs() < 1e-3);
+        assert_eq!(winter.mie_angstrom_exponent, DEFAULT_AEROSOL_ANGSTROM);
+        // A map's column: 0.2 over 1,500 m at alpha 1.6, the albedo kept.
+        let mut hazy = winter;
+        hazy.set_aerosol_column(AerosolColumn { aod_550: 0.2, angstrom: 1.6, scale_height_m: 1500.0 });
+        assert!((hazy.mie_extinction_m_inv - 0.2 / 1500.0).abs() < 1e-12);
+        assert!((hazy.mie_scattering_m_inv / hazy.mie_extinction_m_inv - 0.9).abs() < 1e-3);
+        let ground = hazy.planet_center_m + DVec3::Y * hazy.planet_radius_m;
+        let medium = medium_coefficients_at(&hazy, ground);
+        let ratio = medium.mie_scattering_m_inv / hazy.mie_scattering_m_inv;
+        assert!((ratio - band).abs().max_element() < 1e-9, "{ratio:?}");
+        // The GPU lane carries the exponent; the shader computes the same factor.
+        let gpu = GpuPhysicalEnvironment::from_parameters(&hazy, IntegrationQuality::INTERACTIVE_HIGH);
+        assert_eq!(gpu.ground_glow[3], 1.6);
+        let shader = include_str!("../shaders/physical_environment.wgsl");
+        assert!(shader.contains("vec3(pow(680.0 / 550.0, -alpha), 1.0, pow(440.0 / 550.0, -alpha))"));
+        assert!(shader.contains("mie_scattering_m_inv: vec3<f32>"));
+        // The raymarch backend's surfaces see the same air (rm_shade.wgsl fog_to), the sky does not
+        // take it twice.
+        let shade = include_str!("../shaders/rm_shade.wgsl");
+        assert!(shade.contains("fog_to(in.uv, ray, 20000.0, false)") && shade.contains("fog_to(in.uv, ray, dist, true)"));
+        let common = include_str!("../shaders/rm_common.wgsl");
+        assert!(common.contains("air_spectrum: vec4<f32>"));
+    }
+
+    #[test]
+    fn a_bluer_aerosol_makes_a_distant_view_bluer_and_its_transmittance_redder() {
+        // The physical claim of the change, on the CPU reference: the same 550 nm optical depth,
+        // grey vs alpha 1.6, along a horizontal 3 km path near the ground, the Sun 27 degrees up
+        // and square to the view. (Looking down-sun the backscatter is mostly Rayleigh, and the
+        // bluer aerosol's extra blue extinction of the beam can leave that in-scatter less blue.)
+        let mut grey = AtmosphereParameters::default();
+        grey.sun_direction = DVec3::new(0.0, 0.45, 0.89).normalize();
+        grey.set_aerosol_column(AerosolColumn { aod_550: 0.2, angstrom: 0.0, scale_height_m: 1500.0 });
+        let mut blue = grey;
+        blue.mie_angstrom_exponent = 1.6;
+        let origin = grey.planet_center_m + DVec3::Y * (grey.planet_radius_m + 280.0);
+        let view = DVec3::new(1.0, 0.0, 0.0);
+        let q = IntegrationQuality::REFERENCE;
+        let a = integrate_environment(&grey, origin, view, 3000.0, q);
+        let b = integrate_environment(&blue, origin, view, 3000.0, q);
+        let blueness = |v: DVec3| v.z / v.x;
+        assert!(blueness(b.inscattered_radiance) > blueness(a.inscattered_radiance),
+            "{:?} vs {:?}", b.inscattered_radiance, a.inscattered_radiance);
+        assert!(b.transmittance.x > b.transmittance.z, "{:?}", b.transmittance);
+        assert!((b.transmittance.y - a.transmittance.y).abs() < 1e-9, "the 550 nm band is the anchor");
+    }
+
+    #[test]
+    fn a_hazy_sky_whitens_toward_the_horizon_away_from_the_sun() {
+        // The merged blue haze's fault (2 November 2026): with AOD 0.2 at alpha 1.6 the sky away
+        // from a 22 degree afternoon Sun went slate-dark toward the horizon, single scattering
+        // alone (the aerosol's backscatter lobe is weak and the horizontal path saturates). The
+        // diffuse field's in-scatter (`multiple_scattering_radiance`) is what a real hazy sky shows.
+        let mut a = AtmosphereParameters::default();
+        a.set_aerosol_column(AerosolColumn { aod_550: 0.2, angstrom: 1.6, scale_height_m: 1500.0 });
+        let sun_el = 22f64.to_radians();
+        a.sun_direction = DVec3::new(-sun_el.cos(), sun_el.sin(), 0.0);
+        let origin = a.planet_center_m + DVec3::Y * (a.planet_radius_m + 270.0);
+        let sky = |el: f64| {
+            let e = el.to_radians();
+            integrate_environment(&a, origin, DVec3::new(e.cos(), e.sin(), 0.0), 1.0e9,
+                IntegrationQuality::REFERENCE).inscattered_radiance
+        };
+        let (horizon, zenith) = (sky(2.0), sky(89.0));
+        assert!(horizon.y > 2.0 * zenith.y, "the horizon is brighter: {horizon:?} vs {zenith:?}");
+        assert!(horizon.z / horizon.x < zenith.z / zenith.x, "and whiter: {horizon:?} vs {zenith:?}");
+        // The diffuse field is real light from the column above: zero with no source above.
+        let mut night = a;
+        night.sun_direction = DVec3::new(-1.0, -0.2, 0.0).normalize();
+        assert_eq!(multiple_scattering_radiance(&night, origin, IntegrationQuality::REFERENCE), DVec3::ZERO);
+        let shader = include_str!("../shaders/physical_environment.wgsl");
+        assert!(shader.contains("* physical_multiple_scattering_radiance(environment, position_m);"));
     }
 
     #[test]

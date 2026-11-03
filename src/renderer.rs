@@ -27,6 +27,8 @@ mod renderer_fine_vfx;
 pub(crate) mod renderer_weapon_particles;
 #[path = "renderer_scatter.rs"]
 mod renderer_scatter;
+#[path = "renderer_meadow.rs"]
+mod renderer_meadow;
 #[path = "renderer_raymarch.rs"]
 pub(crate) mod raymarch;
 #[path = "renderer_scars.rs"]
@@ -591,9 +593,13 @@ pub fn day_cycle_scale() -> f64 {
 /// Sunrise and sunset run from the end of civil twilight to the end of the golden hour.
 const TWILIGHT_FROM_DEG: f64 = -6.0;
 const TWILIGHT_TO_DEG: f64 = 8.0;
-/// 0 night, 1 sunrise or sunset, 2 full day, by the Sun's altitude.
+/// The blue hour: nautical twilight and the first of astronomical, the Sun 6 to 14 deg down.
+/// The campaign paces it with the night; a map may give it its own play time.
+const BLUE_FROM_DEG: f64 = -14.0;
+/// 0 night, 1 blue hour, 2 sunrise or sunset, 3 full day, by the Sun's altitude.
 fn day_phase(sun_altitude_deg: f64) -> usize {
-    if sun_altitude_deg < TWILIGHT_FROM_DEG { 0 } else if sun_altitude_deg < TWILIGHT_TO_DEG { 1 } else { 2 }
+    if sun_altitude_deg < BLUE_FROM_DEG { 0 } else if sun_altitude_deg < TWILIGHT_FROM_DEG { 1 }
+    else if sun_altitude_deg < TWILIGHT_TO_DEG { 2 } else { 3 }
 }
 /// On in play. Off for unit tests and wherever `KESSEL_DAY_NIGHT=0` asks for the real-time clock
 /// (stills and films that must hold their authored light).
@@ -607,6 +613,8 @@ fn day_night_cycle_enabled() -> bool {
 /// Exposure and saturation of the display grade at full boost.
 pub const VISION_BOOST_EXPOSURE: f32 = 1.9;
 pub const VISION_BOOST_SATURATION: f32 = 1.18;
+/// The smoked boost's factor on the rods' gain at full boost (night vision).
+const VISION_BOOST_NIGHT: f32 = 2.0;
 fn boosted_display_grade(grade: [f32; 4], boost: f32) -> [f32; 4] {
     let boost = if boost.is_finite() { boost.clamp(0.0, 1.0) } else { 0.0 };
     [grade[0] * (1.0 + (VISION_BOOST_EXPOSURE - 1.0) * boost),
@@ -916,6 +924,8 @@ struct CampaignAtmosphereProfile {
     mie_scattering_m_inv: f64,
     mie_extinction_m_inv: f64,
     mie_asymmetry: f64,
+    /// Angstrom exponent of the aerosol (physical_environment::aerosol_band_factor).
+    mie_angstrom_exponent: f64,
     cloud_bottom_m: f64,
     cloud_top_m: f64,
     cloud_lwc_kg_m3: f64,
@@ -932,6 +942,7 @@ impl CampaignAtmosphereProfile {
             ground_extinction_m_inv: f!(ground_extinction_m_inv), wind_exposure: f!(wind_exposure),
             mie_scale_height_m: d!(mie_scale_height_m), mie_scattering_m_inv: d!(mie_scattering_m_inv),
             mie_extinction_m_inv: d!(mie_extinction_m_inv), mie_asymmetry: d!(mie_asymmetry),
+            mie_angstrom_exponent: d!(mie_angstrom_exponent),
             cloud_bottom_m: d!(cloud_bottom_m), cloud_top_m: d!(cloud_top_m),
             cloud_lwc_kg_m3: d!(cloud_lwc_kg_m3), cloud_droplet_radius_m: d!(cloud_droplet_radius_m),
         }
@@ -963,6 +974,7 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             mie_scattering_m_inv: 4.0e-5,
             mie_extinction_m_inv: 4.444e-5,
             mie_asymmetry: 0.80,
+            mie_angstrom_exponent: physical_environment::DEFAULT_AEROSOL_ANGSTROM,
             cloud_bottom_m: 450.0,
             cloud_top_m: 1_300.0,
             cloud_lwc_kg_m3: 0.25e-3,
@@ -979,6 +991,7 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             mie_scattering_m_inv: 2.8e-6,
             mie_extinction_m_inv: 3.4e-6,
             mie_asymmetry: 0.78,
+            mie_angstrom_exponent: 1.5,
             cloud_bottom_m: 1_300.0,
             cloud_top_m: 2_200.0,
             cloud_lwc_kg_m3: 0.10e-3,
@@ -995,6 +1008,7 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             mie_scattering_m_inv: 0.8e-6,
             mie_extinction_m_inv: 0.95e-6,
             mie_asymmetry: 0.76,
+            mie_angstrom_exponent: 1.5,
             cloud_bottom_m: 1_900.0,
             cloud_top_m: 2_800.0,
             cloud_lwc_kg_m3: 0.08e-3,
@@ -1010,6 +1024,7 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             mie_scattering_m_inv: 3.996e-6,
             mie_extinction_m_inv: 4.440e-6,
             mie_asymmetry: 0.80,
+            mie_angstrom_exponent: physical_environment::DEFAULT_AEROSOL_ANGSTROM,
             cloud_bottom_m: 900.0,
             cloud_top_m: 2_200.0,
             cloud_lwc_kg_m3: 0.25e-3,
@@ -1165,6 +1180,8 @@ struct CrushUniform {
     loupe: [f32; 4],
     /// The realism look (mode 6): contrast, saturation, dithered steps per channel. Appended lane.
     real: [f32; 4],
+    /// Debug only (`KESSEL_POINT_LAYER_VIEW=1`): x 1 shows the point layer (rod pooling check).
+    debug: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -2736,6 +2753,10 @@ pub struct Renderer {
     raymarch: Option<raymarch::Backend>,
     /// The strewn field's GPU side (`renderer_scatter.rs`), installed once per act.
     scatter_field: Option<renderer_scatter::ScatterGpu>,
+    /// The spring meadow's GPU side (`renderer_meadow.rs`): raymarch backend only.
+    meadow: Option<renderer_meadow::MeadowGpu>,
+    /// Firefly lanterns lit this frame: world position and lane intensity (`meadow_fauna.rs`).
+    pub fireflies: Vec<[f32; 4]>,
     /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
     /// backend cuts, displaces and shades them (renderer_scars.rs).
     mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
@@ -2773,7 +2794,10 @@ pub struct Renderer {
     /// The accelerated day and night cycle, and the share of the current day that is daylight.
     pub day_night_cycle: bool,
     /// Real seconds the Sun spends at night, in twilight and in full day over the current date.
-    day_phase_seconds: Option<[f64; 3]>,
+    day_phase_seconds: Option<[f64; 4]>,
+    /// The map's pacing (play seconds of night, each blue hour, each twilight, full day); `None`
+    /// is the campaign's.
+    pub day_cycle_play_s: Option<[f32; 4]>,
     weather_offset: glam::Vec3,
     pub(crate) theatre_weather: bool,
     pub weather_override: Option<f32>,
@@ -2786,6 +2810,9 @@ pub struct Renderer {
     /// grade only: no emitter, medium or material changes. See docs/PHYSICAL_TRUTH_AUDIT.md.
     pub vision_boost: f32,
     pub fog_density: f32,
+    /// The map's authored aerosol (`environment_lighting.aerosol`); `None` keeps the campaign's.
+    /// It replaces the atmosphere's aerosol column and gives `fog_density`'s layer its spectrum.
+    pub aerosol: Option<crate::environment_authoring::AerosolTuning>,
     pub reticle: bool,
     /// The optic snapshot's vertical field when it carried the reticle (`render_optic_snapshot`).
     optic_reticle_fov: f32,
@@ -2820,6 +2847,9 @@ pub struct Renderer {
     /// Fog banks in the world medium (raymarch backend): extinction inside a bank /m, coverage
     /// 0..1, depth m above the floor, the floor's altitude y. All zero: none.
     pub fog_bank: [f32; 4],
+    /// Authored low cloud and mist banks of the map (`low_clouds.rs`, raymarch backend); `None`:
+    /// none. Set by the game and the editor from the revision's `manifest_edits.json`.
+    pub low_clouds: Option<std::sync::Arc<crate::low_clouds::LowCloudField>>,
     /// Source-qualified admission for the observer's flash detector, never added light energy.
     pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
@@ -2895,6 +2925,9 @@ pub struct Renderer {
     frame: u32,
 
     hdr_view: wgpu::TextureView,
+    /// Sub-pixel emitters' radiance at their pixel (crush.wgsl rod pooling).
+    point_view: wgpu::TextureView,
+    _point_layer_tex: wgpu::Texture,
     hdr_tex: wgpu::Texture,
     depth_view: wgpu::TextureView,
     ldr_view: wgpu::TextureView,
@@ -3140,6 +3173,7 @@ pub struct Renderer {
     cabin_medium_pose: Option<(glam::Mat4,glam::Mat4)>,
     atmo_enabled: bool, // spatial cabin medium exists independently of the current camera
     atmo_haze: f32,     // 0..1 interior hazy-atmosphere density (0 = pass skips it)
+    atmo_soot: f32,     // 0..1 a fire's soot load in the cabin air (dark, absorbing)
     atmo_dust: f32,     // 0..1 dust-mote sparkle inside the cabin haze
     atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame with a slow cabin-local drift
     smoke_buf: wgpu::Buffer,
@@ -3901,6 +3935,17 @@ impl Renderer {
             view_formats: &[],
         });
         let hdr_view = hdr_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // The sub-pixel emitters' own radiance (`point_view`, the raymarch backend's firefly
+        // lanterns), for the eye's rod pooling in crush.wgsl; zero on the other backends.
+        let point_layer_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("point-layer"),
+            size: wgpu::Extent3d { width: iw, height: ih, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let point_view = point_layer_tex.create_view(&wgpu::TextureViewDescriptor::default());
         // TEXTURE_BINDING so the volumetric smoke pass can sample scene depth back for occlusion.
         // Kept as a texture (not just its view): the S1 bvhview PASS metric reads scene depth
         // back and correlates it against traced primary-ray depth.
@@ -5468,7 +5513,7 @@ impl Renderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(256 * 3 * 16),
+                        min_binding_size: wgpu::BufferSize::new(256 * 5 * 16),
                     },
                     count: None,
                 },
@@ -5478,7 +5523,7 @@ impl Renderer {
         // execute serially in the command stream; only the persistent eye state is per-view.
         let exp_meter_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("exposure-meter-sums"),
-            size: 256 * 3 * 16,
+            size: 256 * 5 * 16,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -5970,6 +6015,7 @@ impl Renderer {
                 wgpu::BindGroupLayoutEntry {binding:7,visibility:wgpu::ShaderStages::FRAGMENT,
                     ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Uint,
                         view_dimension:wgpu::TextureViewDimension::D2,multisampled:false},count:None},
+                tex_entry(8), // the sub-pixel emitters' radiance (rod pooling)
             ],
         });
         let crush_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -6001,6 +6047,7 @@ impl Renderer {
                     resource: environment_probe.uniform.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {binding:7,resource:wgpu::BindingResource::TextureView(&blue_noise_view)},
+                wgpu::BindGroupEntry {binding:8,resource:wgpu::BindingResource::TextureView(&point_view)},
             ],
         });
         let crush_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -6144,6 +6191,8 @@ impl Renderer {
             shader_backend,
             raymarch,
             scatter_field: None,
+            meadow: None,
+            fireflies: Vec::new(),
             mesh_scars: std::collections::HashMap::new(),
             actor_mesh_clones: Vec::new(),
             raster_optics: shader_backend.then(|| {
@@ -6172,6 +6221,7 @@ impl Renderer {
             sky_time_scale: 1.0,
             day_night_cycle: day_night_cycle_enabled(),
             day_phase_seconds: None,
+            day_cycle_play_s: None,
             weather_offset: glam::Vec3::ZERO,
             theatre_weather: false,
             weather_override: None,
@@ -6180,6 +6230,7 @@ impl Renderer {
             exposure_override: configured_camera_exposure_override(),
             vision_boost: 0.0,
             fog_density: 0.02,
+            aerosol: None,
             reticle: false,
             optic_reticle_fov: 0.0,
             optic_blast: 0.0,
@@ -6225,7 +6276,10 @@ impl Renderer {
             worn_vehicles: Vec::new(),
             exhaust_puffs: Vec::new(),
             fog_bank: [0.0; 4],
+            low_clouds: None,
             frame: 0,
+            point_view,
+            _point_layer_tex: point_layer_tex,
             hdr_view,
             hdr_tex,
             depth_view,
@@ -6318,6 +6372,7 @@ impl Renderer {
             cabin_medium_pose: None,
             atmo_enabled: false,
             atmo_haze: 0.0,
+            atmo_soot: 0.0,
             atmo_dust: 0.0,
             atmo_origin: glam::Vec3::ZERO,
             smoke_buf,
@@ -6458,7 +6513,7 @@ impl Renderer {
         macro_rules! retain { ($($field:ident),* $(,)?) => { $(
             std::mem::swap(&mut next.$field, &mut self.$field);
         )* }; }
-        retain!(camera, master_retro, display_tuning, display_dither_pattern, display_grade, transport_quality, exposure_override, fog_density, reticle, optic_blast, observer_flash_source,
+        retain!(camera, master_retro, display_tuning, display_dither_pattern, display_grade, transport_quality, exposure_override, fog_density, aerosol, reticle, optic_blast, observer_flash_source,
             crew_ko, crew_ko_dir, concussion, menu_mode, night, precipitation, overcast, storm,
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
             sky_clock, celestial, authored_clock_start, sky_time_scale, user_sky_phase, weather_offset, theatre_weather, weather_override, weather_original,
@@ -6467,7 +6522,7 @@ impl Renderer {
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
             track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
-            atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
+            atmo_enabled, atmo_haze, atmo_soot, atmo_dust, atmo_origin, pixel_particle_field,
             pressure_fronts, heat_sources, ui, held_map_surface, order_receipt_surfaces, repair_manual_surfaces,
             repair_manual_presentation);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
@@ -6501,6 +6556,8 @@ impl Renderer {
                 tuning.utc.unwrap(), crate::celestial_sky::act_site(self.weather_act_id)));
         }
         self.fog_density = tuning.fog_density;
+        self.aerosol = tuning.aerosol;
+        self.day_cycle_play_s = tuning.day_cycle;
         self.overcast = tuning.overcast;
         self.storm = tuning.storm;
         self.twilight = 0.0;
@@ -6533,6 +6590,8 @@ impl Renderer {
         self.weather_shelter = 0.0;
         self.weather_seed = (act_id as u32).wrapping_mul(0x9e37_79b9);
         self.fog_density = profile.ground_extinction_m_inv;
+        self.aerosol = None;
+        self.day_cycle_play_s = None;
         self.set_sky_clock(crate::celestial_sky::SkyClock::for_act(act_id, phase.clock_phase()));
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
     }
@@ -6579,7 +6638,7 @@ impl Renderer {
         let phases = *self.day_phase_seconds.get_or_insert_with(|| {
             // One day sampled every two minutes from now: how long the Sun spends in each phase.
             let mut probe = self.sky_clock;
-            let mut seconds = [0.0_f64; 3];
+            let mut seconds = [0.0_f64; 4];
             for _ in 0..720 {
                 probe.advance(120.0);
                 let altitude = crate::celestial_sky::CelestialLighting::at(probe.now(), probe.site,
@@ -6593,13 +6652,21 @@ impl Renderer {
         let scale = day_cycle_scale();
         let mean = 86_400.0 / ((FULL_DAY_S + 2.0 * TWILIGHT_S + NIGHT_S) * scale);
         let rate = |phase: usize, play_s: f64| if phases[phase] > 60.0 { phases[phase] / (play_s * scale) } else { mean };
-        let rates = [rate(0, NIGHT_S), rate(1, 2.0 * TWILIGHT_S), rate(2, FULL_DAY_S)];
+        let rates = match self.day_cycle_play_s.map(|c| c.map(f64::from)) {
+            Some([night_s, blue_s, twilight_s, day_s]) =>
+                [rate(0, night_s), rate(1, 2.0 * blue_s), rate(2, 2.0 * twilight_s), rate(3, day_s)],
+            None => {
+                // The campaign's night includes the blue hours.
+                let dark = if phases[0] + phases[1] > 60.0 { (phases[0] + phases[1]) / (NIGHT_S * scale) } else { mean };
+                [dark, dark, rate(2, 2.0 * TWILIGHT_S), rate(3, FULL_DAY_S)]
+            }
+        };
         // Blend across a degree at each boundary so the clock never jumps.
         let altitude = self.celestial.sun_altitude_deg();
         let ramp = |edge: f64| ((altitude - edge) / 1.0 + 0.5).clamp(0.0, 1.0);
-        let (above_night, above_twilight) = (ramp(TWILIGHT_FROM_DEG), ramp(TWILIGHT_TO_DEG));
-        (rates[0] * (1.0 - above_night) + rates[1] * (above_night - above_twilight).max(0.0)
-            + rates[2] * above_twilight) * self.sky_time_scale as f64
+        let (above_night, above_blue, above_twilight) = (ramp(BLUE_FROM_DEG), ramp(TWILIGHT_FROM_DEG), ramp(TWILIGHT_TO_DEG));
+        (rates[0] * (1.0 - above_night) + rates[1] * (above_night - above_blue).max(0.0)
+            + rates[2] * (above_blue - above_twilight).max(0.0) + rates[3] * above_twilight) * self.sky_time_scale as f64
     }
 
     pub fn advance_sky_clock(&mut self, dt_s: f32) {
@@ -6646,6 +6713,20 @@ impl Renderer {
         self.fog_density = profile.ground_extinction_m_inv;
         self.weather_wind = profile.wind_exposure;
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
+    }
+
+    /// The aerosol every consumer of the atmosphere uses (the sky, the sky cache, the surfaces'
+    /// aerial perspective, the shader backend's media): the campaign profile's, replaced by the
+    /// map's authored column when it has one.
+    fn apply_aerosol(&self, atmosphere: &mut AtmosphereParameters, campaign: &CampaignAtmosphereProfile) {
+        atmosphere.mie_scale_height_m = campaign.mie_scale_height_m;
+        atmosphere.mie_scattering_m_inv = campaign.mie_scattering_m_inv;
+        atmosphere.mie_extinction_m_inv = campaign.mie_extinction_m_inv;
+        atmosphere.mie_asymmetry = campaign.mie_asymmetry;
+        atmosphere.mie_angstrom_exponent = campaign.mie_angstrom_exponent;
+        if let Some(aerosol) = self.aerosol {
+            atmosphere.set_aerosol_column(aerosol.column());
+        }
     }
 
     fn current_campaign_environment(&self) -> CampaignAtmosphereProfile {
@@ -7064,6 +7145,11 @@ impl Renderer {
         self.lights = select_point_lights(lights, self.camera.pos, N_LIGHTS);
     }
 
+    /// Every point light offered for the latest frame (bounded as the raymarch backend takes them).
+    pub fn offered_lights(&self) -> &[PointLight] {
+        &self.lights_full
+    }
+
     /// (point lights offered for the latest frame, admitted within the `N_LIGHTS` budget).
     pub fn light_budget_stats(&self) -> (usize, usize) {
         (self.lights_offered, self.lights.len())
@@ -7148,6 +7234,22 @@ impl Renderer {
     }
     /// Set an instanced batch's shader flag (`params.w`). -1.0 = physical cubic smoke particles;
     /// 4.0 = grass wind/alpha material; 0.0 = plain lit module (default).
+    /// The spring meadow is drawn by the raymarch backend only.
+    pub fn meadow_supported(&self) -> bool { self.raymarch.is_some() }
+    /// Install the map's spring meadow on the GPU (`meadow.rs`).
+    pub fn install_meadow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, build: crate::meadow::Build) {
+        if self.raymarch.is_some() { self.meadow = Some(renderer_meadow::MeadowGpu::new(device, queue, build)); }
+        // The shade and reflection passes bind the canopy for their rays: rebuild their groups.
+        if let Some(rm) = &mut self.raymarch { rm.invalidate_binds(); }
+    }
+    /// This frame's wind grid and new tread pages for the meadow.
+    pub fn set_meadow_frame(&mut self, frame: crate::meadow::Frame) {
+        if let Some(m) = &mut self.meadow { m.set_frame(frame); }
+    }
+    pub fn meadow_stats(&self) -> Option<renderer_meadow::MeadowStats> { self.meadow.as_ref().map(|m| m.stats) }
+    /// The Sun's altitude above the horizon, degrees (the act's ephemeris).
+    pub fn sun_altitude_deg(&self) -> f32 { self.celestial.sun_altitude_deg() as f32 }
+
     pub fn set_batch_flags(&mut self, batch: usize, flags: f32) {
         if let Some(b) = self.inst_batches.get_mut(batch) {
             let rt_membership_changed = (b.flags <= 3.5) != (flags <= 3.5);
@@ -8242,6 +8344,11 @@ impl Renderer {
     /// skips), `dust` the drifting-mote sparkle. Exterior lighting is deliberately absent here:
     /// modeled openings, sun shadows/rays and authored fixtures are the only lighting paths.
 
+    /// A fire's soot load in the cabin air, 0..1 (dark and absorbing, unlike the gun fumes' haze).
+    pub fn set_interior_soot(&mut self, soot: f32) {
+        self.atmo_soot = if soot.is_finite() { soot.clamp(0.0, 1.0) } else { 0.0 };
+    }
+
     pub fn set_interior_atmosphere(&mut self, strength: f32, dust: f32, origin: glam::Vec3) {
         self.atmo_haze = strength.clamp(0.0, 1.0);
         self.atmo_dust = dust.clamp(0.0, 1.0);
@@ -8288,7 +8395,7 @@ impl Renderer {
     /// not keep this pass alive.
     fn smoke_active(&self) -> bool {
         self.fog_density > 1.0e-6
-            || (self.atmo_enabled && self.atmo_haze > 0.001)
+            || (self.atmo_enabled && (self.atmo_haze > 0.001 || self.atmo_soot > 0.001))
             || (self.breech_gas.strength > 0.0 && self.breech_gas.age < 2.2)
             || self
                 .smoke_puffs
@@ -8528,10 +8635,7 @@ impl Renderer {
             self.sun_dir.z as f64,
         )
         .normalize_or_zero();
-        physical_environment.mie_scale_height_m = campaign_environment.mie_scale_height_m;
-        physical_environment.mie_scattering_m_inv = campaign_environment.mie_scattering_m_inv;
-        physical_environment.mie_extinction_m_inv = campaign_environment.mie_extinction_m_inv;
-        physical_environment.mie_asymmetry = campaign_environment.mie_asymmetry;
+        self.apply_aerosol(&mut physical_environment, &campaign_environment);
         physical_environment.cloud.bottom_altitude_m = campaign_environment.cloud_bottom_m;
         physical_environment.cloud.top_altitude_m = campaign_environment.cloud_top_m;
         physical_environment.cloud.liquid_water_content_kg_m3 =
@@ -8623,6 +8727,10 @@ impl Renderer {
                 sf.prepare(self, rm.shadow_views(), device, queue);
                 self.scatter_field = Some(sf);
             }
+            if let Some(mut meadow) = self.meadow.take() {
+                meadow.prepare(self, rm.shadow_views(), rm.shadow_texels(), queue);
+                self.meadow = Some(meadow);
+            }
             // The tracers' veil for the eye's meter (the clock's lanes 5 and 6).
             queue.write_buffer(&self.exp_clock_buf, 20, bytemuck::cast_slice(&rm.point_veil));
             self.raymarch = Some(rm);
@@ -8645,7 +8753,10 @@ impl Renderer {
             // The Strichbild is drawn by the blit at the output's resolution (`blit_reticle`).
             reticle: 0.0,
             frame: (self.frame & 0xFFFF) as f32,
-            rod_exposure: if self.exposure_override.is_some() { 0.0 } else { unmetered.rod_exposure as f32 },
+            // The smoked boost also lifts the rods' gain (night vision; owner-directed, ledger),
+            // still capped at the display's key in crush.wgsl.
+            rod_exposure: if self.exposure_override.is_some() { 0.0 } else {
+                unmetered.rod_exposure as f32 * (1.0 + (VISION_BOOST_NIGHT - 1.0) * self.vision_boost.clamp(0.0, 1.0)) },
             rod_inverse_saturation: unmetered.rod_inverse_saturation as f32,
             ambient_white_balance: self.display_tuning
                 .filter(|p| p.ambient_white_balance)
@@ -8670,6 +8781,7 @@ impl Renderer {
             look: [self.look, DELTAP_PAIR_PENALTY, self.tonemap, self.palette_smooth],
             loupe: self.loupe,
             real: self.real,
+            debug: [if std::env::var("KESSEL_POINT_LAYER_VIEW").as_deref() == Ok("1") { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {
@@ -12605,7 +12717,7 @@ mod atmosphere_tests {
         assert_eq!(ranks.iter().map(|r|(r+0.5)/16.0-0.5).sum::<f32>(),0.0);
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 160); // the look lane at 128, the loupe lane at 144
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 192); // the look lane at 128, the loupe at 144, the realism lane at 160, the debug-view lane at 176
         assert_eq!(std::mem::offset_of!(CrushUniform, look), 128);
         assert_eq!(std::mem::offset_of!(CrushUniform, loupe), 144);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
@@ -13394,9 +13506,12 @@ mod atmosphere_tests {
         }
         // The crush applies the eye's two channels and nothing else before ACES.
         let crush = include_str!("../shaders/crush.wgsl");
-        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
+        // The eye takes the frame and the sub-pixel emitters' point layer (fireflies; `observer.rs`).
+        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion), in.uv);"));
         assert!(crush.contains("let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));"));
-        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
+        // The cone channel is the frame plus a fixated sub-pixel point's foveal concentration.
+        assert!(crush.contains("let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));"));
+        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
             "owner-directed cabin reproduction still acts only on the display rod term");
         assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));"),
             "the night's hue outdoors, the cabin's own hue inside");

@@ -968,6 +968,11 @@ pub struct Tank {
     /// Pitch of the rigid rest of the hull on its supports (the ground's slope under it, without
     /// the suspension's own squat and dive): the grade the drivetrain climbs.
     pub grade_pitch: f32,
+    /// A turret thrown off its ring by a cook-off (`game_cookoff`): its frame's pose in the world
+    /// (the thrown rigid body's, with the frame's scale), which `turret_model` then returns, so
+    /// everything authored in the turret's frame goes with it. Transient (not saved; named).
+    #[serde(skip)]
+    pub turret_thrown: Option<Mat4>,
     // A tank is NOT an HP sponge — armor either holds (bounce, no effect) or is holed (a real
     // consequence). For the PLAYER Tiger the discrete penetration damage-state (individual crewmen +
     // modules, the spall model, fire) lives on `Game` (player-only, richer than the enemies need);
@@ -1001,6 +1006,7 @@ impl Tank {
             ride: crate::suspension::Ride::default(),
             ride_layout: None,
             grade_pitch: 0.0,
+            turret_thrown: None,
         };
         crate::vehicle_ground::settle_rigid(&mut tank, |x,z|hf.vehicle_height_at(x,z));
         tank
@@ -1305,6 +1311,9 @@ impl Tank {
         if self.parts.frame_scale == 1.0 { posed } else { posed * Mat4::from_scale(Vec3::splat(self.parts.frame_scale)) }
     }
     pub fn turret_model(&self) -> Mat4 {
+        if let Some(thrown) = self.turret_thrown {
+            return thrown;
+        }
         if self.kind.casemate() {
             // Casemate TD (SU-100): the fighting compartment is welded to the hull — there is no
             // turret ring. The "turret" transform IS the hull, so `gun_model` (turret · trunnion ·

@@ -68,6 +68,17 @@ pub(crate) mod game_fea_section;
 pub(crate) mod game_fea_review;
 #[path = "game_fea_film.rs"]
 pub(crate) mod game_fea_film;
+#[path = "crew_skeleton.rs"]
+mod crew_skeleton;
+#[path = "crew_tissue.rs"]
+mod crew_tissue;
+#[path = "crew_helmet_body.rs"]
+mod crew_helmet_body;
+#[path = "game_cookoff.rs"]
+mod game_cookoff;
+pub use game_cookoff::{COOKOFF_BLACK_S, COOKOFF_CREW_S, COOKOFF_THROW_S};
+#[path = "crew_corpse_tissue.rs"]
+mod crew_corpse_tissue;
 #[path = "game_recorded_fx.rs"]
 mod game_recorded_fx;
 #[path = "main_gun_candidates.rs"]
@@ -198,6 +209,8 @@ pub(crate) mod tiger_front_optics;
 mod tiger_gunner_sight;
 #[path = "tiger_hatches.rs"]
 mod tiger_hatches;
+/// The roof lids' openings in their frames (the shaft stills of `sky-review` aim at them).
+pub(crate) use tiger_hatches::APERTURE_CENTERS as ROOF_APERTURE_CENTERS;
 #[path = "tiger_cupola.rs"]
 mod tiger_cupola;
 #[path = "tiger_periscopes.rs"]
@@ -269,6 +282,13 @@ mod halftrack_runtime;
 mod expedition_theatre_game;
 #[path = "river_crossings.rs"]
 mod river_crossings;
+/// The water and bridge meshes a manifest declares (`river_crossings`), for the world editor.
+pub fn declared_river_meshes(m: &crate::act_manifest::ActManifest) -> anyhow::Result<Vec<CpuMesh>> {
+    let mut scene = Vec::new();
+    let mut occluders = Vec::new();
+    river_crossings::RiverRuntime::install(&mut scene, &mut occluders, m)?;
+    Ok(scene)
+}
 #[path = "expedition_theatre_review.rs"]
 pub mod expedition_theatre_review;
 #[path = "expedition_world_review.rs"]
@@ -627,6 +647,17 @@ const ALARM_RADIUS: f32 = 40.0; // m — a blown encounter cascades to neighbour
 const INF_DAMAGE: f32 = 34.0; // hp per infantry round that connects (~3 = down)
 /// The evolved T-34 policy the arena's crews fight by (docs/ENEMY_TANK_AI.md).
 const ARENA_T34_POLICY: &str = "assets/ai/weights_academy.bin";
+/// The T-34 policy wherever a winter encounter is fielded (`install_t34_brain`):
+/// `KESSEL_T34_WEIGHTS` if set, else `ARENA_T34_POLICY`.
+fn t34_policy_path() -> String {
+    std::env::var("KESSEL_T34_WEIGHTS").ok().filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| ARENA_T34_POLICY.to_string())
+}
+/// How far, and in what steps, a T-34 crew judges the room to drive (`executor_obs` slots 14-17).
+const T34_RAY_M: f32 = 24.0;
+const T34_RAY_STEP_M: f32 = 3.0;
+/// Frames between a crew's judgements of the room to drive (0.1 s at 60 Hz).
+const T34_ROOM_EVERY: usize = 6;
 const ENEMY_RELOAD: f32 = 5.5; // s — per-enemy cadence (the swarm's volume of fire = the pressure)
 const N_ENEMIES: usize = 6; // swarm size (independent shooters for now)
 /// The first level's district reaches about 300 m from the spawn; beyond this the Tiger has left
@@ -6147,7 +6178,6 @@ const CREW_VULN: f32 = 0.90; // crewmen are soft targets in the cone
 
 // Interior fire / cook-off.
 const FIRE_MAX: f32 = 1.4;
-const FIRE_TO_AMMO: f32 = ammunition_fire::COOKOFF_SECONDS;
 
 const CREW_KO_DUR: f32 = 2.1; // s — full crew-KO screen effect (red splatter + hand-wipe)
 const N_INT_FIRE_SPOTS: usize = surface_fire::MAX_PATCHES;
@@ -8488,7 +8518,6 @@ const N_BLOOD_BATCHES: usize = 4;
 const BLOOD_GRAINS_PER_BATCH: usize = N_BLOOD_CUBES / N_BLOOD_BATCHES;
 /// Every transient blood body is the same sand-grain voxel. Severity changes only how many grains
 /// launch and how fast they travel; it never hides the effect inside a few oversized chunks.
-const BLOOD_GRAIN_SIZE: f32 = surface_blood::GRAIN_M;
 const N_BLOOD_STAINS: usize = surface_blood::MAX_CELLS;
 const BLOOD_STAINS_PER_BATCH: usize = N_BLOOD_STAINS.div_ceil(N_BLOOD_BATCHES);
 const TURRET_BLOOD_WALL_R: f32 = 1.04;
@@ -9608,6 +9637,13 @@ pub struct Game {
     enemy_skill: Vec<u8>,
     /// Seconds each enemy tank has had the Tiger as its target without a break.
     enemy_track_age: Vec<f32>,
+    /// Seconds each enemy crew has been driving without the hull moving, decaying when it moves:
+    /// the evolved brain's sense of being stuck (`executor_obs` slot 19).
+    enemy_stall_s: Vec<f32>,
+    /// Each crew's last judgement of the room to drive (`executor_obs` slots 14-17), refreshed
+    /// every `T34_ROOM_EVERY` frames, staggered by slot, and the frame counter that staggers it.
+    enemy_room: Vec<[f32; 4]>,
+    enemy_room_frame: u32,
     /// The sky's darkness now, 0 day to 1 night, and the weather as the map authored it.
     darkness: f32,
     authored_weather: Option<(f32, f32, f32)>,
@@ -9710,6 +9746,9 @@ pub struct Game {
     /// fast (natural draft). Rapid sustained fire without venting → you're firing blind in your own
     /// smoke. Pushed to the crush veil, gated by being buttoned up inside.
     interior_haze: f32,
+    /// A fire's soot in the cabin air, 0..1: dark and absorbing, built by the fire's heat in the
+    /// enclosure over time and drained by the fan and open hatches (`update_haze`).
+    interior_soot: f32,
     weather_baseline: Option<(f32, f32)>,
     weather_view: crate::weather_visibility::WeatherView,
     weather_wind_scale: f32,
@@ -10131,6 +10170,8 @@ pub struct Game {
     wreck_turret_sources: [std::sync::Arc<wreck_turret::Source>; 6],
     fire_t: f32,                             // fire clock (drives flicker)
     ammo_fire: ammunition_fire::AmmunitionFire, // latched to the ignited live round
+    /// The compartment's heat, its ammunition's cook-off and the thrown turret (`game_cookoff`).
+    cookoff: game_cookoff::Cookoff,
     fire_ammo_ids: Vec<u32>, // exposure history belongs to this exact inventory ordering
     fire_origin: Option<(Vec3, Vec3, Vec3)>, // (shooter, entry, shell_dir) that lit the fire — for the death record
     crew_ko_t: f32, // crew-KO screen-effect timer (counts down from CREW_KO_DUR)
@@ -11485,6 +11526,7 @@ impl Game {
         let tiger0 = scene.len();
         let (player_tiger, mut roof_lids, visor_holder, periscope_parts, sight, shutters, cupola_grip_source, controls_source) = tiger_hatches::load_player_tiger()?;
         let radio_roof_pane = tiger_front_optics::split_radio_roof_pane(&mut roof_lids[2])?;
+        let player_turret_source = game_cookoff::player_turret_source(&player_tiger, tank::TIGER_FRAME_SCALE);
         scene.extend(player_tiger);
         let cupola_grip_source = tiger_cupola::into_hatch_frame(cupola_grip_source);
         let cupola_grip = scene.len();
@@ -12254,8 +12296,24 @@ impl Game {
         // original 1,596 triangles are losslessly divided into the same eleven centroid pages as
         // the relaxed flesh. Five bounded pools cover the real solo roster; the couch authority
         // contract still allows only four distinct human casualties.
-        let skeleton_segments = load_reviewed_skeleton_mesh()
-            .and_then(|source| partition_reviewed_skeleton_mesh(&source));
+        // Since 2026-11-02 the owner's rigged PSX skeleton (`crew_skeleton`), cut by joint and
+        // fitted inside the relaxed figure so no bone pokes through; the reviewed Vinrax skeleton
+        // only when that asset cannot be loaded or fitted.
+        let psx_bones = load_full_crew_mesh(CREW_RELAXED_GLBS[0], "skeleton fit")
+            .and_then(|figure| match crew_skeleton::fitted_bone_pages(&figure) {
+                Ok((pages, fits)) => {
+                    let pulled: usize = fits.iter().flatten().map(|f| f.pulled).sum();
+                    let worst = fits.iter().flatten().map(|f| f.worst_pull_m).fold(0.0f32, f32::max);
+                    let outside: usize = fits.iter().flatten().map(|f| f.vertices_outside).sum();
+                    let scales: Vec<String> = fits.iter().flatten().map(|f| format!("{:.2}/{}", f.scale, f.shrinks)).collect();
+                    println!("[crew] PSX skeleton fitted inside the figure: {pulled} vertices set inside the skin, largest move {:.0} mm, {outside} outside; scale/shrinks by part {}",
+                        worst * 1000.0, scales.join(" "));
+                    Some(pages)
+                }
+                Err(error) => { eprintln!("[crew] PSX skeleton unavailable ({error:#}); the reviewed skeleton stands in"); None }
+            });
+        let skeleton_segments = psx_bones.clone()
+            .or_else(|| load_reviewed_skeleton_mesh().and_then(|source| partition_reviewed_skeleton_mesh(&source)));
         let couch_bones = std::array::from_fn(|_| {
             std::array::from_fn(|part_index| {
                 let part = crew_physics::CrewBodyPart::ALL[part_index];
@@ -13486,7 +13544,13 @@ impl Game {
             manifest.as_ref().is_some_and(|m| m.value()["terrain"]["grass_season"].as_str()==Some("winter")),
             grass_half_extent,
             act.seed,
-        ));
+        )).map(|mut grass| {
+            // A spring map on the raymarch backend: the GPU meadow over every green ground.
+            if let Some(m) = manifest.as_ref().filter(|m| m.value()["terrain"]["grass_season"].as_str() == Some("spring")) {
+                grass.enable_meadow(&mut renderer, device, queue, m.value(), &hf, grass_half_extent);
+            }
+            grass
+        });
 
         // Infantry is one shared authored character library, not 24 uploaded copies. Validate all
         // 17 static deformation frames first, then allocate one fixed, exact-TLAS pool per pose.
@@ -14116,7 +14180,7 @@ impl Game {
         if let Some(arms)=&first_person {arms.mark(&mut renderer);}
         let infantry_casualties=infantry_casualties::Casualties::allocate(device,queue,&mut renderer);
         let living_wounds=living_crew_wounds::LivingWounds::allocate(device,queue,&mut renderer);
-        let crew_corpse_render=crew_corpse_render::Corpses::allocate(device,queue,&mut renderer)
+        let crew_corpse_render=crew_corpse_render::Corpses::allocate(device,queue,&mut renderer,psx_bones.as_ref())
             .map_err(|e|eprintln!("[crew] persistent corpse source unavailable: {e:#}")).ok();
         let enemy_crew = enemy_crew::Aftermath::allocate(device, queue, &mut renderer);
         let mut game = Game {
@@ -14144,6 +14208,9 @@ impl Game {
             enemy_active: vec![!isolated_population; N_ENEMIES],
             enemy_skill: vec![42; N_ENEMIES],
             enemy_track_age: vec![0.0; N_ENEMIES],
+            enemy_stall_s: vec![0.0; N_ENEMIES],
+            enemy_room: vec![[1.0; 4]; N_ENEMIES],
+            enemy_room_frame: 0,
             darkness: 0.0,
             authored_weather: None,
             enemy_concealed: vec![false; N_ENEMIES],
@@ -14215,6 +14282,7 @@ impl Game {
             hover_hatch: false,
             hover_lever: false,
             interior_haze: 0.0,
+            interior_soot: 0.0,
             weather_baseline: None,
             weather_view: crate::weather_visibility::WeatherView::default(),
             weather_wind_scale: 1.0,
@@ -14490,6 +14558,7 @@ impl Game {
             wreck_turret_sources,
             fire_t: 0.0,
             ammo_fire: ammunition_fire::AmmunitionFire::default(),
+            cookoff: game_cookoff::Cookoff::with_source(player_turret_source),
             fire_ammo_ids: Vec::new(),
             fire_origin: None,
             crew_ko_t: 0.0,
@@ -17221,9 +17290,10 @@ impl Game {
         // precipitation (`surface_wear`).
         self.surface_wear.update(dt, self.player.speed, self.rounds_spent, r.precipitation);
         r.wear = self.surface_wear.uniform();
-        // Winter: the crews' washable white coat over the grey (a December 1942 Tiger in the
-        // snow would carry one); none in the other seasons.
-        r.whitewash = if self.act.season == crate::world::Season::Winter { 1.0 } else { 0.0 };
+        // The scratched, worn Dunkelgrau in every season, the owner's choice of 2 November 2026
+        // over the winter coat. A crew in the snow would often carry a washable white coat
+        // (December 1942); `KESSEL_WHITEWASH=1` lays it on (renderer_raymarch's override).
+        r.whitewash = 0.0;
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
@@ -17245,6 +17315,7 @@ impl Game {
         }
         r.apply_authored_lighting(self.scene_environment.lighting,
             self.act.season == crate::world::Season::Winter);
+        r.low_clouds = self.scene_environment.low_clouds(&self.hf);
         if self.act.id == 1 && self.act.season == crate::world::Season::Winter
             && self.tank_editor_scene.is_none() {
             let base = if self.scene_environment.lighting.enabled {
@@ -17492,6 +17563,12 @@ impl Game {
         }
         // Solid grass keeps its own persistent tread contacts separately from snow/soil material history.
         if let Some(g) = self.grass.as_mut() {
+            // Every hull in the meadow, moving or not, and every man on foot push the grass aside.
+            for t in std::iter::once(&self.player).chain(self.enemies.iter()).chain(self.allies.iter().map(|a| &a.tank)) {
+                g.press_hull(t.pos, t.heading, t.parts.hull_half_extents);
+            }
+            for soldier in self.soldiers.iter().filter(|s| s.alive) { g.press_walker(soldier.pos); }
+            if matches!(self.mode, Mode::Foot) { g.press_walker(self.foot.pos); }
             if self.player.alive && self.player.speed.abs() > 0.25 {
                 g.trample(self.player.pos, self.player.heading);
             }
@@ -18516,9 +18593,11 @@ impl Game {
                 let hull_o = self.player.hull_model().transform_point3(Vec3::ZERO);
                 // Low background dust; firing/fire accumulation retains its separate strength.
                 r.set_interior_atmosphere(0.025 + self.interior_haze * 0.78, 0.035, hull_o);
+                r.set_interior_soot(self.interior_soot);
                 r.set_interior_atmosphere_enabled(view_inside);
             } else {
                 r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
+                r.set_interior_soot(0.0);
             }
         }
 
@@ -19448,6 +19527,7 @@ impl Game {
     fn transfer_cartridge_state(&mut self, from: u32, to: u32) {
         if let Some(mission) = &mut self.winter_mission { mission.transfer(from,to); }
         self.ammo_fire.transfer(from, to);
+        self.cookoff.transfer(from, to);
         self.cartridge_primers.transfer(from, to);
     }
 
@@ -20420,8 +20500,11 @@ impl Game {
         // Actual connected wall/overhead contacts feed smoke into the compartment. There is
         // no permanent furnace overlay: suppressing the sources leaves the fan/hatch to clear it.
         let (_, _, enclosure_heat) = self.cabin_fire.enclosure_diagnostics(&self.fire_surface_models());
-        self.interior_haze = (self.interior_haze
-            + (enclosure_heat * 0.38 - drain) * dt).clamp(0.0, 1.0);
+        // A fire's smoke is its own soot (dark, absorbing), built by the enclosure's heat over time
+        // (2026-11-02, the owner: fires need time to build up smoke, much darker than a
+        // penetration's); the gun fumes' light haze only drains here.
+        self.interior_soot = (self.interior_soot + (enclosure_heat * 0.38 - drain) * dt).clamp(0.0, 1.0);
+        self.interior_haze = (self.interior_haze - drain * dt).clamp(0.0, 1.0);
     }
 
     fn fire_surface_models(&self) -> [Mat4; surface_fire::FRAMES] {
@@ -20506,13 +20589,9 @@ impl Game {
                 self.hear_fuel_ignition(source,(self.fire_t*1000.0) as u32 ^ 0x1a17_10a0);
             }
         }
-        let exposed = state.hottest_ammunition.and_then(|i| rounds.get(i)).map(|round| round.stable_id);
-        let was_burning = self.ammo_fire.burning_round();
-        let detonate = self.ammo_fire.advance(dt, &live_ids, exposed, state.ammo_heat);
-        if was_burning.is_none() && self.ammo_fire.burning_round().is_some() {
-            println!("[panzerrechnersystem] LIVE ROUND IGNITED — ammunition cook-off in {FIRE_TO_AMMO:.0}s");
-        }
-        if detonate && self.tiger_accepts_damage() { self.kill_fire_cookoff(was_burning); }
+        // The rounds cook off by their own heat (`game_cookoff`, `cabin_heat`): the compartment's
+        // gas and the flames in sight of each case, not an exposure fuse.
+        self.update_cookoff(dt, &rounds);
     }
 
     // ── ABSITZEN headless-verification accessors ──
@@ -21033,6 +21112,7 @@ impl Game {
                 self.fire = 0.0;
                 self.fire_active = false;
                 self.ammo_fire.reset();
+                self.cookoff.reset();
                 self.breech = Breech::Loaded;
                 // The spare is another vehicle: its own chambered AP round, stowage and plates.
                 // The lost hull's cook-off marked every aboard post dead and emptied its racks;
@@ -21887,10 +21967,16 @@ impl Game {
             !previously_airborne && !self.foot.airborne,
             input.drive.abs()+input.steer.abs()>0.01,self.foot.crouch_t,false,self.foot.pos);
 
-        // Camera at human eye height, look driven directly from accumulated mouse deltas.
-        r.camera.pos = self.foot.eye();
+        // Camera at human eye height, look driven directly from accumulated mouse deltas; the
+        // gait bob moves the view only (the man's eye for sight and collision stays put).
         r.camera.yaw = self.foot.yaw;
         r.camera.pitch = self.foot.pitch;
+        {
+            let (bob_v, bob_l) = self.foot.gait_bob();
+            let quiet = if self.foot.aiming { 0.35 } else { 1.0 };
+            let right = r.camera.forward().cross(Vec3::Y).normalize_or_zero();
+            r.camera.pos = self.foot.eye() + Vec3::Y * bob_v * quiet + right * bob_l * quiet;
+        }
         if self.update_exterior_ammunition(input, dt, r) { return; }
         self.foot.aiming = input.aim && !input.binoculars && self.held_item.is_none() && !self.compass_equipped && !self.personal_hand_item_active() && !self.field_aid_in_hands() && !self.carrying_track_kit; // RMB raises the selected weapon
                                                                                        // BINOCULARS (Left Shift toggle, the Last Tiger scan): service-glass zoom to search
@@ -22143,6 +22229,14 @@ impl Game {
         if self.foot.recoil > 0.0 {
             pistol_pos -= f * 0.045 * self.foot.recoil;
             pistol_rot = Quat::from_axis_angle(rt, -0.22 * self.foot.recoil) * pistol_rot;
+        }
+        {
+            // The pistol rides the step a little behind the eye: a small sway and roll, less
+            // when aimed (presentation only).
+            let quiet = if self.foot.aiming { 0.3 } else { 1.0 };
+            let (bob_v, bob_l) = self.foot.gait_bob();
+            pistol_pos += (up * bob_v * 0.6 + rt * bob_l * 1.4) * quiet;
+            pistol_rot = Quat::from_axis_angle(f, 0.035 * self.foot.gait_amount * self.foot.gait_phase.sin() * quiet) * pistol_rot;
         }
 
         if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)
@@ -23673,7 +23767,28 @@ impl Game {
     /// Executor observation for enemy `i` — egocentric, normalized to ~[-1,1] (the doc's §2 at
     /// smoke-test width). Partial observability: the Tiger's true position is only fed while THIS
     /// tank tracks it (spotted / platoon Engaged); otherwise the slot is zeroed with a blind flag.
-    pub fn executor_obs(&self, i: usize) -> [f32; crate::ai::OBS] {
+    ///
+    /// Slots 0-13 are the July inputs, unchanged, so a July `KSL1` net reads this observation as it
+    /// always did. Slots 14-23 (the `KSL2` T-34 net, 2026-11-02) are what the crew can see of the
+    /// ground and what it remembers of the Tiger:
+    /// - 14-17: room to drive, as a fraction of `T34_RAY_M`, toward the left front, ahead, the
+    ///   right front and astern: the first of the probes every `T34_RAY_STEP_M` along the bearing
+    ///   that `street_way_clear` refuses (the same footprint test that clips this hull's motion in
+    ///   a street district or on the Canyon, `constrain_winter_enemy_motion`).
+    /// - 18: grade of the ground ahead (rise over 8 m, a 50 % grade reads 1).
+    /// - 19: how long the crew has driven without the hull moving (`enemy_stall_s`, 3 s reads 1).
+    /// - 20-23: where the crew would look for the Tiger: in sight, the Tiger; else the winter
+    ///   encounter's fix, sighting or heard area (`WinterEncounter::memory_of_target`), or on open ground the
+    ///   platoon's last-known position while it is alerted. Bearing sin/cos from the hull, range
+    ///   over 300 m, and a flag (+1 a memory, -1 none; all zero but the flag when none).
+    /// - 24-25: where the nearest living mate stands around that Tiger, relative to me: sin/cos of
+    ///   the angle between our bearings from it (a pincer reads cos -1). Zero without a memory.
+    /// - 26: mates with the Tiger in their own sight now, over 4.
+    /// - 27-30: orders. In a winter encounter, the firing post its armour doctrine has chosen for
+    ///   this crew (`WinterEncounter::assigned_post`): bearing sin/cos from the hull, range over
+    ///   300 m, and the stance: +1 take the post and fight; -1 no post, walk the beat (the corner
+    ///   of its platoon's beat it is walking to, `WinterEncounter::patrol_corner`); 0 no orders.
+    pub fn executor_obs(&self, i: usize) -> [f32; crate::ai::T34_OBS] {
         let e = &self.enemies[i];
         let tracks = matches!(self.enemy_mode(i), AiMode::Track);
         let pc = self.player.center();
@@ -23703,7 +23818,8 @@ impl Game {
                 }
             }
         }
-        [
+        let mut obs = [0.0f32; crate::ai::T34_OBS];
+        obs[..crate::ai::OBS].copy_from_slice(&[
             dxn,
             dzn,
             rn,
@@ -23728,7 +23844,72 @@ impl Game {
             1.0, // bias
             ally.x.clamp(-1.0, 1.0),
             ally.y.clamp(-1.0, 1.0),
-        ]
+        ]);
+        let at = Vec2::new(e.pos.x, e.pos.z);
+        obs[14..18].copy_from_slice(&self.enemy_room.get(i).copied().unwrap_or_else(|| self.t34_room(i)));
+        let ahead = at + Vec2::new(e.heading.sin(), e.heading.cos()) * 8.0;
+        obs[18] = ((self.hf.height_at(ahead.x, ahead.y) - self.hf.height_at(at.x, at.y)) / 8.0 / 0.5).clamp(-1.0, 1.0);
+        obs[19] = (self.enemy_stall_s.get(i).copied().unwrap_or(0.0) / 3.0).min(1.0);
+        let lead = if tracks { Some(pc) } else {
+            match &self.winter_encounter {
+                Some(encounter) => encounter.memory_of_target(i),
+                None => matches!(self.stealth.platoon_state(i), AlertState::Engaged | AlertState::Searching)
+                    .then(|| self.stealth.platoons[self.stealth.platoon_index_of(i)].last_known),
+            }
+        };
+        match lead.filter(|p| p.is_finite()) {
+            Some(p) => {
+                let to = Vec2::new(p.x - ec.x, p.z - ec.z);
+                let b = to.x.atan2(to.y) - e.heading;
+                obs[20] = b.sin();
+                obs[21] = b.cos();
+                obs[22] = (to.length() / 300.0).min(1.0);
+                obs[23] = 1.0;
+            }
+            None => obs[23] = -1.0,
+        }
+        if let Some(p) = lead.filter(|p| p.is_finite()) {
+            let around = |q: Vec3| (q.x - p.x).atan2(q.z - p.z);
+            let mine = around(ec);
+            let mate = self.enemies.iter().enumerate()
+                .filter(|&(j, o)| j != i && o.alive && self.enemy_active.get(j).copied().unwrap_or(false))
+                .min_by(|a, b| a.1.pos.distance_squared(e.pos).total_cmp(&b.1.pos.distance_squared(e.pos)));
+            if let Some((_, o)) = mate {
+                let d = around(o.center()) - mine;
+                obs[24] = d.sin();
+                obs[25] = d.cos();
+            }
+        }
+        let seeing = (0..self.enemies.len()).filter(|&j| j != i && self.enemies[j].alive
+            && self.enemy_active.get(j).copied().unwrap_or(false)
+            && self.stealth.spotted.get(j).copied().unwrap_or(false)
+            && self.stealth.meters.get(j).copied().unwrap_or(0.0) >= 0.9).count();
+        obs[26] = (seeing as f32 / 4.0).min(1.0);
+        let orders = self.winter_encounter.as_ref().and_then(|w| w.assigned_post(i).map(|p| (p, 1.0))
+            .or_else(|| w.patrol_corner(i).map(|p| (p, -1.0))));
+        if let Some((goal, stance)) = orders {
+            let to = goal - at;
+            let b = to.x.atan2(to.y) - e.heading;
+            obs[27] = b.sin();
+            obs[28] = b.cos();
+            obs[29] = (to.length() / 300.0).min(1.0);
+            obs[30] = stance;
+        }
+        obs
+    }
+
+    /// Room to drive for enemy `i`, as a fraction of `T34_RAY_M`, toward the left front, ahead,
+    /// the right front and astern (`executor_obs` slots 14-17).
+    fn t34_room(&self, i: usize) -> [f32; 4] {
+        let e = &self.enemies[i];
+        let at = Vec2::new(e.pos.x, e.pos.z);
+        let steps = (T34_RAY_M / T34_RAY_STEP_M) as usize;
+        [-0.55f32, 0.0, 0.55, std::f32::consts::PI].map(|offset| {
+            let h = e.heading + offset;
+            let dir = Vec2::new(h.sin(), h.cos());
+            (1..=steps).take_while(|&k| self.street_way_clear(at, at + dir * (k as f32 * T34_RAY_STEP_M))).count() as f32
+                / steps as f32
+        })
     }
 
     /// AI-Tiger observation, normalized to roughly `[-1, 1]`.
@@ -23948,6 +24129,9 @@ impl Game {
         self.living_wounds.reset();
         self.infantry_casualties.reset();
         self.couch_ragdolls.clear();
+        if let Some(corpses) = self.crew_corpse_render.get_mut().as_mut() {
+            corpses.reset_tissue();
+        }
         self.crew_body_recovery.reset_keep_aid_source();
         self.couch_last_casualty = None;
         self.couch_crew_frame = crate::lan::CrewFrame::default();
@@ -23968,6 +24152,8 @@ impl Game {
         self.fire = 0.0;
         self.fire_active = false;
         self.ammo_fire.reset();
+        self.cookoff.reset();
+        self.player.turret_thrown = None;
         self.fire_origin = None;
         self.crew_ko_t = 0.0;
         self.crew_ko_world_dir = Vec3::Z;
@@ -23983,6 +24169,7 @@ impl Game {
         self.bore_smoke_pending = false;
         self.breech_gas_t = 0.0;
         self.interior_haze = 0.0;
+        self.interior_soot = 0.0;
         self.ram = 0.0;
         self.eject_t = 0.0;
         self.ext_t = 0.0;
@@ -24409,7 +24596,7 @@ impl Game {
             "wall_cells": d.wall_cells, "render_runs": d.render_runs,
             "rejected_cells": d.rejected_cells, "capacity_rejections": d.capacity_rejections,
             "timed_out_airborne": d.timed_out_airborne,
-            "grain_m": surface_blood::GRAIN_M, "cell_m": surface_blood::CELL_M,
+            "droplet_m": [surface_blood::droplet_m(0), surface_blood::droplet_m(1)], "cell_m": surface_blood::CELL_M,
             "cell_capacity": surface_blood::MAX_CELLS
         })
     }
@@ -25087,9 +25274,15 @@ impl Game {
                             }
                         }
                     }
+                    let pressure: Vec<_> = plan.events.iter()
+                        .map(|event| (event.result.part, event.result.blast_work_j)).collect();
+                    let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll, contacts,
+                        &pressure, blast_origin_local);
+                    let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                        self.singleplayer_crew_active, ragdoll, &strikes);
                     let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
                         std::array::from_fn(|index| {
-                            plan.events.iter().any(|event| {
+                            !kept[index] && plan.events.iter().any(|event| {
                                 event.result.part.index() == index && event.result.hide_mesh_part
                             })
                         });
@@ -27690,6 +27883,11 @@ impl Game {
 
     /// The enemy crews' fighting so far (docs/ENEMY_TANK_AI.md), for headless receipts.
     pub fn enemy_ai_summary(&self) -> serde_json::Value { self.enemy_ai_stats.summary() }
+    /// Training episodes re-field the same world: start the crews' telemetry and stall clocks afresh.
+    pub(crate) fn reset_enemy_ai_summary(&mut self) {
+        self.enemy_ai_stats = Default::default();
+        self.enemy_stall_s.iter_mut().for_each(|s| *s = 0.0);
+    }
 
     fn enemy_return_fire_allowed(&self) -> bool {
         self.playtest_return_fire.unwrap_or(true)
@@ -27781,7 +27979,7 @@ impl Game {
         }
         // The ruin field is the ground the T-34 policy was evolved on (docs/AI_SHOWREEL.md), so
         // its crews fight by it here; without the weights the scripted flanking swarm drives.
-        self.enemy_policy = crate::ai::Mlp::load(ARENA_T34_POLICY)
+        self.enemy_policy = crate::ai::Mlp::load_t34(ARENA_T34_POLICY)
             .map_err(|error| eprintln!("[arena] no T-34 policy at {ARENA_T34_POLICY} ({error}); scripted swarm drives"))
             .ok();
         println!(
@@ -28138,9 +28336,11 @@ impl Game {
         let brain = std::env::var("KESSEL_T34_BRAIN").unwrap_or_else(|_| "evolved".into());
         match brain.trim() {
             "evolved" => {
-                self.enemy_policy = Some(crate::ai::Mlp::load(ARENA_T34_POLICY)?);
+                let path = t34_policy_path();
+                let net = crate::ai::Mlp::load_t34(&path)?;
+                println!("[{scope}] T-34 brain: the evolved policy {path} ({} inputs) drives maneuver and fire hold; the doctrine's orders are not applied (KESSEL_T34_BRAIN=doctrine for the winter encounter's orders, KESSEL_T34_WEIGHTS=FILE for another policy)", net.obs);
+                self.enemy_policy = Some(net);
                 self.enemy_policy_over_orders = true;
-                println!("[{scope}] T-34 brain: the evolved policy {ARENA_T34_POLICY} drives maneuver and fire hold; the doctrine's orders are not applied (KESSEL_T34_BRAIN=doctrine for the winter encounter's orders)");
             }
             "doctrine" => {
                 self.enemy_policy_over_orders = false;
@@ -28152,6 +28352,7 @@ impl Game {
     }
 
     fn enemy_ai(&mut self, dt: f32) {
+        self.enemy_room_frame = self.enemy_room_frame.wrapping_add(1);
         { let _p = crate::sim_phase::Probe::new("ai_weather_pose"); self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model()); }
         // Garage and Playtest practice have stationary targets. Skip detection and all AI orders,
         // but retain physical braking/terrain settling and the ordinary player-hit damage path.
@@ -28243,9 +28444,21 @@ impl Game {
                 (drive, steer, true)
             } else if self.brawl {
                 (0.0, 0.0, false) // opposing team eliminated: hold, do not seek the referee
-            } else if let Some(net) = &self.enemy_policy {
+            } else if self.enemy_policy.is_some() {
+                if (self.enemy_room_frame as usize + i) % T34_ROOM_EVERY == 0 || self.enemy_room.len() <= i {
+                    let room = self.t34_room(i);
+                    if self.enemy_room.len() <= i { self.enemy_room.resize(i + 1, [1.0; 4]); }
+                    self.enemy_room[i] = room;
+                }
+                let net = self.enemy_policy.as_ref().unwrap();
                 let obs = { let _p = crate::sim_phase::Probe::new("ai_executor_obs"); self.executor_obs(i) };
                 let a = { let _p = crate::sim_phase::Probe::new("ai_net_forward"); net.forward(&obs) };
+                if std::env::var("KESSEL_T34_OBS_DBG").ok().and_then(|v| v.parse::<usize>().ok()) == Some(i)
+                    && (self.enemy_ai_stats.clock_s * 2.0).fract() < dt * 2.0 {
+                    println!("[t34-obs] {}", serde_json::json!({"t":self.enemy_ai_stats.clock_s,"slot":i,
+                        "pos":[self.enemies[i].pos.x,self.enemies[i].pos.z],"heading":self.enemies[i].heading,
+                        "speed":self.enemies[i].speed,"obs":obs.to_vec(),"act":a}));
+                }
                 (a[0], a[1], a[2] > 0.0)
             } else {
                 let _p = crate::sim_phase::Probe::new("ai_maneuver");
@@ -28300,6 +28513,10 @@ impl Game {
                 self.enemy_ai_stats.frame(i, dt, mode != AiMode::Patrol, mode == AiMode::Track,
                     self.enemies[i].speed, drive, self.enemies[i].pos);
             }
+            if self.enemy_stall_s.len() <= i { self.enemy_stall_s.resize(i + 1, 0.0); }
+            let moved = Vec2::new(self.enemies[i].pos.x - previous.x, self.enemies[i].pos.z - previous.z).length();
+            self.enemy_stall_s[i] = if drive.abs() > 0.15 && moved < 0.3 * dt { self.enemy_stall_s[i] + dt }
+                else { (self.enemy_stall_s[i] - 2.0 * dt).max(0.0) };
 
             if { let _p = crate::sim_phase::Probe::new("ai_live_threat"); !self.enemy_has_live_threat() } && !self.brawl {
                 continue;
@@ -29627,9 +29844,17 @@ impl Game {
                                 }
                             }
                         }
+                        // The strikes open the body's tissue cell by cell; a part that keeps
+                        // enough of it stays in the articulated simulation (crew_tissue).
+                        let pressure: Vec<_> = damage_events.iter()
+                            .map(|event| (event.result.part, event.result.blast_work_j)).collect();
+                        let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll,
+                            &solution.contacts, &pressure, solution.entry);
+                        let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                            self.singleplayer_crew_active, ragdoll, &strikes);
                         let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
                             std::array::from_fn(|index| {
-                                damage_events.iter().any(|event| {
+                                !kept[index] && damage_events.iter().any(|event| {
                                     event.result.part.index() == index
                                         && event.result.hide_mesh_part
                                 })
@@ -29795,9 +30020,26 @@ impl Game {
         fragments: Vec<HotFragment>,
         fragment_contacts: Vec<FragmentDamageContact>,
     ) {
+        // The rounds the strike crossed, and those its flame and fragments reach (within 0.2 m of
+        // where it met the stowage; authored), go at once; the rest of the stowage follows by its
+        // own heat (`game_cookoff`), and the pressure throws the turret. The blast that kills the
+        // crew is those rounds' own: their fillers and their propellant's TNT equivalent.
+        const STRUCK_REACH_M: f32 = 0.2;
+        let rounds = self.live_ammunition_in_frame(fragment_frame);
+        let origin_local = blood_parent_model(&self.player, fragment_frame).inverse().transform_point3(ammo_blast.origin_world);
+        let crossed: Vec<Vec3> = fragment_contacts.iter().filter_map(|c| c.internal_blast_origin_local).chain([origin_local]).collect();
+        let struck: Vec<&LiveAmmoRound> = rounds.iter()
+            .filter(|r| crossed.iter().any(|c| r.center.distance(*c) <= STRUCK_REACH_M)).collect();
+        let propellant_tnt_j = crate::sound_levels::TNT_PER_KG_PROPELLANT
+            * crate::sound_levels::propellant_charge_kg(88.0, 10.2, 773.0) * 4_184_000.0;
+        let struck_blast = InternalAmmoBlast {
+            explosive_energy_j: struck.iter().map(|r| r.explosive_energy_j + propellant_tnt_j).sum::<f32>().max(propellant_tnt_j),
+            ..ammo_blast
+        };
+        // Struck rounds in the turret's frame are found in the hull's by the same identity.
+        let struck_ids: Vec<u32> = struck.iter().map(|r| r.stable_id).collect();
         self.player.alive = false;
-        self.kill_all_couch_crew_from_blast(ammo_blast, fragment_frame, &fragment_contacts);
-        self.consume_live_ammunition_for_detonation();
+        self.kill_all_couch_crew_from_blast(struck_blast, fragment_frame, &fragment_contacts);
         self.disable_detonated_stowage();
         cold_recommission::mark_legacy_catastrophic_crew(
             self.singleplayer_crew_active, self.couch_crew_active, &mut self.crew);
@@ -29812,8 +30054,10 @@ impl Game {
         // Persistent furnace illumination comes from the actual burning cabin cells.
         self.spawn_interior_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
         self.spawn_debris(centre, 12, 16.0, self.armor_tick.wrapping_mul(2246822519));
-        self.schedule_player_internal_sound(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
-        self.schedule_player_internal_sound(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
+        if self.mode == Mode::Tank {
+            self.cookoff_black_now(ammo_blast.origin_world);
+        }
+        self.cookoff_strike(&struck_ids);
         let mut hit_modules = res.hit_modules;
         if !hit_modules.contains(&ModuleKind::AmmoRack) {
             hit_modules.push(ModuleKind::AmmoRack);
@@ -29832,64 +30076,6 @@ impl Game {
             fragment_contacts,
         });
         println!("[panzerrechnersystem] CATASTROPHIC — ammunition detonation, Tiger destroyed.");
-    }
-
-    /// The interior fire reached the ammunition — a delayed cook-off catastrophic kill (fuel-fire
-    /// death cause). Records the actual ignited ammunition as the fatal origin.
-    fn kill_fire_cookoff(&mut self, ignited_round: Option<u32>) {
-        if self.god {
-            return;
-        } // invincible: the fire burns, the ammo never goes
-        let centre = self.player.center();
-        let preferred_origin = self.live_ammunition_in_frame(BloodFrame::Hull).iter()
-            .find(|round| Some(round.stable_id) == ignited_round)
-            .map(|round| self.player.hull_model().transform_point3(round.center));
-        let Some(ammo_blast) = self.internal_ammo_blast(
-            BloodFrame::Hull,
-            &[],
-            preferred_origin,
-            self.kill_tick ^ 0xC00F_F1A5,
-        ) else {
-            // Fire can persist in an evacuated tank, but an empty rack has nothing to cook off.
-            // `update_fire` also refuses to arm a new countdown while this remains true.
-            println!("[panzerrechnersystem] FIRE crossed the ammo threshold, but no live rounds remain");
-            return;
-        };
-        self.player.alive = false;
-        self.kill_all_couch_crew_from_blast(ammo_blast, BloodFrame::Hull, &[]);
-        self.consume_live_ammunition_for_detonation();
-        cold_recommission::mark_legacy_catastrophic_crew(
-            self.singleplayer_crew_active, self.couch_crew_active, &mut self.crew);
-        self.disable_detonated_stowage();
-        self.fire = FIRE_MAX;
-        self.recompute_hp();
-        self.cue_engine_death(0.7); // the wreck's motor dies under the cook-off
-        self.death_cause = Some(DeathCause::FuelFire);
-        self.spawn_interior_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
-        self.spawn_debris(
-            centre,
-            12,
-            16.0,
-            self.kill_tick.wrapping_add(777).wrapping_mul(2246822519),
-        );
-        // The same ammunition reservoir detonated as in a direct rack hit. A heat-triggered
-        // catastrophic loss must retain that blast scale, not use a single secondary pop.
-        self.schedule_player_internal_sound(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
-        self.schedule_player_internal_sound(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
-        self.death_replay = None;
-        self.last_fatal = Some(FatalHit {
-            shooter_pos: self.station_eye(self.station),
-            shell_dir: Vec3::ZERO,
-            entry_point: ammo_blast.origin_world,
-            spall_dir: Vec3::ZERO,
-            hit_body: true,
-            hit_modules: vec![ModuleKind::AmmoRack],
-            cause: DeathCause::FuelFire,
-            fragment_frame: BloodFrame::Hull,
-            fragments: Vec::new(),
-            fragment_contacts: Vec::new(),
-        });
-        println!("[panzerrechnersystem] FIRE reached the ammunition — cook-off, Tiger burned out.");
     }
 
     /// A player round PENETRATED and killed enemy `idx` — the payoff. Marks the enemy dead, sets up
@@ -32161,6 +32347,8 @@ impl Game {
                 );
             }
         }
+        // The pieces torn from the dead (`crew_tissue`) fly and lie on the same surfaces.
+        crew_tissue::integrate_chunks(&self.crew_corpse_render, &fragment_world, &self.player, dt);
         self.mark_fragment_strikes();
 
         let mut stage_mats: [Vec<Mat4>; N_HOT_FRAGMENT_BATCHES] =
@@ -32518,10 +32706,11 @@ impl Game {
         // Preserve tiny physical droplets but give their raster silhouette a readable minimum.
         // This changes only instance scale, never contact radii, particle count or simulation work.
         for mat in grain_mats.iter_mut().flatten() {
+            let own = mat.x_axis.truncate().length().max(1.0e-5);
             let distance = mat.transform_point3(Vec3::ZERO).distance(r.camera.pos);
             let pixel_m = 2.0 * distance * (r.camera.fov_y * 0.5).tan() / r.ih as f32;
-            let size = (pixel_m * 1.4).clamp(BLOOD_GRAIN_SIZE, 0.018);
-            *mat *= Mat4::from_scale(Vec3::splat(size / BLOOD_GRAIN_SIZE));
+            let size = (pixel_m * 1.4).clamp(own, 0.018).max(own);
+            *mat *= Mat4::from_scale(Vec3::splat(size / own));
         }
         for (batch, mats) in self.slots.blood_cube_batch.into_iter().zip(grain_mats.iter()) {
             assert!(mats.len() <= BLOOD_GRAINS_PER_BATCH);
@@ -32956,9 +33145,8 @@ impl Game {
         let pulse = |rate: f32, hi: f32, lo: f32| if (t * rate).sin() > 0.0 { hi } else { lo };
 
         let fire = if self.fire_active || self.ammo_fire.remaining().is_some() {
-            let urgency = self.ammo_fire.remaining()
-                .map(|time| (1.0 - time / FIRE_TO_AMMO).clamp(0.0, 1.0))
-                .unwrap_or(0.0);
+            // Faster as the hottest case nears its propellant's ignition (`cabin_heat`).
+            let urgency = if self.ammo_fire.remaining().is_some() { 1.0 } else { self.cookoff.ammo_urgency() };
             pulse(6.0 + 22.0 * urgency, 6.0, 0.5)
         } else {
             0.0
@@ -37563,6 +37751,7 @@ mod tests {
             ride: Default::default(),
             ride_layout: None,
             grade_pitch: 0.0,
+            turret_thrown: None,
         };
         let driver_before = crew_live_hit_center(&player, crate::lan::LanRole::Driver);
         let gunner_before = crew_live_hit_center(&player, crate::lan::LanRole::Gunner);
@@ -37837,15 +38026,14 @@ mod tests {
         assert!(samples[2] > 12_000 && samples[3] > 25_000);
         assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
         assert_eq!(N_BLOOD_CUBES, N_BLOOD_BATCHES * BLOOD_GRAINS_PER_BATCH);
-        assert_eq!(BLOOD_GRAIN_SIZE, 0.004);
         let requests = [32, 128, 256, 640].map(visual_blood_request);
         assert_eq!(requests, [2048, 8192, 16384, 32768]);
         let allocation = allocate_blood_cube_budget(&requests, N_BLOOD_CUBES / 4);
         assert_eq!(allocation.iter().sum::<usize>(), N_BLOOD_CUBES / 4);
         assert_eq!(visual_blood_request(usize::MAX), N_BLOOD_CUBES);
         assert!(
-            BLOOD_GRAIN_SIZE <= 0.004,
-            "droplets must stay uniformly small"
+            (0..1000).all(|seed| surface_blood::droplet_m(seed) <= 0.006),
+            "droplets must stay small"
         );
         assert_eq!(
             N_BLOOD_STAINS,

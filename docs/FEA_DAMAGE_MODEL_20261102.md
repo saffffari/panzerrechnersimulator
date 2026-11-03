@@ -513,3 +513,74 @@ lists every named approximation of this model.
   18:30 (after dusk at Stalingrad) with the cabin lamps on and the exposure held at five times the
   eye's metered value on the lamps. Every frame says it is a camera-only section; a test pins that
   only the film harness opens one.
+
+### The dead as voxel bodies, solved on their cells (landed, 2026-11-02 night)
+
+The owner saw a struck crewman become a bare skeleton at once and asked for the figures' insides
+to be muscle in voxels, the downloaded rigged PSX skeleton inside them (never poking through,
+drawn only once a man is damaged), skin giving way first, then muscle, and bone last, detaching and
+breaking into voxels itself under enough force. A first version kept the textured figure and opened
+skin patches onto cells; the owner: "these triangle planes look horrible", convert the base mesh
+and the skeleton to voxels on one grid and run the simulation on those voxels.
+
+- **Skeleton** (`crew_skeleton.rs`): the PSX skeleton's skinned vertices are cut by their joints
+  into the eleven body parts and fitted inside the relaxed figure; a test holds every part inside.
+- **One grid** (`crew_tissue.rs`): 2 cm cells fill the figure (skin, muscle); every cell a
+  skeleton triangle passes through is bone (the skeleton is a surface, so its quads are what is
+  voxelised). Only organic matter is cells: the steel helmet is a rigid body (below).
+- **Solved on the cells**: a bond-based lattice (each cell bonded to its 18 neighbours, a bond
+  failing past its critical stretch). Each fragment that crossed the man moves through the cells
+  as a steel cube of its own mass, slowed by Poncelet's resistance and drag, and pushes the cells
+  about its path; a burst's work pushes the cells facing it. After 8 ms of lattice time every
+  piece no longer bonded to its part's main body comes away and flies, bounces and lies on the
+  tank's own surfaces. A 57 mm shot through the torso tears a channel of about 265 cells; a small
+  fast fragment tears a few; a slow one stops in him. Bone holds unless the push is large.
+- **Drawn** (`crew_corpse_tissue.rs`): a dead man with a solved body is drawn only as his cells
+  (one closed cube each, by colour); the pieces the same way where they are. Every page is
+  allocated at start, so a save's retained draw layout keeps its shape.
+- **The helmet** (`crew_helmet_body.rs`, the owner: helmets are rigid bodies, only organic matter
+  is voxels, which keeps the crew's look): its own textured mesh on the head while the strap
+  holds. A fragment crossing the shell punches a plug out (stopped below the plug's ballistic
+  limit), its lost momentum going to the helmet; a burst drives the light shell harder than the
+  head. Past the strap's hold, or with the head mostly gone, it comes away as a rigid body that
+  bounces and comes to rest on the tank's surfaces.
+- **The pink cabin** (same evening): the hot chips' light outshone the cabin lamps twelvefold
+  after a strike and the eye adapted to it. The main line's fix (the chips' light on their band's
+  Planck visible share, the drawn pages lifted at the owner's call) is the one kept.
+- **Not yet**: the living and the couch renderer keep the old rule; the solved state is not saved;
+  parts are rigid segments, so cells of two parts cut into each other at a bent joint.
+
+## The cook-off and the death it brings (2026-11-02, night)
+
+The owner: model the compartment's temperature; a live round, racked, chambered, loose or still in
+a man's hands, ignites once its propellant is hot enough, from the hot gas or a flame reaching it;
+one round going sets off the rest in rapid popping and blows the turret off within a second or
+two; a direct hit on the racks goes at once. The screen cuts to black when the bang reaches the
+man inside and stays black while it rings; then the tank from outside with the turret's whole
+throw in the frame; then what the cook-off left of the crew.
+
+- **The heat** (`cabin_heat.rs`): one gas zone (mass, energy, pressure) in the burst model's free
+  air, fed by the burning surfaces and burning propellant, cooled by the steel and the openings,
+  vented by the burst model's orifice flow, its latched hatches thrown open past 20 kN. Each case
+  wall heats under the gas, the flames in sight of it and its burning neighbours; at 453 K its
+  2.5 kg of propellant ignites and burns in 0.3 s, faster under pressure (Vieille's law).
+- **The turret**: lifted by the pressure on its ring, venting round its skirt as it rises, thrown
+  once the gap matches the ring, pushed on by the gas while still over it; then the wreck
+  turret's rigid body built from the player's own Tiger at real size (`game_cookoff.rs`), with
+  everything in its frame (hatches, blood, fittings) going with it and the dead in it left in
+  the hull.
+- **HE shells**: a struck SprGr's 0.9 kg filler detonates at once and sets off every HE shell
+  within two shell diameters; a heated one detonates when its steel body reaches TNT's cook-off.
+- **In play**: a flame on the rack's fitting ignited the first case after 12 s, its sponson group
+  popped over half a second and the turret went at 3.4-3.9 m/s; a 122 mm round into a rack of
+  armour-piercing rounds threw it at up to 6.9 m/s (about 3 m up); one into the right sponson's
+  twelve HE shells set them all off together and threw it at 17.6 m/s, about 16 m up. For scale, the record holds no measured heights: a T-34-76's full
+  load threw its turret roof about 30 m in 1944 Soviet tests; Tiger wrecks show their turrets
+  beside the hull.
+- **The death** (`main.rs` `cookoff_shot`): black from the bang for 3.5 s with the world held and
+  the bang ringing at full level; then 7 s outside (wide, 24 m off, the frame reaching 13 m above
+  the ring) with the world running on, silent; then 8 s on the dead from the first eye with a
+  clear line to them (above the open ring, above an opening, or inside the hull); then the card.
+- **Not yet**: the penetration replay the owner asked for (the impact in slow motion outside, a
+  section cut along the shot, the interior from the turret's rear corner); the heat and the
+  thrown turret are not saved.

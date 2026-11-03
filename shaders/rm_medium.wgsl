@@ -26,11 +26,12 @@ fn rm_fog_bank_density(p: vec3<f32>) -> f32 {
 }
 
 // World weather: a bounded height layer of blowing snow / aerosol with extinction fr.medium.x,
-// and the fog banks within it.
-fn rm_world_density(p: vec3<f32>) -> f32 {
+// and the fog banks within it. x: the layer (its aerosol share is spectral, rm_world_spectrum),
+// y: the grey parts (spindrift, fog banks).
+fn rm_world_parts(p: vec3<f32>) -> vec2<f32> {
     if(fr.samples.y>0.5){
-        if(p.y<fr.medium.z||p.y>fr.medium.w){return 0.0;}
-        return theatre_extinction(fr.medium.x,p,fr.samples.y)*weather_relative_density(p,vec3(fr.samples.z,0.0,fr.samples.w),fr.medium.y,fr.samples.y);
+        if(p.y<fr.medium.z||p.y>fr.medium.w){return vec2(0.0);}
+        return vec2(theatre_extinction(fr.medium.x,p,fr.samples.y)*weather_relative_density(p,vec3(fr.samples.z,0.0,fr.samples.w),fr.medium.y,fr.samples.y), 0.0);
     }
     let bottom = fr.medium.z;
     let top = fr.medium.w;
@@ -63,7 +64,18 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
             }
         }
     }
-    return fr.medium.x * above * gust + spindrift + rm_fog_bank_density(p);
+    return vec2(fr.medium.x * above * gust, spindrift + rm_fog_bank_density(p));
+}
+fn rm_world_density(p: vec3<f32>) -> f32 {
+    let parts = rm_world_parts(p);
+    return parts.x + parts.y;
+}
+// The weather layer's extinction per band relative to its 550 nm value (fr.medium.x is that
+// value): its snow is grey (crystals far larger than the wavelength), its aerosol share follows
+// the map's aerosol spectrum, the Angstrom law (fr.air_spectrum; 2 November 2026). `snow` is the
+// layer's snow fraction at the point.
+fn rm_world_spectrum(snow: f32) -> vec3<f32> {
+    return mix(fr.air_spectrum.xyz, vec3(1.0), clamp(snow, 0.0, 1.0));
 }
 // The cabin haze fills the cabin air (`inside`: rm_cabin_domain). Without registered cabin air
 // (no posed player Tiger) it falls back to an ellipsoid about the crew compartment.
@@ -170,18 +182,30 @@ fn rm_puff_extinction(p: vec3<f32>) -> vec2<f32> {
 fn rm_medium_at(p: vec3<f32>) -> Medium {
     var m = rm_medium_zero();
     let inside = rm_cabin_domain(p) >= 0;
-    var world = 0.0;
-    if (!inside) { world = rm_world_density(p); }
+    var parts = vec2(0.0);
+    var drops = 0.0;
+    if (!inside) { parts = rm_world_parts(p); drops = rm_low_density(p); }
+    let world = parts.x + parts.y;
     let snow = fr.medium.y*theatre_north_weight(p.z,fr.samples.y);
     let world_albedo = mix(0.70, 0.92, snow);
     let cabin = rm_cabin_density(p, inside);
+    // A fire's soot fills the same cabin air and mostly absorbs (single-scattering albedo 0.2,
+    // fresh black carbon's order; named).
+    let soot = select(0.0, fr.soot.x, inside);
     let puff = rm_puff_extinction(p);
-    let sigma_t = world + cabin + puff.x;
+    let sigma_t = world + cabin + soot + puff.x + drops;
     if (sigma_t <= 0.0) { return m; }
-    let sigma_s = world * world_albedo + cabin * 0.80 + puff.x * puff.y;
     m.sigma_t = sigma_t;
-    m.sigma_s = vec3(sigma_s) * mix(vec3(0.94, 0.97, 1.0), vec3(1.0), snow);
-    m.g = (world * mix(0.74, 0.62, snow) + cabin * 0.55 + puff.x * 0.65) / sigma_t;
+    // The weather layer's aerosol scatters by the Angstrom law (rm_world_spectrum), its snow, the
+    // spindrift, the fog banks and the drops (Mie, size parameter ~60) neutrally. The grid holds one
+    // extinction, the 550 nm band's (named approximation, docs/PHYSICAL_TRUTH_AUDIT.md): its
+    // transmittance is grey over the grid's 320 m; the far march and the sky are spectral.
+    let world_s = (parts.x * rm_world_spectrum(snow) + vec3(parts.y)) * world_albedo;
+    // The cabin haze and the plumes keep the tint they had (an unsourced (0.94, 0.97, 1) left
+    // outside this change's scope; docs/PHYSICAL_TRUTH_AUDIT.md).
+    let rest_s = vec3(cabin * 0.80 + soot * 0.20 + puff.x * puff.y) * mix(vec3(0.94, 0.97, 1.0), vec3(1.0), snow);
+    m.sigma_s = min(world_s, vec3(world)) + rest_s + vec3(drops * fr.low_cloud.z);
+    m.g = (world * mix(0.74, 0.62, snow) + cabin * 0.55 + soot * 0.5 + puff.x * 0.65 + drops * fr.low_cloud.y) / sigma_t;
     return m;
 }
 // Extinction only, for ray marches toward sources.
@@ -189,7 +213,25 @@ fn rm_extinction_at(p: vec3<f32>) -> f32 {
     let inside = rm_cabin_domain(p) >= 0;
     var world = 0.0;
     if (!inside) { world = rm_world_density(p); }
-    return world + rm_cabin_density(p, inside) + rm_puff_extinction(p).x;
+    return world + rm_cabin_density(p, inside) + select(0.0, fr.soot.x, inside) + rm_puff_extinction(p).x + select(rm_low_density(p), 0.0, inside);
+}
+// Extinction without the low cloud banks: the froxel pass's key-beam march, whose banks are
+// already in rm_sun_visibility (marched to the bank's far side, not cut at the march's reach).
+fn rm_extinction_local_at(p: vec3<f32>) -> f32 {
+    let inside = rm_cabin_domain(p) >= 0;
+    var world = 0.0;
+    if (!inside) { world = rm_world_density(p); }
+    return world + rm_cabin_density(p, inside) + select(0.0, fr.soot.x, inside) + rm_puff_extinction(p).x;
+}
+// Optical depth from `origin` toward the key body over `length_m` without the banks.
+fn rm_march_tau_local(origin: vec3<f32>, dir: vec3<f32>, length_m: f32, steps: u32, jitter: f32) -> f32 {
+    var tau = 0.0;
+    let step = length_m / f32(steps);
+    for (var i = 0u; i < steps; i += 1u) {
+        let t = (f32(i) + jitter) * step;
+        tau += rm_extinction_local_at(origin + dir * t) * step;
+    }
+    return tau;
 }
 // Optical depth from `origin` toward `dir` over `length_m`, marched in `steps` samples.
 fn rm_march_tau(origin: vec3<f32>, dir: vec3<f32>, length_m: f32, steps: u32, jitter: f32) -> f32 {
@@ -200,4 +242,18 @@ fn rm_march_tau(origin: vec3<f32>, dir: vec3<f32>, length_m: f32, steps: u32, ji
         tau += rm_extinction_at(origin + dir * t) * step;
     }
     return tau;
+}
+// The key beam at a point of the crew compartment, traced through the vehicle (rm_vehicle_beam,
+// rm_rt.wgsl: panes with their throughput, periscopes folded at their mirrors, the slot's walls
+// exact) and beyond the vehicle's reach through the cascades at the point the beam leaves it.
+// Point source: the body's disc (0.27 degrees in radius) casts no penumbra here (about 5 mm per
+// metre behind an edge). The cloud deck's and the low banks' transmittance are the caller's.
+// Off without ray queries, with the ray queries' debug skip (fr.debug.w) and with KESSEL_RM_SKIP
+// 8388608 (fr.worn_count.z, the A/B against the cascades): the cascades alone, as before.
+struct CabinBeam { throughput: vec3<f32>, toward: vec3<f32> };
+fn rm_cabin_beam_traced() -> bool { return RM_RAY_QUERIES && fr.debug.w < 0.5 && fr.worn_count.z < 0.5; }
+fn rm_cabin_beam(origin: vec3<f32>) -> CabinBeam {
+    let path = rm_vehicle_beam(origin, fr.sun_dir.xyz);
+    if (!path.open) { return CabinBeam(vec3(0.0), path.toward); }
+    return CabinBeam(path.throughput * rm_sun_visibility_maps(path.exit, 0.0), path.toward);
 }

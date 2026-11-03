@@ -32,6 +32,9 @@ fn explosion_sample(local: vec3<f32>, slot: u32) -> vec2<f32> {
 
 const SUN_MARCH_STEPS: u32 = 6u;
 const LAMP_MARCH_STEPS: u32 = 4u;
+// Beam samples through the depth of a froxel in the cabin's air (the shaft's thickness against the
+// cell's).
+const RM_BEAM_STRATA: u32 = 4u;
 
 // `in_cabin`: the point lies in a cabin's air (rm_cabin_domain). A parcel whose centre lies outside
 // every cabin (a burst's glow, a fireball, smoke, a cook-off's flame) adds nothing there: the armour
@@ -183,22 +186,53 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var inscatter = m.emission;
     if (any(m.sigma_s > vec3(0.0))) {
+        // The low cloud banks' optical depth toward the key body, shared by the beam (a beam into
+        // the cabin's air crossed a bank too) and the banks' diffuse light outside.
+        let tau_low = rm_low_tau(p);
         // Key beam: geometric visibility from the cascades, then the medium between here and
         // open sky marched through the same density field.
         if (fr.sun_radiance.w > 0.5 && fr.sun_dir.y > -0.05) {
-            let vis = rm_sun_visibility(p, 0.0);
-            if (vis > 0.001) {
-                let reach = clamp((fr.medium.w - p.y) / max(fr.sun_dir.y, 0.08), 4.0, 60.0);
-                let tau = rm_march_tau(p, fr.sun_dir.xyz, reach, SUN_MARCH_STEPS, jitter.x);
-                inscatter += m.sigma_s * fr.sun_radiance.rgb * vis * exp(-tau)
-                    * rm_phase_dense(dot(ray, fr.sun_dir.xyz), m.g, m.sigma_t);
+            if (cabin_domain >= 0 && rm_cabin_beam_traced()) {
+                // The cabin's air: the beam traced through the vehicle (rm_cabin_beam), so a shaft
+                // stands where the beam through a hatch, a visor, a port's slot or a periscope
+                // crosses the air, at the pane's throughput, and nowhere when the body is out of
+                // the opening's line of sight. A shaft is often thinner than the cell is deep (a
+                // slot's beam is a centimetre, a cell 8 cm deep at 1 m and 15 cm at 2 m): the beam
+                // is averaged over RM_BEAM_STRATA points spread through the cell's depth along the
+                // pixel's ray (stratified, jittered per frame), so the cell holds the share of it
+                // the beam crosses instead of all or nothing per frame. A sampling of the cell, not
+                // a change of its medium.
+                var beam = vec3(0.0);
+                for (var k = 0u; k < RM_BEAM_STRATA; k += 1u) {
+                    let t = rm_dist(f32(id.z) + (f32(k) + jitter.x) / f32(RM_BEAM_STRATA));
+                    let b = rm_cabin_beam(fr.cam_pos.xyz + ray * t);
+                    beam += b.throughput * rm_phase_dense(dot(ray, b.toward), m.g, m.sigma_t);
+                }
+                if (max(beam.r, max(beam.g, beam.b)) > 0.0) {
+                    let reach = clamp((fr.medium.w - p.y) / max(fr.sun_dir.y, 0.08), 4.0, 60.0);
+                    let tau = rm_march_tau_local(p, fr.sun_dir.xyz, reach, SUN_MARCH_STEPS, jitter.x);
+                    inscatter += m.sigma_s * fr.sun_radiance.rgb * beam / f32(RM_BEAM_STRATA)
+                        * rm_cloud_shadow(p) * exp(-tau_low.x - tau);
+                }
+            } else {
+                let vis = rm_sun_visibility_tau(p, 0.0, tau_low.x);
+                if (vis > 0.001) {
+                    let reach = clamp((fr.medium.w - p.y) / max(fr.sun_dir.y, 0.08), 4.0, 60.0);
+                    let tau = rm_march_tau_local(p, fr.sun_dir.xyz, reach, SUN_MARCH_STEPS, jitter.x);
+                    inscatter += m.sigma_s * fr.sun_radiance.rgb * vis * exp(-tau)
+                        * rm_phase_dense(dot(ray, fr.sun_dir.xyz), m.g, m.sigma_t);
+                }
             }
         }
         // Skylight: isotropic mean sky through the vertical cover map. Covered open air keeps 8 %
         // (the sky low on the horizon under eaves and trees); the cabin air only what the map
         // sees through an open hatch above it (light through the vision blocks is left out).
         let sky_vis = rm_sky_visibility(p, 0.0);
-        inscatter += m.sigma_s * rm_sky_isotropic() * mix(select(0.08, 0.0, cabin_domain >= 0), 1.0, sky_vis);
+        // Under and inside the low cloud banks the sky is the two-stream diffuse transmission,
+        // plus the key beam the banks have diffused (rm_low_cloud_diffuse; outside the cabin).
+        var low = vec4(1.0, 0.0, 0.0, 0.0);
+        if (cabin_domain < 0) { low = rm_low_cloud_diffuse(rm_cloud_shadow(p), tau_low); }
+        inscatter += m.sigma_s * (rm_sky_isotropic() * low.x + low.yzw) * mix(select(0.08, 0.0, cabin_domain >= 0), 1.0, sky_vis);
         // The cabin's air through the panes (rm_shade.wgsl's apertures): each pane's sky over
         // its solid angle from the cell, cut by the measured slot behind it, scattered toward
         // the eye by the medium's phase. The key beam through a slot is the cascades' term above.

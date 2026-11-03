@@ -33,8 +33,28 @@ use serde_json::json;
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 
-const W: u32 = 1920;
-const H: u32 = 1080;
+/// Frames are shot at the renderer's own grid (`KESSEL_INTERNAL_RES`) and the file takes them
+/// scaled exactly `film_scale()` times by nearest neighbour (the owner's settings, 2026-11-02:
+/// 1024x576 x5 for a 5120x2880 display, 4:4:4 chroma so the one-pixel dither survives).
+static FRAME: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+
+fn frame() -> (u32, u32) {
+    *FRAME.get().unwrap_or(&(1920, 1080))
+}
+
+/// `KESSEL_FEA_FILM_SCALE`, default 5.
+fn film_scale() -> u32 {
+    std::env::var("KESSEL_FEA_FILM_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(5u32).clamp(1, 8)
+}
+
+/// A still as PNG, scaled `film_scale()` times by nearest neighbour.
+fn save_still(path: &str, rgba: &[u8]) -> anyhow::Result<()> {
+    let (w, h) = frame();
+    let image = image::RgbaImage::from_raw(w, h, rgba.to_vec()).ok_or_else(|| anyhow::anyhow!("still of the wrong size"))?;
+    let k = film_scale();
+    image::imageops::resize(&image, w * k, h * k, image::imageops::FilterType::Nearest).save(path)?;
+    Ok(())
+}
 const FPS: u32 = 30;
 /// Slow motion: one fixed hot-fragment step per film frame (1/16 speed at 30 fps).
 const SLOW_DT: f32 = 1.0 / 480.0;
@@ -50,6 +70,10 @@ enum View {
     Outside(Vec3, Vec3, f32),
     /// An observer camera inside the vehicle (its interior light and air kept).
     Inside(Vec3, Vec3, f32),
+    /// A cook-off death's shots as the player sees them (`Game::render_cookoff_outside`,
+    /// `Game::render_cookoff_crew`) at their phase.
+    CookoffOutside(f32),
+    CookoffCrew(f32),
 }
 
 struct Ctx<'a> {
@@ -95,6 +119,8 @@ impl Ctx<'_> {
         }
         match view {
             View::Game => {}
+            View::CookoffOutside(phase) => g.render_cookoff_outside(phase, r),
+            View::CookoffCrew(phase) => g.render_cookoff_crew(phase, r),
             View::Outside(eye, at, fov) | View::Inside(eye, at, fov) => {
                 r.camera.pos = eye;
                 r.camera.set_forward(at - eye);
@@ -134,7 +160,8 @@ impl Ctx<'_> {
             r.fill_rect(0.015, 0.026, 0.0105 * banner.len() as f32 + 0.03, 0.048, [0.0, 0.0, 0.0, 0.62]);
             r.draw_text(banner, 0.026, 0.050, 0.020, [0.88, 0.86, 0.80, 1.0], crate::ui::Align::Left);
         }
-        r.render_to_rgba_with_hud(self.device, self.queue, W, H)
+        let (w, h) = frame();
+        r.render_to_rgba_with_hud(self.device, self.queue, w, h)
     }
 
     /// The exposure re-metered on the present scene from `view` by the eye's own meter and then
@@ -171,12 +198,15 @@ impl Clip {
     fn start(prefix: &str, name: &str) -> anyhow::Result<Self> {
         let path = format!("{prefix}_{name}.mp4");
         let picture = format!("{prefix}_{name}_picture.mp4");
-        let size = format!("{W}x{H}");
+        let (w, h) = frame();
+        let size = format!("{w}x{h}");
         let rate = FPS.to_string();
+        let k = film_scale();
+        let scale = format!("scale=iw*{k}:ih*{k}:flags=neighbor");
         let encoder = Command::new("nice")
             .args(["-n", "10", "ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pixel_format", "rgba",
-                "-video_size", &size, "-framerate", &rate, "-i", "pipe:0", "-an", "-c:v", "libx264", "-preset",
-                "medium", "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart", &picture])
+                "-video_size", &size, "-framerate", &rate, "-i", "pipe:0", "-an", "-vf", &scale, "-c:v", "libx264", "-preset",
+                "medium", "-crf", "8", "-pix_fmt", "yuv444p", "-movflags", "+faststart", &picture])
             .stdin(Stdio::piped())
             .spawn()?;
         println!("[fea-film] recording {name}");
@@ -351,6 +381,343 @@ fn clear_eye(g: &Game, centre: Vec3, normal: Vec3, distance: f32) -> Vec3 {
     centre + normal * distance
 }
 
+/// One round that kills one man, for the voxel tissue (`crew_tissue`).
+struct CasualtyStudy {
+    name: &'static str,
+    label: &'static str,
+    clock: &'static str,
+    seed: u32,
+    role: CrewRole,
+    /// Entry and eyes are in the turret's frame (else the hull's).
+    turret: bool,
+    shell: &'static crate::ballistics::ShellSpec,
+    range: f32,
+    /// Where the player's own body is (away from the camera).
+    player: Station,
+    /// The loader's roof lid opened by state (disclosed in the label): daylight into the turret.
+    loader_lid: bool,
+    /// The entry on the bare plate, from the man's torso (both in the frame).
+    entry: fn(Vec3) -> Vec3,
+    /// Candidate eyes, in order; the first with a clear line to his torso is used.
+    eyes: fn(Vec3) -> Vec<Vec3>,
+}
+
+/// The cook-off study (see the clip list, 17). Disclosed: the fire's first patch is staged on a
+/// real surface (`debug_start_surface_fire`) and the strike is a real round launched at the rack;
+/// everything after (spread, heating, ignitions, pressure, the throw) is the game's own.
+fn cookoff_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, name: &str, struck: bool,
+    idle_input: &dyn Fn(u32) -> TankInput) -> anyhow::Result<serde_json::Value> {
+    let stills = std::env::var("KESSEL_FEA_FILM_STILLS").as_deref() == Ok("1");
+    let day_clock = ctx.clock;
+    ctx.clock = ephemeris::UtcInstant::parse_iso("1942-12-21T09:30:00Z")?;
+    g.enable_singleplayer_crew();
+    fresh_tiger(ctx, g, r, 0x5EC7_C00C ^ u32::from(struck), true)?;
+    g.set_cabin_lights(true);
+    g.jump_station(Station::Commander);
+    ctx.run(g, r, 1.0, TICK)?;
+    let hull = g.player.hull_model();
+    let ring = hull.transform_point3(g.player.parts.turret_pivot);
+    let side = hull.transform_vector3(Vec3::X).normalize();
+    let back = hull.transform_vector3(Vec3::NEG_Z).normalize();
+    let ground = |g: &Game, p: Vec3| Vec3::new(p.x, p.y.max(g.hf.height_at(p.x, p.z) + 1.7), p.z);
+    let wide = View::Outside(ground(g, ring + side * 24.0 + back * 9.0 + Vec3::Y * 2.5), ring + Vec3::Y * 4.0, 42.0);
+    let still = |ctx: &mut Ctx, g: &Game, r: &mut Renderer, view: View, tag: &str| -> anyhow::Result<()> {
+        let rgba = ctx.shoot(g, r, view, None)?;
+        let path = format!("{prefix}_{name}_{tag}.png");
+        save_still(&path, &rgba)?;
+        println!("[fea-film] wrote {path}");
+        Ok(())
+    };
+    ctx.banner = Some(if struck { "THE COOK-OFF: A 122 MM BR-471 INTO THE RIGHT SPONSON'S HE ROUNDS, 500 M; RACKS LOADED".into() }
+        else { "THE COOK-OFF: A FIRE BESIDE THE LEFT SPONSON'S RACK; RACKS LOADED; THE CASES HEAT TO THEIR PROPELLANT'S IGNITION".into() });
+    let mut film = if stills { None } else { Some(Clip::start(prefix, name)?) };
+    ctx.cut(g, r, wide)?;
+    match film.as_mut() {
+        Some(clip) => { clip.mark("the Tiger", "real time"); clip.real_time(ctx, g, r, 1.0, idle_input, &|_, _| wide)?; }
+        None => still(ctx, g, r, wide, "before")?,
+    }
+    let mut log = Vec::new();
+    if struck {
+        // Into the right sponson's group of SprGr (HE) rounds (`interior_rig::HE_RACK_SOURCE_IDS`).
+        g.debug_launch_round(&crate::ballistics::BR_471, false, hull.transform_point3(Vec3::new(-1.95, 1.69, 0.62)),
+            hull.transform_vector3(Vec3::new(1.0, -0.02, 0.0)), 500.0, 0x5EC7_C0DE);
+    } else {
+        // A first flame on the rack's fitting, inboard of the left sponson's rounds.
+        let staged = g.debug_start_surface_fire("hull", Vec3::new(0.85, 1.85, 0.05), Vec3::new(1.75, 1.55, 0.05), 1.0)?;
+        println!("[fea-film] {name}: fire staged {staged}");
+        // Unfilmed until the hottest case is close to igniting (a minute at most of game time).
+        let mut t = 0.0;
+        while g.cookoff.first_s.is_none() && g.cookoff.ammo_urgency() < 0.85 && t < 300.0 {
+            ctx.run(g, r, 1.0, TICK)?;
+            t += 1.0;
+            if (t as u32) % 10 == 0 {
+                println!("[fea-film] {name}: {t:.0} s, fire {:.2}, soot {:.2}, {}", g.fire, g.interior_soot, g.cookoff_receipt());
+            }
+        }
+        log.push(json!({"heated_s": t, "state": g.cookoff_receipt()}));
+    }
+    // Until the bang (filmed wide while the cases heat): then what the player sees in a cook-off
+    // death (`main::cookoff_shot`): black while the bang rings, the world held; the tank from
+    // outside as the stowage goes and the turret is thrown, the world running on, silent; the dead
+    // from above the open ring. Stills: the outside shot at its start, at the turret's apex and at
+    // its end, and the dead.
+    let mut steps = 0u32;
+    while !g.cookoff_death() && steps < (if struck { 6 } else { 90 }) * 60 {
+        match film.as_mut() {
+            Some(clip) => {
+                if steps == 0 { clip.mark(if struck { "the strike" } else { "the cases heat" }, "real time"); }
+                clip.real_time(ctx, g, r, 1.0 / 30.0, idle_input, &|_, _| wide)?;
+                steps += 2;
+            }
+            None => {
+                ctx.update(g, r, &TankInput::default(), TICK)?;
+                steps += 1;
+            }
+        }
+    }
+    log.push(json!({"to_the_bang_s": steps as f32 * TICK, "player_died_in_it": g.cookoff_death(), "state": g.cookoff_receipt()}));
+    if g.cookoff_death() {
+        // Black, the world held; the bang's sound drained as the app drains it.
+        let black_frames = (COOKOFF_BLACK_S * FPS as f32).round() as u32;
+        let (w, h) = frame();
+        let black = vec![0u8; (w * h * 4) as usize];
+        let mut t = 0.0;
+        for _ in 0..black_frames {
+            t += 1.0 / FPS as f32;
+            if let Some(clip) = film.as_mut() {
+                g.advance_terminal_audio(1.0 / FPS as f32, r, t);
+                ctx.audio_debt += acoustics::SAMPLE_RATE as f64 / FPS as f64;
+                let n = ctx.audio_debt.floor();
+                ctx.audio_debt -= n;
+                let sound = g.render_audio_capture_frames(n as usize)?;
+                clip.push(&black, Some(&sound))?;
+            }
+        }
+        if let Some(clip) = film.as_mut() { clip.mark("black from the bang, while it rings", "real time"); }
+        // Outside, the world running on (two updates a frame), silent as in the app.
+        let frames = (COOKOFF_THROW_S * FPS as f32).round() as u32;
+        let mut apex_written = false;
+        if let Some(clip) = film.as_mut() { clip.mark("outside: the stowage goes, the turret is thrown", "real time, silent"); }
+        ctx.cut(g, r, View::CookoffOutside(0.0))?;
+        if stills { still(ctx, g, r, View::CookoffOutside(0.0), "outside_start")?; }
+        for f in 0..frames {
+            let rising = g.cookoff.turret.as_ref().map(|b| b.velocity.y > 0.0);
+            for _ in 0..2 {
+                ctx.update(g, r, &TankInput::default(), TICK)?;
+            }
+            let view = View::CookoffOutside(f as f32 / frames as f32);
+            if let Some(clip) = film.as_mut() {
+                let rgba = ctx.shoot(g, r, view, None)?;
+                clip.push(&rgba, None)?;
+            }
+            if stills && !apex_written && rising == Some(true) && g.cookoff.turret.as_ref().is_some_and(|b| b.velocity.y <= 0.0) {
+                ctx.cut(g, r, view)?;
+                still(ctx, g, r, view, "outside_apex")?;
+                apex_written = true;
+            }
+        }
+        if stills { ctx.cut(g, r, View::CookoffOutside(1.0))?; still(ctx, g, r, View::CookoffOutside(1.0), "outside_end")?; }
+        // The dead, from above the open ring.
+        let frames = (COOKOFF_CREW_S * FPS as f32).round() as u32;
+        if let Some(clip) = film.as_mut() { clip.mark("the dead, from above the open ring", "real time, silent"); }
+        ctx.cut(g, r, View::CookoffCrew(0.0))?;
+        if stills { still(ctx, g, r, View::CookoffCrew(0.0), "crew_start")?; }
+        for f in 0..frames {
+            for _ in 0..2 {
+                ctx.update(g, r, &TankInput::default(), TICK)?;
+            }
+            if let Some(clip) = film.as_mut() {
+                let rgba = ctx.shoot(g, r, View::CookoffCrew(f as f32 / frames as f32), None)?;
+                clip.push(&rgba, None)?;
+            }
+        }
+        if stills { ctx.cut(g, r, View::CookoffCrew(1.0))?; still(ctx, g, r, View::CookoffCrew(1.0), "crew_end")?; }
+    }
+    log.push(json!({"after_s": steps as f32 * TICK, "state": g.cookoff_receipt()}));
+    ctx.banner = None;
+    ctx.clock = day_clock;
+    let mut receipt = match film {
+        Some(clip) => clip.finish()?,
+        None => json!({"clip": name, "stills": true}),
+    };
+    receipt["outcome"] = strike_outcome(g);
+    receipt["cookoff"] = g.cookoff_receipt();
+    receipt["log"] = json!(log);
+    receipt["corpses"] = g.crew_corpse_render_receipt();
+    Ok(receipt)
+}
+
+/// The fallen man's head (world), from his body's head segment.
+fn head_point(g: &Game, role: CrewRole) -> Option<Vec3> {
+    let actor = g.singleplayer_casualty_identity(role).peer_id;
+    let body = g.couch_ragdolls.iter().find(|b| b.casualty.peer_id == actor)?;
+    Some(body.parent_model(&g.player).transform_point3(body.segments[crew_physics::CrewBodyPart::Head.index()].pos))
+}
+
+/// Whether the line from `eye` to `target` meets none of the tank's own surfaces (the source
+/// triangles fragments and fire meet), short of the last 5 %.
+fn sight_clear(g: &Game, eye: Vec3, target: Vec3) -> bool {
+    g.cabin_fire.sweep(eye, target, &g.fire_surface_models()).is_none_or(|c| c.fraction > 0.95)
+}
+
+/// Film a casualty study, or with KESSEL_FEA_FILM_STILLS=1 write its three stills (before, after,
+/// close) instead. None when the round killed nobody.
+fn casualty_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, study: &CasualtyStudy,
+    idle_input: &dyn Fn(u32) -> TankInput) -> anyhow::Result<Option<serde_json::Value>> {
+    let stills = std::env::var("KESSEL_FEA_FILM_STILLS").as_deref() == Ok("1");
+    let day_clock = ctx.clock;
+    ctx.clock = ephemeris::UtcInstant::parse_iso(study.clock)?;
+    g.enable_singleplayer_crew();
+    fresh_tiger(ctx, g, r, study.seed, false)?;
+    g.set_cabin_lights(true); // disclosed: the ordinary lamp switch on
+    g.jump_station(study.player);
+    if study.loader_lid {
+        g.roof_hatches.set(false, true, true);
+    }
+    ctx.run(g, r, 1.0, TICK)?;
+    let frame = if study.turret { g.player.turret_model() } else { g.player.hull_model() };
+    let torso = |g: &Game| g.crew_solo_man_point(study.role);
+    let man_w = torso(g);
+    let man = frame.inverse().transform_point3(man_w);
+    let entry = (study.entry)(man);
+    let aim = frame.transform_point3(entry);
+    let dir = frame.transform_vector3((man - entry).normalize());
+    let candidates: Vec<Vec3> = (study.eyes)(man).into_iter().map(|e| frame.transform_point3(e)).collect();
+    let clear: Vec<bool> = candidates.iter().map(|&e| sight_clear(g, e, man_w)).collect();
+    let eye = candidates.iter().zip(&clear).find(|(_, c)| **c).map_or(candidates[0], |(e, _)| *e);
+    println!("[fea-film] {}: torso at {:?} (frame), entry {:?}, eyes clear {:?}", study.name, man, entry, clear);
+    let open = View::Inside(eye, man_w, 54.0);
+    // Once he has fallen: the first of a few eyes above where he lies with a clear line to him,
+    // then down along that line to 0.55 m.
+    let overhead = |g: &Game| {
+        let target = torso(g);
+        let (up, side, ahead) = (frame.transform_vector3(Vec3::Y).normalize(), frame.transform_vector3(Vec3::X).normalize(),
+            frame.transform_vector3(Vec3::Z).normalize());
+        [up * 0.9, up * 0.8 + side * 0.3, up * 0.8 - side * 0.3, up * 0.7 + ahead * 0.35, up * 0.7 - ahead * 0.35]
+            .into_iter().map(|o| target + o).find(|&e| sight_clear(g, e, target)).unwrap_or(eye)
+    };
+    let close_at = |g: &Game, from: Vec3, t: f32| {
+        let target = torso(g);
+        let ease = t * t * (3.0 - 2.0 * t);
+        let near = target + (from - target).normalize_or_zero() * 0.55;
+        View::Inside(from.lerp(near, ease), target, 56.0 - 8.0 * ease)
+    };
+    ctx.all_crew = true;
+    ctx.banner = Some(study.label.to_uppercase());
+    let scars_before = g.armor_scars.scars().len();
+    let alive_before = CrewRole::ALL.iter().filter(|&&role| !g.crew_solo.man(role).dead).count();
+    let mut film = if stills { None } else { Some(Clip::start(prefix, study.name)?) };
+    let still = |ctx: &mut Ctx, g: &Game, r: &mut Renderer, view: View, tag: &str| -> anyhow::Result<()> {
+        let rgba = ctx.shoot(g, r, view, None)?;
+        let path = format!("{prefix}_{}_{tag}.png", study.name);
+        save_still(&path, &rgba)?;
+        println!("[fea-film] wrote {path}");
+        Ok(())
+    };
+    ctx.cut(g, r, open)?;
+    match film.as_mut() {
+        Some(clip) => {
+            clip.mark(study.label, "real time");
+            clip.real_time(ctx, g, r, 1.0, idle_input, &|_, _| open)?;
+        }
+        None => still(ctx, g, r, open, "before")?,
+    }
+    g.debug_launch_round(study.shell, false, aim, dir, study.range, study.seed ^ 1);
+    match film.as_mut() {
+        Some(clip) => {
+            clip.mark(study.label, "1/16 speed");
+            clip.slow_motion(ctx, g, r, 96, &|_, _| open)?;
+            // The strike's smoke fills the turret; the camera holds until it has cleared.
+            clip.mark("after, while the smoke clears", "real time");
+            clip.real_time(ctx, g, r, 10.0, idle_input, &|_, _| open)?;
+        }
+        None => {
+            for _ in 0..96 {
+                ctx.update(g, r, &TankInput::default(), SLOW_DT)?;
+            }
+            // The strike's smoke a second on, gathered at the hole.
+            ctx.run(g, r, 0.8, TICK)?;
+            still(ctx, g, r, open, "smoke")?;
+            ctx.run(g, r, 9.2, TICK)?;
+            still(ctx, g, r, open, "after")?;
+            // The lights of that frame, strongest first, and how far each is from the camera.
+            let mut lights: Vec<_> = r.offered_lights().to_vec();
+            lights.sort_by(|a, b| b.radiant_intensity.total_cmp(&a.radiant_intensity));
+            for light in lights.iter().take(8) {
+                println!("[fea-film] light {:.4} W/sr-equivalent, colour {:.2?}, radius {:.3} m, {:.2} m from the camera",
+                    light.radiant_intensity, light.color, light.source_radius, light.pos.distance(r.camera.pos));
+            }
+            println!("[fea-film] exposure {:?}", r.exposure_override);
+        }
+    }
+    let dead = g.crew_solo.man(study.role).dead;
+    match film.as_mut() {
+        Some(clip) if dead => {
+            let from = overhead(g);
+            ctx.cut(g, r, close_at(g, from, 0.0))?;
+            clip.mark("above where he lies, and down to him", "real time");
+            clip.real_time(ctx, g, r, 5.0, idle_input, &|g, t| close_at(g, from, t))?;
+            clip.mark("held", "real time");
+            clip.real_time(ctx, g, r, 3.0, idle_input, &|g, _| close_at(g, from, 1.0))?;
+        }
+        None if dead => {
+            let from = overhead(g);
+            let view = close_at(g, from, 0.0);
+            ctx.cut(g, r, view)?;
+            still(ctx, g, r, view, "above")?;
+            let view = close_at(g, from, 1.0);
+            ctx.cut(g, r, view)?;
+            still(ctx, g, r, view, "close")?;
+            // An inspection orbit round the fallen man at 0.75 m, each eye with a clear line.
+            let target = torso(g);
+            let up = frame.transform_vector3(Vec3::Y).normalize();
+            let side = frame.transform_vector3(Vec3::X).normalize();
+            let ahead = frame.transform_vector3(Vec3::Z).normalize();
+            for (n, azimuth) in [0.0f32, 90.0, 180.0, 270.0].into_iter().enumerate() {
+                let a = azimuth.to_radians();
+                let eye = target + (side * a.cos() + ahead * a.sin()) * 0.65 + up * 0.38;
+                if !sight_clear(g, eye, target) {
+                    println!("[fea-film] {}: orbit {azimuth} deg blocked", study.name);
+                    continue;
+                }
+                let view = View::Inside(eye, target, 50.0);
+                ctx.cut(g, r, view)?;
+                still(ctx, g, r, view, &format!("orbit{n}"))?;
+            }
+            // His head (and his helmet, a rigid body), from the first of sixteen eyes about it with
+            // a clear line, about a metre off.
+            if let Some(head) = head_point(g, study.role) {
+                let eyes = (0..16).map(|k| {
+                    let a = (k as f32 * 22.5).to_radians();
+                    let (reach, rise) = if k % 2 == 0 { (0.85, 0.45) } else { (0.6, 0.7) };
+                    head + (side * a.cos() + ahead * a.sin()) * reach + up * rise
+                });
+                if let Some(eye) = eyes.clone().find(|&e| sight_clear(g, e, head)) {
+                    let view = View::Inside(eye, head, 40.0);
+                    ctx.cut(g, r, view)?;
+                    still(ctx, g, r, view, "head")?;
+                } else {
+                    println!("[fea-film] {}: no clear line to his head", study.name);
+                }
+            }
+        }
+        _ => println!("[fea-film] {}: the {:?} was not killed; no close view", study.name, study.role),
+    }
+    ctx.banner = None;
+    ctx.all_crew = false;
+    ctx.clock = day_clock;
+    let alive_after = CrewRole::ALL.iter().filter(|&&role| !g.crew_solo.man(role).dead).count();
+    let mut receipt = match film {
+        Some(clip) => clip.finish()?,
+        None => json!({"clip": study.name, "stills": true}),
+    };
+    receipt["outcome"] = strike_outcome(g);
+    receipt["scar"] = json!(strike_scar(g, scars_before));
+    receipt["killed"] = json!({"target": format!("{:?}", study.role), "target_dead": dead, "alive_before": alive_before, "alive_after": alive_after});
+    receipt["corpses"] = g.crew_corpse_render_receipt();
+    Ok(Some(receipt))
+}
+
 /// A fresh Tiger for the next strike: the ordinary match reset (whole, its racks loaded, the
 /// living crew at their posts when it is on), then the film's scene as at the start: enemies
 /// banished, the Tiger at the review spot, the cabin lamps as asked.
@@ -452,6 +819,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let _ = FRAME.set((r.iw, r.ih));
+    println!("[fea-film] frames at the renderer's grid {}x{}, written scaled x{} by nearest neighbour", r.iw, r.ih, film_scale());
     let clock = ephemeris::UtcInstant::parse_iso("1942-12-21T10:30:00Z")?;
     let mut ctx = Ctx { device: &device, queue: &queue, audio_debt: 0.0, clock, all_crew: false, banner: None,
         last_camera: None };
@@ -950,7 +1319,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         if std::env::var("KESSEL_FEA_FILM_SECTION_STILL").as_deref() == Ok("1") {
             let rgba = ctx.shoot(&g, &mut r, view, None)?;
             let still = format!("{prefix}_engine_section_still.png");
-            image::save_buffer(&still, &rgba, W, H, image::ColorType::Rgba8)?;
+            save_still(&still, &rgba)?;
             println!("[fea-film] wrote {still} ({} meshes cut, exposure {held:.0}; crew drawn {})", cut_meshes.len(),
                 g.debug_crew_solo_visible_figures(&r));
             return Ok(());
@@ -1218,9 +1587,44 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         clips.push(receipt);
     }
 
+    // ── 16. Casualty study (`crew_tissue`): one round kills one man; the camera keeps a clear line
+    // to him through the tank's own surfaces, then moves in once he has fallen. The racks are
+    // emptied first (disclosed on the frame): with them loaded this round reaches the ammunition
+    // and the detonation, not the round, is what kills the crew.
+    let studies = [
+        CasualtyStudy {
+            name: "tissue_loader", clock: "1942-12-21T09:00:00Z", seed: 0x5EC7_9000, role: CrewRole::Loader,
+            turret: true, shell: &crate::ballistics::BR_271_ZIS2, range: 400.0, player: Station::Driver,
+            loader_lid: true,
+            label: "57 mm BR-271, 400 m, through the right turret side at the loader; noon, his lid open, racks emptied",
+            // The bare right turret side ahead of the spare shoes (z above 0.27), at his chest.
+            entry: |man| Vec3::new(-1.19, man.y + 0.04, 0.45),
+            // On his side of the gun, ahead of him and behind him (the gunner and commander sit on
+            // the other side, so no living man stands in the line).
+            eyes: |man| vec![Vec3::new(-0.78, man.y + 0.38, 0.78), Vec3::new(-0.62, man.y + 0.45, 0.95),
+                Vec3::new(-0.72, man.y + 0.42, -0.62), Vec3::new(-0.35, man.y + 0.5, -0.9)],
+        },
+    ];
+    for study in &studies {
+        if wanted(study.name) {
+            if let Some(receipt) = casualty_study(&mut ctx, &mut g, &mut r, prefix, study, &idle_input)? {
+                clips.push(receipt);
+            }
+        }
+    }
+
+    // ── 17. The cook-off (`game_cookoff`, `cabin_heat`): a fire beside the left sponson's rounds
+    // until a case reaches its propellant's ignition, or a 122 mm round into that rack; watched
+    // from outside, wide enough for the turret's whole throw, then the open hull from above.
+    for (name, struck) in [("cookoff_fire", false), ("cookoff_struck", true)] {
+        if wanted(name) {
+            clips.push(cookoff_study(&mut ctx, &mut g, &mut r, prefix, name, struck, &idle_input)?);
+        }
+    }
+
     let receipt = json!({
         "clips": clips,
-        "film": {"size": [W, H], "fps": FPS, "slow_motion": "1/16 speed: one 1/480 s fragment step per frame, silent",
+        "film": {"grid": [frame().0, frame().1], "scaled": film_scale(), "fps": FPS, "slow_motion": "1/16 speed: one 1/480 s fragment step per frame, silent",
             "audio": "real-time stretches: the ordinary gameplay audio sinks recorded offline on the simulation clock; slow motion and time-lapse silent"},
         "disclosed": "station and on-foot placement set directly; toolbox put in hand and set down by state; the loader's lid opened by state; cabin fires put out between clips; the sky clock held at 10:30; head turns are interpolated head yaw and pitch",
         "wall_s": started.elapsed().as_secs_f32(),

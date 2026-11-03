@@ -60,6 +60,7 @@ mod ai_doctrine;
 mod anti_infantry_ai;
 mod armor_damage;
 mod fea_damage;
+mod cabin_heat;
 #[cfg(test)]
 mod asset_catalog;
 mod asset_yard;
@@ -109,6 +110,7 @@ mod repair_manual_capture;
 mod sky_review;
 mod canyon;
 mod canyon_attempt;
+mod t34_canyon_training;
 mod mission;
 mod mission_capture;
 mod radio_llm;
@@ -127,6 +129,7 @@ mod editor_navigation;
 mod tank_editor_scene;
 mod tank_editor_acceptance;
 mod environment_authoring;
+mod low_clouds;
 mod ephemeris;
 mod celestial_sky;
 mod observer;
@@ -148,6 +151,10 @@ mod winter_bench;
 mod native_input_audit;
 mod graphics;
 mod grass;
+mod meadow;
+mod meadow_fauna;
+mod leaf_optics;
+mod meadow_film;
 mod infantry;
 mod infantry_combat;
 mod interior_rig;
@@ -222,6 +229,7 @@ mod urban_tableau_meshes;
 mod urban_tableaux;
 mod world;
 mod worldgen;
+mod authored_colliders;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -675,10 +683,16 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     if let Some(sim_s) = std::env::var("KESSEL_SHOT_SIM_S").ok().and_then(|v| v.parse::<f32>().ok()).filter(|s| *s > 0.0) {
         let steps = (sim_s * 60.0).round() as u32;
         println!("[sim] stepping {steps} frames ({sim_s:.2} s) before the capture");
+        // KESSEL_SHOT_DRIVE=1: the Tiger drives ahead at full throttle through those steps (its
+        // treads lay the grass flat; the meadow review).
+        let input = if std::env::var("KESSEL_SHOT_DRIVE").as_deref() == Ok("1") {
+            TankInput { drive: 1.0, ..Default::default() }
+        } else { TankInput::default() };
         for i in 0..steps {
-            g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+            g.update(&input, 1.0 / 60.0, &mut r);
             if i % 15 == 14 { r.render_offscreen(&device, &queue); }
         }
+        println!("[sim] player at {:?}, speed {:.1} m/s", g.player.pos, g.player.speed);
     }
     if let Some(c) = cam {
         r.camera.pos = Vec3::new(c[0], c[1], c[2]);
@@ -959,6 +973,10 @@ fn run_gfxbench(
     let act_n = if playtest {
         let path = act_manifest::playtest_manifest_path();
         act_manifest::select_runtime_manifest(Some(path))?.expect("selected Playtest manifest")
+    } else if let Some(path) = std::env::var_os("KESSEL_BENCH_MANIFEST").or_else(|| std::env::var_os("KESSEL_RECON_MANIFEST")) {
+        // Bench a workshop map (its edits included): `KESSEL_BENCH_MANIFEST`, or `KESSEL_RECON_MANIFEST`
+        // as `screenshot` takes it.
+        act_manifest::select_runtime_manifest(Some(std::path::PathBuf::from(path)))?.unwrap_or(act_n)
     } else { act_n };
     let (mut r, mut g) = if playtest {
         Game::build_playtest_act(&device, &queue, night, &world::act(act_n))?
@@ -984,7 +1002,10 @@ fn run_gfxbench(
         Ok((v[0], v[1], v[2] as u32))
     }).transpose()?;
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
-    let center = r.camera.pos;
+    // `KESSEL_BENCH_ORBIT=x,y,z`: orbit that point instead of the player's eye.
+    let center = std::env::var("KESSEL_BENCH_ORBIT").ok()
+        .and_then(|v| { let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect(); (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2])) })
+        .unwrap_or(r.camera.pos);
     r.reticle = false;
     r.camera.fov_y = 55f32.to_radians();
 
@@ -2883,7 +2904,7 @@ fn run_campaign_ai(
             std::fs::create_dir_all(parent)?;
         }
     }
-    let t34_brain = ai::Mlp::load(t34_weights)?;
+    let t34_brain = ai::Mlp::load_t34(t34_weights)?;
     let tiger_brain = ai::Mlp::load(tiger_weights)?;
 
     let instance = create_instance();
@@ -9053,7 +9074,7 @@ fn run_brawl(outdir: &str, weights: Option<&str>) -> anyhow::Result<()> {
     g.player.pos = glam::Vec3::new(0.0, g.hf.height_at(0.0, -400.0), -400.0);
 
     let wpath = weights.unwrap_or("assets/ai/weights_academy.bin");
-    match ai::Mlp::load(wpath) {
+    match ai::Mlp::load_t34(wpath) {
         Ok(net) => {
             println!("[brawl] both teams driven by {wpath}");
             g.enemy_policy = Some(net);
@@ -9300,7 +9321,7 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
 
     // Drive the T-34s with the evolved brain when available (default: the smoke-test artifact).
     let wpath = weights.unwrap_or("assets/ai/weights_test.bin");
-    match ai::Mlp::load(wpath) {
+    match ai::Mlp::load_t34(wpath) {
         Ok(net) => {
             println!("[duel] T-34s driven by {wpath}");
             g.enemy_policy = Some(net);
@@ -9751,7 +9772,7 @@ fn run_train(
         // These seeds never select a champion during evolution; use them for promotion only.
         const PROMOTION_SEEDS: [u32; K_SEEDS] = [0xE7B1_0001, 0xE7B1_0002, 0xE7B1_0003, 0xE7B1_0005, 0xE7B1_0008];
         for path in evaluate_paths {
-            let net = ai::Mlp::load(path)?;
+            let net = ai::Mlp::load_t34(path)?;
             let (score, scores) = eval(&net, &PROMOTION_SEEDS, STAGES[2])?;
             let (replay, replay_scores) = eval(&net, &PROMOTION_SEEDS, STAGES[2])?;
             let deterministic = scores.iter().zip(&replay_scores).all(|(a,b)| a.to_bits() == b.to_bits());
@@ -9890,7 +9911,7 @@ fn run_train(
     // Final artifact + load-path determinism proof (on the exam seeds — the shipped metric).
     anyhow::ensure!(gen_done > 0, "no generation completed before the wall cap");
     let path = artifact.as_str();
-    let reloaded = ai::Mlp::load(path)?;
+    let reloaded = ai::Mlp::load_t34(path)?;
     let (f_replay, _) = eval(
         &reloaded,
         &EXAM_SEEDS,
@@ -11616,7 +11637,25 @@ const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
 
 /// What the death sequence shows `t` seconds after the fatal frame, with a silent card.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Done }
+enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Throw(f32), Crew(f32), Done }
+
+/// A death in the stowage's cook-off (`Game::cookoff_death`; the owner, 2026-11-02): black at once
+/// from the bang while it rings (the world held), then the tank from outside as the rest of the
+/// stowage goes and the turret is thrown (the world runs on, silent), then the dead from above the
+/// open ring, then the card.
+use game::{COOKOFF_BLACK_S, COOKOFF_CREW_S, COOKOFF_THROW_S};
+fn cookoff_shot(card: death_card::Presentation, t: f32) -> DeathShot {
+    let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
+    if t < COOKOFF_BLACK_S { DeathShot::Black }
+    else if t < COOKOFF_BLACK_S + COOKOFF_THROW_S { DeathShot::Throw((t - COOKOFF_BLACK_S) / COOKOFF_THROW_S) }
+    else if t < card.reveal_at_s() { DeathShot::Crew((t - COOKOFF_BLACK_S - COOKOFF_THROW_S) / COOKOFF_CREW_S) }
+    else if t < card_end { DeathShot::Card }
+    else { DeathShot::Done }
+}
+/// The death's shot: the cook-off's order when the man died in it, else the ordinary one.
+fn death_shot_for(cookoff: bool, card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
+    if cookoff { cookoff_shot(card, t) } else { death_shot(card, t, has_replay) }
+}
 fn death_shot(card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
     if t < DEATH_FADE { DeathShot::Fade }
@@ -11733,6 +11772,19 @@ mod local_presentation_tests {
         assert_eq!(death_shot(card, end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR, true), DeathShot::Done);
         // A death with no recorded killing round (on foot, burned) ends with the card.
         assert_eq!(death_shot(card, end, false), DeathShot::Done);
+    }
+
+    #[test]
+    fn a_cookoff_death_is_black_at_once_then_outside_then_the_dead_then_the_card() {
+        let reveal = COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S;
+        let card = death_card::Presentation::silent(1, 1943, reveal, DEATH_CARD_SECONDS);
+        assert_eq!(cookoff_shot(card, 0.0), DeathShot::Black, "no fade: black from the bang");
+        assert_eq!(cookoff_shot(card, COOKOFF_BLACK_S - 0.01), DeathShot::Black);
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + 0.01), DeathShot::Throw(p) if p < 0.01));
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + COOKOFF_THROW_S + 0.01), DeathShot::Crew(p) if p < 0.01));
+        assert_eq!(cookoff_shot(card, reveal + 0.01), DeathShot::Card);
+        assert_eq!(cookoff_shot(card, reveal + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
+        assert_eq!(death_shot_for(false, card, 0.5, true), DeathShot::Fade, "other deaths keep their fade");
     }
 
     #[test]
@@ -13153,19 +13205,32 @@ impl WindowState {
 
     /// Acquire the swapchain frame + view, handling lost/outdated surfaces.
     fn acquire(&self) -> Option<(wgpu::SurfaceTexture, wgpu::TextureView)> {
+        // Consecutive failed acquires: the first is logged, then one line a second (at 60 Hz),
+        // never one per frame (a stuck swapchain once wrote 39 million lines, 1.6 GB, before the
+        // device failed under a full GPU).
+        static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        use std::sync::atomic::Ordering::Relaxed;
         match self.surface.get_current_texture() {
             Ok(f) => {
+                let failed = FAILED.swap(0, Relaxed);
+                if failed > 1 {
+                    eprintln!("[panzerrechnersystem] surface recovered after {failed} failed frames");
+                }
                 let view = f
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 Some((f, view))
             }
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.config);
-                None
-            }
             Err(e) => {
-                eprintln!("[panzerrechnersystem] surface error: {e:?}");
+                let n = FAILED.fetch_add(1, Relaxed) + 1;
+                if n == 1 || n % 60 == 0 {
+                    eprintln!("[panzerrechnersystem] surface error: {e:?} ({n} frames in a row)");
+                }
+                // Lost, outdated or an unspecified failure (often memory pressure): configure the
+                // surface again; a swapchain that cannot come back keeps failing quietly.
+                self.surface.configure(&self.device, &self.config);
+                // No vsync wait happens on a failed acquire: wait a frame here, or the loop spins.
+                std::thread::sleep(std::time::Duration::from_millis(16));
                 None
             }
         }
@@ -13444,12 +13509,17 @@ impl WindowState {
                         .and_then(|value| value.parse::<u64>().ok()).unwrap_or(1944);
                     let enabled = g.expedition_initial_camp_position()
                         .and_then(|position| g.enable_expedition(seed, position))
-                        .and_then(|()| g.begin_expedition_at_camp(&mut r));
+                        .and_then(|()| if canyon::selected_course_camp_start_in_tank() {
+                            // In the Tiger at the course's start; the camp and the half-track
+                            // stand behind, to walk or drive back to.
+                            g.sync_expedition_now()
+                        } else { g.begin_expedition_at_camp(&mut r) });
                     if let Err(error) = enabled {
                         eprintln!("[canyon] cannot set up the course's camp: {error:#}");
                         return false;
                     }
-                    println!("[canyon] the course's camp and half-track are installed; the commander starts at the camp");
+                    println!("[canyon] the course's camp and half-track are installed; the commander starts {}",
+                        if canyon::selected_course_camp_start_in_tank() { "in the Tiger" } else { "at the camp" });
                 }
                 if let Some(start) = campaign_start.as_ref() {
                     if let Err(error) = g.configure_campaign(&start, &mut r) {
@@ -13623,8 +13693,10 @@ impl WindowState {
             // The fatal view fades, the screen is black for two seconds, the card is held for
             // five, and the run ends. No score plays over it.
             println!("[panzerrechnersystem] killed: {over_cause:?}");
+            let reveal = if self.game.cookoff_death() { COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S }
+                else { DEATH_FADE + DEATH_BLACK_SECONDS };
             let card = Some(death_card::Presentation::silent(self.game.death_card_seed(),
-                self.game.death_year(), DEATH_FADE + DEATH_BLACK_SECONDS, DEATH_CARD_SECONDS));
+                self.game.death_year(), reveal, DEATH_CARD_SECONDS));
             self.state = AppState::Death { t: 0.0, card };
             self.render_death(0.0);
             true
@@ -14741,14 +14813,44 @@ impl WindowState {
             AppState::Death { card, .. } => card,
             _ => None,
         };
-        let fade = death_fade(t);
+        let cookoff = self.game.cookoff_death();
+        // A cook-off's bang rings out in the black at full level; its outside shots are silent.
+        let fade = if cookoff { if t < COOKOFF_BLACK_S { 0.0 } else { 1.0 } } else { death_fade(t) };
         self.game.set_audio_level(1.0 - fade);
-        if t >= DEATH_FADE {
+        if (!cookoff && t >= DEATH_FADE) || (cookoff && t >= COOKOFF_BLACK_S) {
             self.game.set_audio_silenced(true);
+        }
+        if let Some(card) = card.filter(|card| card.is_silent() && cookoff) {
+            match cookoff_shot(card, t) {
+                DeathShot::Throw(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.render_cookoff_outside(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                DeathShot::Crew(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.render_cookoff_crew(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                DeathShot::Black => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.renderer.ui_reset();
+                    ui::draw_black(&mut self.renderer);
+                    self.renderer.render_ui_to_surface(&self.device, &self.queue, &view,
+                        self.config.format, self.config.width, self.config.height);
+                    frame.present();
+                    return;
+                }
+                _ => {}
+            }
         }
         // The silent card is followed by two replay shots: the round coming in, seen from behind
         // and above, and then what it did inside.
-        if let Some(card) = card.filter(|card| card.is_silent()) {
+        if let Some(card) = card.filter(|card| card.is_silent() && !cookoff) {
             match death_shot(card, t, self.game.last_fatal.is_some()) {
                 DeathShot::Exterior(phase) => {
                     let Some((frame, view)) = self.acquire() else { return; };
@@ -15502,10 +15604,13 @@ impl ApplicationHandler for App {
                         if matches!(code, KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape) {
                             let has_replay = state.game.last_fatal.is_some();
                             let card_end = card.card_end_s().unwrap_or(t);
-                            match death_shot(card, t, has_replay) {
+                            match death_shot_for(state.game.cookoff_death(), card, t, has_replay) {
                                 DeathShot::Card => state.state = AppState::Death { t: card_end, card: Some(card) },
                                 DeathShot::Exterior(_) | DeathShot::Interior(_) => state.state = AppState::Death {
                                     t: card_end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR, card: Some(card) },
+                                // The cook-off's shots give way to the card.
+                                DeathShot::Throw(_) | DeathShot::Crew(_) => state.state = AppState::Death {
+                                    t: card.reveal_at_s(), card: Some(card) },
                                 _ => {}
                             }
                         }
@@ -16820,8 +16925,13 @@ impl ApplicationHandler for App {
                     AppState::Death { t, card } => {
                         let nt = t + dt;
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
+                        // In a cook-off death the world runs on behind its outside shots.
+                        let cookoff = state.game.cookoff_death();
+                        if cookoff && card.is_some_and(|card| matches!(cookoff_shot(card, nt), DeathShot::Throw(_) | DeathShot::Crew(_))) {
+                            state.game.update_realtime(&TankInput::default(), dt, &mut state.renderer);
+                        }
                         let finished = card.map_or(nt >= DEATH_END, |card| if card.is_silent() {
-                            death_shot(card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
+                            death_shot_for(cookoff, card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
                         } else {
                             card.phase(nt, state.game.death_score_elapsed(),
                                 state.game.death_score_finished()) == death_card::Phase::Finished
@@ -17232,6 +17342,10 @@ fn main() -> anyhow::Result<()> {
         let seeds = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
         return game::game_fea_section::bench(seeds, &capture_arg(&args, 3, "artifacts/perf/fea_bench.json"));
     }
+    if args.len() >= 2 && args[1] == "meadow-film" {
+        // GPU: review clips of the spring meadow by day and at dusk (KESSEL_RENDERER=raymarch).
+        return meadow_film::run(&capture_arg(&args, 2, "meadow_film"));
+    }
     if args.len() >= 2 && args[1] == "fea-film" {
         // GPU: video clips of the layered damage model in play (KESSEL_RENDERER=raymarch).
         return game::game_fea_film::run(&capture_arg(&args, 2, "fea_film"));
@@ -17283,6 +17397,19 @@ fn main() -> anyhow::Result<()> {
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(200.0),
         );
     }
+    if args.len() >= 2 && args[1] == "t34-seed" {
+        return t34_canyon_training::write_seed(
+            args.get(2).map(String::as_str).unwrap_or("assets/ai/weights_t34_seed.bin"),
+            args.get(3).map(String::as_str).unwrap_or("assets/ai/weights_academy.bin"));
+    }
+    if args.len() >= 2 && args[1] == "t34-canyon-eval" {
+        // Worker for tools/t34_canyon_es.py: comma-separated Canyon seeds, episode seconds; reads
+        // weight-artifact paths on stdin, prints one `[t34-eval]` line per path and seed.
+        let seeds: Vec<u64> = args.get(2).map(String::as_str).unwrap_or("3,11")
+            .split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60.0f32);
+        return t34_canyon_training::serve(&seeds, secs);
+    }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {
         return canyon_attempt::run(
             &capture_arg(&args, 2, "canyon_ai_attempt"),
@@ -17305,6 +17432,16 @@ fn main() -> anyhow::Result<()> {
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(220.0),
             args.get(5).and_then(|s| s.parse().ok()).unwrap_or(240.0),
+        );
+    }
+    if args.len() >= 2 && args[1] == "course-camp-check" {
+        return canyon_attempt::course_camp_check(&capture_arg(&args, 2, "course_camp_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29));
+    }
+    if args.len() >= 2 && args[1] == "bridge-check" {
+        return canyon_attempt::bridge_check(
+            &capture_arg(&args, 2, "bridge_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
         );
     }
     if args.len() >= 2 && args[1] == "canyon-foot-check" {

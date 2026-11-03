@@ -10,8 +10,11 @@
 #   tools/launch_demo_20261101.sh --expedition --order 10 --forward  and the crewed Tiger staged on the approach road,
 #                                                 700 m short of the site, engine running (a disclosed playtest fixture)
 #   tools/launch_demo_20261101.sh --canyon        straight into a fresh Canyon v2 winter run (missions + living crew)
-#   tools/launch_demo_20261101.sh --bridge        the spring bridge test map: take the town's bridge, hold it through two
-#                                                 counterattacks, destroy every tank; camp and half-track west of the town
+#   tools/launch_demo_20261101.sh --bridge        the spring bridge test map (v2): take the town's bridge, hold it through two
+#                                                 counterattacks, destroy every tank; camp and half-track west of the town;
+#                                                 16:00 on the crew's clock. --bridge-lite: the render-test density
+#   tools/launch_demo_20261101.sh --berlin        Berlin, 30 April 1945: the Reichstag, Koenigsplatz, the Moltke Bridge and the
+#                                                 Brandenburg Gate (docs/BERLIN_REICHSTAG_1945.md), 17:30
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
 #   tools/launch_demo_20261101.sh --res 640x360   render grid (default 1280x720, an exact 4x on the 5K panel)
 #   tools/launch_demo_20261101.sh --look deltap-tinted  the deltaP look (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered
@@ -38,14 +41,17 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-# realism_render_test: the owner's pick of 2 November 2026, the realism look at 2,048 colours on the
-# 1024x576 grid, fullscreen on the 5120x2880 Studio Display (exactly 5x, nearest).
-export KESSEL_REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
-COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+# LOCKED (the owner, 2 November 2026): the realism look at 2,048 colours (16 red, 16 green, 8 blue
+# levels) on the 1024x576 grid, exactly 5x on the 5120x2880 panel. Agents: do not change these
+# defaults without asking the owner to confirm first; --look/--res still choose others per run.
+REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
+BERLIN=0 BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
-        --bridge) MODE=canyon; COURSE=spring-bridge-v1 ;;
+        --bridge) MODE=canyon; COURSE=spring-bridge-v2; BRIDGE=1 ;;
+        --bridge-lite) MODE=canyon; COURSE=spring-bridge-lite-v2; BRIDGE=1 ;;
+        --berlin) MODE=canyon; COURSE=berlin-reichstag-v1; BERLIN=1 ;;
         --expedition) MODE=expedition ;;
         --menu) MODE=menu ;;
         --windowed) WINDOWED=1 ;;
@@ -60,7 +66,7 @@ while (( $# )); do
         --order) ORDER=$2; MODE=expedition; shift ;;
         --forward) FORWARD=1; MODE=expedition ;;
         --day-cycle) DAY_CYCLE=$2; shift ;;
-        --sky-start) SKY_START=$2; shift ;;   # HH:MM on the crew's clock (07:00 default) | dawn | day | dusk | night
+        --sky-start) SKY_START=$2; SKY_SET=1; shift ;;   # HH:MM on the crew's clock (07:00 default) | dawn | day | dusk | night
         --audio-range) AUDIO_RANGE=$2; shift ;;
         --check) CHECK=1 ;;
         -h|--help) sed -n 2,40p "$0" | grep "^#"; exit 0 ;;
@@ -68,10 +74,12 @@ while (( $# )); do
     esac
     shift
 done
+# The bridge map is a bright May afternoon unless --sky-start says otherwise.
+if (( BRIDGE )) && (( ! SKY_SET )); then SKY_START=16:00; fi
+# Berlin, 30 April 1945: the late afternoon of the Reichstag's storming (the map's authored hour).
+if (( BERLIN )) && (( ! SKY_SET )); then SKY_START=17:30; fi
 if [[ -n "$LOOK" && $RES_SET == 0 ]]; then RES=1024x576; fi   # deltaP's grid: 5x on the 5120x2880 panel
-# The standard display at 1280x720 (4x on the panel) with the Canyon v2 document's own display profile
-# (ordered dither 0.55, LDR dither 0.65): the owner's pick of 2 November 2026 over deltaP's colour, on
-# the FEA film's turret-ring clip ("better than our stylized effects on the color as of now").
+# (The standard look, when chosen with --look standard, uses the Canyon v2 document's dither profile.)
 cd "$ROOT"
 [[ -x "$BINARY" ]] || { printf 'release binary missing: %s (cargo build --release --locked)\n' "$BINARY" >&2; exit 1; }
 for f in assets/tanks/tiger/baked/tiger_hull.glb assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json \
@@ -112,6 +120,7 @@ export XDG_STATE_HOME="$RUNTIME/state" XDG_CACHE_HOME="$RUNTIME/cache" XDG_CONFI
 export KESSEL_ASSET_ROOT="$ASSET_ROOT"
 export KESSEL_CANYON_MANIFEST="$ASSET_ROOT/assets/worldgen/workshops/${COURSE:-gaea-canyon-run-v2}/manifest.v1.json"
 export KESSEL_RENDERER=raymarch KESSEL_GRAPHICS_PRESET=high KESSEL_INTERNAL_RES="$RES"
+export KESSEL_REAL_STEPS="$REAL_STEPS"   # the locked colour count (top of file)
 export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4 KESSEL_SOURCE_VISIBILITY=maps
 export KESSEL_GRAPHICS_CONFIG="$CONFIG" KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_TRANSPORT_QUALITY=full
 export KESSEL_CANYON_V2=1

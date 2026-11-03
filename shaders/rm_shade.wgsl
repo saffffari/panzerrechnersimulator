@@ -206,7 +206,8 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, hi
         let d = t * (cos(phi) * s) + b * (sin(phi) * s) + n * sqrt(max(1.0 - r1, 0.0));
         var escaped = false;
         if (sealed) { escaped = rm_ray_open_sealed(origin, d, RM_AO_RANGE_M); } else { escaped = rm_ray_open(origin, d, RM_AO_RANGE_M); }
-        if (escaped) { open += 1.0; }
+        // The meadow's canopy round the point is a medium the ray crosses (rm_canopy_transmittance).
+        if (escaped) { open += rm_canopy_transmittance(origin, d, RM_AO_RANGE_M); }
     }
     let fresh = open / f32(rays);
     return select(fresh, mix(history.local_shares.x, share_clamped(fresh, history.local_shares.x), RM_AO_BLEND), history.valid);
@@ -242,41 +243,151 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, ndv: f32) -> vec3<f32> {
     return f0 * ab.x + ab.y;
 }
 
-struct Fog { radiance: vec3<f32>, transmittance: f32 };
-// Integrated froxel medium to `distance_m`, then the homogeneous weather layer beyond the grid.
-fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
+// Bank light beyond the froxel grid, front to back over the view ray's [t_near, t_far]: each
+// bank the ray crosses is marched in six samples, lit by the key beam (no cascades out here: the cloud
+// deck's shadow and the banks' own transmittance) through the drops' phase, and by the diffuse
+// light above. Overlapping banks are taken in the order of their entry (up to eight crossings).
+struct RmLowFar { radiance: vec3<f32>, transmittance: f32 };
+fn rm_low_cloud_far(o: vec3<f32>, d: vec3<f32>, t_near: f32, t_far: f32) -> RmLowFar {
+    var out = RmLowFar(vec3(0.0), 1.0);
+    let n = rm_low_count();
+    if (n == 0u) { return out; }
+    var spans: array<vec3<f32>, 8>;
+    var count = 0u;
+    for (var i = 0u; i < n; i += 1u) {
+        let span = rm_low_span(o, d, i);
+        let t0 = max(span.x, t_near);
+        let t1 = min(span.y, t_far);
+        if (t1 > t0 && count < 8u) { spans[count] = vec3(t0, t1, f32(i)); count += 1u; }
+    }
+    if (count == 0u) { return out; }
+    let g = fr.low_cloud.y;
+    let albedo = fr.low_cloud.z;
+    var done = 0u;
+    var last = -1.0;
+    for (var crossing = 0u; crossing < count; crossing += 1u) {
+        // The next crossing by entry.
+        var best = 0u;
+        var best_t = 1.0e30;
+        for (var j = 0u; j < count; j += 1u) {
+            if (spans[j].x > last && spans[j].x < best_t) { best_t = spans[j].x; best = j; }
+        }
+        if (best_t >= 1.0e30) { break; }
+        last = best_t;
+        let span = spans[best];
+        let i = u32(span.z);
+        let dt = (span.y - span.x) / 6.0;
+        for (var k = 0u; k < 6u; k += 1u) {
+            let p = o + d * (span.x + (f32(k) + 0.5) * dt);
+            let sigma = rm_low_bank_density(p, i);
+            if (sigma <= 0.0) { continue; }
+            let deck = rm_cloud_shadow(p);
+            let tau = rm_low_tau(p);
+            let diffuse = rm_low_cloud_diffuse(deck, tau);
+            var source = rm_sky_isotropic() * diffuse.x + diffuse.yzw;
+            if (fr.sun_radiance.w > 0.5) {
+                source += fr.sun_radiance.rgb * deck * exp(-tau.x) * rm_phase_dense(dot(d, fr.sun_dir.xyz), g, sigma);
+            }
+            let t_step = exp(-sigma * dt);
+            out.radiance += out.transmittance * albedo * source * (1.0 - t_step);
+            out.transmittance *= t_step;
+        }
+        if (out.transmittance < 0.003) { break; }
+    }
+    return out;
+}
+
+// Integrated froxel medium to `distance_m`, then the weather layer beyond the grid; for a
+// surface (`surface`) also the clear air between it and the eye, the molecules and the aerosol of
+// the physical atmosphere the sky cache marches (2 November 2026: distant hills took no Rayleigh
+// and no aerosol, only the grey weather layer, and read white instead of blue). Transmittance is
+// per band. A sky pixel adds no clear air: the cache already holds the whole path through it.
+struct Fog { radiance: vec3<f32>, transmittance: vec3<f32> };
+// One homogeneous step of `dt` metres at `p` along `ray`: the weather layer (`weather`: its layer
+// and grey parts, rm_world_parts) and, scaled by `air` (0 or 1), the clear air, molecules
+// (Rayleigh phase) and the atmosphere's aerosol (Henyey-Greenstein), each per band; lit by the
+// isotropic sky and the key beam through the cloud shadow. Returns the in-scattered radiance
+// leaving the step (before the transmittance in front of it) and the step's transmittance.
+fn rm_air_segment(p: vec3<f32>, ray: vec3<f32>, dt: f32, weather: vec2<f32>, air: f32, sky: vec3<f32>) -> Fog {
+    let snow = fr.medium.y * theatre_north_weight(p.z, fr.samples.y);
+    let w_t = weather.x * rm_world_spectrum(snow) + vec3(weather.y);
+    let w_s = w_t * mix(0.70, 0.92, snow);
+    let h = max(p.y - fr.air_spectrum.w, 0.0);
+    let r_s = air * fr.air_rayleigh.xyz * exp(-h / max(fr.air_rayleigh.w, 1.0));
+    let a_t = air * fr.air_aerosol.x * exp(-h / max(fr.air_aerosol.w, 1.0)) * fr.air_spectrum.xyz;
+    let a_s = a_t * fr.air_aerosol.y;
+    let sigma_t = w_t + r_s + a_t;
+    if (all(sigma_t <= vec3(1.0e-12))) { return Fog(vec3(0.0), vec3(1.0)); }
+    var source = sky * (w_s + r_s + a_s);
+    if (fr.sun_radiance.w > 0.5) {
+        let mu = dot(ray, fr.sun_dir.xyz);
+        let phased = w_s * rm_hg(mu, mix(0.74, 0.62, snow))
+            + r_s * (3.0 / (16.0 * RM_PI)) * (1.0 + mu * mu)
+            + a_s * rm_hg(mu, fr.air_aerosol.z);
+        source += fr.sun_radiance.rgb * phased * rm_cloud_shadow(p);
+    }
+    let t = exp(-sigma_t * dt);
+    return Fog(source / max(sigma_t, vec3(1.0e-12)) * (vec3(1.0) - t), t);
+}
+fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32, surface: bool) -> Fog {
     let slice = rm_slice(distance_m);
     let zc = clamp((slice - 0.5) / fr.vol.z, 0.0, (fr.vol.z - 0.5) / fr.vol.z);
     let v = textureSampleLevel(integrated, linear_samp, vec3(uv, zc), 0.0);
-    var radiance = v.rgb;
-    var transmittance = v.a;
+    var out = Fog(v.rgb, vec3(v.a));
     let far = fr.vol_range.y;
+    let air = select(0.0, 1.0, surface);
+    let sky = rm_sky_isotropic();
+    if (surface) {
+        // The clear air inside the grid's reach, two steps, composited behind the grid's media
+        // (named approximation: the grid's smoke and weather dim this air's in-scatter whole,
+        // not only the part of them in front of it; second order in the two optical depths).
+        let near = min(distance_m, far);
+        let dt = near / 2.0;
+        for (var i = 0; i < 2; i = i + 1) {
+            let seg = rm_air_segment(fr.cam_pos.xyz + ray * ((f32(i) + 0.5) * dt), ray, dt, vec2(0.0), air, sky);
+            out.radiance += out.transmittance * seg.radiance;
+            out.transmittance *= seg.transmittance;
+        }
+    }
     if (distance_m > far) {
+        // The map's low cloud banks beyond the grid, each crossing marched (rm_low_cloud_far),
+        // composited ahead of the weather layer's march (named approximation: the haze between
+        // the grid's edge and a bank is applied behind the bank, not in front of it).
+        let banks = rm_low_cloud_far(fr.cam_pos.xyz, ray, far, min(distance_m, far + 8000.0));
+        out.radiance += out.transmittance * banks.radiance;
+        out.transmittance *= banks.transmittance;
         // Beyond the grid: six steps through the world medium (the weather layer and its fog
-        // banks), each lit by the sky and by the key beam through the cloud layer above it; no
-        // geometric occlusion (named approximation).
+        // banks) and, for a surface, the clear air, each lit by the sky and by the key beam
+        // through the cloud layer above it; no geometric occlusion (named approximation). Past
+        // the weather layer (above its top, or beyond 6 km) four steps of clear air alone.
         let origin = fr.cam_pos.xyz + ray * far;
-        var length_m = distance_m - far;
-        if (ray.y > 0.001) { length_m = min(length_m, max(fr.medium.w - origin.y, 0.0) / ray.y); }
-        length_m = min(length_m, 6000.0);
-        if (length_m > 0.0 && (fr.medium.x > 0.0 || fr.fog.y > 0.0)) {
-            let sky = rm_sky_isotropic();
-            let dt = length_m / 6.0;
+        let length_m = distance_m - far;
+        var layer_m = length_m;
+        if (ray.y > 0.001) { layer_m = min(layer_m, max(fr.medium.w - origin.y, 0.0) / ray.y); }
+        layer_m = min(layer_m, 6000.0);
+        if (!(fr.medium.x > 0.0 || fr.fog.y > 0.0)) { layer_m = 0.0; }
+        if (layer_m > 0.0) {
+            let dt = layer_m / 6.0;
             for (var i = 0; i < 6; i = i + 1) {
                 let p = origin + ray * ((f32(i) + 0.5) * dt);
-                let sigma = rm_world_density(p);
-                if (sigma <= 0.0) { continue; }
-                let snow = fr.medium.y*theatre_north_weight(p.z,fr.samples.y);
-                let albedo = mix(0.70,0.92,snow);let g = mix(0.74,0.62,snow);
-                let phase = select(0.0,rm_hg(dot(ray,fr.sun_dir.xyz),g),fr.sun_radiance.w>0.5);
-                let t_step = exp(-sigma * dt);
-                let source = sky + fr.sun_radiance.rgb * phase * rm_cloud_shadow(p);
-                radiance += transmittance * albedo * source * (1.0 - t_step);
-                transmittance *= t_step;
+                let parts = rm_world_parts(p);
+                if (!surface && parts.x + parts.y <= 0.0) { continue; }
+                let seg = rm_air_segment(p, ray, dt, parts, air, sky);
+                out.radiance += out.transmittance * seg.radiance;
+                out.transmittance *= seg.transmittance;
+            }
+        }
+        let rest = min(length_m, 40000.0) - layer_m;
+        if (surface && rest > 0.0) {
+            let dt = rest / 4.0;
+            for (var i = 0; i < 4; i = i + 1) {
+                let seg = rm_air_segment(origin + ray * (layer_m + (f32(i) + 0.5) * dt), ray, dt, vec2(0.0), air, sky);
+                out.radiance += out.transmittance * seg.radiance;
+                out.transmittance *= seg.transmittance;
             }
         }
     }
-    return Fog(radiance, transmittance);
+    return out;
 }
 
 struct ShadeOut { @location(0) color: vec4<f32>, @location(1) shares: vec4<f32>, @location(2) bounce: vec4<f32>, };
@@ -408,7 +519,7 @@ fn fs(in: VsOut) -> ShadeOut {
     if (depth >= 1.0) {
         let cached = rm_sky_background(ray);
         let sky = cached.rgb + (rm_sky_discs(ray) + rm_pixel_star(ray, pixel)) * cached.a;
-        let fog = fog_to(in.uv, ray, 20000.0);
+        let fog = fog_to(in.uv, ray, 20000.0, false);
         return ShadeOut(vec4(sky * fog.transmittance + fog.radiance, 1.0), vec4(1.0, 1.0, 1.0, -1.0), vec4(0.0, 0.0, 0.0, -1.0));
     }
     let rel = rm_relative_from_depth(uv, depth);
@@ -443,6 +554,16 @@ fn fs(in: VsOut) -> ShadeOut {
         }
         let terrain = g0.a > 2.5 && g0.a < 3.5;
         let grass = g0.a > 3.5 && g0.a < 4.5;
+        // A living leaf (the spring meadow, rm_meadow.wgsl): a bi-Lambertian sheet with a cuticle
+        // specular, its transmittance in g2.rgb and the leaf area above it in g2.w.
+        let leaf = g0.a > 4.5 && g0.a < 5.5;
+        // The far meadow's canopy slab (kind 6): its top surface, carrying the stand's leaf optics
+        // (rho in g0, tau in g2.rgb) and leaf area index (g2.w); lit as a turbid slab below.
+        let slab = g0.a > 5.5 && g0.a < 6.5;
+        let thin = grass || leaf || slab;
+        let leaf_tau = select(vec3(0.0), g2.rgb, leaf || slab);
+        let lai_above = select(0.0, g2.w, leaf || slab);
+        if (leaf || slab) { metallic = 0.0; }
         let motion = rm_surface_motion(world, n);
         let fresh_gather = screen_gather(pixel, rel, n, jitter, motion);
         let history = shade_history(world, motion);
@@ -461,12 +582,12 @@ fn fs(in: VsOut) -> ShadeOut {
         // The player's vehicle (pixels within 4.5 m of its compartment's centre that are not the
         // ground; fr.vehicle): paint worn through on its edges, grime gathered in its corners. Edges are the
         // creases between neighbouring pixels' normals; corners are the near-field occlusion.
-        var vehicle = select(0.0, 1.0, !terrain && !grass && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5);
+        var vehicle = select(0.0, 1.0, !terrain && !thin && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5);
         var mech = clamp(fr.wear.w, 0.0, 1.0);
         var outside_grime = clamp(fr.wear.y, 0.0, 1.0);
         // Other vehicles (vehicle_finish.rs; Renderer::set_worn_vehicles): the same worn edges and
         // corners at each one's own loads, for pixels within its reach that are not the ground.
-        if (vehicle == 0.0 && !terrain && !grass) {
+        if (vehicle == 0.0 && !terrain && !thin) {
             let count = min(u32(fr.worn_count.x), 16u);
             for (var k = 0u; k < count; k += 1u) {
                 let centre = fr.worn[2u * k];
@@ -506,20 +627,86 @@ fn fs(in: VsOut) -> ShadeOut {
             albedo *= 1.0 - 0.6 * corner * grime;
         }
         let v = -ray;
-        let f0 = mix(vec3(0.04), albedo, metallic);
+        // A leaf's cuticle wax (n ~ 1.47): f0 0.036 (leaf_optics::cuticle_f0).
+        let f0 = select(mix(vec3(0.04), albedo, metallic), vec3(RM_LEAF_F0), leaf);
         let diffuse = albedo * (1.0 - metallic) / RM_PI;
+        // The low cloud banks' optical depth toward the key body: the beam's shadow below (a beam
+        // through a hatch crossed a bank too) and the banks' diffuse light outside.
+        let tau_low = rm_low_tau(world);
         // Key beam.
-        if (fr.sun_radiance.w > 0.5) {
+        if (fr.sun_radiance.w > 0.5 && slab) {
+            // A homogeneous turbid canopy of spherical bi-Lambertian leaves over soil (SAIL-type):
+            // single scattering of the beam, with Kuusk's hotspot joint gap probability, by the
+            // area scattering phase function Gamma (leaf_optics::gamma_tables), integrated down
+            // the canopy's leaf area in eight steps; the soil seen through both gaps.
+            let mu_s = dot(n, fr.sun_dir.xyz);
+            let mu_v = max(dot(n, v), 0.02);
+            if (mu_s > 0.01) {
+                let ks = RM_LEAF_G / mu_s;
+                let kv = RM_LEAF_G / mu_v;
+                let ts = (fr.sun_dir.xyz - n * mu_s) / mu_s;
+                let tv = (v - n * mu_v) / mu_v;
+                let alpha = length(ts - tv);
+                var gap = 0.0;
+                let dl = lai_above / 8.0;
+                for (var k = 0; k < 8; k += 1) {
+                    let l = (f32(k) + 0.5) * dl;
+                    var shared_gap = sqrt(ks * kv) * l;
+                    if (alpha > 1e-4) { shared_gap = sqrt(ks * kv) * RM_HOTSPOT / alpha * (1.0 - exp(-alpha * l / RM_HOTSPOT)); }
+                    gap += exp(-(ks + kv) * l + shared_gap) * dl;
+                }
+                let beta = acos(clamp(dot(-fr.sun_dir.xyz, v), -1.0, 1.0));
+                let gamma = albedo * rm_slab_gamma(beta, 0u) + leaf_tau * rm_slab_gamma(beta, 1u);
+                let vis = rm_sun_visibility(world, 0.3);
+                color += fr.sun_radiance.rgb * vis * (gamma / RM_PI * gap / mu_v
+                    + RM_SOIL_ALBEDO / RM_PI * mu_s * exp(-(ks + kv) * lai_above));
+                // Light scattered more than once: the deep canopy's two-stream reflectance less
+                // the share of a first scattering (an estimate), lit by the beam's flux.
+                let r_inf = rm_km_reflectance(albedo, leaf_tau);
+                color += fr.sun_radiance.rgb * vis * mu_s * max(r_inf - (albedo + leaf_tau) * 0.25, vec3(0.0)) / RM_PI;
+            }
+        } else if (fr.sun_radiance.w > 0.5 && leaf) {
+            // The beam lights the face it falls on (reflectance rho, cuticle specular) or passes
+            // through the blade to the other face (transmittance tau), both through the sun's
+            // visibility. Within the near cascade the drawn blades shadow each other; beyond it a
+            // uniform turbid canopy does (Beer-Lambert, spherical leaf angles G = 0.5, the leaf area
+            // above the point along the beam).
+            let ndl = dot(n, fr.sun_dir.xyz);
+            let canopy = exp(-RM_LEAF_G * lai_above / max(fr.sun_dir.y, 0.05));
+            let beyond = smoothstep(RM_MEADOW_SHADOW_RADIUS * 0.8, RM_MEADOW_SHADOW_RADIUS, length(rel.xz));
+            let vis = rm_sun_visibility(world, 0.12) * mix(1.0, canopy, beyond);
+            if (vis > 0.001) {
+                color += (albedo * max(ndl, 0.0) + leaf_tau * max(-ndl, 0.0)) / RM_PI * fr.sun_radiance.rgb * vis;
+                if (ndl > 0.0) { color += rm_ggx_specular(n, v, fr.sun_dir.xyz, roughness, f0) * fr.sun_radiance.rgb * ndl * vis; }
+            }
+        } else if (fr.sun_radiance.w > 0.5) {
             // Grass is dead straw: thin, two-sided, lit through; the beam wraps round a blade
             // instead of leaving its back black (named approximation, no transmission solve).
-            let ndl = select(dot(n, fr.sun_dir.xyz), max(dot(n, fr.sun_dir.xyz), 0.35 * abs(dot(n, fr.sun_dir.xyz)) + 0.15), grass);
+            let ndl_sun = select(dot(n, fr.sun_dir.xyz), max(dot(n, fr.sun_dir.xyz), 0.35 * abs(dot(n, fr.sun_dir.xyz)) + 0.15), grass);
+            // A surface of the crew compartment takes the beam traced through the vehicle
+            // (rm_cabin_beam): through a pane at the pane's throughput, through a periscope
+            // along the folded direction out of its lower window, through a port's slot only
+            // while the body lies within the slot's line of sight. No screen-space contact march:
+            // the trace has met every triangle on the way.
+            var key = fr.sun_dir.xyz;
+            var key_vis = vec3(1.0);
+            let beam_traced = ndl_sun > 0.0 && !terrain && !grass && rm_cabin_beam_traced() && rm_cabin_domain(world + n * 0.03) >= 0;
+            if (beam_traced) {
+                let beam = rm_cabin_beam(world + n * (0.01 + 0.002 * dist));
+                key = beam.toward;
+                key_vis = beam.throughput * rm_cloud_shadow(world) * exp(-tau_low.x);
+            }
+            let ndl = select(ndl_sun, dot(n, key), beam_traced);
             if (ndl > 0.0) {
                 let bias = select(select(0.03, 0.35, terrain), 0.12, grass) + 0.25 * (1.0 - ndl);
-                var vis = rm_sun_visibility(world, bias);
-                if (vis > 0.001 && !terrain && !grass) {
-                    vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, still));
+                var vis = key_vis;
+                if (!beam_traced) {
+                    vis = vec3(rm_sun_visibility_tau(world, bias, tau_low.x));
+                    if (vis.x > 0.001 && !terrain && !grass) {
+                        vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, still));
+                    }
                 }
-                color += (diffuse + rm_ggx_specular(n, v, fr.sun_dir.xyz, roughness, f0)) * fr.sun_radiance.rgb * ndl * vis;
+                color += (diffuse + rm_ggx_specular(n, v, key, roughness, f0)) * fr.sun_radiance.rgb * ndl * vis;
                 // Snow glitter: a random ice facet per 4 cm of surface flashes the beam into the
                 // eye when its half-vector lines up (named approximation: facets are a hash, not
                 // a crystal model; the dither keeps them one-pixel sparks).
@@ -541,11 +728,24 @@ fn fs(in: VsOut) -> ShadeOut {
         var ao = gather.ao;
         var open = gather.open;
         if (grass) { ao = mix(ao, 1.0, 0.7); open = mix(open, 1.0, 0.7); }
+        // A leaf inside the meadow sees the sky through the leaf area above it: the uniform turbid
+        // canopy's diffuse gap fraction 2 E3(G L) (an isotropic sky; the screen gather of a
+        // blade among blades is not used).
+        if (slab) { ao = 1.0; open = 1.0; }
+        if (leaf) {
+            var gap = 0.0;
+            for (var k = 0; k < 8; k += 1) {
+                let mu = (f32(k) + 0.5) / 8.0;
+                gap += exp(-RM_LEAF_G * lai_above / mu) * mu;
+            }
+            ao = gap * 2.0 / 8.0;
+            open = 1.0;
+        }
         // With ray queries the rays' open share replaces the screen's where they find more cover
         // (and the near-field contact term, which they include); the difference is cover the
         // frame does not show (`hidden_cover`).
         var hidden_cover = 0.0;
-        let rays_used = RM_RAY_QUERIES && !grass && fr.debug.w < 0.5;
+        let rays_used = RM_RAY_QUERIES && !thin && fr.debug.w < 0.5;
         let receiver_in_cabin = rm_cabin_domain(world + n * 0.03) >= 0;
         if (rays_used) {
             // In the crew compartment the panes are cover to these rays: their daylight is the
@@ -559,11 +759,17 @@ fn fs(in: VsOut) -> ShadeOut {
         }
         // Grass blades ask the cover map from above their own canopy (they stand in it); without
         // ray queries the crew compartment asks it from inside (rm_cabin_sky_visibility).
-        var sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, grass));
+        var sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, thin));
         if (receiver_in_cabin && !rays_used) { sky_vis = rm_cabin_sky_visibility(world, n); }
         let up = clamp(n.y, -1.0, 1.0);
         let sky_band = mix(fr.sky_horizon.rgb, fr.sky_zenith.rgb, clamp(up, 0.0, 1.0));
-        let hemisphere = mix(fr.sky_ground.rgb * 0.5, sky_band, 0.5 + 0.5 * up);
+        var hemisphere = mix(fr.sky_ground.rgb * 0.5, sky_band, 0.5 + 0.5 * up);
+        // Under a low cloud bank: the sky through its two-stream diffuse transmission, plus the
+        // key beam it diffuses (rm_low_cloud_diffuse, named approximation; not in the cabin).
+        if (!receiver_in_cabin && rm_low_count() > 0u) {
+            let low = rm_low_cloud_diffuse(rm_cloud_shadow(world), tau_low);
+            hemisphere = hemisphere * low.x + low.yzw;
+        }
         // The environment radiance the surface sees: sky through the open share, the frame's
         // bounce through the covered share. Lambert takes albedo x that; the GGX lobe takes its
         // directional albedo x that, less the share the screen-space reflection pass draws
@@ -583,12 +789,18 @@ fn fs(in: VsOut) -> ShadeOut {
             // standing for a whole covered hemisphere.
             var hidden = vec3(0.0);
             if (hidden_cover > 0.0) { hidden = previous_radiance(world, motion).rgb; }
-            env = env * open + gather.irradiance * select(1.0, 0.6, grass) / RM_PI + hidden * hidden_cover;
+            env = env * open + gather.irradiance * select(1.0, 0.6, thin) / RM_PI + hidden * hidden_cover;
         }
-        color += diffuse * RM_PI * env;
+        // A leaf in diffuse light: both faces lit alike, the far face's light transmitted. The
+        // canopy slab returns the diffuse sky by its two-stream reflectance.
+        if (slab) {
+            color += rm_km_reflectance(albedo, leaf_tau) * env;
+        } else {
+            color += (diffuse + leaf_tau / RM_PI) * RM_PI * env;
+        }
         // The marched reflection's share (rm_reflect.wgsl's `gloss`): the rest is this term's.
         let gloss = (1.0 - smoothstep(0.2, 0.5, roughness)) * mix(0.35, 1.0, metallic);
-        color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss);
+        if (!slab) { color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss); }
         // Lamps, fires, flashes: the lights binned into this pixel's cell. A lamp in the crew
         // compartment lights only surfaces facing the compartment's air: the armour is opaque
         // whatever the lamp's shadow cube holds (its housing, which the turret and gun meshes
@@ -599,9 +811,12 @@ fn fs(in: VsOut) -> ShadeOut {
         let lend = light_cell_start[cell + 1u];
         for (var i = lstart; i < lend; i += 1u) {
             let index = light_cell_items[i];
+            if (slab) { break; }
             if (!receiver_in_cabin && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }
             let s = rm_light_sample(index, world);
-            let ndl = dot(n, s.dir);
+            let ndl_raw = dot(n, s.dir);
+            // A leaf takes a lamp on either face (transmitted from behind).
+            let ndl = select(ndl_raw, abs(ndl_raw), leaf);
             if (ndl <= 0.0 || max(s.e.r, max(s.e.g, s.e.b)) <= 0.0) { continue; }
             var vis = rm_light_visibility(index, world, 0.02 + 0.03 * (1.0 - ndl));
             if (vis <= 0.001) { continue; }
@@ -610,11 +825,16 @@ fn fs(in: VsOut) -> ShadeOut {
                 // its own fixture (the emitter sits inside its housing).
                 let reach = s.dist - clamp(4.0 * lights[index].a.w, 0.15, 0.3);
                 if (reach > 0.02 && rm_ray_blocked(world + n * (0.01 + 0.002 * dist), s.dir, 0.0, reach) >= 0.0) { continue; }
+                vis *= rm_canopy_transmittance(world + n * (0.01 + 0.002 * dist), s.dir, max(reach, 0.0));
             } else {
                 vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, still));
             }
             let tau = lamp_tau(world, lights[index].a.xyz, 4u);
-            color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
+            if (leaf && ndl_raw < 0.0) {
+                color += leaf_tau / RM_PI * s.e * ndl * vis * exp(-tau);
+            } else {
+                color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
+            }
         }
         // Daylight through the panes (2 November 2026, "light still doesn't seem to make it into
         // the interior from the side vision port"): a surface of the crew compartment takes each
@@ -645,8 +865,9 @@ fn fs(in: VsOut) -> ShadeOut {
                 color += (diffuse + env_brdf(f0, roughness, ndv) / RM_PI) * radiance * omega;
             }
         }
-        color += g2.rgb;
+        // A leaf's and the canopy slab's g2 holds tau and leaf area, not emission.
+        if (!leaf && !slab) { color += g2.rgb; }
     }
-    let fog = fog_to(in.uv, ray, dist);
+    let fog = fog_to(in.uv, ray, dist, true);
     return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), shares_out, bounce_out);
 }

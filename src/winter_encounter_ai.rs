@@ -357,6 +357,28 @@ impl WinterEncounter {
     pub fn cue(&self, i: usize) -> Option<Vec3> {
         self.crews.get(i).and_then(|c| c.known_fix.or(c.observed_fix))
     }
+    /// Where the crew would go looking for the target: its fix or sighting (`cue`), else the area
+    /// its platoon heard it in (a wingman reports what it hears to its leader, who keeps it). The
+    /// evolved brain reads this as its memory of the Tiger (`Game::executor_obs`).
+    pub fn memory_of_target(&self, i: usize) -> Option<Vec3> {
+        let crew = self.crews.get(i)?;
+        let keeper = match crew.role { Role::Wingman { leader, .. } => leader, _ => i };
+        self.cue(i).or(crew.heard).or_else(|| self.crews.get(keeper).and_then(|c| c.heard))
+    }
+    /// The firing post the crew's armour doctrine has chosen for it (fix and flank: the leader
+    /// edged off the target's frontal arc, the wingmen on opposite flanks), while it is fighting
+    /// by that doctrine. The evolved brain reads it as its orders (`Game::executor_obs`).
+    pub fn assigned_post(&self, i: usize) -> Option<Vec2> {
+        self.crews.get(i).filter(|c| c.assault.active).and_then(|c| c.assault.post)
+    }
+    /// The corner of its platoon's beat the crew's leader is walking to (a wingman follows its
+    /// leader's), the beat's standing order when the crew has no post to fight from.
+    pub fn patrol_corner(&self, i: usize) -> Option<Vec2> {
+        let crew = self.crews.get(i)?;
+        let leader = match crew.role { Role::Wingman { leader, .. } => leader, _ => i };
+        let route = self.routes.get(platoon_of(i))?;
+        route.get(self.crews.get(leader)?.waypoint % route.len().max(1)).copied()
+    }
     /// Debug/capture telemetry: the crew's armour-fighting state (docs/ENEMY_TANK_AI.md).
     pub fn doctrine(&self, i: usize) -> serde_json::Value {
         let c = &self.crews[i];

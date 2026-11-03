@@ -151,6 +151,8 @@ impl Game {
             .and_then(|props|props.pick(r.camera.pos,r.camera.forward(),view))}else{None};
         // OWNER-DIRECTED PRESENTATION: recent tokes sharpen and brighten the eye's picture.
         r.vision_boost=view.vision_boost;
+        // OWNER-DIRECTED: a smoked boost also carries the man 1.5 times as fast on foot (ledger).
+        self.foot.speed_scale=if view.boost_seconds>0.0 {crate::cigarette::BOOST_FOOT_SPEED} else {1.0};
         if std::mem::take(&mut self.cigarette_butt_pending) {
             self.throw_cigarette_butt(self.hand_prop_anchors.tip,r.camera.forward());
         }

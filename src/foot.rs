@@ -386,6 +386,14 @@ pub struct FootSoldier {
     pub panzerfaust_flash_t: f32,
     pub recoil: f32, // 0..1 muzzle-flip kick, decays fast (drives camera + pistol pose)
     pub speed_frac: f32, // 0..1 of full sprint this frame — feeds tank crews' detection of the man
+    /// The cigarette's on-foot speed boost (1 = none; 1.5 while a smoked boost lasts): a game
+    /// effect, the owner's choice, named in the ledger, not a physiological model.
+    pub speed_scale: f32,
+    /// Gait clock (radians; one step per pi) advanced by the distance actually walked, and the
+    /// eased share of the walking (0.5) or running (1) bob: a presentation of the camera and the
+    /// held weapon only, never the man's position, sight or collision.
+    pub gait_phase: f32,
+    pub gait_amount: f32,
     pub vel_y: f32,  // vertical velocity (jump/gravity); 0 = grounded
     pub airborne: bool, // true between a jump and the next landing (ground snap suspended)
     pub crouch_t: f32, // 0 = stand, 1 = crouch (smoothed so the camera glides, never snaps)
@@ -429,6 +437,9 @@ impl Default for FootSoldier {
             panzerfaust_flash_t: 0.0,
             recoil: 0.0,
             speed_frac: 0.0,
+            speed_scale: 1.0,
+            gait_phase: 0.0,
+            gait_amount: 0.0,
             vel_y: 0.0,
             airborne: false,
             crouch_t: 0.0,
@@ -543,7 +554,7 @@ impl FootSoldier {
         let r = Vec3::new(cy, 0.0, sy); // ground-plane right
         let wish = (f * fwd + r * strafe).normalize_or_zero();
         // Hold Shift to sprint. Crouch has priority, including when both modifiers are held.
-        let speed = if crouch { CROUCH_WALK } else if run { RUN } else { WALK };
+        let speed = (if crouch { CROUCH_WALK } else if run { RUN } else { WALK }) * self.speed_scale.max(0.1);
         self.speed_frac = if wish.length_squared() > 0.01 {
             (speed / RUN).clamp(0.0, 1.0)
         } else {
@@ -562,6 +573,12 @@ impl FootSoldier {
         );
         self.pos.x = gated.x;
         self.pos.z = gated.y;
+        // Gait: a step every ~0.75 m walking, ~1.05 m running; the bob eases in and out.
+        let walked = glam::Vec2::new(self.pos.x - before.x, self.pos.z - before.z).length();
+        let stride = if run && !crouch { 1.05 } else { 0.75 };
+        if !self.airborne { self.gait_phase = (self.gait_phase + walked / stride * std::f32::consts::PI) % std::f32::consts::TAU; }
+        let target = if walked < 1e-4 || self.airborne { 0.0 } else if run && !crouch { 1.0 } else { 0.5 };
+        self.gait_amount += (target - self.gait_amount) * (1.0 - (-6.0 * dt).exp());
         // Vertical: a jump lofts you, gravity brings you back; the ground snap only re-engages on
         // landing (so you can hop a low wall or step off the hull deck). Can't jump mid-air or crouched.
         let ground = hf.height_at(self.pos.x, self.pos.z);
@@ -668,6 +685,20 @@ impl FootSoldier {
 
     /// Stance-aware eye — the ONLY place camera height is read, so the whole crouch visual falls
     /// out here (game.rs sets `camera.pos = foot.eye()`).
+    /// The walking bob as (vertical, lateral) metres for the camera and the held weapon: about
+    /// 1 cm walking and 2.5 cm running, the lateral sway one per stride pair. Subtle by intent
+    /// (the owner has found camera motion sickening before); presentation only.
+    pub fn gait_bob(&self) -> (f32, f32) {
+        let a = self.gait_amount * (1.0 - 0.6 * self.crouch_t);
+        let walking = (a / 0.5).clamp(0.0, 1.0);
+        let running = ((a - 0.5) / 0.5).clamp(0.0, 1.0);
+        // The eye dips at each footfall (twice per stride pair) and sways once per pair.
+        let dip = walking * 0.010 + running * 0.015;
+        let vertical = -dip * (0.5 - 0.5 * (2.0 * self.gait_phase).cos());
+        let lateral = (walking * 0.006 + running * 0.006) * self.gait_phase.sin();
+        (vertical, lateral)
+    }
+
     pub fn eye(&self) -> Vec3 {
         self.pos + Vec3::Y * (EYE + (EYE_CROUCH - EYE) * self.crouch_t)
     }

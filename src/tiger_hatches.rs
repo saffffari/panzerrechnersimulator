@@ -107,6 +107,18 @@ impl super::Game {
         self.roof_hatches.set(driver, loader, instant);
     }
 
+    /// Headless review control for the driver's visor shields (the authored moving shutters),
+    /// as `debug_set_roof_hatches` for the lids.
+    pub fn debug_set_driver_visor(&mut self, open: bool, instant: bool) {
+        self.driver_shutters.set(open, instant);
+    }
+
+    /// Headless review control for the cabin's propellant-smoke load (0..1, the state firing and
+    /// the breech's venting raise and the fan and hatches drain; `Game::update` keeps evolving it).
+    pub fn debug_set_interior_haze(&mut self, haze: f32) {
+        self.interior_haze = haze.clamp(0.0, 1.0);
+    }
+
     pub(super) fn drive_roof_hatches(&self, renderer: &mut crate::renderer::Renderer) {
         renderer.set_model(self.slots.driver_visor_holder, self.player.hull_model());
         renderer.set_visible(self.slots.driver_visor_holder, true);

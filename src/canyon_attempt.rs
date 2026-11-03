@@ -270,6 +270,101 @@ pub(crate) fn build_course(seed: u64) -> anyhow::Result<(wgpu::Device, wgpu::Que
     Ok((device, queue, r, g, manifest))
 }
 
+/// `bridge-check PREFIX SEED`: a map's declared crossing carries the Tiger. The Tiger is set down
+/// (disclosed) at points along the crossing's axis from 200 m short of it to 200 m past and left to
+/// settle; then it is set down 200 m short and driven at full throttle along the axis. Prints the
+/// supported height against the deck and the ground. Passes when every point on the deck settles
+/// within 0.25 m of the deck and the drive reaches the far bank.
+pub fn bridge_check(prefix: &str, seed: u64) -> anyhow::Result<()> {
+    let (_device, _queue, mut r, mut g, manifest) = build_course(seed)?;
+    // A deck-support and traversal proof, never a survivability result: the course's enemy
+    // platoons arrive during the minute of settling and their hits (FEA engine-bay bursts) would
+    // stop the Tiger before the drive. The receipt's `god` discloses it.
+    g.god = true;
+    println!("[bridge-check] INVINCIBLE traversal proof: the Tiger takes no damage");
+    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+    let c = value["crossings"].get(0).ok_or_else(|| anyhow::anyhow!("the map declares no crossing"))?;
+    let (cx, cz) = (c["center"][0].as_f64().unwrap_or(0.0) as f32, c["center"][1].as_f64().unwrap_or(0.0) as f32);
+    let deck = c["deck_y"].as_f64().unwrap_or(0.0) as f32;
+    let half = c["half_length"].as_f64().unwrap_or(0.0) as f32;
+    let east = std::f32::consts::FRAC_PI_2;
+    let dt = 1.0 / 60.0;
+    let mut rows = Vec::new();
+    let mut worst_on_deck = 0.0f32;
+    for k in 0..=40 {
+        let x = cx - 200.0 + k as f32 * 10.0;
+        g.debug_place_tiger(Vec2::new(x, cz), east);
+        for _ in 0..90 { g.update(&TankInput::default(), dt, &mut r); }
+        let y = g.player.pos.y;
+        let ground = g.hf.height_at(x, cz);
+        let on_deck = (x - cx).abs() <= half;
+        if on_deck { worst_on_deck = worst_on_deck.max((y - deck).abs()); }
+        println!("[bridge-check] x {:+7.1} settled y {:+7.2}  ground {:+7.2}  {}", x - cx, y, ground,
+            if on_deck { format!("deck {deck:+.2}") } else { String::new() });
+        rows.push(serde_json::json!({"dx": x - cx, "y": y, "ground": ground, "on_deck": on_deck}));
+    }
+    g.debug_place_tiger(Vec2::new(cx - 200.0, cz), east);
+    let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    let mut track = Vec::new();
+    for step in 0..(90.0 / dt) as usize {
+        g.update(&drive, dt, &mut r);
+        if step % 60 == 0 {
+            let p = g.player.pos;
+            println!("[bridge-check] drive t {:>3.0}s x {:+7.1} y {:+7.2} speed {:.1}", step as f32 * dt, p.x - cx, p.y, g.player.speed);
+            track.push(serde_json::json!({"t": step as f32 * dt, "dx": p.x - cx, "y": p.y, "z": p.z}));
+        }
+        if g.player.pos.x > cx + 200.0 { break; }
+    }
+    let crossed = g.player.pos.x > cx + half;
+    let receipt = serde_json::json!({"schema": "panzer.bridge-check.v1", "manifest": manifest, "deck_y": deck,
+        "half_length": half, "settled": rows, "worst_on_deck_m": worst_on_deck, "drive": track, "crossed": crossed,
+        "staging": "debug_place_tiger on the crossing's axis; the drive is the ordinary input at full throttle", "god": true});
+    std::fs::write(format!("{prefix}_result.json"), serde_json::to_vec_pretty(&receipt)?)?;
+    anyhow::ensure!(worst_on_deck <= 0.25, "FAIL: a point on the deck settled {worst_on_deck:.2} m off the deck");
+    anyhow::ensure!(crossed, "FAIL: the driven Tiger did not reach the far bank");
+    println!("PASS: the deck carries the Tiger (worst {worst_on_deck:.2} m) and it drove across");
+    Ok(())
+}
+
+/// `course-camp-check PREFIX SEED`: a course with `camp` builds as the expedition builds, fields the
+/// course, installs the camp and the half-track and starts the commander where the course says
+/// (in the Tiger with `camp_start: "tank"`), then runs ten seconds. Prints where everything stands.
+pub fn course_camp_check(prefix: &str, seed: u64) -> anyhow::Result<()> {
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    anyhow::ensure!(crate::canyon::selected_course_wants_camp(), "the course does not ask for a camp");
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_expedition_act(&device, &queue, false, &world::act(1))?;
+    g.enable_canyon_course_seeded(seed)?;
+    let in_tank = crate::canyon::selected_course_camp_start_in_tank();
+    let camp = g.expedition_initial_camp_position()?;
+    g.enable_expedition(seed, camp)?;
+    if in_tank { g.sync_expedition_now()?; } else { g.begin_expedition_at_camp(&mut r)?; }
+    g.enable_singleplayer_crew();
+    g.set_defer_rtt_to_render(true);
+    g.mute_audio();
+    let start = g.player.pos;
+    for step in 0..600 {
+        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+        if step % 8 == 0 { crate::simulation_uploads::drain(&device, &queue)?; }
+    }
+    let receipt = serde_json::json!({"schema": "panzer.course-camp-check.v1", "manifest": manifest, "seed": seed,
+        "camp_start_in_tank": in_tank, "camp": camp.to_array(), "tiger": g.player.pos.to_array(),
+        "tiger_start": start.to_array(), "camp_to_tiger_m": Vec2::new(camp.x - g.player.pos.x, camp.z - g.player.pos.z).length(),
+        "in_tank": g.mode == crate::game::Mode::Tank, "game_over": g.game_over().map(|c| format!("{c:?}")),
+        "halftrack": g.halftrack_receipt()});
+    std::fs::write(format!("{prefix}_result.json"), serde_json::to_vec_pretty(&receipt)?)?;
+    println!("[course-camp-check] {receipt}");
+    anyhow::ensure!(g.game_over().is_none(), "FAIL: the run ended");
+    anyhow::ensure!(!in_tank || g.mode == crate::game::Mode::Tank, "FAIL: the commander is not in the Tiger");
+    println!("PASS: camp at ({:.0}, {:.0}), {:.0} m from the Tiger; commander {}", camp.x, camp.z,
+        Vec2::new(camp.x - g.player.pos.x, camp.z - g.player.pos.z).length(), if in_tank { "in the Tiger" } else { "at the camp" });
+    Ok(())
+}
+
 /// The point `back_m` metres before the goal along the authored route, and the heading of travel there.
 fn route_point_before_goal(route: &[Vec2], back_m: f32) -> (Vec2, f32) {
     let mut idx = route.len() - 1;
