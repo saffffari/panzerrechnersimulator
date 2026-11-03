@@ -9,7 +9,10 @@
 //! - meter: photopic and scotopic luminance from the three spectral samples (section 1.2), a
 //!   linear spatial average blending a 2 deg fovea, a 20 deg Gaussian and the whole field
 //!   (0.50/0.30/0.20 [E]). This bounded reproduction approximation retains light from peripheral
-//!   apertures in a dark cabin; it is not a spatially resolved retinal adaptation model;
+//!   apertures in a dark cabin; the meter itself is not spatially resolved (the display is: below);
+//! - local adaptation (2026-11-03): the display draws each region's cone gain from the eye's one state
+//!   toward its own neighbourhood's pooled luminance (Vangorp et al. 2015 pooling, Kunkel & Reinhard
+//!   2010 range; `LOCAL_*`, `shaders/eye_local.wgsl`);
 //! - pupil: Watson & Yellott 2012's unified formula [R] (Stanley-Davies with the age term, age
 //!   25), constricting with 0.3 s, dilating with 2 s plus a 15 s tail (30 %) [M/E];
 //! - pigments: rate-limited regeneration (Mahroo & Lamb 2004 [M] for cones: K_m 0.2,
@@ -129,6 +132,99 @@ pub fn fovea_veil_per_lux(theta_deg: f64) -> f64 {
         10.0 / (theta_deg * theta_deg)
     }
 }
+/// The eye adapts place by place (2026-11-03; the owner: "either too dark or screen is entirely
+/// white ... can we not increase dynamic range"). Each region of the picture is shown through an
+/// adaptation luminance drawn from the eye's one adaptation state toward its own neighbourhood's
+/// luminance (`shaders/eye_local.wgsl` pools it, `crush.wgsl` applies it; `local_adaptation_log`,
+/// `local_cone_gain` here):
+///
+///   log La(x) = log A + k * clamp(P(x) - log Lm, -R/2, R/2),
+///
+/// A the eye's cone adaptation (lane 12), Lm the luminance it is adapting to this frame (the
+/// meter, lane 15), P(x) the neighbourhood's pooled log luminance. The pixel's cones are then
+/// scaled by Ferwerda's visibility-matching law at La(x) instead of A: TVI(A) / TVI(La(x)), the
+/// same law the global mapping uses. In the Weber range a region a decade darker than the field
+/// is lifted 10^k; below it the cone TVI flattens and the local term fades by itself (the site of
+/// adaptation moves from the receptors to broader post-receptoral pools at low light, Dunn,
+/// Lankheet & Rieke 2007), as the rods carry their own local response (`rod_response`).
+///
+/// - Spatial extent, sourced: Vangorp, Myszkowski, Graf & Mantiuk 2015, "A model of local
+///   adaptation" (ACM TOG 34(6) 166): the adaptation signal pools over a Gaussian of
+///   sigma 0.428 deg (their best model's wide term, weight 0.654; its narrow 0.0824 deg term is
+///   below one pixel here); their log-domain model #7 pools at 0.131 deg. `LOCAL_POOLING_SIGMA_DEG`
+///   takes the wide term, applied to the log of each meter cell's mean luminance (named: the
+///   paper's best model pools through fitted sigmoids, not the log; a cell is 4 x 4 pixels).
+/// - Range, sourced: the eye resolves contrast over about 3.7 log units at once (Kunkel &
+///   Reinhard 2010, "A reassessment of the simultaneous dynamic range of the human visual system",
+///   APGV; Jiang & Fairchild 2021 measured 3.3). A neighbourhood further than half of it from the
+///   adapted level adapts no further: beyond the simultaneous range it is out of reach, black or
+///   white, as it is to the eye.
+/// - Strength k: the share of the eye's adaptation that is local. Single cones adapt on their
+///   own (MacLeod, Williams & Makous 1992, "A visual nonlinearity fed by single cones", Vision
+///   Res. 32:347), so at a fixated point in daylight it approaches one; but the whole picture is
+///   shown at once while the crewman's gaze would have moved over it, and a region is seen with
+///   the adaptation it gets while fixated only partly. `LOCAL_ADAPTATION_STRENGTH` is a
+///   reproduction choice inside those bounds, named in docs/PHYSICAL_TRUTH_AUDIT.md, the owner's to
+///   set (`KESSEL_EYE_LOCAL=sigma_deg,strength` for review; strength 0 is the single-state eye).
+pub const LOCAL_POOLING_SIGMA_DEG: f64 = 0.428;
+pub const LOCAL_SIMULTANEOUS_RANGE_LOG: f64 = 3.7;
+pub const LOCAL_ADAPTATION_STRENGTH: f64 = 0.5;
+
+/// The pooling sigma and strength in use: the constants, or `KESSEL_EYE_LOCAL=sigma_deg,strength`
+/// (a review override, read once like `KESSEL_EYE_RANGE`; never set by a launcher or preset).
+pub fn local_adaptation_setting() -> (f64, f64) {
+    std::env::var("KESSEL_EYE_LOCAL").ok().and_then(|v| {
+        let parts: Vec<f64> = v.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        (parts.len() == 2 && parts[0].is_finite() && parts[1].is_finite())
+            .then(|| (parts[0].clamp(0.05, 20.0), parts[1].clamp(0.0, 1.0)))
+    }).unwrap_or((LOCAL_POOLING_SIGMA_DEG, LOCAL_ADAPTATION_STRENGTH))
+}
+
+/// log10 of the local adaptation luminance of a neighbourhood whose pooled log luminance is
+/// `pooled_log`, for an eye adapted to `adaptation_cd_m2` and metering `metered_cd_m2`.
+pub fn local_adaptation_log(adaptation_cd_m2: f64, metered_cd_m2: f64, pooled_log: f64, strength: f64) -> f64 {
+    let half = 0.5 * LOCAL_SIMULTANEOUS_RANGE_LOG;
+    let deviation = (pooled_log - clamp_luminance(metered_cd_m2).log10()).clamp(-half, half);
+    clamp_luminance(adaptation_cd_m2).log10() + strength.clamp(0.0, 1.0) * deviation
+}
+
+/// The factor on a pixel's cone exposure: Ferwerda's visibility-matching scale at the local
+/// adaptation over the scale at the eye's own (crush.wgsl `local_cone_gain`).
+pub fn local_cone_gain(adaptation_cd_m2: f64, metered_cd_m2: f64, pooled_log: f64, strength: f64) -> f64 {
+    let global = clamp_luminance(adaptation_cd_m2).log10();
+    let local = local_adaptation_log(adaptation_cd_m2, metered_cd_m2, pooled_log, strength);
+    10f64.powf(cone_tvi_log(global) - cone_tvi_log(local))
+}
+
+/// The CPU statement of `eye_local.wgsl`'s pooling: a separable Gaussian of `sigma` cells
+/// (horizontal, vertical) over a row-major grid of log luminances, edges clamped, the kernel cut
+/// at three sigma or 24 cells.
+pub fn pool_log_luminance(cells: &[f64], width: usize, height: usize, sigma: (f64, f64)) -> Vec<f64> {
+    let blur = |get: &dyn Fn(i64) -> f64, s: f64| -> f64 {
+        let radius = ((3.0 * s).ceil() as i64).min(24);
+        let (mut sum, mut wsum) = (0.0, 0.0);
+        for d in -radius..=radius {
+            let w = (-0.5 * (d * d) as f64 / (s * s).max(1e-6)).exp();
+            sum += w * get(d);
+            wsum += w;
+        }
+        sum / wsum.max(1e-6)
+    };
+    let mut rows = vec![0.0; cells.len()];
+    for y in 0..height {
+        for x in 0..width {
+            rows[y * width + x] = blur(&|d| cells[y * width + (x as i64 + d).clamp(0, width as i64 - 1) as usize], sigma.0);
+        }
+    }
+    let mut out = vec![0.0; cells.len()];
+    for y in 0..height {
+        for x in 0..width {
+            out[y * width + x] = blur(&|d| rows[(y as i64 + d).clamp(0, height as i64 - 1) as usize * width + x], sigma.1);
+        }
+    }
+    out
+}
+
 pub const METER_MIN_CD_M2: f64 = 1.0e-7;
 pub const METER_MAX_CD_M2: f64 = 1.0e7;
 pub const METER_FOVEA_RADIUS_DEG: f64 = 1.0;
@@ -172,15 +268,47 @@ pub const ROD_TAU_DOWN_S: f64 = 8.0;
 /// falling within a second; the owner-directed 4.5 s above keeps glances from swinging the picture.
 /// Inside the hull a glance is already damped (`inside_meter`), so a target rising more than
 /// `DAZZLE_FROM_LOG` decades over the adapted level is the whole cabin brightening (a fire, the
-/// ammunition going up): it relaxes toward `DAZZLE_TAU_S`, reached half a decade further. Outside,
-/// the comfortable rates stand (`Eye::step`). The ammunition
+/// ammunition going up): it relaxes toward `DAZZLE_TAU_S`, reached half a decade further. The ammunition
 /// going up inside the hull (4.7 decades) had left the picture washed out for more than ten seconds.
+///
+/// Outside the hull (2026-11-03, the owner: "the exposure effect is just so blinding its ruining
+/// the whole game"): the comfortable 4.5 s held every step up as a white-out. Climbing out of the
+/// cupola into the noon snow (1.8 decades) left 60 % of the frame at white a quarter second out,
+/// 47 % at one second, 26 % at three and 11 % at six (`eye-review`, before). A real eye's light
+/// adaptation to a step up does most of its work within the first second: the increment threshold
+/// after the onset of a bright field falls steeply over its first tenths of a second and slowly
+/// for minutes after (Crawford 1947, Proc. R. Soc. B 134:283; Baker 1949, J. Opt. Soc. Am. 39:172).
+/// So outdoors a target `OUTSIDE_DAZZLE_FROM_LOG` (0.2 decades, 1.6 times) above the adapted level
+/// relaxes toward `DAZZLE_TAU_S`, reached `OUTSIDE_DAZZLE_RAMP_LOG` further: an ordinary outdoor
+/// glance (the meter's field-weighted swing between sky and ground, under 0.2 decades) keeps the
+/// comfortable rate, a step into daylight does not. Outside the hull no meter damping stands in
+/// front of this rate as `inside_meter` does inside, hence the lower threshold there.
 pub const DAZZLE_FROM_LOG: f64 = 0.5;
+pub const DAZZLE_RAMP_LOG: f64 = 0.5;
+pub const OUTSIDE_DAZZLE_FROM_LOG: f64 = 0.2;
+pub const OUTSIDE_DAZZLE_RAMP_LOG: f64 = 0.3;
+/// The fast light adaptation of Crawford and Baker was measured with photopic adapting fields;
+/// the rods' and the mesopic eye's light adaptation is slower. Outdoors the dazzle rate applies in
+/// proportion to how photopic the target is: from the CIE 191 mesopic coefficient m = 0.75 (about
+/// 0.9 cd/m^2) to m = 1 (5 cd/m^2 and above). A fire's glow over the night field (0.05 cd/m^2)
+/// adapts at the comfortable rate, so the night is not lost for seconds after it dies (an HE strike
+/// at night: 36 % of the frame black a second later under the ungated rule; eye-review).
+pub const OUTSIDE_DAZZLE_MESOPIC_FROM: f64 = 0.75;
 pub const DAZZLE_TAU_S: f64 = 0.6;
-/// The time constant toward a brighter target `excess_log` decades above the adapted level.
+/// The time constant toward a brighter target `excess_log` decades above the adapted level,
+/// inside the hull.
 pub fn rise_tau(base_tau_s: f64, excess_log: f64) -> f64 {
-    let t = ((excess_log - DAZZLE_FROM_LOG) / 0.5).clamp(0.0, 1.0);
-    let w = t * t * (3.0 - 2.0 * t);
+    rise_tau_from(base_tau_s, excess_log, DAZZLE_FROM_LOG, DAZZLE_RAMP_LOG, 1.0)
+}
+/// The same outside the hull (`Eye::step`, the GPU eye's outdoor and optic modes), toward a target
+/// of mesopic coefficient `m_target`.
+pub fn outside_rise_tau(base_tau_s: f64, excess_log: f64, m_target: f64) -> f64 {
+    let t = ((m_target - OUTSIDE_DAZZLE_MESOPIC_FROM) / (1.0 - OUTSIDE_DAZZLE_MESOPIC_FROM)).clamp(0.0, 1.0);
+    rise_tau_from(base_tau_s, excess_log, OUTSIDE_DAZZLE_FROM_LOG, OUTSIDE_DAZZLE_RAMP_LOG, t * t * (3.0 - 2.0 * t))
+}
+fn rise_tau_from(base_tau_s: f64, excess_log: f64, from: f64, ramp: f64, share: f64) -> f64 {
+    let t = ((excess_log - from) / ramp).clamp(0.0, 1.0);
+    let w = t * t * (3.0 - 2.0 * t) * share;
     base_tau_s + (DAZZLE_TAU_S - base_tau_s) * w
 }
 
@@ -256,6 +384,12 @@ pub const INSIDE_REFERENCE_TAU_S: f64 = 20.0;
 /// long is adapted to its field at once when the eye returns: putting the eye to a sight does not
 /// swing the exposure (owner-directed, 2026-10-28).
 pub const OPTIC_RESNAP_GAP_S: f64 = 0.5;
+/// A view's snap (its first frame, an optic returned to) repeats for this long of frames, so the eye
+/// is adapted to its field as transported now, not to the first frames of a view whose temporal
+/// histories are as old as its last use (`exposure.wgsl` lane 31). Scheduling of the snap only; the
+/// adapted state is `Eye::adapted` of the frame. 2026-11-03: the TZF at night snapped to the 2.8
+/// cd/m^2 of its noon history, bleached its cones to it and showed black for the whole minute.
+pub const SNAP_HOLD_S: f64 = 0.25;
 
 /// The meter an eye inside the hull adapts to: `INSIDE_RESPONSE` of the metered log luminance
 /// about the reference (photopic, scotopic log10 cd/m^2), the field and flash lanes untouched.
@@ -543,10 +677,6 @@ impl Eye {
         let retinal_ratio_log = (area / steady_area).log10();
         let cone_target = meter.photopic_cd_m2.log10() + retinal_ratio_log;
         let rod_target = meter.scotopic_cd_m2.log10() + retinal_ratio_log;
-        self.cone_neural_log = relax(self.cone_neural_log, cone_target,
-            if cone_target > self.cone_neural_log { CONE_TAU_UP_S } else { CONE_TAU_DOWN_S });
-        self.rod_neural_log = relax(self.rod_neural_log, rod_target,
-            if rod_target > self.rod_neural_log { ROD_TAU_UP_S } else { ROD_TAU_DOWN_S });
         // Flash energy on the part of the retina that saw it.
         let cone_adaptation = self.cone_adaptation_cd_m2();
         // A steady high-contrast port is not a new flash on every frame. The detector uses
@@ -556,6 +686,17 @@ impl Eye {
             meter.field_cd_m2,FLASH_ONSET_TAU_S);
         let flashing = meter.transient_source && rising && meter.bright_coverage > FLASH_MIN_COVERAGE
             && meter.bright_cd_m2 > FLASH_ABOVE_ADAPTATION * cone_adaptation;
+        // Rising: the comfortable rate, falling to the dazzle rate for a step far up
+        // (`outside_rise_tau`; this is the outdoor eye). Not during a weapon's flash: what a
+        // flash of tens of milliseconds leaves is its afterimage (the recovery fit below), and
+        // the dazzle rate on top of it counted the flash twice: a night muzzle flash raised the
+        // neural state 0.45 decades, which then fell at the 6 s dark rate.
+        let m_target = mesopic_coefficient(meter.photopic_cd_m2, meter.scotopic_cd_m2);
+        let rise = |excess: f64, base: f64| if flashing { base } else { outside_rise_tau(base, excess, m_target) };
+        self.cone_neural_log = relax(self.cone_neural_log, cone_target,
+            if cone_target > self.cone_neural_log { rise(cone_target - self.cone_neural_log, CONE_TAU_UP_S) } else { CONE_TAU_DOWN_S });
+        self.rod_neural_log = relax(self.rod_neural_log, rod_target,
+            if rod_target > self.rod_neural_log { rise(rod_target - self.rod_neural_log, ROD_TAU_UP_S) } else { ROD_TAU_DOWN_S });
         self.flash_energy_td_s *= (-dt / FLASH_MEMORY_TAU_S).exp();
         if flashing {
             self.flash_energy_td_s += meter.bright_coverage * meter.bright_cd_m2 * area * dt;
@@ -731,6 +872,10 @@ pub fn wgsl_constants() -> String {
     push("OBS_ROD_TAU_UP", ROD_TAU_UP_S);
     push("OBS_ROD_TAU_DOWN", ROD_TAU_DOWN_S);
     push("OBS_DAZZLE_FROM_LOG", DAZZLE_FROM_LOG);
+    push("OBS_DAZZLE_RAMP_LOG", DAZZLE_RAMP_LOG);
+    push("OBS_OUTSIDE_DAZZLE_FROM_LOG", OUTSIDE_DAZZLE_FROM_LOG);
+    push("OBS_OUTSIDE_DAZZLE_RAMP_LOG", OUTSIDE_DAZZLE_RAMP_LOG);
+    push("OBS_OUTSIDE_DAZZLE_MESOPIC_FROM", OUTSIDE_DAZZLE_MESOPIC_FROM);
     push("OBS_DAZZLE_TAU", DAZZLE_TAU_S);
     push("OBS_DISPLAY_ADAPTATION", DISPLAY_ADAPTATION_CD_M2);
     push("OBS_DISPLAY_KEY", DISPLAY_KEY);
@@ -739,6 +884,7 @@ pub fn wgsl_constants() -> String {
     push("OBS_INSIDE_RESPONSE", INSIDE_RESPONSE);
     push("OBS_INSIDE_REFERENCE_TAU", INSIDE_REFERENCE_TAU_S);
     push("OBS_OPTIC_RESNAP_GAP", OPTIC_RESNAP_GAP_S);
+    push("OBS_SNAP_HOLD", SNAP_HOLD_S);
     push("OBS_ROD_DISPLAY_GAIN", std::env::var("KESSEL_ROD_DISPLAY_GAIN").ok()
         .and_then(|v| v.parse().ok()).unwrap_or(ROD_DISPLAY_GAIN));
     push("OBS_CABIN_ROD_DISPLAY_GAIN", CABIN_ROD_DISPLAY_GAIN);
@@ -769,8 +915,27 @@ pub fn wgsl_constants() -> String {
     push("OBS_ROD_WEBER_KNEE", 10f64.powf(-1.44));
     push("OBS_ROD_WEBER_RESPONSE", DISPLAY_KEY / DISPLAY_ADAPTATION_CD_M2
         * 10f64.powf(cone_tvi_log(DISPLAY_ADAPTATION_CD_M2.log10()) + 0.395));
+    push("OBS_LOCAL_HALF_RANGE", 0.5 * LOCAL_SIMULTANEOUS_RANGE_LOG);
     // Inject one implementation into every observer-aware shader. It operates on linear
     // display input, before tone mapping/encoding, and does not modify the exposure meter.
+    out.push_str(r#"
+// Ferwerda 1996 cone threshold-versus-intensity, log10 (observer::cone_tvi_log).
+fn obs_cone_tvi_log(l: f32) -> f32 {
+    if (l <= -2.6) { return -0.72; }
+    if (l < 1.9) { return pow(0.249 * l + 0.65, 2.7) - 0.72; }
+    return l - 1.255;
+}
+// The eye's local adaptation (observer::local_cone_gain): the factor on a pixel's cone exposure
+// for a neighbourhood of pooled log10 luminance `pooled_log`, the eye adapted to `adaptation` and
+// metering `metered` (cd/m^2), `strength` the local share. 1 where the strength or the state is 0.
+fn obs_local_cone_gain(adaptation: f32, metered: f32, pooled_log: f32, strength: f32) -> f32 {
+    if (strength <= 0.0 || !(adaptation > 0.0) || !(metered > 0.0)) { return 1.0; }
+    let global = log2(clamp(adaptation, OBS_METER_MIN, OBS_METER_MAX)) * 0.30102999566;
+    let reference = log2(clamp(metered, OBS_METER_MIN, OBS_METER_MAX)) * 0.30102999566;
+    let deviation = clamp(pooled_log - reference, -OBS_LOCAL_HALF_RANGE, OBS_LOCAL_HALF_RANGE);
+    let local = global + clamp(strength, 0.0, 1.0) * deviation;
+    return pow(10.0, obs_cone_tvi_log(global) - obs_cone_tvi_log(local));
+}"#);
     out.push_str(r#"
 fn obs_local_rod_tvi_log(l: f32) -> f32 {
     if (l <= -3.94) { return -2.86; }
@@ -1289,12 +1454,14 @@ mod tests {
             let span = daylight.photopic_cd_m2.log10() - start;
             advance(&mut eye, daylight, 0.1);
             let glance_fraction = (eye.cone_neural_log - start) / span;
-            assert!((0.02..0.12).contains(&glance_fraction),
+            // Three decades up outdoors is a step into daylight, not a glance: it adapts at the
+            // dazzle rate since 2026-11-03 (`outside_rise_tau`), a tenth of a second still a start.
+            assert!((0.05..0.25).contains(&glance_fraction),
                 "a 100 ms glance must start, not complete adaptation: {glance_fraction}");
             advance(&mut eye, daylight, 0.9);
             let held_fraction = (eye.cone_neural_log - start) / span;
-            assert!((0.15..0.35).contains(&held_fraction),
-                "holding a bright view must still adapt: {held_fraction}");
+            assert!((0.6..0.95).contains(&held_fraction),
+                "holding a bright view adapts most of the way within a second: {held_fraction}");
             let before_return = eye.cone_neural_log;
             advance(&mut eye, cabin, 0.1);
             assert!(eye.cone_neural_log < before_return);
@@ -1312,6 +1479,15 @@ mod tests {
             }
             reference = Some(final_logs);
         }
+        // An ordinary outdoor glance (sky to snow, 0.15 decades) keeps the owner's comfortable
+        // rate: a tenth of a second moves it a few percent of the way.
+        let ground = Meter::uniform(600.0, 1400.0);
+        let sky = Meter::uniform(600.0 * 10f64.powf(0.15), 1400.0 * 10f64.powf(0.15));
+        let mut eye = Eye::adapted(ground, Viewing::Binocular);
+        let start = eye.cone_neural_log;
+        for _ in 0..6 { eye.step(sky, Viewing::Binocular, 1.0 / 60.0); }
+        let fraction = (eye.cone_neural_log - start) / 0.15;
+        assert!(fraction < 0.06, "an outdoor glance swings the picture: {fraction}");
     }
 
     #[test]
@@ -1452,6 +1628,187 @@ mod tests {
         for name in ["OBS_CONE_TAU_DOWN", "OBS_ROD_BLEACH_LOG", "OBS_DISPLAY_KEY", "OBS_PUPIL_SLOW_SHARE"] {
             assert!(shader.contains(name), "{name} unused by the GPU eye");
             assert!(!shader.contains(&format!("const {name}")), "{name} must come from Rust");
+        }
+    }
+}
+
+/// The eye's local adaptation and its time course after a flash or a step into daylight
+/// (2026-11-03; `LOCAL_*`, `outside_rise_tau`, `shaders/eye_local.wgsl`, `crush.wgsl`).
+#[cfg(test)]
+mod local_adaptation_tests {
+    use super::*;
+
+    fn step_eye(eye: &mut Eye, meter: Meter, seconds: f64) {
+        for _ in 0..(seconds * 60.0).round() as usize { eye.step(meter, Viewing::Binocular, 1.0 / 60.0); }
+    }
+
+    /// The pooling is the separable statement of one 2-D Gaussian over the log map, and a uniform
+    /// map pools to itself.
+    #[test]
+    fn the_pooling_is_a_log_domain_gaussian_of_the_sourced_extent() {
+        let (w, h) = (40usize, 24usize);
+        let cells: Vec<f64> = (0..w * h).map(|i| if (i % w) >= 20 { 3.0 } else { -1.0 }).collect();
+        let sigma = (2.0, 1.5);
+        let pooled = pool_log_luminance(&cells, w, h, sigma);
+        // Direct 2-D reference at a few cells.
+        for &(x, y) in &[(19usize, 10usize), (20, 10), (25, 3), (0, 0)] {
+            let (mut sum, mut wsum) = (0.0, 0.0);
+            for dy in -5i64..=5 { for dx in -6i64..=6 {
+                let wt = (-0.5 * (dx * dx) as f64 / (sigma.0 * sigma.0)).exp() * (-0.5 * (dy * dy) as f64 / (sigma.1 * sigma.1)).exp();
+                let cx = (x as i64 + dx).clamp(0, w as i64 - 1) as usize;
+                let cy = (y as i64 + dy).clamp(0, h as i64 - 1) as usize;
+                sum += wt * cells[cy * w + cx]; wsum += wt;
+            } }
+            assert!((pooled[y * w + x] - sum / wsum).abs() < 1e-9, "({x},{y}) {} vs {}", pooled[y * w + x], sum / wsum);
+        }
+        assert!(pool_log_luminance(&vec![2.5; w * h], w, h, sigma).iter().all(|v| (v - 2.5).abs() < 1e-12));
+        // A log-domain mean across the edge (between cells 19 and 20): 1.5 cells, 0.75 sigma, into
+        // the dark side the cell takes the bright side's four decades by the normal tail, 0.227.
+        assert!((pooled[10 * w + 18] - (-1.0 + 4.0 * 0.2266)).abs() < 0.03, "{}", pooled[10 * w + 18]);
+        // Sourced constants (Vangorp et al. 2015, Kunkel & Reinhard 2010) and a bounded strength.
+        assert_eq!(LOCAL_POOLING_SIGMA_DEG, 0.428);
+        assert_eq!(LOCAL_SIMULTANEOUS_RANGE_LOG, 3.7);
+        assert!((0.0..=1.0).contains(&LOCAL_ADAPTATION_STRENGTH));
+        // At the locked 1024 x 576 grid's 55-75 degree fields a meter cell spans 0.4-0.5 degree:
+        // the pooling is about one cell.
+        let [sx, sy] = crate::eye_local::sigma_cells(LOCAL_POOLING_SIGMA_DEG as f32, 60f32.to_radians(), 16.0 / 9.0);
+        assert!((0.7..1.5).contains(&sx) && (0.7..1.5).contains(&sy), "{sx} {sy}");
+    }
+
+    /// A neighbourhood at the metered level is shown as before; a darker one is lifted and a
+    /// brighter one held down, by the strength's share of the visibility-matching law, within the
+    /// simultaneous range; at night the cone TVI is flat and the local term fades by itself.
+    #[test]
+    fn local_adaptation_lifts_the_dark_holds_the_bright_and_keeps_the_field() {
+        let k = LOCAL_ADAPTATION_STRENGTH;
+        let (a, m) = (1000.0, 1000.0);
+        assert!((local_cone_gain(a, m, m.log10(), k) - 1.0).abs() < 1e-12);
+        assert_eq!(local_cone_gain(a, m, -3.0, 0.0), 1.0, "strength 0 is the single-state eye");
+        // The Weber range: a decade darker lifted 10^k, a decade brighter held down 10^-k.
+        let dark = local_cone_gain(a, m, 2.0, k);
+        let bright = local_cone_gain(a, m, 4.0, k);
+        assert!((dark.log10() - k).abs() < 1e-9 && (bright.log10() + k).abs() < 1e-9, "{dark} {bright}");
+        // Monotone: the shown luminance still rises with the neighbourhood's (the order of regions
+        // is kept, their contrast compressed by 1 - k, never inverted).
+        let mut previous = 0.0;
+        for i in 0..200 {
+            let pooled = -1.0 + i as f64 * 0.04;
+            let shown = 10f64.powf(pooled) * local_cone_gain(a, m, pooled, k);
+            assert!(shown >= previous * (1.0 - 1e-12), "{pooled}: {shown} < {previous}");
+            previous = shown;
+        }
+        // Bounded by the simultaneous range: six decades down lifts no more than k half of it.
+        let floor = local_cone_gain(a, m, -3.0, k).log10();
+        assert!((floor - k * 0.5 * LOCAL_SIMULTANEOUS_RANGE_LOG).abs() < 1e-9, "{floor}");
+        // A moonless night (the cone TVI flat below 10^-2.6 cd/m^2): no local cone gain at all.
+        assert!((local_cone_gain(1.0e-4, 1.0e-4, -5.0, k) - 1.0).abs() < 1e-12);
+        // A dark corner a hundredth of a 2,000 cd/m^2 daylight meter: two decades down, held to the
+        // simultaneous range's half (1.85), lifted 10^(0.5 x 1.85) = 8.4 at k = 0.5. Under the cone
+        // TVI's Weber knee (80 cd/m^2) the same deviation lifts less.
+        let corner = local_cone_gain(2000.0, 2000.0, 1.3, 0.5);
+        assert!((corner - 10f64.powf(0.925)).abs() < 0.05, "{corner}");
+        assert!(local_cone_gain(20.0, 20.0, -0.7, 0.5) < corner);
+        // The shader carries the same law, generated from here.
+        let generated = wgsl_constants();
+        assert!(generated.contains("fn obs_local_cone_gain(") && generated.contains("const OBS_LOCAL_HALF_RANGE: f32 = 1.85e0;"));
+        let module = wgpu::naga::front::wgsl::parse_str(&generated).unwrap();
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all()).validate(&module).unwrap();
+        let crush = include_str!("../shaders/crush.wgsl");
+        assert!(crush.contains("let local_gain = obs_local_cone_gain(cr.eye.y, cr.eye.z,"));
+        assert!(crush.contains("cr.exposure * local_gain + rod_hue"), "the rods keep their own local response");
+        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("LOCAL_ADAPTATION_STRENGTH"));
+    }
+
+    /// The pooling shader validates with the generated constants.
+    #[test]
+    fn the_local_pooling_shader_validates() {
+        let source = include_str!("../shaders/eye_local.wgsl").replacen("// @observer-constants", &wgsl_constants(), 1);
+        let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all()).validate(&module).unwrap();
+    }
+
+    /// Recovery bounds. A main-gun flash seen dark-adapted dazzles, then the night returns within
+    /// the published fit's seconds; a step from the cabin into the noon snow is over-exposed for
+    /// about a second, not ten (`outside_rise_tau`).
+    #[test]
+    fn a_flash_dazzles_briefly_and_a_step_into_daylight_recovers_within_seconds() {
+        // The night: moonless snow. The flash: 83 ms of the muzzle's light over a third of the field.
+        let night = Meter::uniform(5.0e-3, 1.2e-2);
+        let flash = Meter { photopic_cd_m2: 200.0, scotopic_cd_m2: 300.0, bright_coverage: 0.35,
+            bright_cd_m2: 2_000.0, field_cd_m2: 200.0, transient_source: true };
+        let mut eye = Eye::adapted(night, Viewing::Binocular);
+        let before = eye.cone_adaptation_cd_m2();
+        step_eye(&mut eye, flash, 5.0 / 60.0);
+        assert!(eye.flash_energy_td_s > 1.0e3, "the flash is a flash: {}", eye.flash_energy_td_s);
+        // The flash acts through its afterimage, not as a step into daylight: the neural state
+        // moves a tenth of a decade over the flash's 83 ms (the dazzle rate would have moved it 0.45).
+        assert!(eye.cone_neural_log - night.photopic_cd_m2.log10() < 0.15, "{}", eye.cone_neural_log);
+        // Recovery: the afterimage falls under the night's own luminance (the field is seen again).
+        let mut recovered = None;
+        for frame in 0..(30 * 60) {
+            step_eye(&mut eye, night, 1.0 / 60.0);
+            if recovered.is_none() && eye.mapping(Viewing::Binocular).afterimage_cd_m2 < night.photopic_cd_m2 {
+                recovered = Some(frame as f64 / 60.0);
+            }
+        }
+        let recovered = recovered.expect("the night returns");
+        eprintln!("night flash: E {:.0} td s, afterimage under the field after {recovered:.2} s", eye.flash_energy_td_s);
+        assert!((0.3..5.0).contains(&recovered), "{recovered}");
+        assert!(eye.cone_adaptation_cd_m2() < 1.5 * before, "the eye is back near the night: {}", eye.cone_adaptation_cd_m2());
+
+        // A step from the buttoned cabin (12 cd/m^2) into the noon snow (900 cd/m^2): the seconds
+        // the snow is shown above twice its adapted brightness.
+        let cabin = Meter::uniform(12.0, 25.0);
+        let snow = Meter::uniform(900.0, 2100.0);
+        let steady = Eye::adapted(snow, Viewing::Binocular).mapping(Viewing::Binocular).cone_exposure;
+        let mut eye = Eye::adapted(cabin, Viewing::Binocular);
+        let mut over = 0.0;
+        for _ in 0..(10 * 60) {
+            step_eye(&mut eye, snow, 1.0 / 60.0);
+            if eye.mapping(Viewing::Binocular).cone_exposure > 2.0 * steady { over += 1.0 / 60.0; }
+        }
+        eprintln!("cabin to noon snow: over twice the adapted exposure for {over:.2} s");
+        assert!(over < 2.0, "the white-out lasts {over} s");
+        // An ordinary outdoor swing (0.15 decades) keeps the owner's comfortable rate.
+        assert_eq!(outside_rise_tau(CONE_TAU_UP_S, 0.15, 1.0), CONE_TAU_UP_S);
+        assert!((outside_rise_tau(CONE_TAU_UP_S, 1.0, 1.0) - DAZZLE_TAU_S).abs() < 1e-12);
+        // A glow over the night field (mesopic, m 0.4) rises at the comfortable rate.
+        assert_eq!(outside_rise_tau(CONE_TAU_UP_S, 1.0, 0.4), CONE_TAU_UP_S);
+        let exposure = include_str!("../shaders/exposure.wgsl");
+        assert!(exposure.contains("rise_tau(OBS_CONE_TAU_UP, cone_rise, inside, m_target)"));
+        assert!(exposure.contains("smoothstep(OBS_OUTSIDE_DAZZLE_MESOPIC_FROM, 1.0, m_target)"));
+        assert!(!exposure.contains("select(0.0, cone_target - state[8], inside)"), "outdoors the dazzle rate applies too");
+    }
+
+    /// Both shipping presets run the same eye: no launcher opens a debug gate or a review override
+    /// of the eye, the gates resolve closed in both presets, and the local adaptation is part of
+    /// the eye in both, not a gate.
+    #[test]
+    fn the_shipping_presets_and_launchers_use_no_debug_gate_and_the_same_local_eye() {
+        for launcher in [include_str!("../tools/launch_demo_20261101.sh"), include_str!("../tools/launch_canyon_v2.sh"),
+            include_str!("../tools/launch_panzerrechnersystem.sh"), include_str!("../tools/launch_current_build.sh")] {
+            for gate in ["KESSEL_EYE_LOCAL", "KESSEL_EYE_RANGE", "KESSEL_CAMERA_EXPOSURE", "KESSEL_DEBUG_",
+                "KESSEL_ROD_DISPLAY_GAIN", "KESSEL_ROD_HUE"] {
+                assert!(!launcher.contains(&format!("export {gate}")) && !launcher.contains(&format!(" {gate}")),
+                    "a launcher sets {gate}");
+            }
+        }
+        // The demo launcher drops every inherited KESSEL_ flag before it sets its own.
+        assert!(include_str!("../tools/launch_demo_20261101.sh")
+            .contains("for v in $(env | grep -o '^KESSEL_[A-Z0-9_]*'); do unset \"$v\"; done"));
+        assert!(crate::debug_gates::DebugGates::SHIPPING.fixed_camera_exposure.is_none());
+        for preset in crate::graphics::GraphicsPreset::ALL {
+            assert!(crate::debug_gates::DebugGates::resolve(false, preset, |_| Some("1".into())).is_shipping());
+        }
+        let local = include_str!("eye_local.rs");
+        for forbidden in ["GraphicsPreset", "graphics::", "debug_gates", "cfg!(debug_assertions)"] {
+            assert!(!local.contains(forbidden), "the local eye may not depend on {forbidden}");
+        }
+        assert!(LOCAL_ADAPTATION_STRENGTH > 0.0);
+        if std::env::var_os("KESSEL_EYE_LOCAL").is_none() {
+            assert_eq!(local_adaptation_setting(), (LOCAL_POOLING_SIGMA_DEG, LOCAL_ADAPTATION_STRENGTH));
         }
     }
 }

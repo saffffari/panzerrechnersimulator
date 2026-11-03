@@ -42,7 +42,9 @@ struct Crush {
     // Debug only: x 1 shows the point layer (KESSEL_POINT_LAYER_VIEW, the rod pooling check).
     debug: vec4<f32>,
     // The eye's field state, copied from its lanes every metered frame: x = the CIE 191 mesopic
-    // coefficient of the field's adaptation (lane 14). Appended lane.
+    // coefficient of the field's adaptation (lane 14), y = the cone adaptation cd/m^2 (lane 12),
+    // z = the luminance metered this frame cd/m^2 (lane 15); w = the local adaptation's strength
+    // (observer::LOCAL_ADAPTATION_STRENGTH, 0 = the single-state eye). Appended lane.
     eye: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
@@ -62,6 +64,10 @@ struct EnvironmentWhite { lanes: array<vec4<f32>, 68>, };
 @group(0) @binding(7) var blue_noise: texture_2d<u32>;
 // The sub-pixel emitters' radiance at their pixel (the raymarch backend's firefly lanterns).
 @group(0) @binding(8) var point_layer: texture_2d<f32>;
+// The eye's pooled neighbourhood luminance, log10 cd/m^2 over the meter's cells (eye_local.wgsl),
+// sampled bilinearly: the local adaptation of each region (observer::local_cone_gain).
+@group(0) @binding(9) var local_pooled: texture_2d<f32>;
+@group(0) @binding(10) var local_samp: sampler;
 
 // A camera white point, not a change to scene lighting. Use the diffuse sky irradiance that
 // already lights the scene; a red flash, painted wall or warm cabin lamp cannot drive this meter.
@@ -129,13 +135,18 @@ fn eye_response(radiance: vec3<f32>, point: vec3<f32>, uv: vec2<f32>) -> vec3<f3
     let photopic = dot(radiance, vec3(OBS_PHOTOPIC_R, OBS_PHOTOPIC_G, OBS_PHOTOPIC_B));
     let scotopic_px = dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B));
     let local_rods = mix(obs_local_rod_weight(photopic, scotopic_px, cr.eye.x), 1.0, clamp(cr.eye_range_strength, 0.0, 1.0));
-    return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;
+    // The eye adapts place by place (observer::local_cone_gain): each region's cones are shown
+    // through an adaptation drawn from the eye's state toward its own neighbourhood's luminance.
+    let local_gain = obs_local_cone_gain(cr.eye.y, cr.eye.z,
+        textureSampleLevel(local_pooled, local_samp, uv, 0.0).r, cr.eye.w);
+    return cone_seen * camera_white_gain() * cr.exposure * local_gain + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;
 }
 
 // The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright
-// field through a port, each region on its own gain. The single exposure above cannot do that,
-// so parts of the picture more than EYE_RANGE_KNEE_STOPS from the adapted level are drawn in
-// toward it: the dark is lifted and the bright is held down, with colour kept. Within the knee
+// field through a port, each region on its own gain. Since 2026-11-03 the eye does that itself
+// (`local_gain` above, observer::local_cone_gain); this older presentation still follows it in a
+// closed cabin view: parts of the picture more than EYE_RANGE_KNEE_STOPS from the adapted level are
+// drawn in toward it: the dark is lifted and the bright is held down, with colour kept. Within the knee
 // the picture is untouched. OWNER-DIRECTED PRESENTATION of local adaptation
 // (docs/PHYSICAL_TRUTH_AUDIT.md); it changes no light in the scene.
 // Knee and slope are generated from observer.rs (OBS_EYE_RANGE_*; `KESSEL_EYE_RANGE=knee,slope`
