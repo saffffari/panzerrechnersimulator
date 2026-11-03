@@ -5092,3 +5092,14 @@ Named remaining gaps: a light is classed as a lamp by its kind and size (the lig
 fixture flag); a lamp's shadow ray still skips 0.15-0.3 m before it, so armour within that of a
 lamp outside the compartment is skipped; without ray queries (the portable preset) a light without
 a cube is shadowed only by the screen's contact shadow, at surfaces and in the medium (as before).
+
+## Weapon smoke turned down and made cheap, 2026-11-03 (`weapon_smoke_scale`, rm_medium.wgsl `rm_puff_extinction_mean`)
+
+Owner-directed ("please turn down the smoke", "next one needs to run in real time"): impact,
+penetration, blast and vent smoke keep 0.35 of their density and are gone by 2.5 s, fading over
+the last second (`WEAPON_SMOKE_DENSITY`, `WEAPON_SMOKE_LIFE_S`; the game's supports and the
+renderer's detonation, penetration and vent clouds alike; glow untouched; the muzzle's and a full
+cook-off's plume unchanged). Named approximation for cost: the shadow marches toward the key body
+and the lamps, and the shade pass's far segments, take each smoke support's envelope times its
+breakup's measured mean (0.6) instead of its noise; the froxel's own sample keeps the full field. A
+support thinner than 0.001 /m is skipped.
