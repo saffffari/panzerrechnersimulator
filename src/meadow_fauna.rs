@@ -260,7 +260,7 @@ impl Butterfly {
     fn spawn(cell: (i32, i32), index: u32, grass: &dyn Fn(Vec2) -> f32, ground: &dyn Fn(f32, f32) -> f32) -> Option<Self> {
         let h = hash(hash2(cell.0, cell.1, SALT_BUTTERFLY) ^ (index + 1).wrapping_mul(0x9e37_79b1));
         let spot = (Vec2::new(cell.0 as f32, cell.1 as f32) + Vec2::new(unit(hash(h ^ 1)), unit(hash(h ^ 2)))) * BUTTERFLY_CELL_M;
-        let flower = nearest_flower(spot, 5.0, grass, ground)?;
+        let flower = nearest_flower(spot, 10.0, grass, ground)?;
         Some(Butterfly {
             cell, index, species: (hash(h ^ 3) % BUTTERFLIES.len() as u32) as usize, pos: flower,
             heading: unit(hash(h ^ 4)) * std::f32::consts::TAU, mode: Mode::Perch(flower), timer: 1.0 + 6.0 * unit(hash(h ^ 5)),
@@ -299,7 +299,7 @@ impl Butterfly {
                 if let Mode::Approach(f) = self.mode {
                     let to = Vec2::new(f.x, f.z) - flat;
                     target_heading = Some(to.x.atan2(to.y));
-                    climb_to = f.y + 0.05 + to.length() * 0.4;
+                    climb_to = f.y + 0.05 + (to.length() * 0.15).min(1.0);
                     if to.length() < 0.08 && (self.pos.y - f.y).abs() < 0.12 {
                         self.mode = Mode::Perch(f);
                         self.pos = f;
@@ -327,7 +327,7 @@ impl Butterfly {
                 let floor = ground(self.pos.x, self.pos.z) + 0.2;
                 if self.pos.y < floor { self.pos.y = floor; }
                 if self.timer <= 0.0 && matches!(self.mode, Mode::Fly) {
-                    match nearest_flower(Vec2::new(self.pos.x, self.pos.z), 6.0, grass, ground) {
+                    match nearest_flower(Vec2::new(self.pos.x, self.pos.z), 10.0, grass, ground) {
                         Some(f) => self.mode = Mode::Approach(f),
                         None => self.timer = 2.0,
                     }
