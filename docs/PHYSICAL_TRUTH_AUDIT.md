@@ -1337,7 +1337,9 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     the rest; the toss near instant; a T-34's turret hundreds of feet up under a mushroom cloud
     taller than the throw). Once any round ignites or detonates, every other live round goes
     within 0.1 s (`cabin_heat::MASS_SPREAD_S`, each at its own hashed moment; authored), an HE
-    shell by detonating; the heat and jet chain above decides only when the first goes. This is
+    shell by detonating (rounds going in the same update are presented as one volley since
+    2026-11-03: one bang of their summed TNT at their TNT-weighted centre, one flash, one log line;
+    each round's heat, fuel and stowage stay its own, and the crew die once, at the first); the heat and jet chain above decides only when the first goes. This is
     the owner's rule, not a solved propagation from round to round (named; the measured
     timelines above are with the rule off). The owner also asked how high the turret would go
     with the whole load's energy put into its rise: about 6 km (Tiger) and 12 km (T-34); not
@@ -1408,7 +1410,10 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   part classification, and a joint's blend reaches 3.5 cells (3.5 cm at 1 cm; named). Without a
   volume the figure-and-skeleton build stands. Cost at 1 cm: 55,790 cells, a body built in about
   130 ms, and a killing strike's lattice solve in 0.4-0.65 s (about 25 ms at 2 cm). The solve
-  holds the tick as the plate's lattice does; a worker solve is open.
+  holds the tick as the plate's lattice does; a worker solve is open. Since 2026-11-03 the step
+  runs on up to 8 threads, each bond's force then each moving cell's gather in a fixed order, so
+  its result is bit-identical on any thread count (test); a burst on a whole body (a cook-off's)
+  solves in about 0.45 s instead of 2.3 s.
   Since 2026-11-03 a fragment's path through him is its permanent cavity: every cell within the
   fragment's half-size plus a quarter cell of its path is crushed and drawn as gone before the
   lattice runs (a voxel discretisation of the track, named; the lattice still tears the walls).
