@@ -626,8 +626,8 @@ def build(plan=None):
         P.put(f'{MODELS}berlin_{style}_{int(base)}_{cond}.glb', cx, cn, yaw, [sxs, 1.0, szs], tag=f'block_{cond}')
     # grammar houses: the burnt row on In den Zelten (Donath 1945, Bundesarchiv 183-M1015-321)
     grammar = []
-    for k in range(7):
-        x = -1040.0+62.0*k
+    for k in range(6):
+        x = -850.0+50.0*k
         typ = 'apartment_block' if k % 3 == 0 else 'merchant_brick_house'
         w = 24.0 if typ == 'apartment_block' else [12.0, 16.0, 20.0][int(h01(f'iz{k}')*3)]
         grammar.append(dict(id=f'berlin.zelten.house_{k:02d}', typology=typ, seed=int(zlib.crc32(f'iz{k}'.encode())),
@@ -797,6 +797,8 @@ def plant(P, H, tier, sm, water, lots):
             if h01(key, 3) > 0.62:
                 continue
             if sm.near(x2, n2, 3.0) or math.hypot(x2-GATE_X+60, n2-GATE_N) < 75:
+                continue
+            if -880.0 < x2 < -570.0 and 12.0 < n2 < 50.0:      # the In den Zelten row
                 continue
             # the Chaussee's verges cleared for the last days' airstrip (de.wikipedia Strasse des 17. Juni)
             if -500.0 < x2 < 60.0 and abs(n2-(-258.0+0.107*(x2-100.0))) < 38.0:
