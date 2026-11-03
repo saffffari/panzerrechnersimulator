@@ -19745,7 +19745,9 @@ impl Game {
 
     /// Consume the single trapped-gas charge belonging to the most recent shot: the block opens and
     /// the bore's blowback leaves the breech as a puff, which spreads into the compartment's air
-    /// under the roof (`cabin_fumes`).
+    /// under the roof (`cabin_fumes`). Called only where the block has opened: until then the gas
+    /// stays sealed in the bore and the case (the owner, 2026-11-03; test
+    /// `fume_leaves_only_an_opened_breech`).
     fn vent_bore_smoke(&mut self) {
         if !self.bore_smoke_pending {
             return;
@@ -19783,10 +19785,11 @@ impl Game {
             Breech::Spent => {
                 // Lone survivor freeing the hot casing: a short fumble while posted at the breech.
                 self.eject_t += dt;
-                if self.lever_open < LEVER_OPEN && self.bore_smoke_pending {
+                self.lever_open = 1.0; // the auto path throws the lever as part of the fumble
+                // The block open releases the bore's gas, sealed until now.
+                if self.lever_open >= LEVER_OPEN && self.bore_smoke_pending {
                     self.vent_bore_smoke();
                 }
-                self.lever_open = 1.0; // the auto path throws the lever as part of the fumble
                 if self.eject_t >= EJECT_FUMBLE && self.can_spawn_casing() {
                     self.eject_t = 0.0;
                     self.breech = Breech::Empty;
@@ -23845,8 +23848,7 @@ impl Game {
     pub fn debug_reload(&mut self) {
         // This explicit fixture creates a replacement serviceable cartridge. Ordinary reloads
         // always move the existing rack/held round through transfer_cartridge_state instead.
-        // A fired breech opened for it vents its blowback (the fixture draws out no case body).
-        self.vent_bore_smoke();
+        // The fixture never opens the block, so the fired case's gas stays sealed: no fume.
         self.cartridge_primers.consume(cartridge_primer::CHAMBER);
         self.breech = Breech::Loaded;
         self.lever_open = 0.0; // headless force: breech closed and ready

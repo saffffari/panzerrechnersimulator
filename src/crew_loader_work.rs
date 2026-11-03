@@ -197,8 +197,9 @@ impl Game {
             Phase::Open=>{
                 work.origin=clamp_interior_walk(work.origin,work.origin+(HOME-work.origin).clamp_length_max(0.55*h));
                 work.yaw=turn_toward(work.yaw,std::f32::consts::FRAC_PI_2,h);
-                if self.bore_smoke_pending {self.vent_bore_smoke();}
                 self.lever_open=(work.age/0.45).min(1.0);
+                // The bore's gas stays sealed until the block is open (the owner, 2026-11-03).
+                if self.lever_open>=LEVER_OPEN&&self.bore_smoke_pending {self.vent_bore_smoke();}
                 if self.lever_open>=1.0&&work.origin.distance(HOME)<0.025 {work.transition(Phase::Extract);}
             },
             Phase::Extract=>{

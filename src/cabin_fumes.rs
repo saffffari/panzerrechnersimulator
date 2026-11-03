@@ -457,6 +457,49 @@ mod tests {
 }
 
 #[cfg(test)]
+mod gate_tests {
+    /// The owner (2026-11-03): no fume while the block stays shut after the shot; the first puff
+    /// comes as the breech opens, the case's venting as it is drawn out. Every call that releases
+    /// the bore's gas stands behind the lever's open threshold (or the lever thrown open), and the
+    /// cases vent only from the two extraction paths.
+    #[test]
+    fn fume_leaves_only_an_opened_breech() {
+        let sources = [
+            ("game.rs", include_str!("game.rs")),
+            ("loader_hand_service.rs", include_str!("loader_hand_service.rs")),
+            ("crew_loader_work.rs", include_str!("crew_loader_work.rs")),
+            ("crew_solo.rs", include_str!("crew_solo.rs")),
+        ];
+        let mut vents = 0;
+        let mut freed = 0;
+        for (name, text) in sources {
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if line.contains(".breech_opened()") {
+                    assert!(lines[i.saturating_sub(12)..i].iter().any(|l| l.contains("fn vent_bore_smoke")),
+                        "{name}:{} releases the bore's gas outside vent_bore_smoke", i + 1);
+                }
+                if line.contains("self.vent_bore_smoke()") {
+                    vents += 1;
+                    let before = lines[i.saturating_sub(8)..=i].join("\n");
+                    let compact = before.replace(' ', "");
+                    assert!(compact.contains("crossed_open") || compact.contains("lever_open>=LEVER_OPEN"),
+                        "{name}:{} vents the bore without the block open", i + 1);
+                }
+                if line.contains("cabin_fumes.case_freed(") {
+                    freed += 1;
+                    let before = lines[i.saturating_sub(40)..i].join("\n");
+                    assert!(before.contains("fn eject_casing") || before.contains("casing_pull >= 1.0"),
+                        "{name}:{} vents a case that was not drawn out of the breech", i + 1);
+                }
+            }
+        }
+        assert_eq!(vents, 3, "the lever, the solo crew's opening and the lone survivor's fumble");
+        assert_eq!(freed, 2, "the crew's ejection and the loader's pull");
+    }
+}
+
+#[cfg(test)]
 mod source_tests {
     use super::*;
 
