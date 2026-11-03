@@ -3885,3 +3885,15 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   `moonlight_and_the_moonless_night_are_as_dark_as_measured`): its liquid water content is
   0.38 g/m^3 (0.25 before), which keeps the deck's water path at 0.32 kg/m^2 and lies within
   winter stratus's 0.2-0.5 g/m^3.
+
+## Spring 1943 vegetation assets, 2026-11-02 (`tools/vegetation/spring1943.py`, `tools/vegetation/leaf_optics.py`)
+
+Generated GLB trees, shrubs and war-damaged trees (docs/VEGETATION_SPRING1943.md). They use only
+the existing mesh path (no renderer change); what they are and are not:
+
+| Part | What the asset carries | Named approximation and source |
+| --- | --- | --- |
+| Foliage geometry | Leaf "sprays": irregular six-triangle polygons (0.4-1.6 m, scaled to the crown) in clumps on the crown shell, each clump fed by a drawn twig, limb and trunk. Opaque triangles: what is drawn is exactly what shadows and occludes (no alpha cards; the raymarch G-buffer alpha-tests only grass). | One polygon stands for a twig's worth of leaves: the outline is coarser than leaves, the gaps between sprays and clumps stand for the crown's gap fraction (not measured per species). |
+| Leaf reflectance | Base colour = PROSPECT-D leaf reflectance rho at 680/550/440 nm (the meadow's model and lanes, `src/leaf_optics.rs`, ported line for line), spring pigment estimates per species, three chlorophyll tones; scorched and wilted leaves from the same model with brown pigment and low water. Cuticle roughness 0.45. | Leaf transmittance tau is computed but NOT rendered: GLB surfaces shade as opaque one-sided reflectors, so back-lit foliage lacks its transmitted share (for a spring leaf tau about equals rho at 550 nm). Pigment parameters are estimates inside Jacquemoud & Ustin (2019) ranges, not species measurements. |
+| Bark, char, wood, soil, petals | Constant albedos from published reflectance ranges (birch periderm 0.5, furrowed bark 0.07-0.13, charcoal 0.034, fresh sapwood splinters 0.46/0.37/0.25, chernozem 0.085, white petals 0.65). | Estimates, not spectra of these specimens; one constant per material, no texture. |
+| Destructible trunk | `tree_*` names are live trees in `src/trees.rs`; the trunk contact radius is measured from the drawn mesh at the bow's height as for every tree; the generator keeps foliage and hanging broken limbs clear of the trunk below 1.35-2.2 m so that section is the trunk. | The trees' fall is the existing rigid-body release; no fracture of the generated limbs. Shrubs, fallen trunks and stumps are static dressing with no collision (as the library's logs, ferns and stumps): a tank drives through them visually. |
