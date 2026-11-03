@@ -620,9 +620,9 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     course['route'] = [[cc.r3(x), cc.r3(z)] for x, z in route]
     seg = np.hypot(*np.diff(route, axis=0).T)
     course['length_m'] = cc.r3(float(seg.sum()))
-    start_x = cx-town_r-260.0
+    start_x = cx-420.0          # in the Tiger, the town and the bridge ahead (the owner, 2 Nov)
     s = int(np.argmin(np.abs(route[:, 0]-start_x)+1e3*(route[:, 0] > cx)))
-    heading = math.degrees(math.atan2(*(route[min(s+3, len(route)-1)]-route[s])))
+    heading = math.degrees(math.atan2(cx-route[s][0], cz-route[s][1]))   # facing the bridge
     course['start'] = dict(x=cc.r3(route[s, 0]), z=cc.r3(route[s, 1]), heading_deg=cc.r3(heading))
     course['goal'] = dict(x=cc.r3(route[-1, 0]), z=cc.r3(route[-1, 1]), radius_m=85.0)
     street = edits['street_encounter']
@@ -634,7 +634,9 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     street['gun_sites'] = sites
     zones = []
     for zone in course['gun_zones']:
-        zone['candidates'] = [remap[i] for i in zone['candidates'] if i in remap]
+        # Nothing of the defence stands behind the Tiger's start: the enemy holds the town and
+        # the far bank.
+        zone['candidates'] = [remap[i] for i in zone['candidates'] if i in remap and sites[remap[i]]['x'] > start_x+250]
         if zone['candidates']:
             zones.append(zone)
     course['gun_zones'] = zones
@@ -657,7 +659,7 @@ def build(variant_name='playtest', carry_from=None, plan=None):
         return pts_
     street['beats'] = [dict(platoon='A', points=loop(-1)), dict(platoon='B', points=loop(1))]
     cors = [dict(a=[cc.r3(v) for v in a], b=[cc.r3(v) for v in b],
-                 width_m=2*BRIDGE_HALF_W if (abs(a[0]-cx) < BRIDGE_HALF_L+20 or abs(b[0]-cx) < BRIDGE_HALF_L+20) else 40.0)
+                 width_m=2*BRIDGE_HALF_W if (abs(a[0]-cx) < BRIDGE_HALF_L+20 or abs(b[0]-cx) < BRIDGE_HALF_L+20) else 120.0)
             for a, b in zip(route[::30], route[30::30])]
     street['ways']['corridors'] = cors
     street['ways']['district'] = [-CROP_HALF, CROP_HALF, -CROP_HALF, CROP_HALF]
@@ -668,9 +670,24 @@ def build(variant_name='playtest', carry_from=None, plan=None):
         if b['typology'] in ('merchant_brick_house', 'apartment_block') and abs(b['x']-cx) < 320:
             x0, x1, z0, z1 = cc.footprint(b['x'], b['z'], b['width_m'], b['depth_m'], b['yaw_deg'])
             posts.append(dict(x=cc.r3(x0-2), z=cc.r3(z0-2), heading_deg=270.0 if b['x'] > cx else 90.0, host=b['id']))
-    course['garrison'] = posts[:24]
+    # Riflemen dug in on the approaches as well as in the houses: posts along the road and the
+    # field edges on both banks, at least 40 m apart (each infantry group needs its own post,
+    # src/canyon_game.rs), clear of the river, the houses and the bridge ramps.
+    field_posts = []
+    for k, (x, z) in enumerate(route[::6]):
+        if not (start_x+220 < x < cx+900) or abs(x-cx) < BRIDGE_HALF_L+RAMP_M+10:
+            continue
+        for side in (-1, 1):
+            off = side*(18.0+30.0*rnd(f'fp{k}.{side}', 1))
+            px, pz = float(x), float(z)+off
+            if in_river(px, pz, 25.0) or any(x0-6 < px < x1+6 and z0-6 < pz < z1+6 for x0, x1, z0, z1 in town_rects):
+                continue
+            if all(math.hypot(px-q['x'], pz-q['z']) >= 40.0 for q in posts+field_posts):
+                field_posts.append(dict(x=cc.r3(px), z=cc.r3(pz), heading_deg=270.0 if px > cx else 90.0, host='field'))
+    course['garrison'] = posts[:24]+field_posts
+    print('[spring-bridge-v2] garrison posts:', len(posts[:24]), 'in the houses,', len(field_posts), 'on the approaches')
     course.update(variant=variant['dest'], tool='tools/worldgen/spring_bridge_v2.py', finish='mission', director=False,
-                  opening_platoons=False, headline='The bridge is held', camp=True)
+                  opening_platoons=False, headline='The bridge is held', camp=False)
     course['provenance'] = dict(
         terrain='Generated spring steppe with a river valley; not a survey of real ground.',
         buildings=cc.PROVENANCE['buildings']+' A river town on organic streets on both banks, most of it in ruins.',
