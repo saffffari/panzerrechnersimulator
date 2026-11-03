@@ -240,6 +240,16 @@ struct FrameUniform {
     /// The banks' optical-depth grid (rm_low_clouds.wgsl): min corner + filled, texel size.
     low_vol_min: [f32; 4],
     low_vol_cell: [f32; 4],
+    /// The clear air the surfaces' aerial perspective crosses (rm_shade.wgsl `fog_to`), the same
+    /// atmosphere the sky cache marches: molecular scattering per band at the local planet surface
+    /// (xyz, m^-1) and its scale height (w).
+    air_rayleigh: [f32; 4],
+    /// The aerosol: extinction at 550 nm at the planet surface (x, m^-1), single-scattering albedo,
+    /// asymmetry g, scale height m.
+    air_aerosol: [f32; 4],
+    /// The aerosol's Angstrom factor per band (xyz, physical_environment::aerosol_band_factor;
+    /// also the spectrum of the `fog_density` layer's aerosol) and the planet surface's local y (w).
+    air_spectrum: [f32; 4],
 }
 
 /// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
@@ -2273,6 +2283,15 @@ impl Backend {
             low_banks,
             low_vol_min,
             low_vol_cell,
+            air_rayleigh: [atmosphere.rayleigh_scattering_m_inv.x as f32, atmosphere.rayleigh_scattering_m_inv.y as f32,
+                atmosphere.rayleigh_scattering_m_inv.z as f32, atmosphere.rayleigh_scale_height_m as f32],
+            air_aerosol: [atmosphere.mie_extinction_m_inv as f32,
+                if atmosphere.mie_extinction_m_inv > 0.0 { (atmosphere.mie_scattering_m_inv / atmosphere.mie_extinction_m_inv).clamp(0.0, 1.0) as f32 } else { 0.0 },
+                atmosphere.mie_asymmetry as f32, atmosphere.mie_scale_height_m as f32],
+            air_spectrum: {
+                let band = atmosphere.aerosol_band_factor();
+                [band.x as f32, band.y as f32, band.z as f32, (atmosphere.planet_center_m.y + atmosphere.planet_radius_m) as f32]
+            },
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -3731,10 +3750,7 @@ impl Renderer {
     fn raymarch_atmosphere(&self) -> AtmosphereParameters {
         let mut atmosphere = AtmosphereParameters::default();
         let campaign = self.current_campaign_environment();
-        atmosphere.mie_scale_height_m = campaign.mie_scale_height_m;
-        atmosphere.mie_scattering_m_inv = campaign.mie_scattering_m_inv;
-        atmosphere.mie_extinction_m_inv = campaign.mie_extinction_m_inv;
-        atmosphere.mie_asymmetry = campaign.mie_asymmetry;
+        self.apply_aerosol(&mut atmosphere, &campaign);
         atmosphere.cloud.bottom_altitude_m = campaign.cloud_bottom_m;
         atmosphere.cloud.top_altitude_m = campaign.cloud_top_m;
         atmosphere.cloud.liquid_water_content_kg_m3 = campaign.cloud_lwc_kg_m3;

@@ -60,6 +60,13 @@ struct Frame {
     // w 1 when filled this frame; its texel size xyz, w the refresh (2 all, 0/1 that z parity).
     low_vol_min: vec4<f32>,
     low_vol_cell: vec4<f32>,
+    // The clear air of the physical atmosphere (the sky cache's): molecular scattering per band at
+    // the local planet surface xyz /m, scale height w; the aerosol's 550 nm extinction there,
+    // single-scattering albedo, asymmetry, scale height; its Angstrom factor per band xyz and the
+    // planet surface's local y w (renderer_raymarch.rs FrameUniform).
+    air_rayleigh: vec4<f32>,
+    air_aerosol: vec4<f32>,
+    air_spectrum: vec4<f32>,
 };
 // True where a camera pass must leave `world` out: beyond the film's section plane.
 fn rm_beyond_section(world: vec3<f32>) -> bool {

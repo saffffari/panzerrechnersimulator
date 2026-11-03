@@ -263,6 +263,7 @@ impl Scene {
                 fog_density: 0.0,
                 overcast: 0.25,
                 storm: 0.0,
+                aerosol: None,
             },
         }
     }

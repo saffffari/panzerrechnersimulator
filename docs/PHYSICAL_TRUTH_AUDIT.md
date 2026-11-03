@@ -1,8 +1,64 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Spectral aerosol and the surfaces' clear air, 2026-11-02 (`src/physical_environment.rs`, `shaders/physical_environment.wgsl`, `shaders/rm_medium.wgsl`, `shaders/rm_shade.wgsl` `fog_to`)
+
+The owner: "more blue haze in the atmosphere its just white scatter right now". Two causes, both
+transport, not colour: the aerosol was one wavelength-independent coefficient (grey), and on the
+raymarch backend a surface's aerial perspective crossed only the map's weather layer
+(`fog_density`): no Rayleigh and no atmospheric aerosol reached a hill, only the sky had them.
+
+What the code computes now:
+
+- **The aerosol is spectral** by the Angstrom law, beta(lambda) = beta_550 (lambda / 550 nm)^-alpha,
+  for scattering and extinction alike, in the CPU reference, the shared WGSL atmosphere (sky, sky
+  cache, the shader/physical backends' aerial perspective and media, the solar transmittance, the
+  upper-atmosphere diffuse flux) and the raymarch backend's clear air. Default winter background
+  alpha 1.0 at AOD 0.05 (550 nm; the 550 nm band is unchanged); the spring campaign profiles
+  (acts 2, 3) alpha 1.5. Sources: AERONET fine-mode continental/urban alpha(440-870) about 1.2-2.0
+  (Eck et al. 1999, JGR 104 D24; Dubovik et al. 2002, JAS 59); Moscow MSU monthly AOD(500 nm) 0.08
+  in December-January to 0.3 in August (Chubarova et al. 2016, AMT 9, 313). The winter alpha is an
+  estimate at the low end (humid winter growth enlarges the particles), not a measurement.
+- **A map's aerosol** (`environment_lighting.aerosol: {"aod_550", "angstrom", "scale_height_m"}`,
+  `environment_authoring::AerosolTuning`; absent: the campaign's) replaces the atmosphere's column
+  (extinction = AOD / scale height at the local planet surface, y = -256 m; the albedo 0.9 and g 0.80
+  kept) for every consumer above, and gives the weather layer's aerosol its exponent.
+- **Raymarch surfaces cross the clear air** (`fog_to(..., surface = true)`): molecules (Rayleigh
+  phase) and the atmosphere's aerosol (Henyey-Greenstein) at the frame's altitude profile, per band,
+  lit by the isotropic sky and the key beam through the cloud shadow, with per-band transmittance.
+  Sky pixels add none (the sky cache holds that whole path already).
+- **The weather layer (`fog_density`) is the near-ground haze/snow extinction at 550 nm**: its snow
+  share (the layer's snow fraction) is grey, the rest is aerosol with the map's Angstrom factor, in
+  the froxel grid's scattering and the far march's extinction and scattering. The painted tint it
+  carried, (0.94, 0.97, 1), is gone from the weather layer.
+
+Named approximations (limits):
+
+- The three bands are point samples at 680, 550 and 440 nm (as the Rayleigh coefficients); the
+  aerosol's single-scattering albedo and asymmetry are the same in every band.
+- The froxel grid stores one extinction: inside its 320 m the medium's transmittance is the 550 nm
+  band's (grey) while its scattering is spectral; the far march and the sky are spectral.
+- The clear air inside the grid's reach is two steps composited behind the grid's media (smoke,
+  weather, banks dim its in-scatter whole, second order in the two optical depths); beyond the grid
+  six steps of weather plus air, then four steps of air alone to 40 km. No geometric occlusion of
+  the beam in the clear air, no secondary body (the Moon while the Sun keys) in it, single
+  scattering only, altitude as y above the local planet surface (flat over the map).
+- The weather layer's albedo (0.70 aerosol, 0.92 snow) and asymmetry are the values it had,
+  unsourced; the cabin haze and the plumes keep the (0.94, 0.97, 1) scattering tint (outside this
+  change); both are open.
+
+Measured (spring-bridge-v2 copy, 15:28 local solar, looking east across the valley to the hills
+1.8 km away, the locked look; sRGB means over the hill band): before (128, 131, 134 → B-R +6.7);
+after, the map unchanged: (127, 138, 153 → B-R +25.7); with the proposed block (AOD 0.2, alpha 1.6,
+1,500 m): (137, 148, 158 → B-R +20.8, hazier). Winter Canyon v2 at its authored noon: frame mean
+red -2.2, blue +2.2 sRGB codes (the layer is mostly snow there). Cost: `rm-shade` 0.739 → 0.762 ms
+(4090, 1024x576, `gfxbench day 240` on the bridge copy). Gates:
+`physical_environment::tests::the_aerosol_is_spectral_by_the_angstrom_law_in_every_consumer`,
+`a_bluer_aerosol_makes_a_distant_view_bluer_and_its_transmittance_redder`,
+`environment_authoring::tests::a_map_aerosol_round_trips_and_absent_means_the_campaign`.
 
 ## Owner-directed effects of the cigarette, and the walking bob, 2026-11-02 (`src/cigarette.rs`, `src/hand_items.rs`, `src/foot.rs`, `src/renderer.rs`)
 
@@ -3710,7 +3766,8 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   which whitened the day sky until the clouds lost contrast): AERONET continental
   winter climatologies run 0.05 to 0.10, and the cauldron's smoke adds; Bruneton's 0.005 was a
   clear mountain sky, under which the three-band sunset was the saturated orange of a
-  monochromatic transmittance. A sourced estimate, not a measurement of the day.
+  monochromatic transmittance. A sourced estimate, not a measurement of the day. Spectral since
+  2 November 2026 (Angstrom alpha 1.0; see "Spectral aerosol and the surfaces' clear air").
 - **The pastel palette** (`KESSEL_LOOK=deltap-pastel`, `crush.wgsl` `DP_PASTEL`, mode 4): thirty-two
   display-sRGB entries authored for the owner's taste (green-blues and teals, creams, two warm
   dawn tones, snow, steel, fire), dithered by the look's OKLab best-pair search as the PICO-8 mode

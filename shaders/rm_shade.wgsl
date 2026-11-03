@@ -297,47 +297,97 @@ fn rm_low_cloud_far(o: vec3<f32>, d: vec3<f32>, t_near: f32, t_far: f32) -> RmLo
     return out;
 }
 
-struct Fog { radiance: vec3<f32>, transmittance: f32 };
-// Integrated froxel medium to `distance_m`, then the homogeneous weather layer beyond the grid.
-fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
+// Integrated froxel medium to `distance_m`, then the weather layer beyond the grid; for a
+// surface (`surface`) also the clear air between it and the eye, the molecules and the aerosol of
+// the physical atmosphere the sky cache marches (2 November 2026: distant hills took no Rayleigh
+// and no aerosol, only the grey weather layer, and read white instead of blue). Transmittance is
+// per band. A sky pixel adds no clear air: the cache already holds the whole path through it.
+struct Fog { radiance: vec3<f32>, transmittance: vec3<f32> };
+// One homogeneous step of `dt` metres at `p` along `ray`: the weather layer (`weather`: its layer
+// and grey parts, rm_world_parts) and, scaled by `air` (0 or 1), the clear air, molecules
+// (Rayleigh phase) and the atmosphere's aerosol (Henyey-Greenstein), each per band; lit by the
+// isotropic sky and the key beam through the cloud shadow. Returns the in-scattered radiance
+// leaving the step (before the transmittance in front of it) and the step's transmittance.
+fn rm_air_segment(p: vec3<f32>, ray: vec3<f32>, dt: f32, weather: vec2<f32>, air: f32, sky: vec3<f32>) -> Fog {
+    let snow = fr.medium.y * theatre_north_weight(p.z, fr.samples.y);
+    let w_t = weather.x * rm_world_spectrum(snow) + vec3(weather.y);
+    let w_s = w_t * mix(0.70, 0.92, snow);
+    let h = max(p.y - fr.air_spectrum.w, 0.0);
+    let r_s = air * fr.air_rayleigh.xyz * exp(-h / max(fr.air_rayleigh.w, 1.0));
+    let a_t = air * fr.air_aerosol.x * exp(-h / max(fr.air_aerosol.w, 1.0)) * fr.air_spectrum.xyz;
+    let a_s = a_t * fr.air_aerosol.y;
+    let sigma_t = w_t + r_s + a_t;
+    if (all(sigma_t <= vec3(1.0e-12))) { return Fog(vec3(0.0), vec3(1.0)); }
+    var source = sky * (w_s + r_s + a_s);
+    if (fr.sun_radiance.w > 0.5) {
+        let mu = dot(ray, fr.sun_dir.xyz);
+        let phased = w_s * rm_hg(mu, mix(0.74, 0.62, snow))
+            + r_s * (3.0 / (16.0 * RM_PI)) * (1.0 + mu * mu)
+            + a_s * rm_hg(mu, fr.air_aerosol.z);
+        source += fr.sun_radiance.rgb * phased * rm_cloud_shadow(p);
+    }
+    let t = exp(-sigma_t * dt);
+    return Fog(source / max(sigma_t, vec3(1.0e-12)) * (vec3(1.0) - t), t);
+}
+fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32, surface: bool) -> Fog {
     let slice = rm_slice(distance_m);
     let zc = clamp((slice - 0.5) / fr.vol.z, 0.0, (fr.vol.z - 0.5) / fr.vol.z);
     let v = textureSampleLevel(integrated, linear_samp, vec3(uv, zc), 0.0);
-    var radiance = v.rgb;
-    var transmittance = v.a;
+    var out = Fog(v.rgb, vec3(v.a));
     let far = fr.vol_range.y;
+    let air = select(0.0, 1.0, surface);
+    let sky = rm_sky_isotropic();
+    if (surface) {
+        // The clear air inside the grid's reach, two steps, composited behind the grid's media
+        // (named approximation: the grid's smoke and weather dim this air's in-scatter whole,
+        // not only the part of them in front of it; second order in the two optical depths).
+        let near = min(distance_m, far);
+        let dt = near / 2.0;
+        for (var i = 0; i < 2; i = i + 1) {
+            let seg = rm_air_segment(fr.cam_pos.xyz + ray * ((f32(i) + 0.5) * dt), ray, dt, vec2(0.0), air, sky);
+            out.radiance += out.transmittance * seg.radiance;
+            out.transmittance *= seg.transmittance;
+        }
+    }
     if (distance_m > far) {
         // The map's low cloud banks beyond the grid, each crossing marched (rm_low_cloud_far),
         // composited ahead of the weather layer's march (named approximation: the haze between
         // the grid's edge and a bank is applied behind the bank, not in front of it).
         let banks = rm_low_cloud_far(fr.cam_pos.xyz, ray, far, min(distance_m, far + 8000.0));
-        radiance += transmittance * banks.radiance;
-        transmittance *= banks.transmittance;
+        out.radiance += out.transmittance * banks.radiance;
+        out.transmittance *= banks.transmittance;
         // Beyond the grid: six steps through the world medium (the weather layer and its fog
-        // banks), each lit by the sky and by the key beam through the cloud layer above it; no
-        // geometric occlusion (named approximation).
+        // banks) and, for a surface, the clear air, each lit by the sky and by the key beam
+        // through the cloud layer above it; no geometric occlusion (named approximation). Past
+        // the weather layer (above its top, or beyond 6 km) four steps of clear air alone.
         let origin = fr.cam_pos.xyz + ray * far;
-        var length_m = distance_m - far;
-        if (ray.y > 0.001) { length_m = min(length_m, max(fr.medium.w - origin.y, 0.0) / ray.y); }
-        length_m = min(length_m, 6000.0);
-        if (length_m > 0.0 && (fr.medium.x > 0.0 || fr.fog.y > 0.0)) {
-            let sky = rm_sky_isotropic();
-            let dt = length_m / 6.0;
+        let length_m = distance_m - far;
+        var layer_m = length_m;
+        if (ray.y > 0.001) { layer_m = min(layer_m, max(fr.medium.w - origin.y, 0.0) / ray.y); }
+        layer_m = min(layer_m, 6000.0);
+        if (!(fr.medium.x > 0.0 || fr.fog.y > 0.0)) { layer_m = 0.0; }
+        if (layer_m > 0.0) {
+            let dt = layer_m / 6.0;
             for (var i = 0; i < 6; i = i + 1) {
                 let p = origin + ray * ((f32(i) + 0.5) * dt);
-                let sigma = rm_world_density(p);
-                if (sigma <= 0.0) { continue; }
-                let snow = fr.medium.y*theatre_north_weight(p.z,fr.samples.y);
-                let albedo = mix(0.70,0.92,snow);let g = mix(0.74,0.62,snow);
-                let phase = select(0.0,rm_hg(dot(ray,fr.sun_dir.xyz),g),fr.sun_radiance.w>0.5);
-                let t_step = exp(-sigma * dt);
-                let source = sky + fr.sun_radiance.rgb * phase * rm_cloud_shadow(p);
-                radiance += transmittance * albedo * source * (1.0 - t_step);
-                transmittance *= t_step;
+                let parts = rm_world_parts(p);
+                if (!surface && parts.x + parts.y <= 0.0) { continue; }
+                let seg = rm_air_segment(p, ray, dt, parts, air, sky);
+                out.radiance += out.transmittance * seg.radiance;
+                out.transmittance *= seg.transmittance;
+            }
+        }
+        let rest = min(length_m, 40000.0) - layer_m;
+        if (surface && rest > 0.0) {
+            let dt = rest / 4.0;
+            for (var i = 0; i < 4; i = i + 1) {
+                let seg = rm_air_segment(origin + ray * (layer_m + (f32(i) + 0.5) * dt), ray, dt, vec2(0.0), air, sky);
+                out.radiance += out.transmittance * seg.radiance;
+                out.transmittance *= seg.transmittance;
             }
         }
     }
-    return Fog(radiance, transmittance);
+    return out;
 }
 
 struct ShadeOut { @location(0) color: vec4<f32>, @location(1) shares: vec4<f32>, @location(2) bounce: vec4<f32>, };
@@ -469,7 +519,7 @@ fn fs(in: VsOut) -> ShadeOut {
     if (depth >= 1.0) {
         let cached = rm_sky_background(ray);
         let sky = cached.rgb + (rm_sky_discs(ray) + rm_pixel_star(ray, pixel)) * cached.a;
-        let fog = fog_to(in.uv, ray, 20000.0);
+        let fog = fog_to(in.uv, ray, 20000.0, false);
         return ShadeOut(vec4(sky * fog.transmittance + fog.radiance, 1.0), vec4(1.0, 1.0, 1.0, -1.0), vec4(0.0, 0.0, 0.0, -1.0));
     }
     let rel = rm_relative_from_depth(uv, depth);
@@ -818,6 +868,6 @@ fn fs(in: VsOut) -> ShadeOut {
         // A leaf's and the canopy slab's g2 holds tau and leaf area, not emission.
         if (!leaf && !slab) { color += g2.rgb; }
     }
-    let fog = fog_to(in.uv, ray, dist);
+    let fog = fog_to(in.uv, ray, dist, true);
     return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), shares_out, bounce_out);
 }

@@ -920,6 +920,8 @@ struct CampaignAtmosphereProfile {
     mie_scattering_m_inv: f64,
     mie_extinction_m_inv: f64,
     mie_asymmetry: f64,
+    /// Angstrom exponent of the aerosol (physical_environment::aerosol_band_factor).
+    mie_angstrom_exponent: f64,
     cloud_bottom_m: f64,
     cloud_top_m: f64,
     cloud_lwc_kg_m3: f64,
@@ -936,6 +938,7 @@ impl CampaignAtmosphereProfile {
             ground_extinction_m_inv: f!(ground_extinction_m_inv), wind_exposure: f!(wind_exposure),
             mie_scale_height_m: d!(mie_scale_height_m), mie_scattering_m_inv: d!(mie_scattering_m_inv),
             mie_extinction_m_inv: d!(mie_extinction_m_inv), mie_asymmetry: d!(mie_asymmetry),
+            mie_angstrom_exponent: d!(mie_angstrom_exponent),
             cloud_bottom_m: d!(cloud_bottom_m), cloud_top_m: d!(cloud_top_m),
             cloud_lwc_kg_m3: d!(cloud_lwc_kg_m3), cloud_droplet_radius_m: d!(cloud_droplet_radius_m),
         }
@@ -967,6 +970,7 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             mie_scattering_m_inv: 4.0e-5,
             mie_extinction_m_inv: 4.444e-5,
             mie_asymmetry: 0.80,
+            mie_angstrom_exponent: physical_environment::DEFAULT_AEROSOL_ANGSTROM,
             cloud_bottom_m: 450.0,
             cloud_top_m: 1_300.0,
             cloud_lwc_kg_m3: 0.25e-3,
@@ -983,6 +987,7 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             mie_scattering_m_inv: 2.8e-6,
             mie_extinction_m_inv: 3.4e-6,
             mie_asymmetry: 0.78,
+            mie_angstrom_exponent: 1.5,
             cloud_bottom_m: 1_300.0,
             cloud_top_m: 2_200.0,
             cloud_lwc_kg_m3: 0.10e-3,
@@ -999,6 +1004,7 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             mie_scattering_m_inv: 0.8e-6,
             mie_extinction_m_inv: 0.95e-6,
             mie_asymmetry: 0.76,
+            mie_angstrom_exponent: 1.5,
             cloud_bottom_m: 1_900.0,
             cloud_top_m: 2_800.0,
             cloud_lwc_kg_m3: 0.08e-3,
@@ -1014,6 +1020,7 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             mie_scattering_m_inv: 3.996e-6,
             mie_extinction_m_inv: 4.440e-6,
             mie_asymmetry: 0.80,
+            mie_angstrom_exponent: physical_environment::DEFAULT_AEROSOL_ANGSTROM,
             cloud_bottom_m: 900.0,
             cloud_top_m: 2_200.0,
             cloud_lwc_kg_m3: 0.25e-3,
@@ -2796,6 +2803,9 @@ pub struct Renderer {
     /// grade only: no emitter, medium or material changes. See docs/PHYSICAL_TRUTH_AUDIT.md.
     pub vision_boost: f32,
     pub fog_density: f32,
+    /// The map's authored aerosol (`environment_lighting.aerosol`); `None` keeps the campaign's.
+    /// It replaces the atmosphere's aerosol column and gives `fog_density`'s layer its spectrum.
+    pub aerosol: Option<crate::environment_authoring::AerosolTuning>,
     pub reticle: bool,
     /// The optic snapshot's vertical field when it carried the reticle (`render_optic_snapshot`).
     optic_reticle_fov: f32,
@@ -6211,6 +6221,7 @@ impl Renderer {
             exposure_override: configured_camera_exposure_override(),
             vision_boost: 0.0,
             fog_density: 0.02,
+            aerosol: None,
             reticle: false,
             optic_reticle_fov: 0.0,
             optic_blast: 0.0,
@@ -6492,7 +6503,7 @@ impl Renderer {
         macro_rules! retain { ($($field:ident),* $(,)?) => { $(
             std::mem::swap(&mut next.$field, &mut self.$field);
         )* }; }
-        retain!(camera, master_retro, display_tuning, display_dither_pattern, display_grade, transport_quality, exposure_override, fog_density, reticle, optic_blast, observer_flash_source,
+        retain!(camera, master_retro, display_tuning, display_dither_pattern, display_grade, transport_quality, exposure_override, fog_density, aerosol, reticle, optic_blast, observer_flash_source,
             crew_ko, crew_ko_dir, concussion, menu_mode, night, precipitation, overcast, storm,
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
             sky_clock, celestial, authored_clock_start, sky_time_scale, user_sky_phase, weather_offset, theatre_weather, weather_override, weather_original,
@@ -6535,6 +6546,7 @@ impl Renderer {
                 tuning.utc.unwrap(), crate::celestial_sky::act_site(self.weather_act_id)));
         }
         self.fog_density = tuning.fog_density;
+        self.aerosol = tuning.aerosol;
         self.overcast = tuning.overcast;
         self.storm = tuning.storm;
         self.twilight = 0.0;
@@ -6567,6 +6579,7 @@ impl Renderer {
         self.weather_shelter = 0.0;
         self.weather_seed = (act_id as u32).wrapping_mul(0x9e37_79b9);
         self.fog_density = profile.ground_extinction_m_inv;
+        self.aerosol = None;
         self.set_sky_clock(crate::celestial_sky::SkyClock::for_act(act_id, phase.clock_phase()));
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
     }
@@ -6680,6 +6693,20 @@ impl Renderer {
         self.fog_density = profile.ground_extinction_m_inv;
         self.weather_wind = profile.wind_exposure;
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
+    }
+
+    /// The aerosol every consumer of the atmosphere uses (the sky, the sky cache, the surfaces'
+    /// aerial perspective, the shader backend's media): the campaign profile's, replaced by the
+    /// map's authored column when it has one.
+    fn apply_aerosol(&self, atmosphere: &mut AtmosphereParameters, campaign: &CampaignAtmosphereProfile) {
+        atmosphere.mie_scale_height_m = campaign.mie_scale_height_m;
+        atmosphere.mie_scattering_m_inv = campaign.mie_scattering_m_inv;
+        atmosphere.mie_extinction_m_inv = campaign.mie_extinction_m_inv;
+        atmosphere.mie_asymmetry = campaign.mie_asymmetry;
+        atmosphere.mie_angstrom_exponent = campaign.mie_angstrom_exponent;
+        if let Some(aerosol) = self.aerosol {
+            atmosphere.set_aerosol_column(aerosol.column());
+        }
     }
 
     fn current_campaign_environment(&self) -> CampaignAtmosphereProfile {
@@ -8583,10 +8610,7 @@ impl Renderer {
             self.sun_dir.z as f64,
         )
         .normalize_or_zero();
-        physical_environment.mie_scale_height_m = campaign_environment.mie_scale_height_m;
-        physical_environment.mie_scattering_m_inv = campaign_environment.mie_scattering_m_inv;
-        physical_environment.mie_extinction_m_inv = campaign_environment.mie_extinction_m_inv;
-        physical_environment.mie_asymmetry = campaign_environment.mie_asymmetry;
+        self.apply_aerosol(&mut physical_environment, &campaign_environment);
         physical_environment.cloud.bottom_altitude_m = campaign_environment.cloud_bottom_m;
         physical_environment.cloud.top_altitude_m = campaign_environment.cloud_top_m;
         physical_environment.cloud.liquid_water_content_kg_m3 =
