@@ -593,9 +593,13 @@ pub fn day_cycle_scale() -> f64 {
 /// Sunrise and sunset run from the end of civil twilight to the end of the golden hour.
 const TWILIGHT_FROM_DEG: f64 = -6.0;
 const TWILIGHT_TO_DEG: f64 = 8.0;
-/// 0 night, 1 sunrise or sunset, 2 full day, by the Sun's altitude.
+/// The blue hour: nautical twilight and the first of astronomical, the Sun 6 to 14 deg down.
+/// The campaign paces it with the night; a map may give it its own play time.
+const BLUE_FROM_DEG: f64 = -14.0;
+/// 0 night, 1 blue hour, 2 sunrise or sunset, 3 full day, by the Sun's altitude.
 fn day_phase(sun_altitude_deg: f64) -> usize {
-    if sun_altitude_deg < TWILIGHT_FROM_DEG { 0 } else if sun_altitude_deg < TWILIGHT_TO_DEG { 1 } else { 2 }
+    if sun_altitude_deg < BLUE_FROM_DEG { 0 } else if sun_altitude_deg < TWILIGHT_FROM_DEG { 1 }
+    else if sun_altitude_deg < TWILIGHT_TO_DEG { 2 } else { 3 }
 }
 /// On in play. Off for unit tests and wherever `KESSEL_DAY_NIGHT=0` asks for the real-time clock
 /// (stills and films that must hold their authored light).
@@ -2790,9 +2794,10 @@ pub struct Renderer {
     /// The accelerated day and night cycle, and the share of the current day that is daylight.
     pub day_night_cycle: bool,
     /// Real seconds the Sun spends at night, in twilight and in full day over the current date.
-    day_phase_seconds: Option<[f64; 3]>,
-    /// The map's pacing (play seconds of night, each twilight, full day); `None` is the campaign's.
-    pub day_cycle_play_s: Option<[f32; 3]>,
+    day_phase_seconds: Option<[f64; 4]>,
+    /// The map's pacing (play seconds of night, each blue hour, each twilight, full day); `None`
+    /// is the campaign's.
+    pub day_cycle_play_s: Option<[f32; 4]>,
     weather_offset: glam::Vec3,
     pub(crate) theatre_weather: bool,
     pub weather_override: Option<f32>,
@@ -6631,7 +6636,7 @@ impl Renderer {
         let phases = *self.day_phase_seconds.get_or_insert_with(|| {
             // One day sampled every two minutes from now: how long the Sun spends in each phase.
             let mut probe = self.sky_clock;
-            let mut seconds = [0.0_f64; 3];
+            let mut seconds = [0.0_f64; 4];
             for _ in 0..720 {
                 probe.advance(120.0);
                 let altitude = crate::celestial_sky::CelestialLighting::at(probe.now(), probe.site,
@@ -6645,14 +6650,21 @@ impl Renderer {
         let scale = day_cycle_scale();
         let mean = 86_400.0 / ((FULL_DAY_S + 2.0 * TWILIGHT_S + NIGHT_S) * scale);
         let rate = |phase: usize, play_s: f64| if phases[phase] > 60.0 { phases[phase] / (play_s * scale) } else { mean };
-        let [night_s, twilight_s, day_s] = self.day_cycle_play_s.map_or([NIGHT_S, TWILIGHT_S, FULL_DAY_S], |c| c.map(f64::from));
-        let rates = [rate(0, night_s), rate(1, 2.0 * twilight_s), rate(2, day_s)];
+        let rates = match self.day_cycle_play_s.map(|c| c.map(f64::from)) {
+            Some([night_s, blue_s, twilight_s, day_s]) =>
+                [rate(0, night_s), rate(1, 2.0 * blue_s), rate(2, 2.0 * twilight_s), rate(3, day_s)],
+            None => {
+                // The campaign's night includes the blue hours.
+                let dark = if phases[0] + phases[1] > 60.0 { (phases[0] + phases[1]) / (NIGHT_S * scale) } else { mean };
+                [dark, dark, rate(2, 2.0 * TWILIGHT_S), rate(3, FULL_DAY_S)]
+            }
+        };
         // Blend across a degree at each boundary so the clock never jumps.
         let altitude = self.celestial.sun_altitude_deg();
         let ramp = |edge: f64| ((altitude - edge) / 1.0 + 0.5).clamp(0.0, 1.0);
-        let (above_night, above_twilight) = (ramp(TWILIGHT_FROM_DEG), ramp(TWILIGHT_TO_DEG));
-        (rates[0] * (1.0 - above_night) + rates[1] * (above_night - above_twilight).max(0.0)
-            + rates[2] * above_twilight) * self.sky_time_scale as f64
+        let (above_night, above_blue, above_twilight) = (ramp(BLUE_FROM_DEG), ramp(TWILIGHT_FROM_DEG), ramp(TWILIGHT_TO_DEG));
+        (rates[0] * (1.0 - above_night) + rates[1] * (above_night - above_blue).max(0.0)
+            + rates[2] * (above_blue - above_twilight).max(0.0) + rates[3] * above_twilight) * self.sky_time_scale as f64
     }
 
     pub fn advance_sky_clock(&mut self, dt_s: f32) {

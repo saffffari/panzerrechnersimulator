@@ -293,12 +293,13 @@ pub struct LightingTuning {
     /// surfaces' aerial perspective) and sets the spectrum of the local `fog_density` layer.
     #[serde(default)]
     pub aerosol: Option<AerosolTuning>,
-    /// The map's pacing of the accelerated day (`"day_cycle": {"night_s", "twilight_s",
-    /// "day_s"}`): play seconds of the night, of each twilight (Sun -6 to +8 deg) and of full
-    /// day. Only the clock's rate changes; the Sun and Moon stand where the ephemeris puts them.
-    /// `None` keeps the campaign's 300 / 150 / 300.
+    /// The map's pacing of the accelerated day (`"day_cycle": {"night_s", "blue_s",
+    /// "twilight_s", "day_s"}`): play seconds of the night (Sun below -14 deg), of each blue hour
+    /// (-14 to -6), of each twilight (-6 to +8) and of full day. Only the clock's rate changes;
+    /// the Sun and Moon stand where the ephemeris puts them. `None` keeps the campaign's 300 s
+    /// night (blue hours included) / 150 / 300.
     #[serde(default)]
-    pub day_cycle: Option<[f32; 3]>,
+    pub day_cycle: Option<[f32; 4]>,
 }
 
 /// One aerosol population as a map authors it. Optical depth at 550 nm through the whole column,
@@ -418,7 +419,7 @@ impl LightingTuning {
         anyhow::ensure!((0.0..=1.0).contains(&self.storm));
         if let Some(aerosol) = self.aerosol { aerosol.validate()?; }
         if let Some(cycle) = self.day_cycle {
-            for (name, s) in ["night_s", "twilight_s", "day_s"].iter().zip(cycle) {
+            for (name, s) in ["night_s", "blue_s", "twilight_s", "day_s"].iter().zip(cycle) {
                 anyhow::ensure!(s.is_finite() && (10.0..=36_000.0).contains(&s),
                     "day_cycle {name} {s} is outside 10..36000 play seconds");
             }
@@ -439,8 +440,8 @@ impl LightingTuning {
         if let Some(aerosol) = self.aerosol {
             record["aerosol"] = aerosol.to_json();
         }
-        if let Some([night, twilight, day]) = self.day_cycle {
-            record["day_cycle"] = serde_json::json!({ "night_s": night, "twilight_s": twilight, "day_s": day });
+        if let Some([night, blue, twilight, day]) = self.day_cycle {
+            record["day_cycle"] = serde_json::json!({ "night_s": night, "blue_s": blue, "twilight_s": twilight, "day_s": day });
         }
         record
     }
@@ -474,6 +475,7 @@ impl LightingTuning {
                 serde_json::Value::Null => None,
                 serde_json::Value::Object(_) => Some([
                     json_f32_or(&value["day_cycle"]["night_s"], 300.0),
+                    json_f32_or(&value["day_cycle"]["blue_s"], 150.0),
                     json_f32_or(&value["day_cycle"]["twilight_s"], 150.0),
                     json_f32_or(&value["day_cycle"]["day_s"], 300.0),
                 ]),
@@ -2879,9 +2881,9 @@ mod tests {
         let mut edits = serde_json::json!({});
         edits[LIGHTING_KEY] = serde_json::json!({"schema": SCHEMA, "version": 2, "enabled": true,
             "fog_density": 0.001, "overcast": 0.1, "storm": 0.0,
-            "day_cycle": {"night_s": 120, "twilight_s": 1500, "day_s": 300}});
+            "day_cycle": {"night_s": 120, "blue_s": 1500, "twilight_s": 240, "day_s": 300}});
         let tuning = LightingTuning::from_edits(Some(&edits)).unwrap();
-        assert_eq!(tuning.day_cycle, Some([120.0, 1500.0, 300.0]));
+        assert_eq!(tuning.day_cycle, Some([120.0, 1500.0, 240.0, 300.0]));
         let mut again = serde_json::json!({});
         again[LIGHTING_KEY] = tuning.to_json();
         assert_eq!(LightingTuning::from_edits(Some(&again)).unwrap(), tuning);
