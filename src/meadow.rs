@@ -18,7 +18,7 @@
 //!   widened and the density divided by the same factor, so blade area per ground area (the
 //!   canopy's leaf area, which decides how much ground shows through) is conserved. Past
 //!   `NEAR_RADIUS_M` the same rule runs on 8 m far tiles out to `FAR_RADIUS_M`, where the blades
-//!   sink into the ground and the authored green carries the horizon. A geometry LOD.
+//!   fade out while the turbid canopy slab (kind 6, to 3 km) rises over 90-140 m. A geometry LOD.
 //! - Ground cover: the authored ground material's green (the owner: "the entire map that's green
 //!   now should have grass"), less what lies under a river's water; the ground-class mask's red
 //!   channel sets how lush (tall) a stand is.
@@ -35,7 +35,7 @@ pub const BLADE_WIDTH_M: f32 = 0.007;
 /// Smallest drawn width in pixels (camera) or texels (shadow maps).
 pub const MIN_PIXELS: f32 = 1.5;
 /// Near 2 m tiles to this radius; 8 m far tiles (their own seeds) from the cross-fade band below
-/// it out to `FAR_RADIUS_M`, where the mat sinks into the ground's own green.
+/// it out to `FAR_RADIUS_M`, where the blades have faded into the canopy slab.
 pub const NEAR_RADIUS_M: f32 = 100.0;
 pub const BAND_M: f32 = 12.0;
 /// Far blade tiles fade out by this radius while the canopy slab rises over [SLAB_START_M, SLAB_FULL_M].
