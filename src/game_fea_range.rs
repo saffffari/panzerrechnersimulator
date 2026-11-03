@@ -293,7 +293,7 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
         Velocity => (150.0, 1_200.0, false),
         FromAz => (-180.0, 180.0, false),
         FromEl => (-60.0, 80.0, false),
-        LampPower => (1.0, 4_096.0, true),
+        LampPower => (1.0, 1.0e6, true),
         SlowSpan => (0.0, 1.0, false),
         RunLength => (0.1, 20.0, true),
         TimeSpeed => (0.01, 4.0, true),
@@ -1239,7 +1239,7 @@ impl Range {
                 self.g.set_cabin_lights(self.scene.cabin_lamps);
             }
             Knob::LampPower => {
-                let gain = (review_lamp_gain() * 2f32.powf(s)).clamp(1.0, 4096.0);
+                let gain = (review_lamp_gain() * 2f32.powf(s)).clamp(1.0, 1.0e6);
                 set_review_lamp_gain(if (gain - 1.0).abs() < 1.0e-3 { 1.0 } else { gain });
             }
             Knob::Fresh => self.scene.fresh_each_run = !self.scene.fresh_each_run,
