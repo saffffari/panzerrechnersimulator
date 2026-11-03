@@ -1,0 +1,1227 @@
+{
+ "schema": "kessel.crew-anatomy-volume-receipt",
+ "version": 1,
+ "volume": {
+  "path": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/anatomy/german_panzertruppe_face01_relaxed_anatomy.kvox",
+  "bytes": 724096,
+  "file_sha256": "95cde3f217b1c3ff712c8e35f342ad0c87845ff9cbc85fddc03a3515445a77d7",
+  "dims": [
+   70,
+   156,
+   32
+  ],
+  "voxel_size_m": 0.01,
+  "origin_m": [
+   -0.35,
+   -0.01,
+   -0.14
+  ],
+  "label_sha256": "efcd4f99764002383f0bc63a93fc038c5ba1ee94902d3dab076e2a31abfd1464",
+  "bone_sha256": "7aa9967af44e3a4d6f6f71b2e0a0911940fc04eb2b9e4f3148de589eceb1cff6",
+  "base_label_sha256": "efcd4f99764002383f0bc63a93fc038c5ba1ee94902d3dab076e2a31abfd1464"
+ },
+ "inputs": {
+  "figure": {
+   "path": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_relaxed_static.glb",
+   "sha256": "d51c45df2a60f8b7c91fba814469922c54bf3769e4d0ae944aadceaaee35f2de"
+  },
+  "rig": {
+   "path": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/authoring/german_panzertruppe_rigged.glb",
+   "sha256": "65d0324d7526b91ca0831b192d134c80ccd42f5ffab5cf993c2454d7c533aca2"
+  },
+  "bake_report": {
+   "path": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/bake.report.json",
+   "sha256": "47f0dcc1d9830172d82ebd4fb353cbae42353ae23631dfcf0fa9e77f0f75991f"
+  },
+  "tissue_table": {
+   "path": "catalog/crew_anatomy_tissues.v1.json",
+   "sha256": "30ff9d966c895b4b8430dc670c3f4747ac2f8a0bc8ca55d592f69a848d18bc9b"
+  },
+  "generator": {
+   "path": "tools/anatomy/build_anatomy.py",
+   "sha256": "390fe034178974a3a568c0ea19393fd499b785bf9a86d046b9656f960b46344e"
+  }
+ },
+ "rig_check": {
+  "max_skinning_error_m": 5.967431749235345e-07
+ },
+ "figure": {
+  "inside_voxels": 55851,
+  "volume_l": 55.851,
+  "reference_body_volume_l": 70.11,
+  "k_volume_ratio": 0.79662,
+  "linear_scale_to_reference": 1.07874
+ },
+ "landmarks": {
+  "midline_x_m": -0.01742,
+  "crotch_y_m": 0.71,
+  "vertebral_levels_m": {
+   "C1": [
+    1.3723,
+    1.3868
+   ],
+   "C2": [
+    1.3578,
+    1.3723
+   ],
+   "C3": [
+    1.3434,
+    1.3578
+   ],
+   "C4": [
+    1.3289,
+    1.3434
+   ],
+   "C5": [
+    1.3145,
+    1.3289
+   ],
+   "C6": [
+    1.3,
+    1.3145
+   ],
+   "C7": [
+    1.2856,
+    1.3
+   ],
+   "T1": [
+    1.2633,
+    1.2856
+   ],
+   "T2": [
+    1.241,
+    1.2633
+   ],
+   "T3": [
+    1.2187,
+    1.241
+   ],
+   "T4": [
+    1.1964,
+    1.2187
+   ],
+   "T5": [
+    1.1742,
+    1.1964
+   ],
+   "T6": [
+    1.1519,
+    1.1742
+   ],
+   "T7": [
+    1.1296,
+    1.1519
+   ],
+   "T8": [
+    1.1073,
+    1.1296
+   ],
+   "T9": [
+    1.0851,
+    1.1073
+   ],
+   "T10": [
+    1.0628,
+    1.0851
+   ],
+   "T11": [
+    1.0405,
+    1.0628
+   ],
+   "T12": [
+    1.0182,
+    1.0405
+   ],
+   "L1": [
+    0.9842,
+    1.0182
+   ],
+   "L2": [
+    0.9501,
+    0.9842
+   ],
+   "L3": [
+    0.9161,
+    0.9501
+   ],
+   "L4": [
+    0.8821,
+    0.9161
+   ],
+   "L5": [
+    0.848,
+    0.8821
+   ]
+  },
+  "femoral_heads_m": {
+   "L": [
+    0.0609,
+    0.7752,
+    -0.0206
+   ],
+   "R": [
+    -0.0958,
+    0.7752,
+    -0.0206
+   ]
+  }
+ },
+ "tuning": {
+  "kidney_L": {
+   "scale": 1.1352,
+   "voxels": 116,
+   "target_voxels": 116
+  },
+  "kidney_R": {
+   "scale": 1.1871,
+   "voxels": 116,
+   "target_voxels": 116
+  },
+  "spleen": {
+   "scale": 1.3156,
+   "voxels": 110,
+   "target_voxels": 110
+  },
+  "pancreas": {
+   "scale": 2.8,
+   "voxels": 103,
+   "target_voxels": 103
+  },
+  "stomach": {
+   "scale": 0.965,
+   "voxels": 301,
+   "target_voxels": 301
+  },
+  "colon": {
+   "scale": 2.0711,
+   "voxels": 442,
+   "target_voxels": 501
+  },
+  "liver": {
+   "voxels": 1180,
+   "target_voxels": 1329,
+   "method": "ranked fill (one piece)"
+  },
+  "bladder": {
+   "scale": 1.2063,
+   "voxels": 192,
+   "target_voxels": 192
+  },
+  "small_intestine": {
+   "voxels": 771,
+   "target_voxels": 771,
+   "method": "ranked fill + duodenum tube"
+  },
+  "heart": {
+   "scale": 2.3,
+   "voxels": 536,
+   "target_voxels": 630
+  },
+  "eye_R": {
+   "scale": 1.0625,
+   "voxels": 6,
+   "target_voxels": 6
+  },
+  "eye_L": {
+   "scale": 1.2031,
+   "voxels": 6,
+   "target_voxels": 6
+  }
+ },
+ "vessels": {
+  "aorta": {
+   "voxels": 133,
+   "pieces": 1,
+   "blocked_voxels": 16,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {
+    "heart_blood": 3,
+    "heart_wall": 13
+   },
+   "blocked_y_m": [
+    1.145,
+    1.155,
+    1.165,
+    1.175
+   ]
+  },
+  "ivc": {
+   "voxels": 86,
+   "pieces": 1,
+   "blocked_voxels": 7,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {
+    "heart_wall": 5,
+    "oesophagus": 2
+   },
+   "blocked_y_m": [
+    1.115,
+    1.125,
+    1.135
+   ]
+  },
+  "svc": {
+   "voxels": 29,
+   "pieces": 1,
+   "blocked_voxels": 10,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {
+    "airway": 2,
+    "heart_wall": 5,
+    "oesophagus": 3
+   },
+   "blocked_y_m": [
+    1.145,
+    1.155,
+    1.165,
+    1.175,
+    1.185
+   ]
+  },
+  "pulmonary_trunk": {
+   "voxels": 7,
+   "pieces": 1,
+   "blocked_voxels": 18,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {
+    "heart_blood": 5,
+    "heart_wall": 13
+   },
+   "blocked_y_m": [
+    1.135,
+    1.145,
+    1.155,
+    1.165,
+    1.175
+   ]
+  },
+  "pulmonary_r": {
+   "voxels": 7,
+   "pieces": 1,
+   "blocked_voxels": 6,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {
+    "heart_blood": 1,
+    "heart_wall": 5
+   },
+   "blocked_y_m": [
+    1.165,
+    1.175
+   ]
+  },
+  "pulmonary_l": {
+   "voxels": 4,
+   "pieces": 1,
+   "blocked_voxels": 8,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {
+    "heart_blood": 4,
+    "heart_wall": 4
+   },
+   "blocked_y_m": [
+    1.155,
+    1.165,
+    1.175
+   ]
+  },
+  "carotid_L": {
+   "voxels": 20,
+   "pieces": 1,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {},
+   "blocked_y_m": []
+  },
+  "jugular_L": {
+   "voxels": 25,
+   "pieces": 1,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {},
+   "blocked_y_m": []
+  },
+  "arm_artery_L": {
+   "voxels": 92,
+   "pieces": 1,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {},
+   "blocked_y_m": []
+  },
+  "leg_artery_L": {
+   "voxels": 96,
+   "pieces": 1,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {},
+   "blocked_y_m": []
+  },
+  "leg_vein_L": {
+   "voxels": 42,
+   "pieces": 1,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {},
+   "blocked_y_m": []
+  },
+  "carotid_R": {
+   "voxels": 25,
+   "pieces": 1,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {},
+   "blocked_y_m": []
+  },
+  "jugular_R": {
+   "voxels": 18,
+   "pieces": 1,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {},
+   "blocked_y_m": []
+  },
+  "arm_artery_R": {
+   "voxels": 92,
+   "pieces": 1,
+   "blocked_voxels": 1,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {
+    "hard bone": 1
+   },
+   "blocked_y_m": [
+    0.905
+   ]
+  },
+  "leg_artery_R": {
+   "voxels": 101,
+   "pieces": 2,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 2,
+   "skin_or_outside_y_m": [
+    0.395,
+    0.405
+   ],
+   "blocked_by": {},
+   "blocked_y_m": []
+  },
+  "leg_vein_R": {
+   "voxels": 42,
+   "pieces": 1,
+   "blocked_voxels": 0,
+   "skin_or_outside_voxels": 0,
+   "skin_or_outside_y_m": [],
+   "blocked_by": {},
+   "blocked_y_m": []
+  }
+ },
+ "summary": {
+  "labels": [
+   {
+    "id": 0,
+    "key": "exterior",
+    "voxels": 293589,
+    "volume_l": 293.589,
+    "mass_kg": 0.0,
+    "blood_l": 0.0
+   },
+   {
+    "id": 1,
+    "key": "skin",
+    "voxels": 15935,
+    "volume_l": 15.935,
+    "mass_kg": 17.6719,
+    "blood_l": 0.8509
+   },
+   {
+    "id": 2,
+    "key": "subcutaneous_fat",
+    "voxels": 7160,
+    "volume_l": 7.16,
+    "mass_kg": 6.5228,
+    "blood_l": 0.0952
+   },
+   {
+    "id": 3,
+    "key": "muscle",
+    "voxels": 19433,
+    "volume_l": 19.433,
+    "mass_kg": 21.182,
+    "blood_l": 0.5422
+   },
+   {
+    "id": 4,
+    "key": "cortical_bone",
+    "voxels": 3069,
+    "volume_l": 3.069,
+    "mass_kg": 5.8557,
+    "blood_l": 0.0565
+   },
+   {
+    "id": 5,
+    "key": "spongiosa",
+    "voxels": 1030,
+    "volume_l": 1.03,
+    "mass_kg": 1.2133,
+    "blood_l": 0.1656
+   },
+   {
+    "id": 6,
+    "key": "yellow_marrow",
+    "voxels": 136,
+    "volume_l": 0.136,
+    "mass_kg": 0.1333,
+    "blood_l": 0.0026
+   },
+   {
+    "id": 7,
+    "key": "cartilage",
+    "voxels": 298,
+    "volume_l": 0.298,
+    "mass_kg": 0.3278,
+    "blood_l": 0.0
+   },
+   {
+    "id": 8,
+    "key": "brain",
+    "voxels": 1475,
+    "volume_l": 1.475,
+    "mass_kg": 1.5414,
+    "blood_l": 0.0676
+   },
+   {
+    "id": 9,
+    "key": "csf",
+    "voxels": 37,
+    "volume_l": 0.037,
+    "mass_kg": 0.0373,
+    "blood_l": 0.0
+   },
+   {
+    "id": 10,
+    "key": "spinal_cord",
+    "voxels": 47,
+    "volume_l": 0.047,
+    "mass_kg": 0.0505,
+    "blood_l": 0.0022
+   },
+   {
+    "id": 11,
+    "key": "eye",
+    "voxels": 12,
+    "volume_l": 0.012,
+    "mass_kg": 0.0121,
+    "blood_l": 0.0001
+   },
+   {
+    "id": 12,
+    "key": "lung",
+    "voxels": 2162,
+    "volume_l": 2.162,
+    "mass_kg": 0.8518,
+    "blood_l": 0.4702
+   },
+   {
+    "id": 13,
+    "key": "airway",
+    "voxels": 73,
+    "volume_l": 0.073,
+    "mass_kg": 0.0001,
+    "blood_l": 0.0
+   },
+   {
+    "id": 14,
+    "key": "heart_wall",
+    "voxels": 351,
+    "volume_l": 0.351,
+    "mass_kg": 0.3794,
+    "blood_l": 0.0609
+   },
+   {
+    "id": 15,
+    "key": "heart_blood",
+    "voxels": 184,
+    "volume_l": 0.184,
+    "mass_kg": 0.1932,
+    "blood_l": 0.184
+   },
+   {
+    "id": 16,
+    "key": "vessel_blood",
+    "voxels": 764,
+    "volume_l": 0.764,
+    "mass_kg": 0.8022,
+    "blood_l": 0.764
+   },
+   {
+    "id": 17,
+    "key": "liver",
+    "voxels": 1149,
+    "volume_l": 1.149,
+    "mass_kg": 1.2398,
+    "blood_l": 0.365
+   },
+   {
+    "id": 18,
+    "key": "kidney",
+    "voxels": 232,
+    "volume_l": 0.232,
+    "mass_kg": 0.2473,
+    "blood_l": 0.0846
+   },
+   {
+    "id": 19,
+    "key": "spleen",
+    "voxels": 110,
+    "volume_l": 0.11,
+    "mass_kg": 0.1198,
+    "blood_l": 0.0593
+   },
+   {
+    "id": 20,
+    "key": "pancreas",
+    "voxels": 103,
+    "volume_l": 0.103,
+    "mass_kg": 0.112,
+    "blood_l": 0.0254
+   },
+   {
+    "id": 21,
+    "key": "stomach_wall",
+    "voxels": 208,
+    "volume_l": 0.208,
+    "mass_kg": 0.2263,
+    "blood_l": 0.0625
+   },
+   {
+    "id": 22,
+    "key": "stomach_contents",
+    "voxels": 92,
+    "volume_l": 0.092,
+    "mass_kg": 0.0957,
+    "blood_l": 0.0
+   },
+   {
+    "id": 23,
+    "key": "small_intestine",
+    "voxels": 733,
+    "volume_l": 0.733,
+    "mass_kg": 0.7572,
+    "blood_l": 0.1525
+   },
+   {
+    "id": 24,
+    "key": "colon_wall",
+    "voxels": 353,
+    "volume_l": 0.353,
+    "mass_kg": 0.3841,
+    "blood_l": 0.121
+   },
+   {
+    "id": 25,
+    "key": "colon_contents",
+    "voxels": 89,
+    "volume_l": 0.089,
+    "mass_kg": 0.0926,
+    "blood_l": 0.0
+   },
+   {
+    "id": 26,
+    "key": "bladder_wall",
+    "voxels": 116,
+    "volume_l": 0.116,
+    "mass_kg": 0.126,
+    "blood_l": 0.0027
+   },
+   {
+    "id": 27,
+    "key": "urine",
+    "voxels": 76,
+    "volume_l": 0.076,
+    "mass_kg": 0.0778,
+    "blood_l": 0.0
+   },
+   {
+    "id": 28,
+    "key": "oesophagus",
+    "voxels": 43,
+    "volume_l": 0.043,
+    "mass_kg": 0.0447,
+    "blood_l": 0.0129
+   },
+   {
+    "id": 29,
+    "key": "visceral_fat",
+    "voxels": 381,
+    "volume_l": 0.381,
+    "mass_kg": 0.3471,
+    "blood_l": 0.0051
+   }
+  ],
+  "organs": [
+   {
+    "organ": "brain",
+    "labels": [
+     "brain"
+    ],
+    "voxel_mass_kg": 1.5414,
+    "icrp89_male_kg": 1.45,
+    "reference_scaled_kg": 1.1551,
+    "ratio_to_scaled": 1.334
+   },
+   {
+    "organ": "eyes (both)",
+    "labels": [
+     "eye"
+    ],
+    "voxel_mass_kg": 0.0121,
+    "icrp89_male_kg": 0.015,
+    "reference_scaled_kg": 0.0119,
+    "ratio_to_scaled": 1.013
+   },
+   {
+    "organ": "spinal cord",
+    "labels": [
+     "spinal_cord"
+    ],
+    "voxel_mass_kg": 0.0505,
+    "icrp89_male_kg": 0.03,
+    "reference_scaled_kg": 0.0239,
+    "ratio_to_scaled": 2.113
+   },
+   {
+    "organ": "lungs (with blood)",
+    "labels": [
+     "lung"
+    ],
+    "voxel_mass_kg": 0.8518,
+    "icrp89_male_kg": 1.2,
+    "reference_scaled_kg": 0.9559,
+    "ratio_to_scaled": 0.891
+   },
+   {
+    "organ": "heart wall",
+    "labels": [
+     "heart_wall"
+    ],
+    "voxel_mass_kg": 0.3794,
+    "icrp89_male_kg": 0.33,
+    "reference_scaled_kg": 0.2629,
+    "ratio_to_scaled": 1.443
+   },
+   {
+    "organ": "heart contents (blood)",
+    "labels": [
+     "heart_blood"
+    ],
+    "voxel_mass_kg": 0.1932,
+    "icrp89_male_kg": 0.51,
+    "reference_scaled_kg": 0.4063,
+    "ratio_to_scaled": 0.476
+   },
+   {
+    "organ": "heart, wall + contents",
+    "labels": [
+     "heart_wall",
+     "heart_blood"
+    ],
+    "voxel_mass_kg": 0.5726,
+    "icrp89_male_kg": 0.84,
+    "reference_scaled_kg": 0.6692,
+    "ratio_to_scaled": 0.856
+   },
+   {
+    "organ": "liver",
+    "labels": [
+     "liver"
+    ],
+    "voxel_mass_kg": 1.2398,
+    "icrp89_male_kg": 1.8,
+    "reference_scaled_kg": 1.4339,
+    "ratio_to_scaled": 0.865
+   },
+   {
+    "organ": "kidneys (both)",
+    "labels": [
+     "kidney"
+    ],
+    "voxel_mass_kg": 0.2473,
+    "icrp89_male_kg": 0.31,
+    "reference_scaled_kg": 0.247,
+    "ratio_to_scaled": 1.001
+   },
+   {
+    "organ": "spleen",
+    "labels": [
+     "spleen"
+    ],
+    "voxel_mass_kg": 0.1198,
+    "icrp89_male_kg": 0.15,
+    "reference_scaled_kg": 0.1195,
+    "ratio_to_scaled": 1.003
+   },
+   {
+    "organ": "pancreas",
+    "labels": [
+     "pancreas"
+    ],
+    "voxel_mass_kg": 0.112,
+    "icrp89_male_kg": 0.14,
+    "reference_scaled_kg": 0.1115,
+    "ratio_to_scaled": 1.004
+   },
+   {
+    "organ": "stomach wall",
+    "labels": [
+     "stomach_wall"
+    ],
+    "voxel_mass_kg": 0.2263,
+    "icrp89_male_kg": 0.15,
+    "reference_scaled_kg": 0.1195,
+    "ratio_to_scaled": 1.894
+   },
+   {
+    "organ": "stomach contents",
+    "labels": [
+     "stomach_contents"
+    ],
+    "voxel_mass_kg": 0.0957,
+    "icrp89_male_kg": 0.25,
+    "reference_scaled_kg": 0.1992,
+    "ratio_to_scaled": 0.481
+   },
+   {
+    "organ": "stomach, wall + contents",
+    "labels": [
+     "stomach_wall",
+     "stomach_contents"
+    ],
+    "voxel_mass_kg": 0.322,
+    "icrp89_male_kg": 0.4,
+    "reference_scaled_kg": 0.3186,
+    "ratio_to_scaled": 1.011
+   },
+   {
+    "organ": "small intestine, wall + contents",
+    "labels": [
+     "small_intestine"
+    ],
+    "voxel_mass_kg": 0.7572,
+    "icrp89_male_kg": 1.0,
+    "reference_scaled_kg": 0.7966,
+    "ratio_to_scaled": 0.951
+   },
+   {
+    "organ": "colon wall",
+    "labels": [
+     "colon_wall"
+    ],
+    "voxel_mass_kg": 0.3841,
+    "icrp89_male_kg": 0.37,
+    "reference_scaled_kg": 0.2947,
+    "ratio_to_scaled": 1.303
+   },
+   {
+    "organ": "colon contents",
+    "labels": [
+     "colon_contents"
+    ],
+    "voxel_mass_kg": 0.0926,
+    "icrp89_male_kg": 0.3,
+    "reference_scaled_kg": 0.239,
+    "ratio_to_scaled": 0.387
+   },
+   {
+    "organ": "colon, wall + contents",
+    "labels": [
+     "colon_wall",
+     "colon_contents"
+    ],
+    "voxel_mass_kg": 0.4767,
+    "icrp89_male_kg": 0.67,
+    "reference_scaled_kg": 0.5337,
+    "ratio_to_scaled": 0.893
+   },
+   {
+    "organ": "urinary bladder wall",
+    "labels": [
+     "bladder_wall"
+    ],
+    "voxel_mass_kg": 0.126,
+    "icrp89_male_kg": 0.05,
+    "reference_scaled_kg": 0.0398,
+    "ratio_to_scaled": 3.163
+   },
+   {
+    "organ": "urine",
+    "labels": [
+     "urine"
+    ],
+    "voxel_mass_kg": 0.0778,
+    "icrp89_male_kg": 0.2,
+    "reference_scaled_kg": 0.1593,
+    "ratio_to_scaled": 0.488
+   },
+   {
+    "organ": "bladder, wall + urine",
+    "labels": [
+     "bladder_wall",
+     "urine"
+    ],
+    "voxel_mass_kg": 0.2038,
+    "icrp89_male_kg": 0.25,
+    "reference_scaled_kg": 0.1992,
+    "ratio_to_scaled": 1.023
+   },
+   {
+    "organ": "oesophagus",
+    "labels": [
+     "oesophagus"
+    ],
+    "voxel_mass_kg": 0.0447,
+    "icrp89_male_kg": 0.04,
+    "reference_scaled_kg": 0.0319,
+    "ratio_to_scaled": 1.403
+   },
+   {
+    "organ": "skin",
+    "labels": [
+     "skin"
+    ],
+    "voxel_mass_kg": 17.6719,
+    "icrp89_male_kg": 3.3,
+    "reference_scaled_kg": 2.6288,
+    "ratio_to_scaled": 6.722
+   },
+   {
+    "organ": "adipose, subcutaneous + visceral (vs separable adipose)",
+    "labels": [
+     "subcutaneous_fat",
+     "visceral_fat"
+    ],
+    "voxel_mass_kg": 6.8699,
+    "icrp89_male_kg": 14.5,
+    "reference_scaled_kg": 11.551,
+    "ratio_to_scaled": 0.595
+   },
+   {
+    "organ": "skeletal muscle",
+    "labels": [
+     "muscle"
+    ],
+    "voxel_mass_kg": 21.182,
+    "icrp89_male_kg": 29.0,
+    "reference_scaled_kg": 23.102,
+    "ratio_to_scaled": 0.917
+   },
+   {
+    "organ": "cortical bone",
+    "labels": [
+     "cortical_bone"
+    ],
+    "voxel_mass_kg": 5.8557,
+    "icrp89_male_kg": 4.4,
+    "reference_scaled_kg": 3.5051,
+    "ratio_to_scaled": 1.671
+   },
+   {
+    "organ": "spongiosa (trabecular bone + red marrow)",
+    "labels": [
+     "spongiosa"
+    ],
+    "voxel_mass_kg": 1.2133,
+    "icrp89_male_kg": 2.27,
+    "reference_scaled_kg": 1.8083,
+    "ratio_to_scaled": 0.671
+   },
+   {
+    "organ": "yellow marrow",
+    "labels": [
+     "yellow_marrow"
+    ],
+    "voxel_mass_kg": 0.1333,
+    "icrp89_male_kg": 2.48,
+    "reference_scaled_kg": 1.9756,
+    "ratio_to_scaled": 0.067
+   },
+   {
+    "organ": "cartilage",
+    "labels": [
+     "cartilage"
+    ],
+    "voxel_mass_kg": 0.3278,
+    "icrp89_male_kg": 1.1,
+    "reference_scaled_kg": 0.8763,
+    "ratio_to_scaled": 0.374
+   },
+   {
+    "organ": "skeleton (bone, marrow, cartilage)",
+    "labels": [
+     "cortical_bone",
+     "spongiosa",
+     "yellow_marrow",
+     "cartilage"
+    ],
+    "voxel_mass_kg": 7.5301,
+    "icrp89_male_kg": 10.25,
+    "reference_scaled_kg": 8.1654,
+    "ratio_to_scaled": 0.922
+   },
+   {
+    "organ": "whole body",
+    "labels": [
+     "skin",
+     "subcutaneous_fat",
+     "muscle",
+     "cortical_bone",
+     "spongiosa",
+     "yellow_marrow",
+     "cartilage",
+     "brain",
+     "csf",
+     "spinal_cord",
+     "eye",
+     "lung",
+     "airway",
+     "heart_wall",
+     "heart_blood",
+     "vessel_blood",
+     "liver",
+     "kidney",
+     "spleen",
+     "pancreas",
+     "stomach_wall",
+     "stomach_contents",
+     "small_intestine",
+     "colon_wall",
+     "colon_contents",
+     "bladder_wall",
+     "urine",
+     "oesophagus",
+     "visceral_fat"
+    ],
+    "voxel_mass_kg": 60.6452,
+    "icrp89_male_kg": 73.0,
+    "reference_scaled_kg": 58.1532,
+    "ratio_to_scaled": 1.043
+   }
+  ],
+  "blood_l": {
+   "total": 4.153,
+   "explicit_blood_voxels": 0.948,
+   "reference_scaled": 4.222,
+   "crew_blood_system_authored": 6.0
+  }
+ },
+ "checks": {
+  "non_skin_voxels_touching_exterior": 0,
+  "organ_voxels_touching_skin": {
+   "brain": 0,
+   "lung": 0,
+   "heart_wall": 0,
+   "heart_blood": 0,
+   "liver": 0,
+   "kidney": 0,
+   "spleen": 0,
+   "pancreas": 0,
+   "stomach_wall": 0,
+   "stomach_contents": 0,
+   "small_intestine": 0,
+   "colon_wall": 0,
+   "colon_contents": 0,
+   "bladder_wall": 0,
+   "urine": 0,
+   "spinal_cord": 0,
+   "csf": 0,
+   "visceral_fat": 0,
+   "oesophagus": 0
+  },
+  "bone_voxels_touching_skin": 1270,
+  "components": {
+   "brain": {
+    "count": 1,
+    "largest": [
+     1475
+    ]
+   },
+   "lung": {
+    "count": 3,
+    "largest": [
+     1151,
+     1010,
+     1
+    ]
+   },
+   "heart_wall": {
+    "count": 1,
+    "largest": [
+     351
+    ]
+   },
+   "liver": {
+    "count": 2,
+    "largest": [
+     1131,
+     18
+    ]
+   },
+   "kidney": {
+    "count": 2,
+    "largest": [
+     116,
+     116
+    ]
+   },
+   "spleen": {
+    "count": 1,
+    "largest": [
+     110
+    ]
+   },
+   "pancreas": {
+    "count": 1,
+    "largest": [
+     103
+    ]
+   },
+   "stomach_wall": {
+    "count": 4,
+    "largest": [
+     205,
+     1,
+     1,
+     1
+    ]
+   },
+   "small_intestine": {
+    "count": 3,
+    "largest": [
+     708,
+     16,
+     9
+    ]
+   },
+   "colon_wall": {
+    "count": 2,
+    "largest": [
+     352,
+     1
+    ]
+   },
+   "bladder_wall": {
+    "count": 4,
+    "largest": [
+     97,
+     9,
+     7,
+     3
+    ]
+   },
+   "eye": {
+    "count": 2,
+    "largest": [
+     6,
+     6
+    ]
+   },
+   "spinal_cord": {
+    "count": 1,
+    "largest": [
+     47
+    ]
+   },
+   "oesophagus": {
+    "count": 1,
+    "largest": [
+     43
+    ]
+   },
+   "airway": {
+    "count": 3,
+    "largest": [
+     54,
+     10,
+     9
+    ]
+   },
+   "vessel_blood": {
+    "count": 2,
+    "largest": [
+     738,
+     26
+    ]
+   },
+   "csf": {
+    "count": 9,
+    "largest": [
+     17,
+     6,
+     3,
+     2
+    ]
+   },
+   "heart (wall + blood)": {
+    "count": 1,
+    "largest": [
+     535
+    ]
+   },
+   "stomach (wall + contents)": {
+    "count": 1,
+    "largest": [
+     300
+    ]
+   },
+   "colon (wall + contents)": {
+    "count": 1,
+    "largest": [
+     442
+    ]
+   },
+   "bladder (wall + urine)": {
+    "count": 1,
+    "largest": [
+     192
+    ]
+   }
+  },
+  "brain_voxels_beside_non_cranial_tissue": 0,
+  "lung_voxels_beside_skin_or_subcutaneous_fat": 0,
+  "voxels_without_bone_binding": 0,
+  "shape_voxels_clipped_by_the_body_or_skin": {
+   "fibula_L": 1,
+   "foot_L": 38,
+   "foot_R": 39,
+   "hand_L": 32,
+   "hand_R": 31,
+   "patella_L": 10,
+   "patella_R": 2,
+   "teeth": 3,
+   "tibia_L": 2,
+   "vertebra_L3_posterior": 1
+  },
+  "bone_binding_vs_skin_weights": {
+   "skin_voxels": 15935,
+   "same_dominant_joint": 0.6743
+  }
+ },
+ "notes": [
+  "outer surface: 1887 triangles and sub-triangles of the figure's 564 face the outside; body-piece surface: 482",
+  "crotch 0.710 m; L5/S1 0.848; T12/L1 1.018; C7/T1 1.286; C1 top 1.387; femoral heads 0.775",
+  "skull sealed at 8 brain voxels"
+ ],
+ "edit_layer": null
+}
