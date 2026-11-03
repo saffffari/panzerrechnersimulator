@@ -325,7 +325,7 @@ impl Grass {
             r.add_dynamic_instanced_pool(device, queue, &crate::meadow_fauna::wing_mesh(s), 2 * 96)).collect();
         self.tracks.mark_all_dirty();
         println!("[meadow] spring meadow over {:.1} % of the map ({}), river {}, built in {:.2} s",
-            presence * 100.0, if material.is_some() { "ground material green" } else { "ground-class red" },
+            presence * 100.0, if mask.is_some() { "ground-class red" } else { "ground material green" },
             if river.is_some() { "excluded" } else { "none" }, started.elapsed().as_secs_f32());
         self.meadow = Some(Box::new(SpringMeadow {
             wind: Default::default(), push: Default::default(), mirror: Default::default(), cover, butterflies: Default::default(), wing_batches,

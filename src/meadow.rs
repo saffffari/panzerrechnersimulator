@@ -357,7 +357,7 @@ impl River {
 /// red channel, smoothed over 3 x 3 texels.
 pub fn build_cover(material: Option<(&[u8], usize)>, mask: Option<(&[u8], usize)>, half_extent: f32,
     river: Option<&River>, ground: &dyn Fn(f32, f32) -> f32) -> CoverMap {
-    let res = material.map(|m| m.1).or(mask.map(|m| m.1)).unwrap_or(1024).min(4096);
+    let res = mask.map(|m| m.1).or(material.map(|m| m.1)).unwrap_or(1024).min(4096);
     let mut rg = vec![0u8; res * res * 2];
     let sample = |img: (&[u8], usize), px: usize, pz: usize| {
         let (data, n) = img;
@@ -367,21 +367,26 @@ pub fn build_cover(material: Option<(&[u8], usize)>, mask: Option<(&[u8], usize)
     };
     for pz in 0..res {
         for px in 0..res {
-            let presence = match (material, mask) {
-                (Some(m), _) => { let c = sample(m, px, pz); greenness(c[0], c[1], c[2]) }
-                (None, Some(k)) => sample(k, px, pz)[0] as f32 / 255.0,
+            // The map's grass mask (the ground class's red), 3 x 3 smoothed, is the presence; the
+            // material's green only where a map has no ground class (2 November 2026: the earth
+            // under the grass is painted as earth, so the material no longer says where grass is).
+            let presence = match (mask, material) {
+                (Some(k), _) => {
+                    let mut sum = 0.0;
+                    for (dx, dz) in [(-1i32, -1i32), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                        let qx = (px as i32 + dx).clamp(0, res as i32 - 1) as usize;
+                        let qz = (pz as i32 + dz).clamp(0, res as i32 - 1) as usize;
+                        sum += sample(k, qx, qz)[0] as f32;
+                    }
+                    sum / 9.0 / 255.0
+                }
+                (None, Some(m)) => { let c = sample(m, px, pz); greenness(c[0], c[1], c[2]) }
                 _ => 0.0,
             };
-            let mut lush = 0.0;
-            if let Some(k) = mask {
-                let mut sum = 0.0;
-                for (dx, dz) in [(-1i32, -1i32), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
-                    let qx = (px as i32 + dx).clamp(0, res as i32 - 1) as usize;
-                    let qz = (pz as i32 + dz).clamp(0, res as i32 - 1) as usize;
-                    sum += sample(k, qx, qz)[0] as f32;
-                }
-                lush = sum / 9.0 / 255.0;
-            }
+            // Lushness (stand height): world-fixed 23 m and 7 m patches.
+            let (wx, wz) = ((px as f32 + 0.5) / res as f32 * 2.0 * half_extent - half_extent,
+                (pz as f32 + 0.5) / res as f32 * 2.0 * half_extent - half_extent);
+            let lush = value_noise(wx / 23.0, wz / 23.0, 0x10c5) * 0.7 + value_noise(wx / 7.0, wz / 7.0, 0x10c6) * 0.3;
             let i = (pz * res + px) * 2;
             rg[i] = (presence * 255.0).round() as u8;
             rg[i + 1] = (lush * 255.0).round() as u8;
@@ -808,6 +813,13 @@ mod tests {
         let cover = build_cover(Some((&mat, 64)), None, 32.0, Some(&river), &|x, _| if x.abs() < 10.0 { -1.0 } else { 3.0 });
         assert_eq!(cover.presence(0.5, 0.5), 0.0, "under the water");
         assert!(cover.presence(20.0, 0.5) > 0.9, "on the bank above it");
+        // A map with a ground class takes the grass mask's red, whatever the material's colour:
+        // earth-coloured ground under the grass keeps its meadow, a zero mask has none.
+        let earth: Vec<u8> = [70u8, 52, 38, 255].repeat(64 * 64);
+        let mut mask: Vec<u8> = [255u8, 0, 0, 255].repeat(64 * 64);
+        for z in 0..64 { for x in 0..32 { mask[(z * 64 + x) * 4] = 0; } }
+        let cover = build_cover(Some((&earth, 64)), Some((&mask, 64)), 32.0, None, &|_, _| 0.0);
+        assert!(cover.presence(20.0, 0.0) > 0.95 && cover.presence(-20.0, 0.0) < 0.05);
     }
 
     #[test]
