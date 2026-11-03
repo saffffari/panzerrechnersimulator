@@ -96,7 +96,7 @@ fn solved_glow() -> bool {
 
 /// Planck radiance of the rim at `kelvin`, on the same normalization as rm_sparks.wgsl's
 /// `rim_color` (the incandescent rim grains), so surface and grains agree.
-fn rim_radiance(kelvin: f32) -> Vec3 {
+pub(crate) fn rim_radiance(kelvin: f32) -> Vec3 {
     if kelvin < 700.0 { return Vec3::ZERO; }
     let c2 = 14_387_769.0f32; // nm K
     let reference = (c2 / (650.0 * 1800.0)).exp() - 1.0;

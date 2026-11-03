@@ -702,7 +702,7 @@ fn flat_rgba(rgb: [u8; 3]) -> CpuImage {
     CpuImage::new(1, 1, vec![rgb[0], rgb[1], rgb[2], 255])
 }
 
-fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
+pub(crate) fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
     use gltf::image::Format;
     let (w, h) = (img.width, img.height);
     let px = &img.pixels;

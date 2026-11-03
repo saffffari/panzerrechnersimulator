@@ -66,6 +66,12 @@ pub(crate) mod game_fea_section;
 pub(crate) mod game_fea_review;
 #[path = "game_fea_film.rs"]
 pub(crate) mod game_fea_film;
+#[path = "crew_skeleton.rs"]
+mod crew_skeleton;
+#[path = "crew_tissue.rs"]
+mod crew_tissue;
+#[path = "crew_corpse_tissue.rs"]
+mod crew_corpse_tissue;
 #[path = "game_recorded_fx.rs"]
 mod game_recorded_fx;
 #[path = "main_gun_candidates.rs"]
@@ -4290,6 +4296,42 @@ fn hot_fragment_heat_stage(fragment: &HotFragment) -> usize {
     }
 }
 
+/// A chip without a solved temperature (the authored populations of HE, HEAT and harness hits)
+/// takes one from its normalized heat age through the old pages' bounds (named, authored):
+/// 1,500 K new, 1,300 / 1,100 / 900 K at the page changes, 750 K at the end of its life.
+const AUTHORED_HEAT_KNOTS: [(f32, f32); 5] = [(0.0, 1500.0), (0.014, 1300.0), (0.11, 1100.0), (0.58, 900.0), (1.0, 750.0)];
+
+fn hot_fragment_temperature(fragment: &HotFragment) -> f32 {
+    if fragment.temp_k > 0.0 {
+        return fragment.temp_k;
+    }
+    let jitter = (hash01(fragment.seed ^ 0x7E11) - 0.5) * 0.008;
+    let heat_age = (fragment.age / fragment.life.max(0.001) + jitter).clamp(0.0, 1.0);
+    AUTHORED_HEAT_KNOTS.windows(2).find(|w| heat_age <= w[1].0).map_or(750.0, |w| {
+        let t = (heat_age - w[0].0) / (w[1].0 - w[0].0).max(1.0e-6);
+        w[0].1 + (w[1].1 - w[0].1) * t
+    })
+}
+
+/// A chip's emitted radiance: Planck at its temperature on the renderer's scale, the law the wound
+/// rims and the rim grains use (`renderer_scars::rim_radiance`; zero below 700 K).
+fn hot_fragment_radiance(fragment: &HotFragment) -> Vec3 {
+    crate::renderer::scars::rim_radiance(hot_fragment_temperature(fragment))
+}
+
+/// Each heat page's colour is Planck's chroma at a temperature within its band (named: a chip
+/// draws its band's chroma, not its own); its glow is set every frame to the mean red-band
+/// radiance of the chips on it (`drive_penetration_fx`).
+const HOT_FRAGMENT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1450.0, 1200.0, 1000.0, 825.0, 0.0];
+
+fn hot_fragment_page_colour(stage: usize) -> [u8; 3] {
+    if HOT_FRAGMENT_PAGE_KELVIN[stage] > 0.0 {
+        crate::incandescence::planck_srgb8(HOT_FRAGMENT_PAGE_KELVIN[stage])
+    } else {
+        [70, 68, 64] // cold, oxidised steel: emits nothing
+    }
+}
+
 /// Collapse one moving compartment's bounded incandescent-chip population into one spherical
 /// compact source for the renderer's shadowed local-light transport. This is a source-clustering
 /// approximation, not a separate authored flash: position is the emitted-power centroid, source
@@ -4303,12 +4345,6 @@ fn hot_fragment_aggregate_light(
     frame: BloodFrame,
     parent: Mat4,
 ) -> Option<PointLight> {
-    let radiance: [Vec3; N_HOT_FRAGMENT_BATCHES] = std::array::from_fn(|stage| {
-        let linear = HOT_FRAGMENT_STAGE_COLOR[stage]
-            .to_array()
-            .map(crate::rt_surface::srgb_to_linear);
-        Vec3::from_array(linear) * HOT_FRAGMENT_STAGE_EMISSIVE[stage]
-    });
     let mut rgb_power = Vec3::ZERO;
     let mut weighted_pos = Vec3::ZERO;
     let mut weight_sum = 0.0f32;
@@ -4320,9 +4356,8 @@ fn hot_fragment_aggregate_light(
             && fragment.age >= 0.0
             && fragment.age < fragment.life
     }) {
-        let stage = hot_fragment_heat_stage(fragment);
         let area_m2 = 6.0 * fragment.size.max(0.0).powi(2);
-        let emission = radiance[stage] * (area_m2 / 4.0);
+        let emission = hot_fragment_radiance(fragment) * (area_m2 / 4.0);
         let weight = emission.max_element();
         if weight <= 0.0 {
             continue;
@@ -8454,18 +8489,11 @@ const HOT_FRAGMENT_TAIL_MIN_SPEED: f32 = 1.2;
 // with the lights debug, 2026-11-02: every tail at the cap, 0.17-0.7 m from the eye).
 const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.04;
 const HOT_FRAGMENT_TAIL_WIDTH_RATIO: f32 = 0.38;
-// The visible temperature pages also define the radiance of the bounded fragment-swarm emitter.
-// Emission is integrated from each real chip's six cube faces; the narrow history tail is only a
-// motion representation of that same body and therefore contributes no duplicate source power.
-const HOT_FRAGMENT_STAGE_COLOR: [Vec3; N_HOT_FRAGMENT_BATCHES] = [
-    Vec3::new(1.0, 220.0 / 255.0, 54.0 / 255.0),
-    Vec3::new(1.0, 182.0 / 255.0, 28.0 / 255.0),
-    Vec3::new(225.0 / 255.0, 94.0 / 255.0, 9.0 / 255.0),
-    Vec3::new(104.0 / 255.0, 14.0 / 255.0, 3.0 / 255.0),
-    // Cold, oxidised steel: a body the lattice solved, below visible glow. No emission.
-    Vec3::new(70.0 / 255.0, 68.0 / 255.0, 64.0 / 255.0),
-];
-const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.05, 0.18, 0.0];
+// The fragment-swarm emitter integrates each real chip's Planck radiance over its six cube faces
+// (`hot_fragment_radiance`); the narrow history tail is only a motion representation of that same
+// body and therefore contributes no duplicate source power. (Until 2026-11-02 the pages' authored
+// radiances, 2.45 / 2.05 / 1.05 / 0.18, stood for both: hundreds to tens of thousands of times a
+// chip's Planck radiance at its band, and their light flooded a closed turret deep red.)
 // These pre-allocated scene slots are retained only to avoid re-indexing the large fixed scene while
 // the renderer agent admits dynamic physical grains into the TLAS. They are submitted empty forever.
 const N_MICRO_SPARK_BATCHES: usize = 3;
@@ -12171,8 +12199,24 @@ impl Game {
         // original 1,596 triangles are losslessly divided into the same eleven centroid pages as
         // the relaxed flesh. Five bounded pools cover the real solo roster; the couch authority
         // contract still allows only four distinct human casualties.
-        let skeleton_segments = load_reviewed_skeleton_mesh()
-            .and_then(|source| partition_reviewed_skeleton_mesh(&source));
+        // Since 2026-11-02 the owner's rigged PSX skeleton (`crew_skeleton`), cut by joint and
+        // fitted inside the relaxed figure so no bone pokes through; the reviewed Vinrax skeleton
+        // only when that asset cannot be loaded or fitted.
+        let psx_bones = load_full_crew_mesh(CREW_RELAXED_GLBS[0], "skeleton fit")
+            .and_then(|figure| match crew_skeleton::fitted_bone_pages(&figure) {
+                Ok((pages, fits)) => {
+                    let pulled: usize = fits.iter().flatten().map(|f| f.pulled).sum();
+                    let worst = fits.iter().flatten().map(|f| f.worst_pull_m).fold(0.0f32, f32::max);
+                    let outside: usize = fits.iter().flatten().map(|f| f.vertices_outside).sum();
+                    let scales: Vec<String> = fits.iter().flatten().map(|f| format!("{:.2}/{}", f.scale, f.shrinks)).collect();
+                    println!("[crew] PSX skeleton fitted inside the figure: {pulled} vertices set inside the skin, largest move {:.0} mm, {outside} outside; scale/shrinks by part {}",
+                        worst * 1000.0, scales.join(" "));
+                    Some(pages)
+                }
+                Err(error) => { eprintln!("[crew] PSX skeleton unavailable ({error:#}); the reviewed skeleton stands in"); None }
+            });
+        let skeleton_segments = psx_bones.clone()
+            .or_else(|| load_reviewed_skeleton_mesh().and_then(|source| partition_reviewed_skeleton_mesh(&source)));
         let couch_bones = std::array::from_fn(|_| {
             std::array::from_fn(|part_index| {
                 let part = crew_physics::CrewBodyPart::ALL[part_index];
@@ -13475,8 +13519,9 @@ impl Game {
         // page is amber rather than cream-white and is intentionally brief; saturated orange/red
         // carries the effect after the flash. Every page reserves the bounded pool because an
         // impact frame may legitimately put every chip in the same heat stage.
-        let hot_steel = [[255, 220, 54], [255, 182, 28], [225, 94, 9], [104, 14, 3], [70, 68, 64]];
-        let hot_emissive = HOT_FRAGMENT_STAGE_EMISSIVE;
+        let hot_steel: [[u8; 3]; N_HOT_FRAGMENT_BATCHES] = std::array::from_fn(hot_fragment_page_colour);
+        // Every page starts dark; `drive_penetration_fx` sets its glow from its chips each frame.
+        let hot_emissive = [0.0f32; N_HOT_FRAGMENT_BATCHES];
         slots.hot_fragment_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
@@ -13493,7 +13538,7 @@ impl Game {
         // A second bounded page set draws one narrow, velocity-aligned tail for each flying head.
         // It reuses a plain unit box rather than crossed fins/billboards, so two luminous axes can
         // never be baked into one fragment. Slower and settled chips submit no tail transform.
-        let tail_emissive = [2.10, 1.78, 0.86, 0.12, 0.0];
+        let tail_emissive = [0.0f32; N_HOT_FRAGMENT_BATCHES];
         slots.hot_fragment_tail_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
@@ -14018,7 +14063,7 @@ impl Game {
         if let Some(arms)=&first_person {arms.mark(&mut renderer);}
         let infantry_casualties=infantry_casualties::Casualties::allocate(device,queue,&mut renderer);
         let living_wounds=living_crew_wounds::LivingWounds::allocate(device,queue,&mut renderer);
-        let crew_corpse_render=crew_corpse_render::Corpses::allocate(device,queue,&mut renderer)
+        let crew_corpse_render=crew_corpse_render::Corpses::allocate(device,queue,&mut renderer,psx_bones.as_ref())
             .map_err(|e|eprintln!("[crew] persistent corpse source unavailable: {e:#}")).ok();
         let enemy_crew = enemy_crew::Aftermath::allocate(device, queue, &mut renderer);
         let mut game = Game {
@@ -23828,6 +23873,9 @@ impl Game {
         self.living_wounds.reset();
         self.infantry_casualties.reset();
         self.couch_ragdolls.clear();
+        if let Some(corpses) = self.crew_corpse_render.get_mut().as_mut() {
+            corpses.reset_tissue();
+        }
         self.crew_body_recovery.reset_keep_aid_source();
         self.couch_last_casualty = None;
         self.couch_crew_frame = crate::lan::CrewFrame::default();
@@ -24966,9 +25014,15 @@ impl Game {
                             }
                         }
                     }
+                    let pressure: Vec<_> = plan.events.iter()
+                        .map(|event| (event.result.part, event.result.blast_work_j)).collect();
+                    let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll, contacts,
+                        &pressure, blast_origin_local);
+                    let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                        self.singleplayer_crew_active, ragdoll, &strikes);
                     let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
                         std::array::from_fn(|index| {
-                            plan.events.iter().any(|event| {
+                            !kept[index] && plan.events.iter().any(|event| {
                                 event.result.part.index() == index && event.result.hide_mesh_part
                             })
                         });
@@ -29462,9 +29516,17 @@ impl Game {
                                 }
                             }
                         }
+                        // The strikes open the body's tissue cell by cell; a part that keeps
+                        // enough of it stays in the articulated simulation (crew_tissue).
+                        let pressure: Vec<_> = damage_events.iter()
+                            .map(|event| (event.result.part, event.result.blast_work_j)).collect();
+                        let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll,
+                            &solution.contacts, &pressure, solution.entry);
+                        let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                            self.singleplayer_crew_active, ragdoll, &strikes);
                         let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
                             std::array::from_fn(|index| {
-                                damage_events.iter().any(|event| {
+                                !kept[index] && damage_events.iter().any(|event| {
                                     event.result.part.index() == index
                                         && event.result.hide_mesh_part
                                 })
@@ -31987,16 +32049,20 @@ impl Game {
                 );
             }
         }
+        // The pieces torn from the dead (`crew_tissue`) fly and lie on the same surfaces.
+        crew_tissue::integrate_chunks(&self.crew_corpse_render, &fragment_world, &self.player, dt);
         self.mark_fragment_strikes();
 
         let mut stage_mats: [Vec<Mat4>; N_HOT_FRAGMENT_BATCHES] =
             std::array::from_fn(|_| Vec::with_capacity(HOT_FRAGMENT_STAGE_CAPACITY));
         let mut tail_stage_mats: [Vec<Mat4>; N_HOT_FRAGMENT_BATCHES] =
             std::array::from_fn(|_| Vec::with_capacity(HOT_FRAGMENT_STAGE_CAPACITY));
+        let mut stage_red = [0.0f32; N_HOT_FRAGMENT_BATCHES];
         for fragment in self.hot_fragments.iter().filter(|fragment| fragment.active) {
             let parent = blood_parent_model(&self.player, fragment.frame);
             let (scale, rot) = hot_fragment_render_pose(fragment);
             let stage = hot_fragment_heat_stage(fragment);
+            stage_red[stage] += hot_fragment_radiance(fragment).x;
             stage_mats[stage]
                 .push(parent * Mat4::from_scale_rotation_translation(scale, rot, fragment.pos));
             if let Some((tail_scale, tail_rot, tail_pos)) = hot_fragment_tail_pose(fragment) {
@@ -32005,27 +32071,35 @@ impl Game {
                 );
             }
         }
-        for (batch, mats) in self
+        // A page glows at the mean Planck radiance of the chips on it (its colour is the band's
+        // chroma with the red band 1); a trail at the old pages' ratio of trail to head, 0.86.
+        let page_glow: [f32; N_HOT_FRAGMENT_BATCHES] = std::array::from_fn(|stage|
+            if stage_mats[stage].is_empty() { 0.0 } else { stage_red[stage] / stage_mats[stage].len() as f32 });
+        for ((batch, mats), glow) in self
             .slots
             .hot_fragment_batch
             .into_iter()
             .zip(stage_mats.iter())
+            .zip(page_glow)
         {
             assert!(
                 r.set_dynamic_instanced_mats(batch, mats),
                 "hot-fragment instance pool exceeded its fixed capacity"
             );
+            r.set_dynamic_instanced_emissive(batch, glow);
         }
-        for (batch, mats) in self
+        for ((batch, mats), glow) in self
             .slots
             .hot_fragment_tail_batch
             .into_iter()
             .zip(tail_stage_mats.iter())
+            .zip(page_glow)
         {
             assert!(
                 r.set_dynamic_instanced_mats(batch, mats),
                 "hot-fragment tail instance pool exceeded its fixed capacity"
             );
+            r.set_dynamic_instanced_emissive(batch, glow * 0.86);
         }
 
         let empty: [Mat4; 0] = [];
@@ -37723,33 +37797,17 @@ mod tests {
     }
 
     #[test]
-    fn hot_fragment_source_agrees_with_visible_material_and_lambertian_face_area() {
-        // These are the actual four textures passed to hot_fragment_mesh by scene construction.
-        // Evaluate the real mesh texel and triangle area independently of the source helper so an
-        // sRGB-as-linear error or a return of the former *42 conversion fails the regression.
-        let visible_colors = [[255, 220, 54], [255, 182, 28], [225, 94, 9], [104, 14, 3]];
+    fn hot_fragment_source_is_planck_at_its_temperature_over_its_face_area() {
+        // A chip's light is Planck's radiance at its temperature on the renderer's scale (the
+        // wound rims' law) over a quarter of its six faces; its page glows at the same red band.
         let heat_ages = [0.0, 0.04, 0.30, 0.80];
         // The fifth page is cold, solved steel: it emits nothing and lights nothing.
-        assert_eq!(HOT_FRAGMENT_STAGE_EMISSIVE[N_HOT_FRAGMENT_BATCHES - 1], 0.0);
         let cold = HotFragment { active: true, settled: true, frame: BloodFrame::Turret, size: 0.006,
             life: f32::MAX, temp_k: 400.0, seed: 3, ..HotFragment::default() };
         assert_eq!(hot_fragment_heat_stage(&cold), N_HOT_FRAGMENT_BATCHES - 1);
+        assert_eq!(hot_fragment_radiance(&cold), Vec3::ZERO);
         assert!(hot_fragment_aggregate_light(&[cold], cold.frame, Mat4::IDENTITY).is_none());
-        for stage in 0..visible_colors.len() {
-            let mesh = hot_fragment_mesh(visible_colors[stage]);
-            let texture = mesh.texture.as_ref().unwrap();
-            let linear = Vec3::new(
-                crate::rt_surface::srgb_to_linear(texture.rgba[0] as f32 / 255.0),
-                crate::rt_surface::srgb_to_linear(texture.rgba[1] as f32 / 255.0),
-                crate::rt_surface::srgb_to_linear(texture.rgba[2] as f32 / 255.0),
-            );
-            let unit_area: f32 = mesh.indices.chunks_exact(3).map(|triangle| {
-                let p: [Vec3; 3] = std::array::from_fn(|i| {
-                    Vec3::from_array(mesh.vertices[triangle[i] as usize].pos)
-                });
-                (p[1] - p[0]).cross(p[2] - p[0]).length() * 0.5
-            }).sum();
-            assert!((unit_area - 6.0).abs() < 1.0e-6);
+        for stage in 0..heat_ages.len() {
             let chip = HotFragment {
                 active: true,
                 settled: true,
@@ -37762,18 +37820,27 @@ mod tests {
                 ..HotFragment::default()
             };
             assert_eq!(hot_fragment_heat_stage(&chip), stage);
+            let kelvin = hot_fragment_temperature(&chip);
+            assert!(kelvin >= FEA_HEAT_PAGE_KELVIN[stage], "stage {stage} at {kelvin} K");
+            let radiance = crate::renderer::scars::rim_radiance(kelvin);
+            assert!(radiance.x > 0.0);
             let light = hot_fragment_aggregate_light(&[chip], chip.frame, Mat4::IDENTITY).unwrap();
-            let expected = linear * HOT_FRAGMENT_STAGE_EMISSIVE[stage]
-                * (unit_area * chip.size.powi(2) / 4.0);
+            let expected = radiance * (6.0 * chip.size.powi(2) / 4.0);
             let actual = light.color * light.radiant_intensity;
             assert!((actual - expected).abs().max_element() < expected.max_element() * 2.0e-6,
-                "stage {stage}: source {actual:?} does not match visible face emission {expected:?}");
+                "stage {stage}: source {actual:?} is not Planck over the faces {expected:?}");
             assert!(light.pos.distance(chip.pos) < 1.0e-6);
             let twice = hot_fragment_aggregate_light(&[chip, chip], chip.frame, Mat4::IDENTITY).unwrap();
             assert!((twice.radiant_intensity / light.radiant_intensity - 2.0).abs() < 1.0e-6);
             assert!(hot_fragment_aggregate_light(&[HotFragment { age: chip.life, ..chip }],
                 chip.frame, Mat4::IDENTITY).is_none());
+            // The page's colour is Planck's chroma within its band, red full.
+            assert_eq!(hot_fragment_page_colour(stage)[0], 255);
         }
+        // Planck's steepness: steel at 1,100 K glows hundreds of times dimmer than at 1,500 K.
+        let rim = crate::renderer::scars::rim_radiance;
+        assert!(rim(1100.0).x * 100.0 < rim(1500.0).x);
+        assert_eq!(rim(650.0), Vec3::ZERO);
     }
 
     #[test]

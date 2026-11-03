@@ -351,6 +351,172 @@ fn clear_eye(g: &Game, centre: Vec3, normal: Vec3, distance: f32) -> Vec3 {
     centre + normal * distance
 }
 
+/// One round that kills one man, for the voxel tissue (`crew_tissue`).
+struct CasualtyStudy {
+    name: &'static str,
+    label: &'static str,
+    clock: &'static str,
+    seed: u32,
+    role: CrewRole,
+    /// Entry and eyes are in the turret's frame (else the hull's).
+    turret: bool,
+    shell: &'static crate::ballistics::ShellSpec,
+    range: f32,
+    /// Where the player's own body is (away from the camera).
+    player: Station,
+    /// The loader's roof lid opened by state (disclosed in the label): daylight into the turret.
+    loader_lid: bool,
+    /// The entry on the bare plate, from the man's torso (both in the frame).
+    entry: fn(Vec3) -> Vec3,
+    /// Candidate eyes, in order; the first with a clear line to his torso is used.
+    eyes: fn(Vec3) -> Vec<Vec3>,
+}
+
+/// Whether the line from `eye` to `target` meets none of the tank's own surfaces (the source
+/// triangles fragments and fire meet), short of the last 5 %.
+fn sight_clear(g: &Game, eye: Vec3, target: Vec3) -> bool {
+    g.cabin_fire.sweep(eye, target, &g.fire_surface_models()).is_none_or(|c| c.fraction > 0.95)
+}
+
+/// Film a casualty study, or with KESSEL_FEA_FILM_STILLS=1 write its three stills (before, after,
+/// close) instead. None when the round killed nobody.
+fn casualty_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, study: &CasualtyStudy,
+    idle_input: &dyn Fn(u32) -> TankInput) -> anyhow::Result<Option<serde_json::Value>> {
+    let stills = std::env::var("KESSEL_FEA_FILM_STILLS").as_deref() == Ok("1");
+    let day_clock = ctx.clock;
+    ctx.clock = ephemeris::UtcInstant::parse_iso(study.clock)?;
+    g.enable_singleplayer_crew();
+    fresh_tiger(ctx, g, r, study.seed, false)?;
+    g.set_cabin_lights(true); // disclosed: the ordinary lamp switch on
+    g.jump_station(study.player);
+    if study.loader_lid {
+        g.roof_hatches.set(false, true, true);
+    }
+    ctx.run(g, r, 1.0, TICK)?;
+    let frame = if study.turret { g.player.turret_model() } else { g.player.hull_model() };
+    let torso = |g: &Game| g.crew_solo_man_point(study.role);
+    let man_w = torso(g);
+    let man = frame.inverse().transform_point3(man_w);
+    let entry = (study.entry)(man);
+    let aim = frame.transform_point3(entry);
+    let dir = frame.transform_vector3((man - entry).normalize());
+    let candidates: Vec<Vec3> = (study.eyes)(man).into_iter().map(|e| frame.transform_point3(e)).collect();
+    let clear: Vec<bool> = candidates.iter().map(|&e| sight_clear(g, e, man_w)).collect();
+    let eye = candidates.iter().zip(&clear).find(|(_, c)| **c).map_or(candidates[0], |(e, _)| *e);
+    println!("[fea-film] {}: torso at {:?} (frame), entry {:?}, eyes clear {:?}", study.name, man, entry, clear);
+    let open = View::Inside(eye, man_w, 54.0);
+    // Once he has fallen: the first of a few eyes above where he lies with a clear line to him,
+    // then down along that line to 0.55 m.
+    let overhead = |g: &Game| {
+        let target = torso(g);
+        let (up, side, ahead) = (frame.transform_vector3(Vec3::Y).normalize(), frame.transform_vector3(Vec3::X).normalize(),
+            frame.transform_vector3(Vec3::Z).normalize());
+        [up * 0.9, up * 0.8 + side * 0.3, up * 0.8 - side * 0.3, up * 0.7 + ahead * 0.35, up * 0.7 - ahead * 0.35]
+            .into_iter().map(|o| target + o).find(|&e| sight_clear(g, e, target)).unwrap_or(eye)
+    };
+    let close_at = |g: &Game, from: Vec3, t: f32| {
+        let target = torso(g);
+        let ease = t * t * (3.0 - 2.0 * t);
+        let near = target + (from - target).normalize_or_zero() * 0.55;
+        View::Inside(from.lerp(near, ease), target, 56.0 - 8.0 * ease)
+    };
+    ctx.all_crew = true;
+    ctx.banner = Some(study.label.to_uppercase());
+    let scars_before = g.armor_scars.scars().len();
+    let alive_before = CrewRole::ALL.iter().filter(|&&role| !g.crew_solo.man(role).dead).count();
+    let mut film = if stills { None } else { Some(Clip::start(prefix, study.name)?) };
+    let still = |ctx: &mut Ctx, g: &Game, r: &mut Renderer, view: View, tag: &str| -> anyhow::Result<()> {
+        let rgba = ctx.shoot(g, r, view, None)?;
+        let path = format!("{prefix}_{}_{tag}.png", study.name);
+        image::save_buffer(&path, &rgba, W, H, image::ColorType::Rgba8)?;
+        println!("[fea-film] wrote {path}");
+        Ok(())
+    };
+    ctx.cut(g, r, open)?;
+    match film.as_mut() {
+        Some(clip) => {
+            clip.mark(study.label, "real time");
+            clip.real_time(ctx, g, r, 1.0, idle_input, &|_, _| open)?;
+        }
+        None => still(ctx, g, r, open, "before")?,
+    }
+    g.debug_launch_round(study.shell, false, aim, dir, study.range, study.seed ^ 1);
+    match film.as_mut() {
+        Some(clip) => {
+            clip.mark(study.label, "1/16 speed");
+            clip.slow_motion(ctx, g, r, 96, &|_, _| open)?;
+            // The strike's smoke fills the turret; the camera holds until it has cleared.
+            clip.mark("after, while the smoke clears", "real time");
+            clip.real_time(ctx, g, r, 10.0, idle_input, &|_, _| open)?;
+        }
+        None => {
+            for _ in 0..96 {
+                ctx.update(g, r, &TankInput::default(), SLOW_DT)?;
+            }
+            ctx.run(g, r, 10.0, TICK)?;
+            still(ctx, g, r, open, "after")?;
+            // The lights of that frame, strongest first, and how far each is from the camera.
+            let mut lights: Vec<_> = r.offered_lights().to_vec();
+            lights.sort_by(|a, b| b.radiant_intensity.total_cmp(&a.radiant_intensity));
+            for light in lights.iter().take(8) {
+                println!("[fea-film] light {:.4} W/sr-equivalent, colour {:.2?}, radius {:.3} m, {:.2} m from the camera",
+                    light.radiant_intensity, light.color, light.source_radius, light.pos.distance(r.camera.pos));
+            }
+            println!("[fea-film] exposure {:?}", r.exposure_override);
+        }
+    }
+    let dead = g.crew_solo.man(study.role).dead;
+    match film.as_mut() {
+        Some(clip) if dead => {
+            let from = overhead(g);
+            ctx.cut(g, r, close_at(g, from, 0.0))?;
+            clip.mark("above where he lies, and down to him", "real time");
+            clip.real_time(ctx, g, r, 5.0, idle_input, &|g, t| close_at(g, from, t))?;
+            clip.mark("held", "real time");
+            clip.real_time(ctx, g, r, 3.0, idle_input, &|g, _| close_at(g, from, 1.0))?;
+        }
+        None if dead => {
+            let from = overhead(g);
+            let view = close_at(g, from, 0.0);
+            ctx.cut(g, r, view)?;
+            still(ctx, g, r, view, "above")?;
+            let view = close_at(g, from, 1.0);
+            ctx.cut(g, r, view)?;
+            still(ctx, g, r, view, "close")?;
+            // An inspection orbit round the fallen man at 0.75 m, each eye with a clear line.
+            let target = torso(g);
+            let up = frame.transform_vector3(Vec3::Y).normalize();
+            let side = frame.transform_vector3(Vec3::X).normalize();
+            let ahead = frame.transform_vector3(Vec3::Z).normalize();
+            for (n, azimuth) in [0.0f32, 90.0, 180.0, 270.0].into_iter().enumerate() {
+                let a = azimuth.to_radians();
+                let eye = target + (side * a.cos() + ahead * a.sin()) * 0.65 + up * 0.38;
+                if !sight_clear(g, eye, target) {
+                    println!("[fea-film] {}: orbit {azimuth} deg blocked", study.name);
+                    continue;
+                }
+                let view = View::Inside(eye, target, 50.0);
+                ctx.cut(g, r, view)?;
+                still(ctx, g, r, view, &format!("orbit{n}"))?;
+            }
+        }
+        _ => println!("[fea-film] {}: the {:?} was not killed; no close view", study.name, study.role),
+    }
+    ctx.banner = None;
+    ctx.all_crew = false;
+    ctx.clock = day_clock;
+    let alive_after = CrewRole::ALL.iter().filter(|&&role| !g.crew_solo.man(role).dead).count();
+    let mut receipt = match film {
+        Some(clip) => clip.finish()?,
+        None => json!({"clip": study.name, "stills": true}),
+    };
+    receipt["outcome"] = strike_outcome(g);
+    receipt["scar"] = json!(strike_scar(g, scars_before));
+    receipt["killed"] = json!({"target": format!("{:?}", study.role), "target_dead": dead, "alive_before": alive_before, "alive_after": alive_after});
+    receipt["corpses"] = g.crew_corpse_render_receipt();
+    Ok(Some(receipt))
+}
+
 /// A fresh Tiger for the next strike: the ordinary match reset (whole, its racks loaded, the
 /// living crew at their posts when it is on), then the film's scene as at the start: enemies
 /// banished, the Tiger at the review spot, the cabin lamps as asked.
@@ -1216,6 +1382,32 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         receipt["outcome"] = strike_outcome(&g);
         receipt["scar"] = json!(strike_scar(&g, scars_before));
         clips.push(receipt);
+    }
+
+    // ── 16. Casualty study (`crew_tissue`): one round kills one man; the camera keeps a clear line
+    // to him through the tank's own surfaces, then moves in once he has fallen. The racks are
+    // emptied first (disclosed on the frame): with them loaded this round reaches the ammunition
+    // and the detonation, not the round, is what kills the crew.
+    let studies = [
+        CasualtyStudy {
+            name: "tissue_loader", clock: "1942-12-21T09:00:00Z", seed: 0x5EC7_9000, role: CrewRole::Loader,
+            turret: true, shell: &crate::ballistics::BR_271_ZIS2, range: 400.0, player: Station::Driver,
+            loader_lid: true,
+            label: "57 mm BR-271, 400 m, through the right turret side at the loader; noon, his lid open, racks emptied",
+            // The bare right turret side ahead of the spare shoes (z above 0.27), at his chest.
+            entry: |man| Vec3::new(-1.19, man.y + 0.04, 0.45),
+            // On his side of the gun, ahead of him and behind him (the gunner and commander sit on
+            // the other side, so no living man stands in the line).
+            eyes: |man| vec![Vec3::new(-0.78, man.y + 0.38, 0.78), Vec3::new(-0.62, man.y + 0.45, 0.95),
+                Vec3::new(-0.72, man.y + 0.42, -0.62), Vec3::new(-0.35, man.y + 0.5, -0.9)],
+        },
+    ];
+    for study in &studies {
+        if wanted(study.name) {
+            if let Some(receipt) = casualty_study(&mut ctx, &mut g, &mut r, prefix, study, &idle_input)? {
+                clips.push(receipt);
+            }
+        }
     }
 
     let receipt = json!({

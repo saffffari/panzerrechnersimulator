@@ -45,6 +45,8 @@ pub(super) struct Corpses {
     /// when the snapshot was taken. The next ordinary update performs that same first draw.
     preserve_saved_allocations:bool,
     source_triangles: Vec<Vec<Vec<[Vec3;3]>>>,
+    /// Voxel tissue for struck bodies (`crew_corpse_tissue`); absent without the fitted skeleton.
+    tissue: Option<crew_corpse_tissue::TissueDraw>,
 }
 fn actor_slot(actor_id: u32) -> Option<usize> {
     actor_id.checked_sub(singleplayer_crew::SOLO_ACTOR_BASE).map(|i|i as usize).filter(|&i|i<CAPACITY)
@@ -75,9 +77,13 @@ impl Corpses {
         }
         Ok(())
     }
-    pub(super) fn allocate(device:&wgpu::Device,queue:&wgpu::Queue,r:&mut Renderer)->anyhow::Result<Self> {
+    /// `fitted_bones`: the owner's PSX skeleton fitted inside the relaxed figure (`crew_skeleton`);
+    /// without it the reviewed skeleton stands in and bodies are not drawn opened.
+    pub(super) fn allocate(device:&wgpu::Device,queue:&wgpu::Queue,r:&mut Renderer,
+        fitted_bones:Option<&[Option<CpuMesh>;PARTS]>)->anyhow::Result<Self> {
         let mut flesh=Vec::new();
         let mut source_triangles=Vec::new();
+        let mut figures=Vec::new();
         for (appearance,path) in CREW_RELAXED_GLBS.into_iter().enumerate() {
             let mesh=load_full_crew_mesh(path,"persistent solo corpse")
                 .ok_or_else(||anyhow::anyhow!("corpse source {path} is unavailable"))?;
@@ -92,21 +98,38 @@ impl Corpses {
             }
             flesh.push(pages.try_into().ok().expect("eleven source pages"));
             source_triangles.push(triangles);
+            figures.push(mesh);
         }
-        let skeleton=load_reviewed_skeleton_mesh().and_then(|source|partition_reviewed_skeleton_mesh(&source))
+        let skeleton=fitted_bones.cloned().or_else(||load_reviewed_skeleton_mesh().and_then(|source|partition_reviewed_skeleton_mesh(&source)))
             .ok_or_else(||anyhow::anyhow!("reviewed corpse skeleton is unavailable"))?;
+        let helmet_mesh=load_crew_steel_helmet()?;
+        let tissue=fitted_bones.and_then(|bones|crew_corpse_tissue::TissueDraw::allocate(device,queue,r,&figures,bones,&helmet_mesh)
+            .map_err(|e|eprintln!("[crew] voxel tissue unavailable: {e:#}")).ok());
         let mut bones=Vec::new();
         for (part,mesh) in skeleton.into_iter().enumerate() {
             let mesh=mesh.ok_or_else(||anyhow::anyhow!("reviewed skeleton lacks anatomical page {part}"))?;
             bones.push(r.register_instanced_prototype(device,queue,&mesh));
         }
-        let helmet=r.register_instanced_prototype(device,queue,&load_crew_steel_helmet()?);
+        let helmet=r.register_instanced_prototype(device,queue,&helmet_mesh);
         let gore=r.register_instanced_prototype(device,queue,&crew_gore_mesh());
         Ok(Self {flesh:flesh.try_into().ok().expect("five source appearances"),
             bones:bones.try_into().ok().expect("eleven source pages"),helmet,gore,
-            pages:std::array::from_fn(|_|None),preserve_saved_allocations:false,source_triangles})
+            pages:std::array::from_fn(|_|None),preserve_saved_allocations:false,source_triangles,tissue})
+    }
+    /// Solve the strikes that killed the ragdoll's man on his cells: the share of each part's soft
+    /// cells that remain.
+    pub(super) fn strike_tissue(&mut self,ragdoll:&CrewRagdoll,strikes:&[crew_tissue::Strike])->Option<[f32;PARTS]> {
+        self.tissue.as_mut().map(|tissue|tissue.strike(ragdoll,strikes))
+    }
+    /// The pieces of solved bodies, for their flight (`crew_tissue::integrate_chunks`).
+    pub(super) fn tissue_pieces_mut(&mut self)->Option<impl Iterator<Item=&mut crew_tissue::ChunkBody>> {
+        self.tissue.as_mut().map(|tissue|tissue.pieces_mut())
+    }
+    pub(super) fn reset_tissue(&mut self) {
+        if let Some(tissue)=self.tissue.as_mut() {tissue.reset();}
     }
     pub(super) fn hide(&self,r:&mut Renderer) {
+        if let Some(tissue)=&self.tissue {tissue.hide(r);}
         for pages in self.pages.iter().flatten() {
             for &pool in pages.flesh.iter().chain(&pages.bones).chain([&pages.helmet,&pages.gore]) {
                 r.set_moving_instanced_mats(pool,&[]);
@@ -115,6 +138,7 @@ impl Corpses {
     }
     pub(super) fn draw(&mut self,player:&Tank,bodies:&[CrewRagdoll],living:&[u32],appearances:&[(u32,crate::lan::LanRole)],r:&mut Renderer) {
         let mut present=[false;CAPACITY];
+        if let Some(tissue)=self.tissue.as_mut() {tissue.begin_frame();}
         for body in bodies {
             let Some(index)=actor_slot(body.casualty.peer_id) else {continue;};
             present[index]=true;
@@ -137,14 +161,33 @@ impl Corpses {
                 }
                 pages.appearance=appearance;
             }
+            // A body solved on its cells is drawn as its cells, never as the figure's triangles or
+            // the skeleton page (the skeleton is voxelised among them).
+            let peer=body.casualty.peer_id;
+            let voxel=self.tissue.as_ref().is_some_and(|tissue|tissue.has_body(peer));
             for part in crew_physics::CrewBodyPart::ALL {
                 let i=part.index();
+                if voxel {
+                    show(r,pages.flesh[i],None);
+                    show(r,pages.bones[i],None);
+                    if let Some(tissue)=self.tissue.as_mut() {
+                        tissue.add_part(peer,appearance,part,crew_ragdoll_bone_segment_model(player,body,part));
+                    }
+                    continue;
+                }
                 let (flesh,bone)=casualty_anatomy_visibility(body.segments[i].present);
                 show(r,pages.flesh[i],flesh.then(||crew_ragdoll_segment_model(player,body,part)));
                 show(r,pages.bones[i],bone.then(||crew_ragdoll_bone_segment_model(player,body,part)));
             }
-            show(r,pages.helmet,crew_ragdoll_helmet_model(player,body));
+            // A solved body's helmet is among its cells.
+            show(r,pages.helmet,(!voxel).then(||crew_ragdoll_helmet_model(player,body)).flatten());
             show(r,pages.gore,(body.settled&&!living.contains(&body.casualty.peer_id)).then(||crew_ragdoll_gore_model(player,body)));
+        }
+        if let Some(tissue)=self.tissue.as_mut() {
+            let faces:Vec<(u32,usize)>=self.pages.iter().enumerate().filter_map(|(i,p)|
+                p.as_ref().map(|p|(singleplayer_crew::SOLO_ACTOR_BASE+i as u32,p.appearance))).collect();
+            tissue.add_pieces(player,&|actor|faces.iter().find(|(a,_)|*a==actor).map_or(0,|(_,f)|*f));
+            tissue.end_frame(r);
         }
         for (index,pages) in self.pages.iter().enumerate() {
             if present[index] {continue;}
@@ -156,7 +199,7 @@ impl Corpses {
         }
     }
     pub(super) fn receipt(&self)->serde_json::Value {
-        serde_json::json!({"available":true,"capacity":CAPACITY,"allocated_actors":self.pages.iter().flatten().count(),
+        serde_json::json!({"available":true,"tissue":self.tissue.as_ref().map(crew_corpse_tissue::TissueDraw::receipt),"capacity":CAPACITY,"allocated_actors":self.pages.iter().flatten().count(),
             "pages_per_actor":PARTS*2+2,"actor_pages":self.pages.iter().enumerate().filter_map(|(index,p)|
                 p.as_ref().map(|p|serde_json::json!({"actor_id":singleplayer_crew::SOLO_ACTOR_BASE+index as u32,
                     "appearance":p.appearance,"flesh_pools":p.flesh,"bone_pools":p.bones,"helmet_pool":p.helmet}))).collect::<Vec<_>>()})
