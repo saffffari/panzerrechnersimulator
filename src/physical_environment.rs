@@ -1144,6 +1144,51 @@ fn cloud_diffuse_boundary(
     }
 }
 
+/// Mean radiance over the sphere of the multiply scattered (diffuse) field at `position_m`, taken
+/// as isotropic in each hemisphere: (F_down_diffuse + F_up) / (2 pi). The downward diffuse flux is
+/// the delta-Eddington two-stream transmission of the Rayleigh/aerosol/ozone column above the
+/// point (`upper_atmosphere_diffuse_flux`) for the key and the secondary body; under a cloud it is
+/// the diffuse flux leaving the measured cloud column (`cloud_source_lower_flux`). The upward flux
+/// (air below the point, the ground's reflection) is left out: a named approximation. In-scattering
+/// this field into a view ray is the second and higher orders the single-scattering march misses;
+/// without it a thick aerosol seen away from the Sun goes dark toward the horizon, where a real
+/// hazy sky whitens (2 November 2026).
+fn multiple_scattering_radiance(
+    atmosphere: &AtmosphereParameters,
+    position_m: DVec3,
+    quality: IntegrationQuality,
+) -> DVec3 {
+    let up = (position_m - atmosphere.planet_center_m).normalize_or_zero();
+    let altitude = altitude_m(atmosphere, position_m).max(0.0);
+    let sources = [
+        (atmosphere.sun_direction.normalize_or_zero(), atmosphere.solar_irradiance),
+        (atmosphere.secondary_direction.normalize_or_zero(), atmosphere.secondary_irradiance),
+    ];
+    let cloud = atmosphere.cloud;
+    let cloud_depth = if cloud.coverage > 0.0 && altitude < cloud.top_altitude_m {
+        cloud_column_optical_depth(atmosphere, position_m, quality.cloud_column_steps)
+    } else {
+        0.0
+    };
+    let mut flux = DVec3::ZERO;
+    if cloud_depth > 1.0e-8 {
+        let cloud_diffuse = delta_eddington_diffuse_flux(
+            cloud_depth, cloud.single_scattering_albedo, cloud.asymmetry);
+        for (direction, irradiance) in sources {
+            flux += cloud_source_lower_flux(atmosphere, up, cloud_depth,
+                cloud_diffuse.transmittance, direction, irradiance, quality);
+        }
+    } else {
+        for (direction, irradiance) in sources {
+            let mu0 = up.dot(direction);
+            if mu0 > 0.0 && irradiance.max_element() > 0.0 {
+                flux += upper_atmosphere_diffuse_flux(atmosphere, altitude, mu0, irradiance);
+            }
+        }
+    }
+    flux.max(DVec3::ZERO) / TAU
+}
+
 /// Diffuse flux leaving the cloud base that one directional source feeds into the column.
 fn cloud_source_lower_flux(
     atmosphere: &AtmosphereParameters,
@@ -1333,6 +1378,9 @@ pub fn integrate_environment(
         if cloud_boundary.handled_cloud_scattering {
             source += cloud_boundary.transported_radiance * medium.cloud_scattering_m_inv;
         }
+        // The air's higher scattering orders: its scattering of the diffuse field.
+        source += (medium.rayleigh_scattering_m_inv + medium.mie_scattering_m_inv)
+            * multiple_scattering_radiance(atmosphere, position, quality);
         let segment_weight=(DVec3::ONE-exp_neg(medium.extinction_m_inv*ds))/medium.extinction_m_inv.max(DVec3::splat(1e-12));
         inscattered += view_transmittance * source * segment_weight;
         optical_depth += medium.extinction_m_inv * ds;
@@ -1986,6 +2034,33 @@ mod tests {
             "{:?} vs {:?}", b.inscattered_radiance, a.inscattered_radiance);
         assert!(b.transmittance.x > b.transmittance.z, "{:?}", b.transmittance);
         assert!((b.transmittance.y - a.transmittance.y).abs() < 1e-9, "the 550 nm band is the anchor");
+    }
+
+    #[test]
+    fn a_hazy_sky_whitens_toward_the_horizon_away_from_the_sun() {
+        // The merged blue haze's fault (2 November 2026): with AOD 0.2 at alpha 1.6 the sky away
+        // from a 22 degree afternoon Sun went slate-dark toward the horizon, single scattering
+        // alone (the aerosol's backscatter lobe is weak and the horizontal path saturates). The
+        // diffuse field's in-scatter (`multiple_scattering_radiance`) is what a real hazy sky shows.
+        let mut a = AtmosphereParameters::default();
+        a.set_aerosol_column(AerosolColumn { aod_550: 0.2, angstrom: 1.6, scale_height_m: 1500.0 });
+        let sun_el = 22f64.to_radians();
+        a.sun_direction = DVec3::new(-sun_el.cos(), sun_el.sin(), 0.0);
+        let origin = a.planet_center_m + DVec3::Y * (a.planet_radius_m + 270.0);
+        let sky = |el: f64| {
+            let e = el.to_radians();
+            integrate_environment(&a, origin, DVec3::new(e.cos(), e.sin(), 0.0), 1.0e9,
+                IntegrationQuality::REFERENCE).inscattered_radiance
+        };
+        let (horizon, zenith) = (sky(2.0), sky(89.0));
+        assert!(horizon.y > 2.0 * zenith.y, "the horizon is brighter: {horizon:?} vs {zenith:?}");
+        assert!(horizon.z / horizon.x < zenith.z / zenith.x, "and whiter: {horizon:?} vs {zenith:?}");
+        // The diffuse field is real light from the column above: zero with no source above.
+        let mut night = a;
+        night.sun_direction = DVec3::new(-1.0, -0.2, 0.0).normalize();
+        assert_eq!(multiple_scattering_radiance(&night, origin, IntegrationQuality::REFERENCE), DVec3::ZERO);
+        let shader = include_str!("../shaders/physical_environment.wgsl");
+        assert!(shader.contains("* physical_multiple_scattering_radiance(environment, position_m);"));
     }
 
     #[test]
