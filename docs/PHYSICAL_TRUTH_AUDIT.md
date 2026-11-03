@@ -3897,8 +3897,8 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   choice that changes no light; the baseline showed the fully adapted night blue-grey and the
   moonlit night bright, so the black the owner saw was the unadapted eye.
 - **The night's hue is deeper outdoors** (`observer::ROD_DISPLAY_HUE`, 0.675/1.022/1.738,
-  luminance-neutral) and **the cabin keeps its hue** (`observer::CABIN_ROD_DISPLAY_HUE`, the former
-  0.80/1.00/1.45; `crush.wgsl` mixes the two by the buttoned-up view's eye_range_strength as it
+  luminance-neutral); the cabin's own hue (`CABIN_ROD_DISPLAY_HUE`, the former 0.80/1.00/1.45,
+  removed 2 November 2026, see below) was kept at first (`crush.wgsl` mixes the two by the buttoned-up view's eye_range_strength as it
   does the rod gain), so the interior's look is untouched; the interior stills' photometry before
   and after is in the sky note. Since 2 November 2026 the cabin's hue is removed (the owner: "the interior
   now has a very blue hue", once the compartment's paint became a white; "i think we can remove

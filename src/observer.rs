@@ -879,13 +879,11 @@ mod tests {
 
     #[test]
     fn the_rod_display_hues_are_luminance_neutral_cool_and_named() {
-        for (hue, bound) in [(ROD_DISPLAY_HUE, 2.8)] {
-            let [r, g, b] = hue;
-            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            assert!((luma - 1.0).abs() < 0.02, "the hue must not change the rod signal's brightness: {luma}");
-            assert!(b > g && g >= r, "cool: blue above green above red");
-            assert!(b / r < bound, "bounded departure from grey: {hue:?}");
-        }
+        let [r, g, b] = ROD_DISPLAY_HUE;
+        let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        assert!((luma - 1.0).abs() < 0.02, "the hue must not change the rod signal's brightness: {luma}");
+        assert!(b > g && g >= r, "cool: blue above green above red");
+        assert!(b / r < 2.8, "bounded departure from grey: {ROD_DISPLAY_HUE:?}");
         let constants = wgsl_constants();
         for name in ["OBS_ROD_HUE_R", "OBS_ROD_HUE_G", "OBS_ROD_HUE_B"] {
             assert!(constants.contains(&format!("const {name}: f32 = ")));
