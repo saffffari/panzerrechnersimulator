@@ -650,6 +650,11 @@ tissue with its own properties.
   the class: skin, muscle and bone keep their existing hold, organs take the skin or muscle
   class, and fluids are held weakly enough to spill when struck. The outer shell keeps the
   figure's colours; inside, every tissue draws in its own colour.
-- **Preliminary:** read from `KESSEL_CREW_ANATOMY` until the final volume lands at its asset
-  path. Native-resolution clips: `fea-damage-fea_anatomy_native_v4b_{crew_impact,tissue_loader,penetration_death}`.
+- **The volume in use:** the anatomy agent's final build sits at its asset path (face01,
+  relaxed; `tools/anatomy/build_anatomy.py --verify` rebuilds it identically against
+  `catalog/crew_anatomy_volume.v1.json`), so play reads it. `KESSEL_CREW_ANATOMY` overrides it
+  and `off` restores the figure-and-skeleton build. Hand edits go through
+  `tools/anatomy/voxel_editor.html` (offline, in a browser) and `--capture-edits`; the method and
+  every named approximation are in docs/CREW_ANATOMY_VOXELS.md. Native-resolution clips of the
+  preliminary volume: `fea-damage-fea_anatomy_native_v4b_{crew_impact,tissue_loader,penetration_death}`.
 
