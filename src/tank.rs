@@ -499,6 +499,16 @@ pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<c
         });
     }
     if material != Some("Material.001") { return None; }
+    // The radio rack and the driver's panel under their Braun-style fronts (`cabin_panels`, the
+    // owner's design of 3 November 2026): a light warm grey enamel cabinet, satin.
+    if matches!(node, "Hull_0355" | "Hull_0240") {
+        return Some(crate::gltf_load::MaterialOverride {
+            swatch: 14,
+            base: [linear(196.0), linear(194.0), linear(188.0), 1.0],
+            metallic: 0.0,
+            roughness: 0.55,
+        });
+    }
     if exterior_finishes::TRACK_STEEL.contains(&node) || exterior_finishes::CABLE_EXHAUST_STEEL.contains(&node) {
         let track=exterior_finishes::TRACK_STEEL.contains(&node);
         let rgb=if track {[58.0,58.0,56.0]} else {[73.0,72.0,68.0]};
