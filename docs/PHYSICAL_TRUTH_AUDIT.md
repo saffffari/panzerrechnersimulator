@@ -1492,6 +1492,57 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   break-up for the `fea-film` range review only: the harness opens its gate and nothing else
   does (test `the_tune_is_the_constants_unless_the_review_allows_it`), so play and both
   shipping presets keep the constants above.
+- **The round as a deformable body** (2026-11-03, `fea_damage::shot`, review film
+  `fea-shot-film`; the owner: shells must squash, bend, ricochet and spin off the armour and break
+  into shrapnel, each by its kind). Status: joined to play for perforations only. The round of a
+  perforation is solved at 8 cells across (`game_fea::SHOT_CELLS_ACROSS`, every preset; 0.1-0.4 s
+  on a worker beside the plate's lattice, the tick waiting for both) over one crossing time; the
+  chain carries its residual mass past the plate (`chain::run_with_residual`: capability at the
+  speed giving the lighter body the same DeMarre penetration, drag and plug shares at its mass, its
+  shape the intact round's for the law: named), the residual's contacts with crew and modules take
+  that mass, the pieces it shed through the plate join the interior's hot fragments at their solved
+  motion, spin and heat (placed where each one's path crosses the back face, a piece still in the
+  cavity going on unresisted; slower than 20 m/s it stays; filler pieces are the burst's), and a
+  bursting round breaks only the steel it kept. Ricochets, stops and lodged rounds still use the
+  rigid round in play (drawn undeformed: named). The review film solves at 12 across. Each kinetic round is a
+  voxel lattice, 12 cells across its calibre, built from its kind: a hardened nose, a body, a soft
+  base, a piercing cap (APCBC), a sheet-steel ballistic cap (2.5 mm, carried at its sheet's share of
+  a cell), the filler in its cavity, or a tungsten-carbide core in a soft-steel carrier (APCR), its
+  body length set so its mass is the round's. Soviet shot takes the hardness measured on captured
+  rounds (Watertown Arsenal WAL 762/582 and 762/589: Rc ~47 at the nose, ~42 along the body, an
+  air-cooled base near Rc 16-26, a V-notch below the bourrelet to fix where it breaks); German shot
+  Rc 62 at the nose (secondary). Yield follows Banerjee's fit for 4340 (exp(0.0355 Rc + 5.5312)
+  MPa, fitted over Rc 30-49, extrapolated beyond: named), hardening the secant of Johnson-Cook
+  B = 0.634 sigma0, n = 0.26. Bonds are elastic-plastic springs (a bond-based solid: Poisson 1/4,
+  named) yielding on their deviatoric part (a bond-level split, not a von Mises return: named),
+  softening linearly toward melting with the plastic and friction heat they make; a bond fails in
+  tension past its failure strain, or after 12 failure strains of accumulated flow (authored). The
+  failure strain falls with hardness from 0.18 at Rc 20 to 0.02 at Rc 60 (authored: the sources
+  give only the trend, harder noses shattering more readily); the tungsten carbide does not flow
+  below 5.5 GPa and cracks at 0.2 % (authored). Pieces and loose cells that come together push
+  apart; detached cells meet the plate along their own motion.
+  The plate is a slab of voxels the round's size. A surface cell in a voxel still holding plate
+  and advancing into it is pressed back along its own outward normal at Forrestal's
+  cavity-expansion stress, static plus the plate's inertia (sigma_n = R + rho v_n^2), with kinetic
+  friction 0.1; the voxel is gone once it has absorbed its volume times the calibrated mean
+  pressure, so the nose cuts a cavity the shank passes through and a glancing nose a gouge. The
+  calibrated mean pressure is the penetrating body's kinetic energy over the volume of its
+  calibrated flat penetration (a sub-calibre round's core alone), times the plate's quality; the
+  static part is that mean less half the plate's density times the striking speed squared, floored
+  at a quarter of it (authored). Within a quarter calibre of either face the pressure and the
+  voxels' energy ramp down (free-surface relief, floored at 5 %: authored). The voxels' cavity is
+  this contact's only: the plate's own lattice is not coupled to the round's (named, one-way). The
+  rifling spin is set from an authored 25-calibre twist (the guns' twists were not found).
+  Measured (12 cells across, 3,100-3,700 cells, 2-9 s a solve on one thread): a 122 mm BR-471
+  square on 100 mm at 780 m/s goes through keeping 24.8 of 25 kg (only its filler cracks); at 72
+  degrees it gouges 80 mm deep and leaves the face at 530 m/s tumbling at 250 rad/s with 24.4 kg;
+  a blunt 76 mm BR-350B stopped by 160 mm mushrooms (widest x1.5) and sheds 1.5 kg of nose; a
+  76 mm BR-354P core stopped by 160 mm at 30 degrees cracks into pieces of a few cells; an 88 mm
+  PzGr.39 through 100 mm at 30 degrees loses its piercing and ballistic caps and 1.5 kg of nose.
+  Where the solve and the calibrated chain disagree (a round the chain puts through that the
+  solve stops, or the reverse) the receipt reports both; the chain stays the outcome authority.
+  Unsourced and named: critical ricochet angles, shatter-gap bands, perforation mass loss,
+  driving-band stripping and the twists (docs/research/SHOT_DEFORMATION_SOURCES_20261103.md).
 - **A fire lit by the strike** (2026-11-02, `fea_damage::ignition`, `SpallResult::ignite`; the
   owner: a spark or a fragment meeting what burns may start a fire inside the tank, each material
   at its own chance, some never, as often as fires started in the war). It replaces the rule that

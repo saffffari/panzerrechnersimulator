@@ -192,16 +192,16 @@ fn drag_speed(v: f32, density: f32, length_m: f32, mass: f32, diameter_m: f32) -
 }
 
 /// A homogenised interior (or a live round) of mean `density` over `path` metres.
-fn interior_crossing(crossing: &mut Crossing, shell: &ShellSpec, v: f32, mat: &materials::Material,
+fn interior_crossing(crossing: &mut Crossing, shell: &ShellSpec, v: f32, scale: f32, mat: &materials::Material,
     density: f32, path: f32) {
     let rha = materials::rha_equivalent_mm(mat, path, density);
     let eff = crate::ballistics::layer_effective_mm(shell, rha, 0.0);
-    let (after, pen) = through_solid(shell, v, eff, 1.0);
+    let (after, pen) = through_solid(shell, v * scale, eff, 1.0);
     crossing.pen_mm = pen;
     crossing.effective_mm = eff;
     crossing.law = "homogenised interior: DeMarre capability against areal density, no plug";
     match after {
-        Some(vo) => { crossing.v_out = vo; crossing.fate = Fate::Perforated; }
+        Some(vo) => { crossing.v_out = vo / scale; crossing.fate = Fate::Perforated; }
         None => {
             crossing.v_out = 0.0;
             crossing.fate = Fate::Stopped { depth_m: (pen / eff).clamp(0.0, 0.999) * path };
@@ -211,17 +211,28 @@ fn interior_crossing(crossing: &mut Crossing, shell: &ShellSpec, v: f32, mat: &m
 
 /// Follow the round through `layers` (sorted, non-overlapping, the struck plate first).
 pub fn run(event: &ImpactEvent, layers: &[Layer], air_density: f32) -> ChainResult {
+    run_with_residual(event, layers, air_density, 1.0)
+}
+
+/// `run`, with the round keeping `residual_fraction` of its mass past the struck plate (the
+/// deformable round's solve, `shot`): behind the plate its capability is the calibrated law's at
+/// the speed that gives the lighter body the same DeMarre penetration (capability scales as
+/// m^0.71 v^1.43, so as the speed times the square root of the mass fraction), and its drag and
+/// plug shares take the lighter mass. Its shape stays the intact round's for the law (named).
+pub fn run_with_residual(event: &ImpactEvent, layers: &[Layer], air_density: f32, residual_fraction: f32) -> ChainResult {
     let shell = event.shell;
-    let m = shell.mass_kg;
+    let full = shell.mass_kg;
+    let mut m = full;
+    let mut scale = 1.0f32;
     let d = shell.caliber_mm * 0.001;
-    let ke = |v: f32| 0.5 * m * v * v;
+    let ke = |mass: f32, v: f32| 0.5 * mass * v * v;
     let mut out = ChainResult {
         crossings: Vec::new(),
         hits: Vec::new(),
         lodged: None,
         exit_speed: None,
         burst: false,
-        energy_in_j: ke(event.striking_v),
+        energy_in_j: ke(full, event.striking_v),
         energy_removed_j: 0.0,
     };
     let mut v = event.striking_v;
@@ -262,12 +273,12 @@ pub fn run(event: &ImpactEvent, layers: &[Layer], air_density: f32) -> ChainResu
                 let angle = layer.cos_obliquity.clamp(0.05, 1.0).acos().to_degrees();
                 let rha = plate_mm * mat.ke_resistance;
                 let eff = crate::ballistics::layer_effective_mm(shell, rha, angle);
-                let (after, pen) = through_solid(shell, v, eff, 0.92);
+                let (after, pen) = through_solid(shell, v * scale, eff, 0.92);
                 crossing.pen_mm = pen;
                 crossing.effective_mm = eff;
                 crossing.law = "armour: DeMarre capability, Lambert-Jonas residual (project law, 0.92)";
                 match after {
-                    Some(vo) => { crossing.v_out = vo; crossing.fate = Fate::Perforated; }
+                    Some(vo) => { crossing.v_out = vo / scale; crossing.fate = Fate::Perforated; }
                     None => {
                         crossing.v_out = 0.0;
                         crossing.fate = Fate::Stopped { depth_m: (pen / eff).clamp(0.0, 0.999) * path };
@@ -281,12 +292,12 @@ pub fn run(event: &ImpactEvent, layers: &[Layer], air_density: f32) -> ChainResu
                 let rha = materials::rha_equivalent_mm(mat, normal_thickness, mat.density);
                 let eff = crate::ballistics::layer_effective_mm(shell, rha, cos.acos().to_degrees());
                 let plug = mat.density * std::f32::consts::FRAC_PI_4 * d * d * normal_thickness;
-                let (after, pen) = through_solid(shell, v, eff, m / (m + plug));
+                let (after, pen) = through_solid(shell, v * scale, eff, m / (m + plug));
                 crossing.pen_mm = pen;
                 crossing.effective_mm = eff;
                 crossing.law = "solid layer: DeMarre capability, Lambert-Jonas residual, Recht-Ipson plug share";
                 match after {
-                    Some(vo) => { crossing.v_out = vo; crossing.fate = Fate::Perforated; }
+                    Some(vo) => { crossing.v_out = vo / scale; crossing.fate = Fate::Perforated; }
                     None => {
                         crossing.v_out = 0.0;
                         crossing.fate = Fate::Stopped { depth_m: (pen / eff).clamp(0.0, 0.999) * path };
@@ -294,10 +305,10 @@ pub fn run(event: &ImpactEvent, layers: &[Layer], air_density: f32) -> ChainResu
                 }
             }
             LayerKind::Interior { matrix, density, .. } => {
-                interior_crossing(&mut crossing, shell, v, matrix.get(), density, path);
+                interior_crossing(&mut crossing, shell, v, scale, matrix.get(), density, path);
             }
             LayerKind::LiveRound { .. } => {
-                interior_crossing(&mut crossing, shell, v, MaterialId::Copper.get(), LIVE_ROUND_DENSITY, path);
+                interior_crossing(&mut crossing, shell, v, scale, MaterialId::Copper.get(), LIVE_ROUND_DENSITY, path);
             }
             LayerKind::Liquid { material, .. } => {
                 crossing.law = "hydrodynamic drag";
@@ -322,7 +333,12 @@ pub fn run(event: &ImpactEvent, layers: &[Layer], air_density: f32) -> ChainResu
                 crossing.v_out = drag_speed(v, air_density, path / GAME_OVER_REAL_LENGTH, m, d);
             }
         }
-        crossing.energy_j = (ke(crossing.v_in) - ke(crossing.v_out)).max(0.0);
+        let m_in = m;
+        if layer.kind == LayerKind::StruckPlate {
+            m = full * residual_fraction.clamp(0.05, 1.0);
+            scale = (m / full).sqrt();
+        }
+        crossing.energy_j = (ke(m_in, crossing.v_in) - ke(m, crossing.v_out)).max(0.0);
         out.energy_removed_j += crossing.energy_j;
         v = crossing.v_out;
         let fate = crossing.fate;
@@ -653,6 +669,21 @@ mod tests {
             let end = 0.5 * shell.mass_kg * r.crossings.last().unwrap().v_out.powi(2);
             assert!((r.energy_in_j - r.energy_removed_j - end).abs() <= 1e-3 * r.energy_in_j.max(1.0));
         }
+    }
+
+    #[test]
+    fn a_round_that_lost_mass_at_the_plate_goes_less_far_and_its_energy_closes() {
+        let set = components::tiger_components();
+        let layers = build_layers(&front_line(60.0), set, &state());
+        let ev = ballistics::resolve(&ballistics::PZGR_40, 100.0, tiger_plate("front lower", 60.0), 0.0, 3);
+        let whole = run(&ev, &layers, 1.2);
+        let same = run_with_residual(&ev, &layers, 1.2, 1.0);
+        assert_eq!(whole.end_s().to_bits(), same.end_s().to_bits());
+        let half = run_with_residual(&ev, &layers, 1.2, 0.5);
+        assert!(half.end_s() <= whole.end_s(), "half {} vs whole {}", half.summary(), whole.summary());
+        assert_eq!(half.crossings[0].v_out, whole.crossings[0].v_out, "the plate's own outcome is the calibrated one");
+        let end = 0.5 * 0.5 * ev.shell.mass_kg * half.crossings.last().unwrap().v_out.powi(2);
+        assert!((half.energy_in_j - half.energy_removed_j - end).abs() <= 1e-3 * half.energy_in_j);
     }
 
     #[test]
