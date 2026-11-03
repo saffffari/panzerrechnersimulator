@@ -1384,7 +1384,11 @@ impl Range {
                 let hull_inv = self.g.player.hull_model().inverse();
                 self.shot.target = Target::Point(hull_inv.transform_point3(hit));
                 if !keep_dir {
-                    self.shot.set_dir_hull(hull_inv.transform_vector3(dir));
+                    // A new aim starts the shot square to the surface (along its inward normal),
+                    // not along the camera's ray (owner, 2026-11-03).
+                    let n = contact.normal.normalize_or_zero();
+                    let incoming = if n.length_squared() < 0.5 { dir } else if n.dot(dir) > 0.0 { n } else { -n };
+                    self.shot.set_dir_hull(hull_inv.transform_vector3(incoming));
                 }
                 self.status = format!("AIM: picked at {:.2?} (hull frame)", hull_inv.transform_point3(hit).to_array());
             }
