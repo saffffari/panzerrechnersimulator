@@ -13549,7 +13549,7 @@ mod atmosphere_tests {
         assert!(crush.contains("let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));"));
         assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
             "owner-directed cabin reproduction still acts only on the display rod term");
-        assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));"),
+        assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));"),
             "the night's hue outdoors, the cabin's own hue inside");
 
         let mesh = include_str!("../shaders/mesh.wgsl");

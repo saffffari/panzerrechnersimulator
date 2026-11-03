@@ -744,7 +744,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         step(&mut g, &mut r, 60, &idle);
         // (name, inside, frame (0 hull, 1 turret), eye, target in that frame, fov, note)
         let commander = g.player.parts.commander_eye.to_array();
-        let views: [(&str, bool, u8, [f32; 3], [f32; 3], f32, &str); 12] = [
+        let views: [(&str, bool, u8, [f32; 3], [f32; 3], f32, &str); 13] = [
             ("ext_front", false, 0, [-5.6, 2.9, 8.4], [0.0, 1.3, 0.4], 50.0, "front quarter, 9 m"),
             ("ext_rear", false, 0, [5.8, 3.4, -8.0], [0.0, 1.4, -0.6], 50.0, "rear quarter: the engine deck and exhausts"),
             ("ext_close", false, 0, [-2.3, 2.6, 4.6], [-0.7, 1.7, 2.6], 45.0, "close on the front plate, the driver's visor and the track guard"),
@@ -758,6 +758,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             ("ext_exhaust", false, 0, [1.6, 2.7, -4.8], [0.35, 1.85, -3.25], 50.0, "the rear plate and the exhausts, 2 m"),
             ("ext_side", false, 0, [3.4, 1.7, 1.2], [1.6, 1.0, 0.0], 55.0, "the left side: track, road wheels, track guard, hull side"),
             ("ext_top", false, 0, [3.2, 6.2, -5.2], [0.0, 2.0, -0.4], 55.0, "from above the rear quarter: the decks, the turret roof, the engine deck"),
+            ("ext_ref", false, 0, [5.0, 6.8, 7.6], [0.0, 1.3, 0.0], 42.0, "from above the front left, as the owner's reference image"),
         ];
         let views = views.map(|(name, inside, frame, eye, target, fov, note)| (name, inside, frame, Vec3::from(eye), Vec3::from(target), fov, note));
         let views = views.iter().chain([
@@ -816,8 +817,10 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             if inside {
                 g.station = Station::Commander;
                 g.commander_outside = false;
-                // Daylight through the open roof hatches, so the lit stills show the materials.
-                g.debug_set_roof_hatches(true, true, true);
+                // Daylight through the open roof hatches, so the lit stills show the materials
+                // (`KESSEL_VSM_REVIEW_HATCHES=closed`: buttoned up, as in play).
+                let open = std::env::var("KESSEL_VSM_REVIEW_HATCHES").as_deref() != Ok("closed");
+                g.debug_set_roof_hatches(open, open, true);
             } else {
                 g.debug_set_roof_hatches(false, false, true);
             }

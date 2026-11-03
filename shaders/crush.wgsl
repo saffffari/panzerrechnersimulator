@@ -109,11 +109,11 @@ fn eye_response(radiance: vec3<f32>, point: vec3<f32>, uv: vec2<f32>) -> vec3<f3
     // The outdoor night-visibility boost is unnecessary in a cabin with practical lamps and
     // local range compression. Retain normal rod vision without washing out the lamps' colour.
     let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));
-    // The rod term is achromatic in the eye; it is reproduced in the cool mesopic hue,
-    // luminance-neutral: the deep blue of the night outdoors (observer::ROD_DISPLAY_HUE), the
-    // cabin's own hue inside the hull (observer::CABIN_ROD_DISPLAY_HUE, unchanged since
-    // 2026-10-04, so the cabin keeps its look). Cones keep every source's own colour.
-    let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));
+    // The rod term is achromatic in the eye: outdoors it is reproduced in the deep blue of the
+    // night, luminance-neutral (observer::ROD_DISPLAY_HUE); inside the hull it is drawn as it is,
+    // grey (the cabin's own cool hue was removed on 2 November 2026). Cones keep every source's
+    // own colour.
+    let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));
     // The lifted rod channel reaches the display's key at most (observer::rod_display): an eye
     // adapted to the moonlit field, or dark-adapted beyond it, showed the whole sight white
     // (2 November 2026); mid-grey is what a night field is to a locally adapted eye.
