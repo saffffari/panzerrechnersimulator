@@ -6405,20 +6405,20 @@ struct BreechGasSample {
     strength: f32,
 }
 
-/// The soft bore-gas emitter in gun-local space. Density is intentionally low: the renderer gives
-/// it coherent billowing/parallax while this envelope ensures it never becomes an opaque smoke ball.
-fn breech_gas_sample(age: f32) -> Option<BreechGasSample> {
+/// The bore-gas emitter in gun-local space. `extinction` is the puff's at its centre
+/// (`cabin_fumes::CabinFumes::breech_extinction`: its unspread fume over the drawn shape, thinning as
+/// it spreads); the block's opening ramps it in over 80 ms.
+fn breech_gas_sample(age: f32, extinction: f32) -> Option<BreechGasSample> {
     if !(0.0..BREECH_GAS_DUR).contains(&age) {
         return None;
     }
     let attack = smoothstep(0.0, 0.08, age);
-    let release = 1.0 - smoothstep(0.48, BREECH_GAS_DUR, age);
     Some(BreechGasSample {
         // Rear face of the recoiling 8.8 cm breech; transformed by visual_gun_model at draw time.
         emitter: Vec3::new(0.0, 0.08, -1.06),
         direction: Vec3::new(0.0, 0.24, -1.0).normalize(),
         age,
-        strength: 0.30 * attack * release,
+        strength: extinction.max(0.0) / crate::cabin_fumes::PUFF_DENSITY_TO_EXTINCTION * attack,
     })
 }
 
@@ -9886,12 +9886,13 @@ pub struct Game {
     walk_pos: Vec3,
     loader_crouch_t: f32, // held Ctrl lowers the actual cabin eye/body
     walk_sounds: footsteps::Cadence,
-    /// INTERIOR HAZE (0..1): propellant smoke fills the buttoned-up fighting compartment. A shot
-    /// adds a little (muzzle backdraft); OPENING THE BREECH to reload adds the big puff (gas vents
-    /// off the hot casing). The bore-evacuator FAN drains a steady rate; an OPEN HATCH vents it
-    /// fast (natural draft). Rapid sustained fire without venting → you're firing blind in your own
-    /// smoke. Pushed to the crush veil, gated by being buttoned up inside.
+    /// INTERIOR HAZE (0..1): the residue a hit's pressure front leaves in the compartment's air,
+    /// drained by the fan and an open hatch (`update_haze`). The gun's own fumes are
+    /// `cabin_fumes`. Pushed to the crush veil, gated by being buttoned up inside.
     interior_haze: f32,
+    /// The gun's fumes in the crew compartment: the breech's puff and the spent cases venting,
+    /// layered under the roof and drawn out by the turret ventilator (`cabin_fumes.rs`).
+    cabin_fumes: crate::cabin_fumes::CabinFumes,
     /// A fire's soot in the cabin air, 0..1: dark and absorbing, built by the fire's heat in the
     /// enclosure over time and drained by the fan and open hatches (`update_haze`).
     interior_soot: f32,
@@ -14470,6 +14471,7 @@ impl Game {
             hover_hatch: false,
             hover_lever: false,
             interior_haze: 0.0,
+            cabin_fumes: Default::default(),
             interior_soot: 0.0,
             weather_baseline: None,
             weather_view: crate::weather_visibility::WeatherView::default(),
@@ -19741,18 +19743,16 @@ impl Game {
         self.bore_smoke_pending = true;
     }
 
-    /// Consume the single trapped-gas charge belonging to the most recent shot. The independent
-    /// cubes carry the immediate visual; the smaller haze addition is the smoke that remains after
-    /// the grains have dispersed into the sealed compartment.
+    /// Consume the single trapped-gas charge belonging to the most recent shot: the block opens and
+    /// the bore's blowback leaves the breech as a puff, which spreads into the compartment's air
+    /// under the roof (`cabin_fumes`).
     fn vent_bore_smoke(&mut self) {
         if !self.bore_smoke_pending {
             return;
         }
         self.bore_smoke_pending = false;
         self.breech_gas_t = BREECH_GAS_DUR;
-        // Most of the visible discharge is the local volume at the block. Only a faint remainder
-        // joins the cabin atmosphere; the old 0.11 dose made one reload fog the entire compartment.
-        self.interior_haze = (self.interior_haze + 0.035).min(1.0);
+        self.cabin_fumes.breech_opened();
     }
 
     /// Headless auto-crew: the scripted Tiger opponent (playtest / duel / trainer) services the
@@ -19855,6 +19855,7 @@ impl Game {
             + Vec3::Y * (0.65 + 0.35 * s(2)) + back * (2.0 + 0.60 * s(3));
         let Some(k) = self.spawn_casing_from(position, velocity) else { return; };
         self.casings[k].rotation = rotation.normalize();
+        self.cabin_fumes.case_freed(k);
         // The solo crew's loader stows the empty upright in the rear rack unless he is rushed,
         // hurt, or the rack is full; then it tumbles as before.
         self.crew_solo_offer_stow(k, position, rotation.normalize());
@@ -20706,9 +20707,33 @@ impl Game {
         let (_, _, enclosure_heat) = self.cabin_fire.enclosure_diagnostics(&self.fire_surface_models());
         // A fire's smoke is its own soot (dark, absorbing), built by the enclosure's heat over time
         // (2026-11-02, the owner: fires need time to build up smoke, much darker than a
-        // penetration's); the gun fumes' light haze only drains here.
+        // penetration's); a hit's residue haze only drains here (the gun's fumes: `cabin_fumes`).
         self.interior_soot = (self.interior_soot + (enclosure_heat * 0.38 - drain) * dt).clamp(0.0, 1.0);
         self.interior_haze = (self.interior_haze - drain * dt).clamp(0.0, 1.0);
+        self.update_cabin_fumes(dt);
+    }
+
+    /// The gun's fumes: the ventilator runs off the generator while the engine turns (as its hum,
+    /// `game_acoustics`); a hatch counts open past half its travel (as `game_fea::crew_openings`).
+    fn update_cabin_fumes(&mut self, dt: f32) {
+        let lids = self.roof_hatches.phase;
+        let open = |phase: f32| u32::from(phase > 0.5);
+        // tiger_hatches order: the driver's, the loader's, the radio operator's, the turret's escape.
+        let air = crate::cabin_fumes::Air {
+            fan: self.engine_on && self.player.alive,
+            upper_hatches: open(lids[1]) + open(lids[3]) + open(self.hatch_t),
+            lower_hatches: open(lids[0]) + open(lids[2]),
+        };
+        let hull_inverse = self.player.hull_model().inverse();
+        let casings = &self.casings;
+        self.cabin_fumes.step(dt, air, |k| {
+            let c = casings.get(k).filter(|c| c.active)?;
+            let mouth = c.pos + c.rotation * (Vec3::Z * SPENT_CASE_HALF_LENGTH);
+            // Inside the hull's box (as the range's inside test): its fume is the compartment's.
+            let local = hull_inverse.transform_point3(mouth);
+            let aboard = local.x.abs() < 1.6 && local.y > 0.4 && local.y < 2.9 && local.z > -3.2 && local.z < 3.4;
+            Some((mouth, aboard))
+        });
     }
 
     fn fire_surface_models(&self) -> [Mat4; surface_fire::FRAMES] {
@@ -23820,6 +23845,8 @@ impl Game {
     pub fn debug_reload(&mut self) {
         // This explicit fixture creates a replacement serviceable cartridge. Ordinary reloads
         // always move the existing rack/held round through transfer_cartridge_state instead.
+        // A fired breech opened for it vents its blowback (the fixture draws out no case body).
+        self.vent_bore_smoke();
         self.cartridge_primers.consume(cartridge_primer::CHAMBER);
         self.breech = Breech::Loaded;
         self.lever_open = 0.0; // headless force: breech closed and ready
@@ -24406,6 +24433,7 @@ impl Game {
         self.bore_smoke_pending = false;
         self.breech_gas_t = 0.0;
         self.interior_haze = 0.0;
+        self.cabin_fumes = Default::default();
         self.interior_soot = 0.0;
         self.ram = 0.0;
         self.eject_t = 0.0;
@@ -26103,6 +26131,10 @@ impl Game {
     pub fn haze_level(&self) -> f32 {
         self.interior_haze
     }
+    /// The gun's fumes in the crew compartment: their mean extinction, /m (`cabin_fumes`).
+    pub fn gun_fume_level(&self) -> f32 {
+        self.cabin_fumes.mean_extinction()
+    }
     /// Is the interior fire alight?
     pub fn is_fire_active(&self) -> bool {
         self.fire_active
@@ -27681,7 +27713,7 @@ impl Game {
         self.fx.muzzle_t = 0.09;
         self.fx.smoke_t = 1.4;
         self.fx.smoke_dur = 1.4;
-        self.interior_haze = (self.interior_haze + 0.11).min(1.0);
+        // The breech is shut at the shot: the fumes enter when it opens (`vent_bore_smoke`).
         self.gun_shots = sequence;
         if let Some(audio)=&self.audio {audio.soundscape_main_gun_fired();}
         if let Some(runtime) = self.campaign.as_mut() {
@@ -27881,7 +27913,6 @@ impl Game {
         self.fx.muzzle_t = 0.09;
         self.fx.smoke_t = 1.4; // slow drifting plume at the muzzle
         self.fx.smoke_dur = 1.4;
-        self.interior_haze = (self.interior_haze + 0.11).min(1.0); // muzzle backdraft into the compartment
         self.fx.tracer_active = true;
         self.fx.tracer_t = 0.0;
         // REAL time of flight from the ballistic solve when a tank was struck (the 88 takes ~0.66 s
@@ -31964,15 +31995,18 @@ impl Game {
         // Opening the fired breech vents a light, continuous propellant-gas volume from the rear
         // face of the moving gun group. This deliberately does not consume a cubic-soot page.
         let breech_age = BREECH_GAS_DUR - self.breech_gas_t;
-        if let Some(gas) = breech_gas_sample(breech_age) {
+        if let Some(gas) = breech_gas_sample(breech_age, self.cabin_fumes.breech_extinction()) {
             let gun = self.player.visual_gun_model();
+            let emitter = gun.transform_point3(gas.emitter);
+            // The ventilator's sink flow carries the puff toward its intake.
             r.set_breech_gas(
-                gun.transform_point3(gas.emitter),
+                emitter + self.cabin_fumes.breech_drift(emitter, self.player.turret_model()),
                 gun.transform_vector3(gas.direction).normalize_or_zero(),
                 gas.age,
                 gas.strength,
             );
         }
+        r.cabin_fumes = self.cabin_fumes.lanes(self.player.turret_model());
         // A detonation throws a dirty hot cloud behind the white core. It starts compact and rides
         // the same wind field as fire and weather, making the blast feel anchored in the scene.
         for (i, b) in self.blasts.iter().enumerate() {
@@ -39976,15 +40010,17 @@ mod tests {
 
     #[test]
     fn breech_gas_is_a_light_finite_volume_not_a_cubic_soot_burst() {
-        let early = breech_gas_sample(0.04).expect("gas attacks immediately");
-        let body = breech_gas_sample(0.42).expect("gas remains visible while the block is open");
-        let tail = breech_gas_sample(1.80).expect("a faint haze tail should linger");
+        // The puff's strength is the fume model's (cabin_fumes tests hold it light and spreading);
+        // here only the block's opening ramp, the emitter and the drawn life.
+        let undiluted = crate::cabin_fumes::FUME_EXTINCTION_PER_M;
+        let early = breech_gas_sample(0.04, undiluted).expect("gas attacks immediately");
+        let body = breech_gas_sample(0.42, undiluted).expect("gas remains visible while the block is open");
         assert!(early.strength > 0.0 && early.strength < body.strength);
-        assert!(body.strength <= 0.30, "bore gas must remain translucent");
-        assert!(tail.strength < body.strength);
+        assert!(body.strength <= undiluted / crate::cabin_fumes::PUFF_DENSITY_TO_EXTINCTION);
         assert_eq!(body.emitter, Vec3::new(0.0, 0.08, -1.06));
         assert!(body.direction.y > 0.0 && body.direction.z < -0.9);
-        assert!(breech_gas_sample(BREECH_GAS_DUR).is_none());
+        assert!(breech_gas_sample(BREECH_GAS_DUR, undiluted).is_none());
+        assert_eq!(BREECH_GAS_DUR, crate::cabin_fumes::BREECH_PUFF_S);
         // The persistent fire pool now contains only actual flame/soot sources; opening a breech
         // cannot allocate or draw an opaque cube instance.
         assert_eq!(

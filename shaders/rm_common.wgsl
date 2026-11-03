@@ -79,6 +79,11 @@ struct Frame {
     // display radius rad w (0 none); the sunlit part's irradiance at the eye rgb + the slot that
     // carries its light w (1 key, 2 secondary, 0 neither); the earthlit disc's rgb; to the Sun xyz.
     moon: array<vec4<f32>, 4>,
+    // The gun's fumes in the crew compartment (cabin_fumes.rs `CabinFumes::lanes`; rm_medium.wgsl
+    // `rm_fume_density`): the layers' extinction (lower x, upper y /m), the interface's turret-frame
+    // height z and half thickness w; the fan's intake xyz and the vents drawn w; per venting case its
+    // mouth xyz and extinction there w, then its drift per metre of rise xz, reach y, mouth radius w.
+    fumes: array<vec4<f32>, 10>,
 };
 // True where a camera pass must leave `world` out: beyond the film's section plane (within its
 // window, when it has one).

@@ -79,9 +79,10 @@ fn rm_world_spectrum(snow: f32) -> vec3<f32> {
 }
 // The cabin haze fills the cabin air (`inside`: rm_cabin_domain). Without registered cabin air
 // (no posed player Tiger) it falls back to an ellipsoid about the crew compartment.
+// The gun's fumes join it there (rm_fume_density), whatever the base haze.
 fn rm_cabin_density(p: vec3<f32>, inside: bool) -> f32 {
+    if (rm_cabin_air_on()) { return select(0.0, max(fr.cabin.w, 0.0) + rm_fume_density(p), inside); }
     if (fr.cabin.w <= 0.0) { return 0.0; }
-    if (rm_cabin_air_on()) { return select(0.0, fr.cabin.w, inside); }
     // Centred on the crew compartment (fr.vehicle, 1.4 m up) where the pose is known: the
     // cabin origin is the hull's ground-contact point, which left the haze below seated eye
     // height (2026-10-28).
@@ -89,6 +90,42 @@ fn rm_cabin_density(p: vec3<f32>, inside: bool) -> f32 {
     let d = p - centre;
     let r = length(d * vec3(0.45, 0.75, 0.45));
     return fr.cabin.w * (1.0 - smoothstep(0.8, 1.15, r));
+}
+// The gun's fumes (cabin_fumes.rs): two layers of the compartment's air, the upper one under the
+// turret roof where the fresh hot fume collects and the ventilator draws, blended across their
+// interface in the turret's frame; and the spent cases venting from their mouths.
+const RM_CASE_VENTS: u32 = 4u;
+// A pure plume's entrainment coefficient (Morton, Taylor & Turner; cabin_fumes::PLUME_ALPHA).
+const RM_PLUME_ALPHA: f32 = 0.1;
+// A venting case's plume: from a virtual origin z0 below the mouth (where its half-width 1.2 alpha
+// (z + z0) is the mouth's radius) the centreline concentration falls as (z0 / (z + z0))^(5/3) of
+// the mouth's, Gaussian across; it leans with the fan's sink flow and ends where it meets the upper
+// layer (named approximations: similarity profiles from the mouth, a straight leaning axis).
+fn rm_case_plume(p: vec3<f32>, i: u32) -> f32 {
+    let a = fr.fumes[2u + 2u * i];
+    let b = fr.fumes[3u + 2u * i];
+    let d = p - a.xyz;
+    let reach = b.y;
+    if (d.y < -b.w || d.y > reach) { return 0.0; }
+    let z = max(d.y, 0.0);
+    let z0 = b.w / (1.2 * RM_PLUME_ALPHA);
+    let half = 1.2 * RM_PLUME_ALPHA * (z + z0);
+    let lateral = d.xz - b.xz * z;
+    let across = dot(lateral, lateral) / (half * half);
+    if (across > 9.0) { return 0.0; }
+    // Below the mouth only the mouth's own disc.
+    let below = select(1.0, 1.0 - smoothstep(0.0, b.w, -d.y), d.y < 0.0);
+    let end = 1.0 - smoothstep(reach * 0.6, reach, z);
+    return a.w * pow(z0 / (z + z0), 5.0 / 3.0) * exp(-across) * below * end;
+}
+fn rm_fume_density(p: vec3<f32>) -> f32 {
+    let layers = fr.fumes[0];
+    let vents = u32(fr.fumes[1].w);
+    if (layers.x <= 0.0 && layers.y <= 0.0 && vents == 0u) { return 0.0; }
+    let y = (fr.cabin_air.world_to_local[1] * vec4(p, 1.0)).y;
+    var sigma = mix(layers.x, layers.y, smoothstep(layers.z - layers.w, layers.z + layers.w, y));
+    for (var i = 0u; i < min(vents, RM_CASE_VENTS); i += 1u) { sigma += rm_case_plume(p, i); }
+    return sigma;
 }
 fn rm_puff_pos(i: u32) -> vec4<f32> { return fr.puffs[i * 3u]; }
 fn rm_puff_dir(i: u32) -> vec4<f32> { return fr.puffs[i * 3u + 1u]; }
@@ -125,7 +162,9 @@ fn rm_plume_density(p: vec3<f32>, i: u32) -> f32 {
     let breakup = 0.6 + 0.8 * rm_noise(q * 4.0 + vec3(age * 2.0), 9u);
     return (1.0 - smoothstep(0.15, 1.0, radius)) * lobes * breakup * envelope * clamp(dir.w, 0.0, 1.0);
 }
-// Breech gas: slot 12, a sub-metre elongated volume behind the opened breech.
+// Breech gas: slot 12, a sub-metre elongated volume behind the opened breech. Its strength is the
+// puff's density at its centre (cabin_fumes.rs `breech_extinction` / 5.2: its unspread fume over
+// this shape's fill, which the CPU holds to the same axes).
 fn rm_gas_density(p: vec3<f32>) -> f32 {
     let pos = rm_puff_pos(12u); let dir = rm_puff_dir(12u);
     let age = pos.w;
@@ -139,7 +178,7 @@ fn rm_gas_density(p: vec3<f32>) -> f32 {
     let axial = along / (0.16 + 0.16 * age);
     let radial = length(q - axis * along) / (0.09 + 0.10 * age);
     let shape = sqrt(axial * axial + radial * radial);
-    return (1.0 - smoothstep(0.18, 1.0, shape)) * clamp(dir.w, 0.0, 0.30) * 0.34 * (1.0 - smoothstep(1.2, 2.2, age));
+    return (1.0 - smoothstep(0.18, 1.0, shape)) * max(dir.w, 0.0);
 }
 // Puff extinction in /m (the simulation's density × 5.2, the shared smoke coefficient) and its
 // single-scattering albedo.

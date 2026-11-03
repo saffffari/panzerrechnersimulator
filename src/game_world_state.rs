@@ -23,7 +23,7 @@ fields_owner!(capture_physical,restore_physical,"game.physical";
     mg_heat, mg_overheated, mg_hot, gun_shots, engine_death_cued, next_blast, next_spark,
     next_snow, kill_tick, gunner_optic, commander_outside, hatch_open, hatch_t, driver_visor_lean,
     driver_look, radio_look, last_access_hatch, hover_roof_hatch, hover_hatch, hover_lever, rounds_spent,
-    walk_pos, loader_crouch_t, interior_haze, weather_baseline, weather_wind_scale, bore_smoke_pending, breech_gas_t,
+    walk_pos, loader_crouch_t, interior_haze, cabin_fumes, weather_baseline, weather_wind_scale, bore_smoke_pending, breech_gas_t,
     chase_cam, force_buttoned, force_driver, head_yaw, head_pitch, binocular_raise, interior_light,
     next_projectile_id, projectile_accumulator_s, next_e_fx, ai_tick, armor_tick, armor_clock_s, concussion_t,
     concussion_dur, engine_ear_laf_dba, hit_camera_kick, pressure_reset_pending, pressure_arrivals_delivered, pressure_last_arrival_s, act_complete,
