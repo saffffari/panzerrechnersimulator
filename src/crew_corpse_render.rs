@@ -121,6 +121,13 @@ impl Corpses {
     pub(super) fn strike_tissue(&mut self,ragdoll:&CrewRagdoll,strikes:&[crew_tissue::Strike])->Option<[f32;PARTS]> {
         self.tissue.as_mut().map(|tissue|tissue.strike(ragdoll,strikes))
     }
+    /// Start a body's solve on a worker (`crew_corpse_tissue::TissueDraw::begin_strike`).
+    pub(super) fn begin_tissue_strike(&mut self,ragdoll:&CrewRagdoll,strikes:&[crew_tissue::Strike])->Option<crew_corpse_tissue::StrikeJob> {
+        self.tissue.as_mut().map(|tissue|tissue.begin_strike(ragdoll,strikes))
+    }
+    pub(super) fn finish_tissue_strike(&mut self,job:crew_corpse_tissue::StrikeJob,ragdoll:&CrewRagdoll)->Option<[f32;PARTS]> {
+        self.tissue.as_mut().map(|tissue|tissue.finish_strike(job,ragdoll))
+    }
     /// Move the pieces of solved bodies (`crew_tissue::integrate_chunks`).
     pub(super) fn integrate_tissue(&mut self,world:&FragmentWorld,player:&Tank,dt:f32) {
         if let Some(tissue)=self.tissue.as_mut() {tissue.integrate(world,player,dt);}

@@ -1649,7 +1649,14 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   holds the tick as the plate's lattice does; a worker solve is open. Since 2026-11-03 the step
   runs on up to 8 threads, each bond's force then each moving cell's gather in a fixed order, so
   its result is bit-identical on any thread count (test); a burst on a whole body (a cook-off's)
-  solves in about 0.45 s instead of 2.3 s.
+  solves in about 0.45 s instead of 2.3 s. When the strike is the player's own death (the tank's loss, or his own man
+  in solo play) the casualties' solves run on workers behind the death's fade and black instead
+  of holding the tick (the owner, 2026-11-02): the world is frozen through the death, finished
+  solves are taken back only while the screen is fully black, and any still running is waited for
+  before a view of the world returns or any update advances it, then the carve's consequences
+  (pulverized parts, their coupled impulses, the pieces thrown) are applied to the unchanged
+  ragdoll, so the outcome is the one the strike would have had. Other casualties still hold the
+  tick. Not yet verified in a rendered death (the owner asked for no renders while he works).
   Since 2026-11-03 a fragment's path through him is its permanent cavity: every cell within the
   fragment's half-size plus a quarter cell of its path is crushed and drawn as gone before the
   lattice runs (a voxel discretisation of the track, named; the lattice still tears the walls).
