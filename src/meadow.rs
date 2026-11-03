@@ -542,9 +542,12 @@ impl WindGrid {
         let n = WIND_CELLS as i32;
         for z in 0..n {
             for x in 0..n {
-                let (ox, oz) = (x + want.0 - old.0, z + want.1 - old.1);
+                // A fresh grid (origin i32::MIN) keeps nothing; test that before the offset, which
+                // would overflow against the sentinel.
+                let fresh = old.0 == i32::MIN;
+                let (ox, oz) = if fresh { (-1, -1) } else { (x + want.0 - old.0, z + want.1 - old.1) };
                 let i = (z * n + x) as usize;
-                if old.0 != i32::MIN && (0..n).contains(&ox) && (0..n).contains(&oz) {
+                if !fresh && (0..n).contains(&ox) && (0..n).contains(&oz) {
                     let j = (oz * n + ox) as usize;
                     self.disp[i] = old_disp[j];
                     self.vel[i] = old_vel[j];
@@ -635,9 +638,10 @@ impl PushGrid {
         let (old_d, old_v, old) = (self.disp.clone(), self.vel.clone(), self.origin);
         for z in 0..n {
             for x in 0..n {
-                let (ox, oz) = (x + want.0 - old.0, z + want.1 - old.1);
+                let fresh = old.0 == i32::MIN;
+                let (ox, oz) = if fresh { (-1, -1) } else { (x + want.0 - old.0, z + want.1 - old.1) };
                 let i = (z * n + x) as usize;
-                let keep = old.0 != i32::MIN && (0..n).contains(&ox) && (0..n).contains(&oz);
+                let keep = !fresh && (0..n).contains(&ox) && (0..n).contains(&oz);
                 self.disp[i] = if keep { old_d[(oz * n + ox) as usize] } else { Vec2::ZERO };
                 self.vel[i] = if keep { old_v[(oz * n + ox) as usize] } else { Vec2::ZERO };
             }
