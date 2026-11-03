@@ -1087,6 +1087,24 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   whole vehicle), unlabelled in play (it is the replay's view, not a claim about the vehicle).
   The plate's thickness is measured along the shot through the tank's own source triangles (0.1 m
   if they are not met; named).
+- **FEA range** (`fea-range`, the owner's review editor, `src/game_fea_range.rs`, 2026-11-03): a
+  window on the snow field (Canyon v2 winter workshop, act 1) with the player's Tiger and its solo
+  crew, the shipping raymarch renderer and the game's own update. Its shots are real rounds through
+  `Game::debug_launch_round` (9 m short of the first source surface on the chosen line, so the
+  round meets every surface on it; impact velocity is the shell's own `v0·e^(−kx)` at the chosen
+  range, a chosen velocity sets that range). Disclosed review actions, as in `fea-film`: the Tiger
+  is placed and reset by state, enemies are banished and hold fire, the racks may be emptied, the
+  cabin lamps switched, the sky clock is held at the chosen date and time, the eye's exposure may
+  be held (a camera setting), and the section is the film section above (camera only, labelled on
+  screen). Recorded frames are the renderer's own frames read back; "live here" re-simulates the
+  same shot step for step (`fea-range --shots` checks its state digest against the recording's).
+  **Tissue knobs** (`crew_tissue::TissueTuning`): a review-only override of the crew lattice's
+  authored constants (tear energies, critical stretches, momentum shares, active reach, the piece
+  landing-breakup factor), set only by `fea-range` while it differs from the authored values; with
+  no override (both shipping presets, every play path) `tissue_tuning()` is exactly the constants
+  (`crew_tissue` test `the_tissue_tuning_is_authored_unless_the_review_range_sets_it`, which also
+  pins the only setter to `game_fea_range.rs`). Bonds keep the law `k = 2E/(ε_c·r)²`; a tuned class
+  scales its bonds' stiffness and critical stretch at solve time instead of rebuilding the model.
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
   game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
   SVG/PNG frames about 1/1000 of real time apart, with a contact sheet and a 12 fps clip per case.

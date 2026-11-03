@@ -68,6 +68,8 @@ pub(crate) mod game_fea_section;
 pub(crate) mod game_fea_review;
 #[path = "game_fea_film.rs"]
 pub(crate) mod game_fea_film;
+#[path = "game_fea_range.rs"]
+pub(crate) mod game_fea_range;
 #[path = "crew_skeleton.rs"]
 mod crew_skeleton;
 #[path = "crew_tissue.rs"]
