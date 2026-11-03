@@ -997,6 +997,54 @@ fn physical_cloud_diffuse_boundary(
     );
 }
 
+// Mean radiance over the sphere of the multiply scattered field at a point, isotropic in each
+// hemisphere: (F_down_diffuse + F_up) / (2 pi); physical_environment.rs
+// `multiple_scattering_radiance`. The downward diffuse flux is the two-stream transmission of the
+// clear column above (key and secondary body), or under a cloud the diffuse flux leaving the
+// measured cloud column. The upward flux (air below, the ground) is left out (named).
+fn physical_multiple_scattering_radiance(
+    environment: PhysicalEnvironment,
+    position_m: vec3<f32>,
+) -> vec3<f32> {
+    let up = normalize(position_m - environment.planet_center_radius.xyz);
+    let altitude = max(physical_altitude_m(environment, position_m), 0.0);
+    let key_direction = environment.sun_direction_water_density.xyz;
+    let key_irradiance = environment.solar_irradiance_angle.xyz;
+    let second_direction = environment.secondary_direction.xyz;
+    let second_irradiance = environment.secondary_irradiance_angle.xyz;
+    var cloud_depth = 0.0;
+    if (environment.cloud_top_lwc_radius_coverage.w > 0.0
+        && altitude < environment.cloud_top_lwc_radius_coverage.x) {
+        cloud_depth = physical_cloud_column_optical_depth(environment, position_m);
+    }
+    var flux = vec3(0.0);
+    if (cloud_depth > 1.0e-8) {
+        let cloud_diffuse = physical_delta_eddington_diffuse_flux(
+            cloud_depth,
+            environment.ozone_absorption_cloud_albedo.w,
+            environment.cloud_optics_scales.y,
+        );
+        flux = physical_cloud_source_lower_flux(environment, up, cloud_depth,
+                cloud_diffuse.transmittance, key_direction, key_irradiance)
+            + physical_cloud_source_lower_flux(environment, up, cloud_depth,
+                cloud_diffuse.transmittance, second_direction, second_irradiance);
+    } else {
+        if (dot(key_direction, key_direction) > 0.0) {
+            let mu0 = dot(up, normalize(key_direction));
+            if (mu0 > 0.0 && max(max(key_irradiance.x, key_irradiance.y), key_irradiance.z) > 0.0) {
+                flux += physical_upper_atmosphere_diffuse_flux(environment, altitude, mu0, key_irradiance);
+            }
+        }
+        if (dot(second_direction, second_direction) > 0.0) {
+            let mu0 = dot(up, normalize(second_direction));
+            if (mu0 > 0.0 && max(max(second_irradiance.x, second_irradiance.y), second_irradiance.z) > 0.0) {
+                flux += physical_upper_atmosphere_diffuse_flux(environment, altitude, mu0, second_irradiance);
+            }
+        }
+    }
+    return max(flux, vec3(0.0)) / (2.0 * PHYSICAL_ENV_PI);
+}
+
 // Diffuse flux leaving the cloud base that one directional source feeds into the column.
 fn physical_cloud_source_lower_flux(
     environment: PhysicalEnvironment,
@@ -1304,6 +1352,9 @@ fn physical_environment_transport(
         if (cloud_boundary.handled_cloud_scattering != 0u) {
             source += cloud_boundary.transported_radiance * medium.cloud_scattering_m_inv;
         }
+        // The air's higher scattering orders: its scattering of the diffuse field.
+        source += (medium.rayleigh_scattering_m_inv + medium.mie_scattering_m_inv)
+            * physical_multiple_scattering_radiance(environment, position_m);
         let segment_weight=(vec3(1.0)-exp(-medium.extinction_m_inv*weight_m))/max(medium.extinction_m_inv,vec3(1e-12));
         inscattered += view_transmittance * source * segment_weight;
         optical_depth += medium.extinction_m_inv * weight_m;

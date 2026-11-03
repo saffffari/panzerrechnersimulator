@@ -1968,6 +1968,14 @@ after_aod020_a16,after_aod025_a16_fog015}_east.jpg`; Canyon v2 `..._haze_canyon_
 On the hills: B-R +6.7 before, +25.7 after with the map unchanged, +20.8 with AOD 0.2 / alpha 1.6.
 Cost: rm-shade 0.739 → 0.762 ms (4090, 1024x576).
 
+The same day the proposed block's sky went slate and darker at the horizon away from the Sun:
+the atmosphere scattered only once. It now also scatters the downward two-stream diffuse field
+(`physical_multiple_scattering_radiance`, ledger "Spectral aerosol and the surfaces' clear air"),
+so a hazy sky whitens toward the horizon; the sky cache's refresh cost did not move measurably
+(rm-sky 1.70 → 1.62 ms, inside the run-to-run spread). Stills:
+`/home/alex/panzer/captures/agent-ac1a9bff69ecfa515-msfix_20261102_{1410z,0200z,1600z}_{block_before,
+block_after,noblock_after}.jpg`.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
