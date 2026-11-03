@@ -1690,6 +1690,29 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     response is the owner's art direction, not a measured property. The droplets, the coat and the
     pools under the couch dead share it.
   - Not yet seen rendered (no renders while the owner works).
+- **Refraction by blasts and hot air** (2026-11-03, `pressure_front` physical mode,
+  `fea_damage::blast`, `HeatPlume`; behind `KESSEL_REFRACTION=physical`, off by default until the
+  owner approves stills: the look is locked). One pass bends the camera's rays through two fields:
+  - Blast fronts: each emitted front's shock radius from the blast model's Rankine-Hugoniot
+    arrival (not the acoustic speed), the air behind it over its positive phase's length as the
+    Friedlander shape, its refractivity jump by Gladstone-Dale on the Rankine-Hugoniot density. A
+    ray is turned by the transverse gradient of n integrated along it (paraxial): the smooth profile
+    sampled along its chord, the front's jump at each crossing with its grazing divergence cut at
+    one pixel's footprint. Measured (1024 px over 60 degrees): 8.8 muzzle blast 2.4 px at 1 m,
+    0.4 px at 2 m; 122 mm HE 17 px at 1 m, 3.5 px at 2 m, 0.8 px at 5 m; under a pixel beyond.
+  - Hot-object plumes: Heskestad's point-source plume (centreline excess and width), excess capped
+    at the source's own, heat into the air by free convection at 10 W/m²K (named); turbulence as
+    hashed gradient noise at 0.38 of the local excess (George, Alpert & Tamanini 1977), half the
+    plume's width in scale, carried up at the centreline rise (named: a statistical stand-in for the
+    turbulent field). Measured: about 0.1 px at most (a glowing rim, 20 cm up), 0.04 px over a 20 kW
+    fire at 1 m, under 0.01 px for chips and a 400 K barrel: invisible at the game's resolution,
+    under a pixel even through the 2.5x sight. The physics gives this and no more.
+  - The bent ray leaves its point of closest approach and is traced against the scene; what it
+    meets is lit as the frame shows it there (named: radiance gathered from the lit frame at the
+    true hit, not reshaded along the bent direction; a hit the frame does not show leaves the pixel
+    as it was).
+  - Not yet fed: the hot-object sources (fx-fire-sparks' `hot_surfaces`, pending its merge), and no
+    barrel temperature exists yet. Not yet seen in a render (the owner's editor was open).
 - **Every object inside stops or slows fragments** (2026-11-03, `FragmentWorld::perforation`,
   `game_fea::InteriorDamage`, `tools/tiger_game_part_components.py`; the owner: fragments passed
   straight through the traverse gearing, and every object inside should stop or slow them and be
