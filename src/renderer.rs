@@ -12668,7 +12668,7 @@ mod atmosphere_tests {
         assert_eq!(ranks.iter().map(|r|(r+0.5)/16.0-0.5).sum::<f32>(),0.0);
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 176); // the look lane at 128, the loupe at 144, the realism lane at 160
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 192); // the look lane at 128, the loupe at 144, the realism lane at 160, the debug-view lane at 176
         assert_eq!(std::mem::offset_of!(CrushUniform, look), 128);
         assert_eq!(std::mem::offset_of!(CrushUniform, loupe), 144);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
