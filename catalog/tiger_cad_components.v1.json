@@ -1519,6 +1519,78 @@
     "solids_absent": [],
     "solids_partial": []
    }
+  },
+  {
+   "id": "traverse_gearbox",
+   "name": "Commander's turret traverse gearbox (kit 05J27 'MOTOR')",
+   "frame": "turret",
+   "confidence": "game_mesh_node",
+   "game_nodes": ["Turret_0137"],
+   "evidence": "Cast gearbox under the commander's traverse flywheel at the turret's right rear (game node Turret_0137, kit 05J27 'MOTOR', iron_cast_machinery in docs/fea/tiger_parts.csv).",
+   "doubts": "Taken from the game's mesh, not a registered kit solid; its volume is the mesh's.",
+   "volume_m3": {
+    "solids": 0.020876
+   }
+  },
+  {
+   "id": "traverse_flywheel",
+   "name": "Commander's auxiliary traverse flywheel (kit 05J55 'ROLLOR')",
+   "frame": "turret",
+   "confidence": "game_mesh_node",
+   "game_nodes": ["tiger_part_wheel2.glb"],
+   "evidence": "The game's separately baked wheel2 (src/interior_rig.rs: the commander's auxiliary traverse flywheel on top of the traverse gearbox, 595 turns per turret revolution).",
+   "doubts": "Taken from the game's mesh, not a registered kit solid; its volume is the mesh's.",
+   "volume_m3": {
+    "solids": 0.000611
+   }
+  },
+  {
+   "id": "traverse_pedal",
+   "name": "Hydraulic traverse foot pedal (kit 05J26 'PEDLAL')",
+   "frame": "turret",
+   "confidence": "game_mesh_node",
+   "game_nodes": ["Turret_0068"],
+   "evidence": "Rocker pedal on the basket floor at the gunner's feet (game node Turret_0068, kit 05J26).",
+   "doubts": "Taken from the game's mesh, not a registered kit solid; its volume is the mesh's.",
+   "volume_m3": {
+    "solids": 0.001595
+   }
+  },
+  {
+   "id": "elevation_gearbox",
+   "name": "Gun elevation gearbox (kit 06J56 'BLOCK')",
+   "frame": "turret",
+   "confidence": "game_mesh_node",
+   "game_nodes": ["Turret_0084"],
+   "evidence": "Block beside the elevation handwheel on the cradle's right (game node Turret_0084, kit 06J56 'BLOCK').",
+   "doubts": "Taken from the game's mesh, not a registered kit solid; its volume is the mesh's.",
+   "volume_m3": {
+    "solids": 0.001182
+   }
+  },
+  {
+   "id": "elevation_handwheel",
+   "name": "Gunner's elevation handwheel (kit 05J55 'ROLLOR')",
+   "frame": "turret",
+   "confidence": "game_mesh_node",
+   "game_nodes": ["tiger_part_wheel1.glb"],
+   "evidence": "The game's separately baked wheel1 (src/interior_rig.rs: the gunner's elevation wheel).",
+   "doubts": "Taken from the game's mesh, not a registered kit solid; its volume is the mesh's.",
+   "volume_m3": {
+    "solids": 0.000611
+   }
+  },
+  {
+   "id": "basket_floor",
+   "name": "Turret basket floor and its plates (kit 05U25 'BASE', 25H10/25H11 'PLATE')",
+   "frame": "turret",
+   "confidence": "game_mesh_node",
+   "game_nodes": ["TURRET FLOOR", "Turret_0007", "Turret_0204"],
+   "evidence": "The turning floor of the fighting compartment (game nodes TURRET FLOOR, Turret_0007, Turret_0204). Its drive is the hydraulic traverse motor (component turret_traverse_motor).",
+   "doubts": "Taken from the game's mesh, not a registered kit solid; its volume is the mesh's.",
+   "volume_m3": {
+    "solids": 0.121951
+   }
   }
  ],
  "cad_only_components": {

@@ -1402,9 +1402,9 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   moving on a wall or roof eight contacts past its budget is stopped where it is (named: no
   sliding or resting-contact solver). The rest of a sub-step after a contact is not flown (named:
   at most 2.1 ms per contact). Each segment's first 0.2 mm is not tested, so a burst born on the
-  struck plate's back face leaves it. A fragment cannot perforate any surface: thin sheet (a fuel
-  tank's wall, a radiator, the firewall) stops it as armour would (named; the layered chain
-  perforates components for the round itself only). A body 12 m from its frame's origin has left
+  struck plate's back face leaves it. Since 2026-11-03 a fragment goes through a thin part it
+  strikes (see "Every object inside stops or slows fragments" below); before, no surface could be
+  perforated and thin sheet stopped it as armour would. A body 12 m from its frame's origin has left
   the vehicle and is dropped (it meets no ground; named). The damage pass follows the same bodies
   and meets modules where a body's path, ended at the first surface and carried 3 cm on (named:
   the drawn face and the voxel envelope differ by up to a cell), enters their CAD-measured
@@ -1690,6 +1690,45 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     response is the owner's art direction, not a measured property. The droplets, the coat and the
     pools under the couch dead share it.
   - Not yet seen rendered (no renders while the owner works).
+- **Every object inside stops or slows fragments** (2026-11-03, `FragmentWorld::perforation`,
+  `game_fea::InteriorDamage`, `tools/tiger_game_part_components.py`; the owner: fragments passed
+  straight through the traverse gearing, and every object inside should stop or slow them and be
+  damaged by it).
+  - What was wrong: the fragments' surfaces were the hull, turret and gun meshes and a list of
+    hatches, periscopes, workshop parts and glass. The interior pieces drawn as meshes of their own
+    were not in it, so fragments flew through them in the simulation, not only on screen: both
+    handwheels (the gunner's elevation wheel and the commander's traverse flywheel over the
+    traverse gearbox), the TPZ needle, the driver's yoke and button, the radio set and the order
+    printer's head. They are now in it (the handwheels at rest about their hubs and the needle at
+    zero bearing: their turning is not followed; the radio set at its base, a moved dressing prop
+    not followed; named). The gearbox itself and the hydraulic drive are part of the turret mesh
+    and always stopped fragments. The live rounds are still met only as cartridges (the rack), not
+    as surfaces (named).
+  - Through a part: at each surface a fragment strikes, the part's thickness along its path is the
+    distance to the next surface ahead (its far face). It goes through when its kinetic energy
+    exceeds 400 MPa (named: the nominal cast and structural steels) times its face area times that
+    thickness, the embedding rule carried through the wall, and leaves the far face with the rest
+    of its energy along the same line. A part with no far face within 20 mm (the cabin's 25 mm and
+    thicker armour, solid parts, and open single-sided sheets: named) stops it as before, and so
+    does a measured component with a solid interior, which keeps what enters it. One strength for
+    every interior steel part (named: the sweep does not know which node it met).
+  - New components from the game's own meshes (closed-mesh volumes, envelopes by the CAD
+    voxeliser, casings and masses estimates): the commander's traverse gearbox (Turret_0137, kit
+    05J27) and flywheel (wheel2), the hydraulic traverse pedal (Turret_0068), the elevation gearbox
+    (Turret_0084, kit 06J56) and handwheel (wheel1), and the basket floor and its plates (TURRET
+    FLOOR, Turret_0007, Turret_0204); the basket's drive is the existing hydraulic traverse motor.
+    The basket floor's plates, about a cell thick, over-fill their 2 cm envelope by 18 % (named).
+    Not identified: the gunner's own traverse handwheel (Turret_0086, 'HAND', is a 1.75 m rail).
+  - Function: each strike's energy at a mechanism (a fragment's kinetic energy where it enters,
+    the round's where it crosses) is summed per part. A traverse gearbox struck turns the turret
+    stiffly in proportion, to a quarter of its free rate, and jams at 3 kJ like a jammed ring
+    (powered and hand traverse alike); its flywheel counts half. The elevation gearbox does the
+    same to the gun's elevation, jamming at 1.5 kJ, its handwheel counting half. The pedal is the
+    hydraulic drive's control (the module, as before); the floor records its strikes. Thresholds
+    authored (named: no damage-to-function data for these gears was found). Saved; not cleared by
+    the field repair yet (named).
+  - Not done: the struck parts do not yet change shape (no dents or bends drawn); the energy is
+    recorded for it.
 - **The round as a deformable body** (2026-11-03, `fea_damage::shot`, review film
   `fea-shot-film`; the owner: shells must squash, bend, ricochet and spin off the armour and break
   into shrapnel, each by its kind). Status: joined to play for perforations and ricochets. The round of a

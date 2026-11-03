@@ -496,8 +496,10 @@ lists every named approximation of this model.
   triangles (one segment per 0.25 m of flight) and bounces, embeds or rests on the surface it
   meets, with that surface's normal; modules are met where a body's path enters their CAD-measured
   component; cartridges where it crosses their boxes. The same strikes now open the fuel tank or
-  the engine behind the firewall; the crew live. A fragment cannot perforate any surface (named:
-  the firewall and tank walls stop it as armour would). The turret rear's chips now embed in the
+  the engine behind the firewall; the crew live. Since 2026-11-03 a fragment goes through a part
+  thinner than 20 mm along its path when its energy exceeds 400 MPa times its face area times
+  that thickness, and slows by that work (the ledger's "Every object inside stops or slows
+  fragments"); before, it could perforate no surface. The turret rear's chips now embed in the
   first surface behind the plate (24 of 25, about 5 mm deep, 1.64–1.71 m from the loader's eye)
   instead of bouncing round a cylinder; the review harness now uses the repair jobs' own 1.65 m
   reach.

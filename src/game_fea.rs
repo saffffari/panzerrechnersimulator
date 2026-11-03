@@ -207,6 +207,75 @@ pub(super) struct FeaSaved {
     pending: Vec<PendingPlateSaved>,
     carried_fragment: Option<usize>,
     next_id: u64,
+    #[serde(default)]
+    interior: InteriorDamage,
+}
+
+/// What the interior mechanisms took (2026-11-03, the owner: every object inside stops or slows
+/// fragments and is damaged by what it took, its function with it): the strike energy each
+/// component met, summed over strikes, and what that does to the gearing. Thresholds are authored
+/// (named): no measured damage-to-function data for these gears was found.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub(super) struct InteriorDamage {
+    /// (`components::COMPONENT_SPECS` index, joules met).
+    pub(super) energy_j: Vec<(usize, f32)>,
+}
+
+/// A gearbox jams when its strikes have brought this much energy against it; below, it turns stiff
+/// in proportion (authored).
+pub(super) const TRAVERSE_GEAR_JAM_J: f32 = 3_000.0;
+pub(super) const ELEVATION_GEAR_JAM_J: f32 = 1_500.0;
+/// The stiffest a damaged gear train turns, short of jamming (share of its free rate; authored).
+pub(super) const STIFF_FLOOR: f32 = 0.25;
+/// A handwheel's strike counts this share against its gearbox: a bent shaft binds, a cracked rim
+/// does not (authored).
+pub(super) const HANDWHEEL_SHARE: f32 = 0.5;
+
+impl InteriorDamage {
+    fn spec(id: &str) -> Option<usize> {
+        components::COMPONENT_SPECS.iter().position(|s| s.id == id)
+    }
+
+    pub(super) fn energy(&self, id: &str) -> f32 {
+        Self::spec(id).map_or(0.0, |spec| self.energy_j.iter().filter(|(s, _)| *s == spec).map(|(_, e)| e).sum())
+    }
+
+    pub(super) fn record(&mut self, spec: usize, energy_j: f32) {
+        if !(energy_j.is_finite() && energy_j > 0.0) {
+            return;
+        }
+        match self.energy_j.iter_mut().find(|(s, _)| *s == spec) {
+            Some(entry) => entry.1 += energy_j,
+            None => self.energy_j.push((spec, energy_j)),
+        }
+    }
+
+    fn train(&self, gearbox: &str, wheel: &str) -> f32 {
+        self.energy(gearbox) + HANDWHEEL_SHARE * self.energy(wheel)
+    }
+
+    pub(super) fn traverse_jammed(&self) -> bool {
+        self.train("traverse_gearbox", "traverse_flywheel") >= TRAVERSE_GEAR_JAM_J
+    }
+
+    /// The traverse's rate against its free rate (1 undamaged).
+    pub(super) fn traverse_factor(&self) -> f32 {
+        (1.0 - self.train("traverse_gearbox", "traverse_flywheel") / TRAVERSE_GEAR_JAM_J).clamp(STIFF_FLOOR, 1.0)
+    }
+
+    pub(super) fn elevation_jammed(&self) -> bool {
+        self.train("elevation_gearbox", "elevation_handwheel") >= ELEVATION_GEAR_JAM_J
+    }
+
+    pub(super) fn elevation_factor(&self) -> f32 {
+        (1.0 - self.train("elevation_gearbox", "elevation_handwheel") / ELEVATION_GEAR_JAM_J).clamp(STIFF_FLOOR, 1.0)
+    }
+
+    /// Whether a strike on `spec` counts (the mechanisms with a function or a floor to dent).
+    pub(super) fn tracks(spec: usize) -> bool {
+        matches!(components::COMPONENT_SPECS[spec].id, "traverse_gearbox" | "traverse_flywheel" | "traverse_pedal"
+            | "elevation_gearbox" | "elevation_handwheel" | "basket_floor")
+    }
 }
 
 /// Game time between a stopped round's strike and the commit of its plate solve (named: long
@@ -233,6 +302,8 @@ pub(super) struct FeaRuntime {
     /// The own solves of rounds that ricocheted (any vehicle's armour), by projectile id; each is
     /// joined at that round's next contact, so its result never depends on when the worker ends.
     pub(super) ricochet_solves: std::collections::BTreeMap<u64, std::thread::JoinHandle<Option<RicochetShot>>>,
+    /// What the interior mechanisms took (`InteriorDamage`).
+    pub(super) interior: InteriorDamage,
 }
 
 /// What a ricochet's own solve left of the round.
@@ -280,6 +351,7 @@ impl FeaRuntime {
                 job: p.job }).collect(),
             carried_fragment: self.carried_fragment,
             next_id: self.next_id,
+            interior: self.interior.clone(),
         }
     }
 
@@ -297,6 +369,9 @@ impl FeaRuntime {
             job: p.job, handle: p.job.spawn() }).collect();
         self.carried_fragment = saved.carried_fragment;
         self.next_id = saved.next_id;
+        anyhow::ensure!(saved.interior.energy_j.iter().all(|(s, e)| *s < components::COMPONENT_SPECS.len() && e.is_finite()),
+            "invalid interior damage");
+        self.interior = saved.interior;
         self.receipts.clear();
         self.current = None;
         self.started = None;
@@ -333,7 +408,10 @@ pub(super) fn module_for_system(system: System) -> Option<ModuleKind> {
         System::GunnerSight => Some(ModuleKind::GunnerSight),
         System::TurretTraverse => Some(ModuleKind::TurretTraverse),
         // No live cooling circuit, air-filter state or seat state yet: recorded in the receipt.
-        System::AirFilters | System::Cooling(_) | System::Ammunition | System::Seat => None,
+        // No live cooling circuit, air-filter state or seat state yet: recorded in the receipt. The
+        // elevation gearing and the basket floor act through `InteriorDamage` instead.
+        System::AirFilters | System::Cooling(_) | System::Ammunition | System::Seat
+            | System::Elevation | System::Basket => None,
     }
 }
 
@@ -617,6 +695,29 @@ impl Game {
         Some((line, result))
     }
 
+    /// Bring a strike's interior strikes into the mechanisms' damage and report what it did to them.
+    pub(super) fn fea_apply_part_strikes(&mut self, strikes: &[(usize, f32)]) {
+        if strikes.is_empty() {
+            return;
+        }
+        let (traverse_was, elevation_was) = (self.fea.interior.traverse_jammed(), self.fea.interior.elevation_jammed());
+        for &(spec, energy) in strikes {
+            self.fea.interior.record(spec, energy);
+            println!("[fea] {} struck: {:.0} J ({:.0} J in all)", components::COMPONENT_SPECS[spec].name, energy,
+                self.fea.interior.energy(components::COMPONENT_SPECS[spec].id));
+        }
+        let interior = &self.fea.interior;
+        println!("[fea] interior gearing: traverse {:.0} %{}, elevation {:.0} %{}", interior.traverse_factor() * 100.0,
+            if interior.traverse_jammed() { " (jammed)" } else { "" }, interior.elevation_factor() * 100.0,
+            if interior.elevation_jammed() { " (jammed)" } else { "" });
+        if interior.traverse_jammed() && !traverse_was {
+            println!("[panzerrechnersystem] the traverse gearbox has jammed: the turret will not turn");
+        }
+        if interior.elevation_jammed() && !elevation_was {
+            println!("[panzerrechnersystem] the elevation gearbox has jammed: the gun will not elevate");
+        }
+    }
+
     /// Record a round the chain left lodged. `part` is the struck armour part (the frame of a round
     /// held in the plate); a round stopped inside goes to the frame of the component holding it.
     fn fea_record_lodged(&mut self, line: &chain::ShotLine, result: &chain::ChainResult,
@@ -723,6 +824,11 @@ impl Game {
 
         // Systems breached by the round itself.
         for hit in &chain_result.hits {
+            if InteriorDamage::tracks(hit.component) {
+                if let Some(first) = chain_result.crossings.iter().find(|c| c.layer.kind.component() == Some(hit.component)) {
+                    result.part_strikes.push((hit.component, 0.5 * mass * first.v_in * first.v_in));
+                }
+            }
             let spec = &components::COMPONENT_SPECS[hit.component];
             if !hit.breached {
                 struck_not_breached.push(spec.id.to_string());
@@ -1637,6 +1743,26 @@ mod save_tests {
         }
     }
 
+    #[test]
+    fn struck_gearing_turns_stiff_then_jams_and_a_handwheel_counts_half() {
+        let mut damage = InteriorDamage::default();
+        assert_eq!((damage.traverse_factor(), damage.elevation_factor()), (1.0, 1.0));
+        let gearbox = InteriorDamage::spec("traverse_gearbox").unwrap();
+        let flywheel = InteriorDamage::spec("traverse_flywheel").unwrap();
+        damage.record(gearbox, 0.5 * TRAVERSE_GEAR_JAM_J);
+        assert!((damage.traverse_factor() - 0.5).abs() < 1e-6 && !damage.traverse_jammed());
+        damage.record(flywheel, 0.5 * TRAVERSE_GEAR_JAM_J);
+        assert!((damage.traverse_factor() - 0.25).abs() < 1e-6 && !damage.traverse_jammed());
+        damage.record(gearbox, 0.25 * TRAVERSE_GEAR_JAM_J);
+        assert!(damage.traverse_jammed());
+        assert_eq!(damage.elevation_factor(), 1.0, "the elevation train is its own");
+        damage.record(InteriorDamage::spec("elevation_gearbox").unwrap(), ELEVATION_GEAR_JAM_J);
+        assert!(damage.elevation_jammed());
+        for id in ["traverse_gearbox", "traverse_flywheel", "traverse_pedal", "elevation_gearbox", "elevation_handwheel", "basket_floor"] {
+            assert!(InteriorDamage::tracks(InteriorDamage::spec(id).unwrap()), "{id}");
+        }
+    }
+
     fn saved_state() -> FeaSaved {
         let extraction = lodged::extraction(4.0e7, 0.045, 0.02, true);
         FeaSaved {
@@ -1648,6 +1774,7 @@ mod save_tests {
                 job: stop_job() }],
             carried_fragment: Some(17),
             next_id: 4,
+            interior: InteriorDamage { energy_j: vec![(InteriorDamage::spec("traverse_gearbox").unwrap(), 1_200.0)] },
         }
     }
 
