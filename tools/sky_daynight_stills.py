@@ -193,9 +193,10 @@ def shoot(mp, tag, set_name, label, utc, eye, yaw, pitch, aim=None, fov=None, ex
     while True:
         wait_for_gpu()
         r = subprocess.run(cmd, env=env, cwd=ROOT, capture_output=True, text=True, timeout=1200)
-        if r.returncode != WINDOW_LIVE_EXIT:
+        # 75: refused while his window is open; SIGTERM: stopped when he opened one mid-still.
+        if r.returncode not in (WINDOW_LIVE_EXIT, -15, 143):
             break
-        print(f'{label}: the owner opened a window; waiting', flush=True)
+        print(f'{label}: the owner opened a window (exit {r.returncode}); waiting', flush=True)
         time.sleep(30)
     lines = [l for l in r.stdout.splitlines() if l.startswith(('[sky]', '[light] photometry'))]
     record = {'map': mp.name, 'set': set_name, 'label': label, 'utc': utc, 'eye': eye, 'yaw': yaw, 'pitch': pitch,
