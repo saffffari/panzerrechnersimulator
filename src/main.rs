@@ -226,6 +226,7 @@ mod urban_tableau_meshes;
 mod urban_tableaux;
 mod world;
 mod worldgen;
+mod authored_colliders;
 
 use std::sync::Arc;
 use std::time::Instant;

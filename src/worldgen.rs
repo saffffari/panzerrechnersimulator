@@ -589,6 +589,11 @@ pub(crate) fn manifest_structure_proxies(
     if manifest_wreck_collision::accepts(path) {
         return manifest_wreck_collision::proxies(path, mesh, model);
     }
+    // Custom landmark models (tools/berlin1945/) ship their modelled solids as boxes beside the
+    // GLB; a model without that sidecar falls through to the path vocabulary below.
+    if crate::authored_colliders::boxes(path).is_some() {
+        return crate::authored_colliders::proxies(path, model);
+    }
 
     match manifest_structure(path) {
         // The Pizza city module contract is measured, stable and much tighter than some variants'
