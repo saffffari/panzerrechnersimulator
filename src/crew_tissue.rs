@@ -1143,6 +1143,31 @@ pub(super) fn carve_casualty_tissue(corpses: &std::cell::RefCell<Option<crew_cor
     std::array::from_fn(|i| solo && shares.is_some_and(|shares| shares[i] >= KEEP_SOFT_SHARE))
 }
 
+/// A casualty's solve deferred behind the death's fade and black (`Game::settle_casualty_tissue`):
+/// its worker, and what the carve's consequences need once it is back.
+pub(super) struct DeferredCarve {
+    pub(super) casualty: CouchCrewCasualty,
+    pub(super) job: crew_corpse_tissue::StrikeJob,
+    pub(super) solo: bool,
+    pub(super) fragment_impulses: [Vec3; PARTS],
+    /// Parts the strike would hide (its pulverizing outcome), before the cells decide.
+    pub(super) hide: [bool; PARTS],
+}
+
+/// Start a casualty's solve on a worker (`None` without the voxel corpse renderer).
+pub(super) fn begin_casualty_carve(corpses: &std::cell::RefCell<Option<crew_corpse_render::Corpses>>,
+    ragdoll: &CrewRagdoll, strikes: &[Strike]) -> Option<crew_corpse_tissue::StrikeJob> {
+    corpses.borrow_mut().as_mut().and_then(|corpses| corpses.begin_tissue_strike(ragdoll, strikes))
+}
+
+/// Take a casualty's solve back: the parts whose soft cells keep them in the articulated
+/// simulation (as `carve_casualty_tissue`).
+pub(super) fn finish_casualty_carve(corpses: &std::cell::RefCell<Option<crew_corpse_render::Corpses>>, solo: bool,
+    job: crew_corpse_tissue::StrikeJob, ragdoll: &CrewRagdoll) -> [bool; PARTS] {
+    let shares = corpses.borrow_mut().as_mut().and_then(|corpses| corpses.finish_tissue_strike(job, ragdoll));
+    std::array::from_fn(|i| solo && shares.is_some_and(|shares| shares[i] >= KEEP_SOFT_SHARE))
+}
+
 /// Restitution and tangential keep of a piece meeting a surface or another grain (authored: wet
 /// tissue), the speed below which a piece resting on a face turned up (or on grains) stops, and its
 /// bounce budget.

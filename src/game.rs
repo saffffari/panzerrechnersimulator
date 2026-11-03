@@ -10202,6 +10202,9 @@ pub struct Game {
     /// Physical state keyed by the same stable peer identity as `couch_casualties`. The four
     /// dedicated render slots are never recycled: every body keeps its final transform until reset.
     couch_ragdolls: Vec<CrewRagdoll>,
+    /// Casualties' tissue solves running behind the death's fade and black
+    /// (`settle_casualty_tissue`); the world does not advance while any is pending.
+    deferred_carves: Vec<crew_tissue::DeferredCarve>,
     crew_corpse_render: std::cell::RefCell<Option<crew_corpse_render::Corpses>>,
     crew_body_recovery: crew_body_recovery::Recovery,
     couch_last_casualty: Option<CouchCrewCasualty>,
@@ -14608,6 +14611,7 @@ impl Game {
             couch_kia_peers: Vec::new(),
             couch_casualties: Vec::new(),
             couch_ragdolls: Vec::new(),
+            deferred_carves: Vec::new(),
             crew_corpse_render: std::cell::RefCell::new(crew_corpse_render),
             crew_body_recovery,
             couch_last_casualty: None,
@@ -17351,6 +17355,8 @@ impl Game {
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        // A casualty's solve deferred behind a death is back before the world moves on.
+        self.settle_casualty_tissue(true);
         self.enforce_engine_operability();
         self.sim_phase.count_update();
         self.sim_phase.seg_begin();
@@ -23196,6 +23202,39 @@ impl Game {
     /// scarred vehicle across all three acts, so losing that Tiger while bailed out resolves the
     /// checkpoint instead of leaving a living crewman permanently stranded with no legal mount.
     /// Canyon likewise ends on losing its Tiger, including while the player is outside it.
+    /// Whether this strike's death hides a casualty's tissue solve: the tank's own loss or the
+    /// player's own man (the death's fade and black then cover the solve, `settle_casualty_tissue`).
+    fn death_hides_tissue(&self, casualty: CouchCrewCasualty) -> bool {
+        self.game_over().is_some()
+            || self.singleplayer_embodied_role().is_some_and(|role| singleplayer_crew::body_post(role) == casualty.identity)
+    }
+
+    /// Whether a casualty's tissue solve is still running behind the death.
+    pub fn casualty_tissue_pending(&self) -> bool {
+        !self.deferred_carves.is_empty()
+    }
+
+    /// Take the deferred casualty solves back in the order they began (each waited for when `wait`,
+    /// else only those already done, stopping at the first still running) and apply the carve's
+    /// consequences exactly as the strike would have: the world has not advanced since (the death
+    /// freezes it), so the result is the same as solving at the strike.
+    pub fn settle_casualty_tissue(&mut self, wait: bool) {
+        while self.deferred_carves.first().is_some_and(|c| wait || c.job.is_finished()) {
+            let carve = self.deferred_carves.remove(0);
+            let Some(index) = self.couch_ragdolls.iter().position(|r| r.casualty == carve.casualty) else {
+                // His body is gone (a reset): the solve is let go.
+                continue;
+            };
+            let kept = crew_tissue::finish_casualty_carve(&self.crew_corpse_render, carve.solo, carve.job,
+                &self.couch_ragdolls[index]);
+            let ragdoll = &mut self.couch_ragdolls[index];
+            let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
+                std::array::from_fn(|i| !kept[i] && carve.hide[i]);
+            crew_physics::couple_pulverized_fragment_impulses(&mut ragdoll.segments, &carve.fragment_impulses, &pulverized);
+            apply_crew_pulverization(ragdoll, &pulverized);
+        }
+    }
+
     pub fn game_over(&self) -> Option<DeathCause> {
         if let Some(runtime) = &self.expedition_runtime {
             // A disabled Tiger does not kill a walking survivor. Unconsciousness is not a
@@ -25329,6 +25368,7 @@ impl Game {
                     plan.impact,
                     casualty_seed ^ 0x2A66_D011,
                 );
+                let hides_tissue = self.death_hides_tissue(plan.casualty);
                 if let Some(ragdoll) = self
                     .couch_ragdolls
                     .iter_mut()
@@ -25355,24 +25395,27 @@ impl Game {
                         .map(|event| (event.result.part, event.result.blast_work_j)).collect();
                     let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll, contacts,
                         &pressure, blast_origin_local);
-                    let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
-                        self.singleplayer_crew_active, ragdoll, &strikes);
-                    let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
-                        std::array::from_fn(|index| {
-                            !kept[index] && plan.events.iter().any(|event| {
-                                event.result.part.index() == index && event.result.hide_mesh_part
-                            })
-                        });
-                    crew_physics::couple_pulverized_fragment_impulses(
-                        &mut ragdoll.segments,
-                        &fragment_impulses,
-                        &pulverized,
-                    );
+                    let hide: [bool; crew_physics::CREW_BODY_PART_COUNT] = std::array::from_fn(|index| {
+                        plan.events.iter().any(|event| event.result.part.index() == index && event.result.hide_mesh_part)
+                    });
                     for event in &plan.events {
                         let segment = &mut ragdoll.segments[event.result.part.index()];
                         segment.detached |= event.result.detach_joint;
                     }
-                    apply_crew_pulverization(ragdoll, &pulverized);
+                    let deferred = hides_tissue
+                        .then(|| crew_tissue::begin_casualty_carve(&self.crew_corpse_render, ragdoll, &strikes)).flatten();
+                    match deferred {
+                        Some(job) => self.deferred_carves.push(crew_tissue::DeferredCarve { casualty: plan.casualty, job,
+                            solo: self.singleplayer_crew_active, fragment_impulses, hide }),
+                        None => {
+                            let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                                self.singleplayer_crew_active, ragdoll, &strikes);
+                            let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
+                                std::array::from_fn(|index| !kept[index] && hide[index]);
+                            crew_physics::couple_pulverized_fragment_impulses(&mut ragdoll.segments, &fragment_impulses, &pulverized);
+                            apply_crew_pulverization(ragdoll, &pulverized);
+                        }
+                    }
                 }
 
                 let requests: Vec<usize> = plan
@@ -29903,6 +29946,7 @@ impl Game {
                             .inverse()
                             * blood_parent_model(&self.player, solution.frame);
                     self.spawn_couch_ragdoll_impact(casualty, impact, casualty_seed ^ 0x2A66_D011);
+                    let hides_tissue = self.death_hides_tissue(casualty);
                     if let Some(ragdoll) = self
                         .couch_ragdolls
                         .iter_mut()
@@ -29935,25 +29979,27 @@ impl Game {
                             .map(|event| (event.result.part, event.result.blast_work_j)).collect();
                         let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll,
                             &solution.contacts, &pressure, solution.entry);
-                        let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
-                            self.singleplayer_crew_active, ragdoll, &strikes);
-                        let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
-                            std::array::from_fn(|index| {
-                                !kept[index] && damage_events.iter().any(|event| {
-                                    event.result.part.index() == index
-                                        && event.result.hide_mesh_part
-                                })
-                            });
-                        crew_physics::couple_pulverized_fragment_impulses(
-                            &mut ragdoll.segments,
-                            &fragment_impulses,
-                            &pulverized,
-                        );
+                        let hide: [bool; crew_physics::CREW_BODY_PART_COUNT] = std::array::from_fn(|index| {
+                            damage_events.iter().any(|event| event.result.part.index() == index && event.result.hide_mesh_part)
+                        });
                         for event in &damage_events {
                             let segment = &mut ragdoll.segments[event.result.part.index()];
                             segment.detached |= event.result.detach_joint;
                         }
-                        apply_crew_pulverization(ragdoll, &pulverized);
+                        let deferred = hides_tissue
+                            .then(|| crew_tissue::begin_casualty_carve(&self.crew_corpse_render, ragdoll, &strikes)).flatten();
+                        match deferred {
+                            Some(job) => self.deferred_carves.push(crew_tissue::DeferredCarve { casualty, job,
+                                solo: self.singleplayer_crew_active, fragment_impulses, hide }),
+                            None => {
+                                let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                                    self.singleplayer_crew_active, ragdoll, &strikes);
+                                let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
+                                    std::array::from_fn(|index| !kept[index] && hide[index]);
+                                crew_physics::couple_pulverized_fragment_impulses(&mut ragdoll.segments, &fragment_impulses, &pulverized);
+                                apply_crew_pulverization(ragdoll, &pulverized);
+                            }
+                        }
                     }
 
                     if damage_events.is_empty() {
