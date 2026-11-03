@@ -54,7 +54,14 @@ COMP = {'28U05': 'engine_block', '28U20': 'engine_air_filters', '27K76': 'radiat
         '21K49': 'gearbox', '21K54': 'steering_unit', '21K51': 'steering_unit', '21K59': 'steering_unit', '21K57': 'radio',
         '28B-K81': 'hull_mg', '28B-K07': 'hull_mg', '20K67': 'driver_seat', '20K65': 'driver_seat', '02U03': 'gun_breech',
         '02J07': 'gun_cradle', '02J51': 'gun_cradle', '02J50': 'gun_cradle', '03J19': 'coax_mg', '01J18': 'gunner_sight',
-        '05U13': 'turret_traverse_motor', '06J20B': 'gunner_seat'}
+        '05U13': 'turret_traverse_motor', '06J20B': 'gunner_seat',
+        # Interior mechanisms made components from the game's own meshes (2026-11-03,
+        # tools/tiger_game_part_components.py).
+        '05J27': 'traverse_gearbox', '05J26': 'traverse_pedal', '06J56': 'elevation_gearbox',
+        '05U25': 'basket_floor', '25H10': 'basket_floor', '25H11': 'basket_floor'}
+# Kit 05J55 'ROLLOR' is both handwheels: the commander's traverse flywheel (right rear) and the
+# gunner's elevation wheel (beside the gun).
+def handwheel(cen): return 'traverse_flywheel' if cen[0] > 0.6 else 'elevation_handwheel'
 SIDED = {'27H13': 'cooling_fans', '27H25': 'cooling_fans', '27H12': 'fuel_tank', '28H21': 'fuel_tank', '28H22': 'fuel_tank',
          '29D56': 'final_drive', '18-22': 'final_drive', '18-23': 'final_drive'}
 def side(cen): return 'left' if cen[0] > 0 else 'right'
@@ -67,6 +74,7 @@ def classify(p, cen):
         if num == k or num.startswith(k+'_') or num == k:
             return 'armour_rolled_homogeneous', f'armour:{region}', dict(armour_nominal_mm=nom, armour_note=note)
     if num in COMP: return None, f'component:{COMP[num]}', {}
+    if num == '05J55': return 'steel_cast', f'component:{handwheel(cen)}', {}
     if num in SIDED: return None, f'component:{SIDED[num]}_{side(cen)}', {}
     if num.startswith('23M03') or ('AMMO' in word):
         loc = 'floor' if cen[2] < 0.75 else ('sponson_' + side(cen) + ('_front' if cen[1] < 0 else '_rear'))

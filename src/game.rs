@@ -4666,6 +4666,37 @@ impl<'a> FragmentWorld<'a> {
         out
     }
 
+    /// Whether a fragment of edge `size` moving at `vel` (its frame) through the surface it struck
+    /// at `at` goes through the part (2026-11-03, the owner: every object inside stops or slows
+    /// fragments). The part's thickness along the path is the distance to the next surface ahead,
+    /// its far face; a part with none within `PART_PERFORATION_MAX_M` (a thick or solid part, or an
+    /// open sheet with no far face: named) stops it, and so does a measured component with a solid
+    /// interior, which keeps what enters it. Otherwise it goes through when its kinetic energy
+    /// exceeds the flow stress times its face area times that thickness: the embedding rule
+    /// (`fea_damage::fragments::embed_depth`) carried through the wall. Returns the exit point
+    /// and the work done on the part.
+    fn perforation(&self, frame: BloodFrame, at: Vec3, vel: Vec3, size: f32) -> Option<(Vec3, f32)> {
+        use crate::fea_damage::components::{Interior, COMPONENT_SPECS};
+        let surfaces = self.surfaces.as_ref()?;
+        let speed = vel.length();
+        if speed < 1.0 || size <= 0.0 {
+            return None;
+        }
+        let dir = vel / speed;
+        if self.components_entered(frame, at, at + dir * HOT_FRAGMENT_COMPONENT_REACH_M, 0.0).iter()
+            .any(|&(_, spec)| !matches!(COMPONENT_SPECS[spec].interior, Interior::Empty)) {
+            return None;
+        }
+        let i = blood_frame_index(frame);
+        let start = at + dir * PART_FACE_SKIP_M;
+        let far = at + dir * PART_PERFORATION_MAX_M;
+        let contact = surfaces.sweep(self.parent[i].transform_point3(start), self.parent[i].transform_point3(far))?;
+        let thickness = PART_FACE_SKIP_M + contact.fraction * (PART_PERFORATION_MAX_M - PART_FACE_SKIP_M);
+        let energy = 0.5 * crate::fea_damage::fragments::cube_mass(size) * speed * speed;
+        let work = PART_FLOW_STRESS_PA * size * size * thickness;
+        (energy > work).then_some((at + dir * thickness, work))
+    }
+
     /// The modules those components stand for (`game_fea::module_for_system`), nearest first.
     fn modules_of(entered: &[(f32, usize)]) -> Vec<(f32, ModuleKind)> {
         let mut out: Vec<(f32, ModuleKind)> = Vec::new();
@@ -4679,6 +4710,14 @@ impl<'a> FragmentWorld<'a> {
     }
 }
 
+/// A part thicker than this along a fragment's path stops it (named; the cabin's armour is 25 mm and
+/// more, its fittings sheet, castings and handwheels a few millimetres to a centimetre or two).
+const PART_PERFORATION_MAX_M: f32 = 0.02;
+/// The first tenth of a millimetre past a struck face is not searched for the far face.
+const PART_FACE_SKIP_M: f32 = 1.0e-4;
+/// Flow stress of the interior's steel parts against a fragment going through (named: the nominal
+/// cast and structural steels of docs/fea/tiger_materials.csv, 250-400 MPa, at the upper end).
+const PART_FLOW_STRESS_PA: f32 = 400.0e6;
 /// A fragment's flight between surface tests is at most this long (one swept segment).
 const HOT_FRAGMENT_SWEEP_STEP_M: f32 = 0.25;
 /// Each swept segment's first fifth of a millimetre is not tested (a body born on a face leaves it).
@@ -4754,6 +4793,27 @@ fn integrate_hot_fragment_traced(
         fragment.ang += fragment.spin * step_dt;
         let to = from + fragment.vel * step_dt;
         let (end, surface) = match world.first_surface(fragment.frame, from, to) {
+            Some((fraction, _)) if world.perforation(fragment.frame, from.lerp(to, fraction), fragment.vel, fragment.size).is_some() => {
+                // Through the part it struck, slowed by the work it did on it.
+                let at = from.lerp(to, fraction);
+                let (exit, work) = world.perforation(fragment.frame, at, fragment.vel, fragment.size).unwrap();
+                let speed = fragment.vel.length();
+                let energy = 0.5 * crate::fea_damage::fragments::cube_mass(fragment.size) * speed * speed;
+                let dir = fragment.vel / speed;
+                fragment.vel *= ((energy - work) / energy).max(0.0).sqrt();
+                fragment.pos = exit + dir * (radius + HOT_FRAGMENT_CONTACT_GAP_M);
+                // The renderer draws only history since the far face, never a beam through the part.
+                fragment.prev_pos = fragment.pos;
+                fragment.spin *= 0.8;
+                fragment.bounces = fragment.bounces.saturating_add(1);
+                *collision_count = collision_count.saturating_add(1);
+                if collisions.len() < MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME {
+                    let normal = -dir;
+                    collisions.push(HotFragmentCollision { turret_local: fragment.frame == BloodFrame::Turret,
+                        local_pos: at, local_normal: normal, speed, seed: fragment.seed, bounce_count: fragment.bounces });
+                }
+                (at, true)
+            }
             Some((fraction, normal)) => {
                 let at = from.lerp(to, fraction);
                 fragment.pos = at + normal * (radius + HOT_FRAGMENT_CONTACT_GAP_M);
@@ -6935,6 +6995,9 @@ pub struct SpallResult {
     /// The hottest fragment that struck each man (K): his crew peer id, or None for the solo
     /// player's body (`fea_damage::ignition::clothing_chance`).
     pub clothing: Vec<(Option<u32>, f32)>,
+    /// The interior mechanisms the fragments and the round met, and the energy each brought
+    /// (`game_fea::InteriorDamage`): (`components::COMPONENT_SPECS` index, J), once per body.
+    pub part_strikes: Vec<(usize, f32)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -7328,6 +7391,7 @@ fn resolve_fragment_damage(
         let mut contacted_parts_by_body = vec![0u16; couch_bodies.len()];
         // One ignition trial per component per fragment.
         let mut tried_components = 0u64;
+        let mut struck_parts = 0u64;
         while fragment.active
             && !fragment.settled
             && fragment.age < fragment.life.min(HOT_FRAGMENT_DAMAGE_MAX_S)
@@ -7446,6 +7510,13 @@ fn resolve_fragment_damage(
                 let entered = FragmentWorld::modules_of(&components_entered);
                 // What burns in a component it enters (`fea_damage::ignition`): the entry, with the
                 // fragment's temperature there; the strike's trials follow (`SpallResult::ignite`).
+                for &(_, spec) in &components_entered {
+                    let bit = 1u64 << spec;
+                    if game_fea::InteriorDamage::tracks(spec) && struck_parts & bit == 0 {
+                        struck_parts |= bit;
+                        result.part_strikes.push((spec, energy));
+                    }
+                }
                 for &(fraction, spec) in &components_entered {
                     let bit = 1u64 << spec;
                     if tried_components & bit != 0 || energy < ignition_casing_j(spec) {
@@ -12941,6 +13012,19 @@ impl Game {
         // by the live articulated frame. The source scene and its authored hinges remain unchanged.
         let cupola_spindle_source = scene[slots.hatchlever].clone().transformed(
             Mat4::from_translation(HATCHLEVER_POS - CUPOLA_HINGE));
+        // Interior pieces drawn as their own meshes stand in a fragment's way like the rest
+        // (2026-11-03, the owner: fragments passed straight through the handwheels): the two
+        // handwheels about their hubs at rest (their turning is not followed: named), the TPZ
+        // needle at its dial (zero bearing, its drawn thinning not followed: named), the radio set
+        // at its base (a moved dressing prop not followed: named). The yoke, its button and the
+        // order printer's head are authored in their frames.
+        let wheel1_source = scene[slots.wheel1].clone()
+            .transformed(Mat4::from_translation(crate::interior_rig::WHEEL1_POS));
+        let wheel2_source = scene[slots.wheel2].clone()
+            .transformed(Mat4::from_translation(crate::interior_rig::WHEEL2_POS));
+        let tpz_needle_source = scene[slots.tpz_needle].clone()
+            .transformed(Mat4::from_translation(crate::interior_rig::TPZ_NEEDLE_POS));
+        let enigma_source = scene[slots.enigma].clone().transformed(enigma_radio_model(Mat4::IDENTITY));
         let player_fire_surfaces = std::array::from_fn(|part|
             wreck_surface_fire::Surface::from_mesh(&scene[slots.tiger[part]]));
         let mut fire_surfaces = vec![
@@ -12970,6 +13054,9 @@ impl Game {
         for (frame, slot) in slots.tiger_glass.iter().enumerate() {
             if let Some(slot)=slot {fire_surfaces.push((frame, &scene[*slot]));}
         }
+        fire_surfaces.extend([(1, &wheel1_source), (1, &wheel2_source), (1, &tpz_needle_source), (0, &enigma_source),
+            (0, &scene[slots.driver_controls[0]]), (0, &scene[slots.driver_controls[1]]),
+            (1, &scene[slots.order_printer_head])]);
         // Armor-only source cache excludes cabin equipment, crew, ammunition and glass.
         let mut armor_surfaces=vec![(0,&scene[slots.tiger[0]]),(1,&scene[slots.tiger[1]]),
             (3,&scene[slots.roof_hatches[0]]),(4,&scene[slots.roof_hatches[1]]),
@@ -17116,8 +17203,11 @@ impl Game {
             // engine dead, a hydraulic fault — the gunner cranks the handwheel ("Wer keines hat,
             // würgt mit der Hand", TF p.63): check valves let the oil bypass, so the hand drive
             // always works. Only a jammed or wrecked ring stops the turret outright.
+            // A jammed traverse gearbox stops the turret like a jammed ring; a struck one turns it
+            // stiffly (`game_fea::InteriorDamage`).
             let ring_blocked = matches!(self.module_fault(ModuleKind::TurretTraverse),
-                tiger_damage::Fault::RingJammed | tiger_damage::Fault::RingWrecked);
+                tiger_damage::Fault::RingJammed | tiger_damage::Fault::RingWrecked)
+                || self.fea.interior.traverse_jammed();
             let powered = self.engine_running()
                 && self.module_ok(ModuleKind::TurretTraverse);
             let traverse = if !lay_ok || ring_blocked {
@@ -17126,13 +17216,14 @@ impl Game {
                 chase_yaw
             } else {
                 chase_yaw.clamp(-HAND_TRAVERSE_FRACTION, HAND_TRAVERSE_FRACTION)
-            };
+            } * self.fea.interior.traverse_factor();
             // A leaking recoil brake only cuts the firing circuit; the gun still elevates. A
             // sheared mount leaves it stuck in recoil (Zabel), as other gun damage always did.
-            let gun_elevates = self.module_ok(ModuleKind::MainGun)
-                || self.module_fault(ModuleKind::MainGun) == tiger_damage::Fault::RecoilLeak;
+            let gun_elevates = (self.module_ok(ModuleKind::MainGun)
+                || self.module_fault(ModuleKind::MainGun) == tiger_damage::Fault::RecoilLeak)
+                && !self.fea.interior.elevation_jammed();
             let elevate = if lay_ok && gun_elevates {
-                chase_pitch
+                chase_pitch * self.fea.interior.elevation_factor()
             } else {
                 0.0
             };
@@ -29682,6 +29773,7 @@ impl Game {
         // path through crew and live rounds (`game_fea`).
         self.fea_penetration_consequences(entry_w, shell_dir_w, &ev, armor_part, penetration_id, frame,
             body, &couch_bodies, &live_ammunition, burst_fragment_kinetic_j, &mut result, &mut contacts);
+        self.fea_apply_part_strikes(&result.part_strikes);
         result.ignite(penetration_id);
         // The player's own clothing, struck by a hot fragment (`fea_damage::ignition::CLOTHING`).
         let player_peer = if self.singleplayer_crew_active {
@@ -38746,6 +38838,47 @@ mod tests {
         let hull = penetration_entry_point(BloodFrame::Hull, Vec3::new(-8.0, -4.0, 7.0), axis);
         assert!(hull.cmpge(HULL_BLOOD_MIN).all());
         assert!(hull.cmple(HULL_BLOOD_MAX).all());
+    }
+
+    #[test]
+    fn a_fast_fragment_goes_through_a_thin_part_slowed_and_a_thick_one_stops_it() {
+        let hf = crate::terrain::Heightfield { res: 2, spacing: 1000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0,
+            openings: Default::default(), detail: None };
+        let tank = Tank::new(0.0, 0.0, 0.0, &hf, crate::tank::TIGER_PARTS);
+        let mut models = [Mat4::IDENTITY; surface_fire::FRAMES];
+        models[0] = tank.hull_model();
+        models[1] = tank.turret_model();
+        // A 3 mm sheet and, a metre on, a 50 mm block, both across the fragment's path (turret frame,
+        // clear of every measured component).
+        let sheet = crate::prims::box_mesh(Vec3::new(-0.2, 2.2, -1.2), Vec3::new(0.2, 2.6, -1.197), [90; 3]);
+        let block = crate::prims::box_mesh(Vec3::new(-0.2, 2.2, -0.2), Vec3::new(0.2, 2.6, -0.15), [90; 3]);
+        let source = surface_fire::CabinFire::new(&[(1, &sheet), (1, &block)]);
+        let world = FragmentWorld::new(&source, &models, &tank,
+            crate::fea_damage::components::Articulation::rest(tank.parts.turret_pivot));
+        let fly = |speed: f32| {
+            let mut fragment = HotFragment { active: true, frame: BloodFrame::Turret, pos: Vec3::new(0.0, 2.4, -1.4),
+                vel: Vec3::new(0.0, 0.0, speed), size: 0.01, life: 1.0, ..HotFragment::default() };
+            let (mut collisions, mut count) = (Vec::new(), 0);
+            for _ in 0..40 {
+                integrate_hot_fragment(&mut fragment, 1.0 / 480.0, &mut collisions, &mut count, &world);
+            }
+            fragment
+        };
+        // 1 cm of steel at 500 m/s carries 980 J; the sheet takes 400 MPa x 1 cm² x 3 mm = 120 J.
+        let fast = fly(500.0);
+        assert!(fast.pos.z > -1.19 && fast.pos.z < -0.2, "through the sheet, stopped by the block: {:?}", fast.pos);
+        assert!(fast.bounces >= 2);
+        // 100 m/s carries 39 J: the sheet stops or turns it.
+        let slow = fly(100.0);
+        assert!(slow.pos.z < -1.2, "the sheet holds a slow fragment: {:?}", slow.pos);
+        // Through the sheet it keeps sqrt(1 - 120/980) of its speed, about 94 per cent.
+        let mut once = HotFragment { active: true, frame: BloodFrame::Turret, pos: Vec3::new(0.0, 2.4, -1.21),
+            vel: Vec3::new(0.0, 0.0, 500.0), size: 0.01, life: 1.0, ..HotFragment::default() };
+        let (mut collisions, mut count) = (Vec::new(), 0);
+        integrate_hot_fragment(&mut once, 1.0 / 4800.0, &mut collisions, &mut count, &world);
+        assert!(once.pos.z > -1.197, "{:?}", once.pos);
+        let kept = once.vel.length() / 500.0;
+        assert!((0.90..0.97).contains(&kept), "{kept}");
     }
 
     #[test]
