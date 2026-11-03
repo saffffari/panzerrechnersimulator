@@ -1,8 +1,48 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-03 (the radio sets' and driver's Braun-style panels: eleven finite panel lamps on the cabin light list, drawn-only slab fronts, glass panes; the radio operator seated on his cushion; the bow MG eyepiece relayed over its whole lens); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## The radio sets' and the driver's panels, 2026-11-03 (`src/cabin_panels.rs`, `cabin-panels`)
+
+- **What it is:** the owner's design (a 1960s Braun audio set): brushed-silver fronts, black knobs,
+  glass panes over the radio's tuning scales and the driver's two dials and fuel counter, amber
+  pilot lamps and 8 mm red, green and turquoise indicators. Not a reconstruction of the FuG 5 sets
+  or the Tiger's driver's instruments.
+- **Light:** eleven finite cube lenses (`cabin_panels::LAMPS`: four amber pilot lamps, seven
+  indicators) are cabin light registrations 22-32 (`CABIN_LIGHT_REGISTRATIONS` 22 to 33), sampled
+  through `FiniteCubeLamp` like every cabin fixture (visible radiance and transported power from
+  the same lens area; isotropic point approximation conserving power), switched by
+  `set_cabin_lights` (`practical_gain`), shadowed by the scene (raymarch: one any-hit ray per
+  lamp; shader backend: the packed cube maps with the lens excluded as its own emitter). Power is
+  an appearance calibration in the cabin's scale, not a measured bulb: an amber lens emits
+  `PANEL_AMBER` (85, 14 mm; the driver's 12 mm) against the dome lamp's 42 at 28 mm, about half the
+  dome lamp's power each. The indicators' states come from the simulation (engine speed for the
+  driver's oil and charging lamps, coolant at 100 C for the oil lamp); the radio transmitter's red
+  lamp burns at 0.45 on standby with no transmit state wired yet.
+- **Drawn-only geometry (named bound):** each front is a closed slab standing on its source box
+  (`Hull_0355` radio rack, `Hull_0240` driver's panel), 20 mm (supply box), 24 mm (sets) and 32 mm
+  (driver) deep, with knobs, keys and lamps up to a further 20 mm; collision, the damage model and
+  the crew's reach still use the source boxes, so a fragment or ray crosses at most 52 mm of drawn
+  panel before it meets the source face. The source's own relief (knob stubs to 20 mm) lies inside
+  the slabs.
+- **Instruments:** the driver's tachometer (0-3000 rpm) and coolant needle (40-120 C) read
+  `player_powertrain.rpm` and `workshop_coolant_temperature`; the three amber drums read
+  `tank_fuel_liters` as an odometer (each drum carries through the last unit of the one below).
+  The radio's tuning needle and frequency knob are groundwork: `CabinPanels::set_radio_tuning`
+  sets them; nothing in play tunes yet. The digital FUEL/L readout (`driver_panel.rs`, an
+  own-emissive raster-only print with no light registration) is removed.
+- **The radio operator's seat:** `crew_live_model` placed the AI radio operator at the pre-fit
+  (-0.66, 0.38, 1.42): his boots through the belly plate, his seat 0.24 m inside the pedestal,
+  the backrest through his neck. Now (-0.635, 0.635, 1.58), pelvis on the cushion, back on the
+  backrest, eye 1.59 (the player's at that post 1.58). His shins still pass the pedestal's box at
+  this scale, as the driver's do (open).
+- **Bow MG eyepiece:** its relay painted the first two of the lens's 24 triangles (0.9 % of its
+  area). It now paints the whole planar lens. The eyepiece is still a vision-block relay (its
+  field visible from anywhere in front of it), not an `Eyepiece` with an exit pupil as the
+  gunner's sight; as for the TZF, a telescope's eyepiece is no cabin aperture, and no daylight
+  enters through it (named, open).
 
 ## The player's own body seen from his own eyes, 2026-11-02 (`src/first_person_arms.rs`, `fp-body-review`)
 

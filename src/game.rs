@@ -66,6 +66,8 @@ mod game_fea_effects;
 pub(crate) mod game_fea_section;
 #[path = "game_fea_review.rs"]
 pub(crate) mod game_fea_review;
+#[path = "game_cabin_panels_review.rs"]
+pub(crate) mod game_cabin_panels_review;
 #[path = "game_fea_film.rs"]
 pub(crate) mod game_fea_film;
 #[path = "game_ai_film.rs"]
@@ -195,6 +197,8 @@ mod recovery_threat;
 mod soldier_life;
 #[path = "driver_panel.rs"]
 mod driver_panel;
+#[path = "cabin_panels.rs"]
+mod cabin_panels;
 #[path = "tank_editor_play.rs"]
 mod tank_editor_play;
 #[path = "surface_blood.rs"]
@@ -3780,8 +3784,12 @@ fn crew_live_model(player: &Tank, post: crate::lan::LanRole) -> Mat4 {
         crate::lan::LanRole::Driver => {
             (player.hull_model(), Vec3::new(0.535, 0.675745, 1.777748), 0.0, 0.80)
         }
+        // The seated figure (contact ~0.40, back ~-0.10 mesh units) on the radio seat's cushion
+        // (Hull_0394, top y 0.92-0.96, z 1.55-1.91), back to its backrest plate (Hull_0414, front
+        // face z 1.501); eye ~1.59, the player's at this post 1.58. Until 3 November 2026 the
+        // pre-fit (-0.66, 0.38, 1.42): boots through the belly plate, seat 0.24 m inside the pedestal.
         crate::lan::LanRole::Radio => {
-            (player.hull_model(), Vec3::new(-0.66, 0.38, 1.42), 0.0, 0.80)
+            (player.hull_model(), Vec3::new(-0.635, 0.635, 1.58), 0.0, 0.80)
         }
         crate::lan::LanRole::Gunner => (
             player.turret_model(),
@@ -9840,7 +9848,8 @@ pub struct Game {
     roof_hatches: tiger_hatches::RoofHatches, // lid motion, independent of head-out exposure
     driver_visor_lean: f32, // local seated aim phase; never grants roof exposure or repair access
     driver_shutters: tiger_driver_shutters::Shutters,
-    driver_fuel_panel: driver_panel::FuelPanel,
+    tpz_cover: driver_panel::TpzCover,
+    cabin_panels: cabin_panels::CabinPanels,
     driver_look: glam::Vec2, // seated glance, independent of other crew posts
     radio_look: glam::Vec2, // retained full-circle look at the bow MG/radio post
     cupola_focus: tiger_periscopes::FocusState,
@@ -12225,7 +12234,8 @@ impl Game {
             "assets/tanks/tiger/baked/tiger_part_tpz.glb",
             [200, 40, 30],
         ));
-        let driver_fuel_panel = driver_panel::FuelPanel::append(&mut scene, tpz_needle);
+        let tpz_cover = driver_panel::TpzCover::append(&mut scene, tpz_needle);
+        let cabin_panels = cabin_panels::CabinPanels::append(&mut scene);
         // Project-authored low-poly 88 mm rounds: no imported-ordnance fallback or runtime payload.
         let ap_round = round_88_mesh(false);
         let he_round = round_88_mesh(true);
@@ -13014,6 +13024,7 @@ impl Game {
         let mut renderer =
             Renderer::new_with_raster_only(device, queue, &scene, &crew_raster_only_slots);
         crew_status_panel.configure(&mut renderer);
+        cabin_panels.configure(&mut renderer);
         crew_body_recovery.initialize_aid(&mut renderer);
         if let Some(transport)=&mut halftrack_runtime {
             transport.initialize(&mut renderer)?;
@@ -14428,7 +14439,8 @@ impl Game {
             roof_hatches: tiger_hatches::RoofHatches::default(),
             driver_visor_lean: 0.0,
             driver_shutters: tiger_driver_shutters::Shutters::default(),
-            driver_fuel_panel,
+            tpz_cover,
+            cabin_panels,
             driver_look: glam::Vec2::ZERO,
             radio_look: glam::Vec2::ZERO,
             cupola_focus: tiger_periscopes::FocusState::default(),
@@ -19879,9 +19891,7 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         let yaw = self.player.turret_yaw;
-        let fuel_liters = self.tank_fuel_liters();
-        let coolant=self.workshop_coolant_temperature();
-        self.driver_fuel_panel.drive(fuel_liters,coolant,r.time,hm,tm,r);
+        self.tpz_cover.drive(tm, r);
         let enigma_model = self.enigma_dressing.as_ref()
             .map(|prop| prop.visual_world_model(&self.player))
             .unwrap_or_else(|| enigma_radio_model(hm));
@@ -20549,6 +20559,19 @@ impl Game {
                 emitting_meshes.push(emitter);
             }
             append_optional_cabin_fixture(&mut lights, &mut shadowed_cabin_lights, &mut emitting_meshes, self.workshop_light());
+            // The radio sets' and the driver's panel lamps (`cabin_panels`): amber pilot lamps
+            // and indicators, finite lenses on the same switch.
+            let panel_state = cabin_panels::PanelState {
+                engine_rpm: self.player_powertrain.rpm,
+                coolant_c: self.workshop_coolant_temperature(),
+                fuel_liters: self.tank_fuel_liters(),
+                radio_transmitting: false,
+            };
+            for (light, emitter) in self.cabin_panels.drive(r, hm, practical_gain, &panel_state) {
+                if light.radiant_intensity > 0.0 { lights.push(light); }
+                shadowed_cabin_lights.push(light);
+                emitting_meshes.push(emitter);
+            }
             debug_assert_eq!(shadowed_cabin_lights.len(), crate::renderer::CABIN_LIGHT_REGISTRATIONS);
             debug_assert_eq!(shadowed_cabin_lights.len(), emitting_meshes.len());
             r.set_cabin_light_frame(Quat::from_mat4(&self.player.turret_model()));
@@ -34920,7 +34943,8 @@ mod tests {
             + crate::interior_rig::ANNUNCIATOR_FIXTURES.len() + crate::lamp_mounts::BREECH.len();
         let sight_count = crate::lamp_mounts::SIGHT.iter().map(|station|station.len()).sum::<usize>();
         let panel_count = crew_status_panel::SHADOW_REGISTRATIONS;
-        assert_eq!(base_count+sight_count+panel_count+1, crate::renderer::CABIN_LIGHT_REGISTRATIONS);
+        let cluster_count = cabin_panels::SHADOW_REGISTRATIONS;
+        assert_eq!(base_count+sight_count+panel_count+1+cluster_count, crate::renderer::CABIN_LIGHT_REGISTRATIONS);
         let light = |i:usize| PointLight {pos:Vec3::new(i as f32, 1.0, 0.0), source_radius:0.01,
             color:Vec3::ONE, radiant_intensity:0.001};
         for work_installed in [false,true] {
@@ -34941,6 +34965,10 @@ mod tests {
             let before_work = active.len();
             append_optional_cabin_fixture(&mut active,&mut named,&mut emitters,
                 work_installed.then(||(light(21),900)));
+            // The panel lamps follow the work lamp; every identity is kept, dark ones too.
+            for i in 0..cluster_count {
+                named.push(light(22+i)); emitters.push(Some(600+i));
+            }
             assert_eq!(named.len(),crate::renderer::CABIN_LIGHT_REGISTRATIONS);
             assert_eq!(emitters.len(),named.len());
             assert_eq!(&emitters[9..13],&[Some(301),None,None,Some(404)]);

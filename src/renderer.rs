@@ -818,9 +818,10 @@ const MENU_RIGHT_SHIFT: f32 = 3.7; // world metres along the camera's right → 
 /// flashes and fire glow are the working set; cheap at internal resolution.
 pub const N_LIGHTS: usize = 32;
 
-/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources
-/// and one optional work lamp. This is not the active packed-light budget or a shader array size.
-pub const CABIN_LIGHT_REGISTRATIONS: usize = 22;
+/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources,
+/// one optional work lamp and the radio sets' and driver's eleven panel lamps (`cabin_panels`).
+/// This is not the active packed-light budget or a shader array size.
+pub const CABIN_LIGHT_REGISTRATIONS: usize = 33;
 
 /// A modeled compact spherical emitter. `source_radius` is the physical luminous radius in metres,
 /// used only to regularize the near field of the inverse-square law; it is never an illumination
