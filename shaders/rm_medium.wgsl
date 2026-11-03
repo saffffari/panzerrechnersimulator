@@ -189,8 +189,11 @@ fn rm_medium_at(p: vec3<f32>) -> Medium {
     let snow = fr.medium.y*theatre_north_weight(p.z,fr.samples.y);
     let world_albedo = mix(0.70, 0.92, snow);
     let cabin = rm_cabin_density(p, inside);
+    // A fire's soot fills the same cabin air and mostly absorbs (single-scattering albedo 0.2,
+    // fresh black carbon's order; named).
+    let soot = select(0.0, fr.soot.x, inside);
     let puff = rm_puff_extinction(p);
-    let sigma_t = world + cabin + puff.x + drops;
+    let sigma_t = world + cabin + soot + puff.x + drops;
     if (sigma_t <= 0.0) { return m; }
     m.sigma_t = sigma_t;
     // The weather layer's aerosol scatters by the Angstrom law (rm_world_spectrum), its snow, the
@@ -200,9 +203,9 @@ fn rm_medium_at(p: vec3<f32>) -> Medium {
     let world_s = (parts.x * rm_world_spectrum(snow) + vec3(parts.y)) * world_albedo;
     // The cabin haze and the plumes keep the tint they had (an unsourced (0.94, 0.97, 1) left
     // outside this change's scope; docs/PHYSICAL_TRUTH_AUDIT.md).
-    let rest_s = vec3(cabin * 0.80 + puff.x * puff.y) * mix(vec3(0.94, 0.97, 1.0), vec3(1.0), snow);
+    let rest_s = vec3(cabin * 0.80 + soot * 0.20 + puff.x * puff.y) * mix(vec3(0.94, 0.97, 1.0), vec3(1.0), snow);
     m.sigma_s = min(world_s, vec3(world)) + rest_s + vec3(drops * fr.low_cloud.z);
-    m.g = (world * mix(0.74, 0.62, snow) + cabin * 0.55 + puff.x * 0.65 + drops * fr.low_cloud.y) / sigma_t;
+    m.g = (world * mix(0.74, 0.62, snow) + cabin * 0.55 + soot * 0.5 + puff.x * 0.65 + drops * fr.low_cloud.y) / sigma_t;
     return m;
 }
 // Extinction only, for ray marches toward sources.
@@ -210,7 +213,7 @@ fn rm_extinction_at(p: vec3<f32>) -> f32 {
     let inside = rm_cabin_domain(p) >= 0;
     var world = 0.0;
     if (!inside) { world = rm_world_density(p); }
-    return world + rm_cabin_density(p, inside) + rm_puff_extinction(p).x + select(rm_low_density(p), 0.0, inside);
+    return world + rm_cabin_density(p, inside) + select(0.0, fr.soot.x, inside) + rm_puff_extinction(p).x + select(rm_low_density(p), 0.0, inside);
 }
 // Extinction without the low cloud banks: the froxel pass's key-beam march, whose banks are
 // already in rm_sun_visibility (marched to the bank's far side, not cut at the march's reach).
@@ -218,7 +221,7 @@ fn rm_extinction_local_at(p: vec3<f32>) -> f32 {
     let inside = rm_cabin_domain(p) >= 0;
     var world = 0.0;
     if (!inside) { world = rm_world_density(p); }
-    return world + rm_cabin_density(p, inside) + rm_puff_extinction(p).x;
+    return world + rm_cabin_density(p, inside) + select(0.0, fr.soot.x, inside) + rm_puff_extinction(p).x;
 }
 // Optical depth from `origin` toward the key body over `length_m` without the banks.
 fn rm_march_tau_local(origin: vec3<f32>, dir: vec3<f32>, length_m: f32, steps: u32, jitter: f32) -> f32 {

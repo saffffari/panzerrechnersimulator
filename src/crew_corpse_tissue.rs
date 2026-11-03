@@ -4,9 +4,12 @@
 //! skeleton page; only cells with a face open to air or to a wound are submitted. Cells near a joint
 //! are drawn between the two segments' poses so a bent joint stays closed (`TissueModel::blend`).
 //! The pieces that came away fly, break into single grains on a hard landing, and come to rest on
-//! the tank's surfaces and on grains already lying there. Every page is allocated here at build,
-//! before any casualty, so the retained draw layout that saves record never changes shape.
+//! the tank's surfaces and on grains already lying there. A man's steel helmet is no cells: it is
+//! a rigid body (`crew_helmet_body`), drawn on his head until it comes away. Every page is
+//! allocated here at build, before any casualty, so the retained draw layout that saves record
+//! never changes shape.
 use super::*;
+use super::crew_helmet_body::{HelmetBody, HelmetShape};
 use super::crew_tissue::{self, CasualtyTissue, ChunkBody, Strike, TissueModel};
 
 const APPEARANCES: usize = 5;
@@ -27,10 +30,13 @@ struct Actor {
     tissue: CasualtyTissue,
     /// (tissue revision, face) the cached cells were listed for, and the cells drawn by part.
     cache: Option<(u32, usize, [Vec<(u32, u8)>; PARTS])>,
+    /// His helmet once it came away from his head (on it while `None`).
+    helmet: Option<HelmetBody>,
 }
 
 pub(super) struct TissueDraw {
     model: std::sync::Arc<TissueModel>,
+    helmet: HelmetShape,
     cube_pages: [usize; crew_tissue::LABELS],
     /// Skin colour label per face and cell.
     skin_labels: Vec<Vec<u8>>,
@@ -96,12 +102,12 @@ fn hash01(n: u32) -> f32 {
 
 impl TissueDraw {
     /// `figures` are the five relaxed faces (one body, five atlases); `bones` the fitted skeleton
-    /// pages and `helmet` the steel helmet (figure frame), voxelised onto the same grid.
+    /// pages, voxelised onto the same grid; `helmet` the steel helmet (figure frame), a rigid body.
     pub(super) fn allocate(device: &wgpu::Device, queue: &wgpu::Queue, r: &mut Renderer, figures: &[CpuMesh],
         bones: &[Option<CpuMesh>; PARTS], helmet: &CpuMesh) -> anyhow::Result<Self> {
         anyhow::ensure!(figures.len() == APPEARANCES, "five relaxed faces expected");
         let start = std::time::Instant::now();
-        let model = std::sync::Arc::new(crew_tissue::build_tissue(&figures[0], bones, Some(helmet)));
+        let model = std::sync::Arc::new(crew_tissue::build_tissue(&figures[0], bones));
         let cells_ms = start.elapsed().as_secs_f32() * 1000.0;
         let atlases: Vec<&crate::gltf_load::CpuImage> = figures.iter()
             .map(|f| f.texture.as_ref().ok_or_else(|| anyhow::anyhow!("relaxed face without atlas")))
@@ -132,12 +138,6 @@ impl TissueDraw {
             if count > 0.0 { sum.map(|s| (s / count) as u8) } else { [178, 171, 145] }
         };
         let bone_roughness = bones.iter().flatten().next().map_or(0.72, |page| page.roughness_factor);
-        // The helmet's paint: its own atlas averaged over its vertices.
-        let steel_colour = helmet.texture.as_ref().map_or([72, 76, 66], |image| {
-            let sum = helmet.vertices.iter().map(|v| texel(image, Vec2::from(v.uv)).map(f32::from))
-                .fold([0.0f32; 3], |a, c| [a[0] + c[0], a[1] + c[1], a[2] + c[2]]);
-            sum.map(|s| (s / helmet.vertices.len().max(1) as f32) as u8)
-        });
         let mut cube_pages = [0usize; crew_tissue::LABELS];
         for (index, page) in cube_pages.iter_mut().enumerate() {
             let label = index as u8 + 1;
@@ -145,8 +145,6 @@ impl TissueDraw {
                 (colours[index].map(|c| c.round().clamp(0.0, 255.0) as u8), figures[0].roughness_factor)
             } else if label == crew_tissue::BONE_LABEL {
                 (bone_colour, bone_roughness)
-            } else if label == crew_tissue::STEEL_LABEL {
-                (steel_colour, helmet.roughness_factor)
             } else {
                 (MUSCLE[(label - crew_tissue::MUSCLE_LABELS[0]) as usize], MUSCLE_ROUGHNESS)
             };
@@ -155,10 +153,10 @@ impl TissueDraw {
                 .ok_or_else(|| anyhow::anyhow!("tissue cube page"))?;
         }
         let count = |t| model.cells.iter().filter(|c| c.tissue == t).count();
-        println!("[crew] voxel bodies: {} cells of {:.0} mm (skin {}, muscle {}, bone {} from the skeleton's triangles, helmet {}) in {cells_ms:.0} ms; {} pages",
+        println!("[crew] voxel bodies: {} cells of {:.0} mm (skin {}, muscle {}, bone {} from the skeleton's triangles) in {cells_ms:.0} ms; {} pages; the helmet a rigid body",
             model.cell_count(), crew_tissue::CELL_M * 1000.0, count(crew_tissue::Tissue::Skin), count(crew_tissue::Tissue::Muscle),
-            count(crew_tissue::Tissue::Bone), count(crew_tissue::Tissue::Steel), cube_pages.len());
-        Ok(Self { model, cube_pages, skin_labels, actors: Vec::new(), pieces: Vec::new(),
+            count(crew_tissue::Tissue::Bone), cube_pages.len());
+        Ok(Self { model, helmet: HelmetShape::new(helmet), cube_pages, skin_labels, actors: Vec::new(), pieces: Vec::new(),
             cube_lists: std::array::from_fn(|_| Vec::new()), overflow_reported: false })
     }
 
@@ -168,18 +166,27 @@ impl TissueDraw {
     }
 
     /// Solve the strikes that killed the ragdoll's man and throw what came away: the share of
-    /// each part's soft cells that remain.
+    /// each part's soft cells that remain. His helmet, while on his head, meets the strikes first;
+    /// it comes away when its momentum against the head tears the strap or his head is mostly gone.
     pub(super) fn strike(&mut self, ragdoll: &CrewRagdoll, strikes: &[Strike]) -> [f32; PARTS] {
         let model = self.model.clone();
         let peer = ragdoll.casualty.peer_id;
         let index = match self.actors.iter().position(|a| a.peer == peer) {
             Some(index) => index,
             None => {
-                self.actors.push(Actor { peer, tissue: CasualtyTissue::new(&model), cache: None });
+                self.actors.push(Actor { peer, tissue: CasualtyTissue::new(&model), cache: None, helmet: None });
                 self.actors.len() - 1
             }
         };
         let actor = &mut self.actors[index];
+        let head = crew_physics::CrewBodyPart::Head;
+        let head_segment = ragdoll.segments[head.index()];
+        let (strikes, helmet_impulse, helmet_at) = if actor.helmet.is_none() {
+            self.helmet.through_shell(strikes, head_segment.rot.conjugate() * head_segment.vel)
+        } else {
+            (strikes.to_vec(), Vec3::ZERO, self.helmet.com)
+        };
+        let strikes = &strikes[..];
         let started = std::time::Instant::now();
         let solve = actor.tissue.solve(&model, strikes);
         let torn: usize = solve.chunks.iter().map(|c| c.cells.len()).sum();
@@ -187,7 +194,13 @@ impl TissueDraw {
             .filter(|&&c| model.cells[c as usize].tissue == crew_tissue::Tissue::Bone).count();
         println!("[crew] body of actor {peer} solved on its cells: {} strikes, {} bonds broken, {torn} cells torn away ({bone} bone) in {} pieces, {} fragments stopped in him, {} steps in {:.0} ms",
             strikes.len(), solve.bonds_broken, solve.chunks.len(), solve.lodged, solve.steps, started.elapsed().as_secs_f32() * 1000.0);
-        let shares = std::array::from_fn(|i| actor.tissue.soft_share(&model, crew_physics::CrewBodyPart::ALL[i]));
+        let shares: [f32; PARTS] = std::array::from_fn(|i| actor.tissue.soft_share(&model, crew_physics::CrewBodyPart::ALL[i]));
+        if actor.helmet.is_none() && (HelmetBody::strap_tears(helmet_impulse) || shares[head.index()] < crew_tissue::KEEP_SOFT_SHARE) {
+            let body = HelmetBody::release(&self.helmet, ragdoll, helmet_impulse, helmet_at);
+            println!("[crew] helmet of actor {peer} came away at {:.1} m/s ({:.2} N·s against the head, head soft share {:.2})",
+                body.vel.length(), helmet_impulse.length(), shares[head.index()]);
+            actor.helmet = Some(body);
+        }
         self.pieces.extend(crew_tissue::chunk_bodies(&model, ragdoll, solve.chunks));
         self.bound_pieces();
         shares
@@ -207,6 +220,12 @@ impl TissueDraw {
         self.actors.iter().any(|a| a.peer == peer)
     }
 
+    /// Where a helmet that came away from its man is now (world); `None` while it is on his head.
+    pub(super) fn loose_helmet_model(&self, peer: u32, player: &Tank) -> Option<Mat4> {
+        let helmet = self.actors.iter().find(|a| a.peer == peer)?.helmet.as_ref()?;
+        Some(blood_parent_model(player, helmet.frame) * helmet.local_model(&self.helmet))
+    }
+
     /// Advance the pieces by `dt`: gravity; the vehicle's own surfaces (`FragmentWorld`) and the
     /// grains already at rest, each met by a sphere of the piece's bounding radius about its
     /// centre (named: not its cells), with no rotational response to a contact (named). A piece
@@ -216,7 +235,15 @@ impl TissueDraw {
     /// turned up (or on grains) when slow or past its bounces; 12 m from its frame's origin it has
     /// left the vehicle and stops being moved.
     pub(super) fn integrate(&mut self, world: &FragmentWorld, player: &Tank, dt: f32) {
-        if !(dt > 0.0) || self.pieces.iter().all(|p| p.settled) {
+        if !(dt > 0.0) {
+            return;
+        }
+        for helmet in self.actors.iter_mut().filter_map(|a| a.helmet.as_mut()).filter(|h| !h.settled) {
+            let frame = helmet.frame;
+            let gravity = blood_parent_model(player, frame).inverse().transform_vector3(Vec3::new(0.0, -9.81, 0.0));
+            helmet.advance(&self.helmet, dt, gravity, &|from, to| world.first_surface(frame, from, to));
+        }
+        if self.pieces.iter().all(|p| p.settled) {
             return;
         }
         let model = self.model.clone();
@@ -418,8 +445,11 @@ impl TissueDraw {
     }
 
     pub(super) fn end_frame(&self, r: &mut Renderer) {
+        // Debug only (KESSEL_TISSUE_DEBUG=hide): no cells drawn, so what is not cells (the
+        // helmet) can be checked where it sits. Never set by a shipping preset.
+        let hide = std::env::var("KESSEL_TISSUE_DEBUG").as_deref() == Ok("hide");
         for (page, list) in self.cube_pages.iter().zip(&self.cube_lists) {
-            r.set_moving_instanced_mats(*page, list);
+            r.set_moving_instanced_mats(*page, if hide { &[] } else { list });
         }
     }
 
@@ -437,6 +467,8 @@ impl TissueDraw {
                 "cells_gone": crew_physics::CrewBodyPart::ALL.iter().map(|p|
                     self.model.part_cells[p.index()].iter().filter(|&&c| !a.tissue.present[c as usize]).count()).collect::<Vec<_>>(),
                 "bonds_broken": a.tissue.broken.iter().filter(|b| **b).count(),
+                "helmet": a.helmet.as_ref().map_or(serde_json::json!("on the head"), |h| serde_json::json!({
+                    "frame_position": h.pos.to_array(), "speed_mps": h.vel.length(), "at_rest": h.settled})),
             })).collect::<Vec<_>>(),
             "pieces": self.pieces.len(),
             "grains": self.pieces.iter().filter(|p| p.cells.len() == 1).count(),

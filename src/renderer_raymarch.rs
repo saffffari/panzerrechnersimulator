@@ -107,6 +107,14 @@ const EVENT_MUZZLE: u32 = 1;
 const EVENT_ARMOUR: u32 = 2;
 /// A heavy round through the plate: the hole vents the compartment's smoke along its normal.
 const EVENT_PENETRATION: u32 = 3;
+/// A full soot load's extinction (/m) in the cabin air: at 1 a lamp two metres away is all but
+/// hidden (optical depth 3); authored scale for the fire's accumulated soot.
+const SOOT_EXTINCTION_PER_M: f32 = 1.5;
+/// A penetration's smoke is scaled by the work the round left in the plate: (work / 1 MJ)^(1/3),
+/// bounded (a 45 mm round about 0.7, a 76 mm about 1, a 152 mm about 1.4; authored scale).
+fn penetration_smoke_scale(plate_work_j: f32) -> f32 {
+    (plate_work_j.max(0.0) / 1.0e6).cbrt().clamp(0.5, 1.6)
+}
 /// A pressure vent: the ammunition's gas and flame jetting from a real opening before the turret goes.
 const EVENT_VENT: u32 = 4;
 /// Spark record kinds the backend adds to the simulation's (weapon_particle_math.rs ends at 8).
@@ -250,6 +258,9 @@ struct FrameUniform {
     /// The aerosol's Angstrom factor per band (xyz, physical_environment::aerosol_band_factor;
     /// also the spectrum of the `fog_density` layer's aerosol) and the planet surface's local y (w).
     air_spectrum: [f32; 4],
+    /// A fire's soot in the cabin air (`Renderer::set_interior_soot`): x its extinction /m (the
+    /// light gun-fume haze is `cabin.w`); rm_medium.wgsl gives it soot's low albedo.
+    soot: [f32; 4],
 }
 
 /// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
@@ -2292,6 +2303,7 @@ impl Backend {
                 let band = atmosphere.aerosol_band_factor();
                 [band.x as f32, band.y as f32, band.z as f32, (atmosphere.planet_center_m.y + atmosphere.planet_radius_m) as f32]
             },
+            soot: [if r.atmo_enabled { r.atmo_soot * SOOT_EXTINCTION_PER_M } else { 0.0 }, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -2763,7 +2775,10 @@ impl Backend {
                 .min_by(|(a, _), (b, _)| a.distance_squared(origin).total_cmp(&b.distance_squared(origin)));
             let ground_y = ground.map(|(p, _)| p.y);
             let ground_snow = ground.map_or(0.0, |(_, snow)| *snow);
-            let strength = if event_kind == EVENT_VENT { burst.parameters[0].clamp(0.0, 1.0) } else { 1.0 };
+            // A vent's strength is the pressure behind it; a penetration's is the scale of its smoke
+            // from the plate work (its record carries 0.6 % of that work: `weapon_vfx`).
+            let strength = if event_kind == EVENT_VENT { burst.parameters[0].clamp(0.0, 1.0) }
+                else if event_kind == EVENT_PENETRATION { penetration_smoke_scale(burst.parameters[0] / 0.006) } else { 1.0 };
             self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, ground_snow, strength,
                 born: now - burst.origin_age[3].max(0.0) });
         }
@@ -2975,32 +2990,33 @@ impl Backend {
                         let rise = 0.6 * age * age.min(3.0);
                         let spread = (0.05 + 0.35 * age) * (0.5 + h(150 + k));
                         let center = o + n * out + Vec3::Y * rise + (t1 * a.cos() + t2 * a.sin()) * spread + wind * (age * 0.6);
-                        let radius = 0.45 + 0.45 * age;
-                        let density = (1.0 - age / 6.0).powi(2) * 2.4 * (1.0 - k as f32 / 28.0);
+                        let radius = (0.45 + 0.45 * age) * e.strength.clamp(0.5, 1.6).sqrt();
+                        let density = (1.0 - age / 6.0).powi(2) * 2.4 * e.strength.clamp(0.5, 1.6) * (1.0 - k as f32 / 28.0);
                         if debug_event { println!("[rm-event]   vent puff {k} age {age:.2} center {:?} radius {radius:.2} extinction {:.2}", center.to_array(), density / radius); }
-                        push(center, radius, [0.22, 0.21, 0.20], PARCEL_SMOKE, 0.0, density / radius, h(160 + k) * 100.0, 0.0);
+                        // Lighter, scattering smoke (the owner: a penetration's smoke is light air).
+                        push(center, radius, [0.62, 0.61, 0.59], PARCEL_SMOKE, 0.0, density / radius, h(160 + k) * 100.0, 0.0);
                     }
-                    // Inside the hull the same hole fills the compartment: the round's own smoke,
-                    // the spall's dust and the burning paint and stowage behind the plate, left
-                    // trapped (no buoyant rise through a roof), spreading slowly from the hole and
-                    // thinning over six seconds. Six puffs born over the first second, inward
-                    // along the normal. On a vehicle without a modelled interior they sit inside
-                    // its shell unseen (the owner, 2026-11-02: the inside of a hit needs its smoke).
-                    // At the exterior vent's density (1.6) the puffs were opaque across the
-                    // turret and an interior camera saw only sky-lit fog for ten seconds; a third
-                    // of it keeps the compartment legible through the smoke (named presentation
-                    // density, not a vented-gas model).
-                    for k in 0..6u32 {
-                        let born = 0.02 + 0.2 * k as f32;
+                    // Inside the hull, the strike's own smoke: the round's propellant and the
+                    // spall's dust and burnt paint, blown in through the hole in the first tenth of
+                    // a second and held near it, a light, scattering cloud (2026-11-02, the owner:
+                    // rapid like an explosion's aftermath, lighter and scattering, more for heavier
+                    // hits, emanating from the impact and skewed toward it rather than filling the
+                    // compartment; a fire's smoke is the dark soot instead, `Renderer::set_interior_soot`).
+                    // Eight puffs; their reach, size and density scale with the plate work
+                    // (`penetration_smoke_scale`); gone in five seconds. Authored puff envelope,
+                    // not a vented-gas model.
+                    let s = e.strength.clamp(0.5, 1.6);
+                    for k in 0..8u32 {
+                        let born = 0.01 + 0.015 * k as f32;
                         let age = t - born;
-                        if age <= 0.0 || age > 6.0 { continue; }
+                        if age <= 0.0 || age > 5.0 { continue; }
                         let a = h(170 + k) * std::f32::consts::TAU;
-                        let inward = (0.9 * (1.0 - (-age / 0.5).exp())) * (0.5 + 0.9 * h(180 + k));
-                        let spread = (0.05 + 0.18 * age.min(4.0)) * (0.5 + h(190 + k));
-                        let center = o - n * inward + (t1 * a.cos() + t2 * a.sin()) * spread + Vec3::Y * (0.15 * age.min(2.0) * h(200 + k));
-                        let radius = (0.3 + 0.25 * age.min(4.0)) * (0.8 + 0.4 * h(210 + k));
-                        let density = (1.0 - age / 6.0).powi(2) * 0.55 * (1.0 - 0.08 * k as f32);
-                        push(center, radius, [0.26, 0.25, 0.24], PARCEL_SMOKE, 0.0, density / radius, h(220 + k) * 100.0, 0.0);
+                        let inward = (0.12 + 0.28 * s) * (1.0 - (-age / 0.15).exp()) * (0.6 + 0.8 * h(180 + k));
+                        let spread = (0.04 + 0.10 * age.min(3.0)) * s * (0.5 + h(190 + k));
+                        let center = o - n * inward + (t1 * a.cos() + t2 * a.sin()) * spread + Vec3::Y * (0.04 * age * h(200 + k));
+                        let radius = ((0.10 + 0.25 * (1.0 - (-age / 0.35).exp())) * (0.7 + 0.6 * s) + 0.03 * age) * (0.8 + 0.4 * h(210 + k));
+                        let density = (1.0 - age / 5.0).powi(2) * 0.9 * s * (1.0 - 0.06 * k as f32);
+                        push(center, radius, [0.80, 0.79, 0.77], PARCEL_SMOKE, 0.0, density / radius, h(220 + k) * 100.0, 0.0);
                     }
                 }
                 EVENT_VENT => {
@@ -3982,6 +3998,10 @@ mod event_source_tests {
         assert_eq!(source_event_kind(&record(wm::GROUND, 100.0, true)), None);
         assert_eq!(source_event_kind(&record(wm::FULL_COOKOFF, 1.0, true)), None);
         assert_eq!(source_event_kind(&record(wm::ARMOR_IMPACT, 1.0, true)), Some(EVENT_PENETRATION));
+        // A penetration's smoke scales with the plate work, bounded.
+        let scale = penetration_smoke_scale;
+        assert!(scale(3.0e5) < scale(1.0e6) && scale(1.0e6) < scale(3.0e6));
+        assert!((scale(1.0e6) - 1.0).abs() < 1e-5 && scale(0.0) == 0.5 && scale(1.0e9) == 1.6);
         assert_eq!(source_event_kind(&record(wm::BULLET_ARMOR, 1.0, true)), Some(EVENT_PENETRATION));
         assert_eq!(source_event_kind(&record(wm::BULLET_ARMOR, 1.0, false)), None);
         assert_eq!(source_event_kind(&record(wm::RICOCHET, 1.0, true)), Some(EVENT_ARMOUR));

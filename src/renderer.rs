@@ -3173,6 +3173,7 @@ pub struct Renderer {
     cabin_medium_pose: Option<(glam::Mat4,glam::Mat4)>,
     atmo_enabled: bool, // spatial cabin medium exists independently of the current camera
     atmo_haze: f32,     // 0..1 interior hazy-atmosphere density (0 = pass skips it)
+    atmo_soot: f32,     // 0..1 a fire's soot load in the cabin air (dark, absorbing)
     atmo_dust: f32,     // 0..1 dust-mote sparkle inside the cabin haze
     atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame with a slow cabin-local drift
     smoke_buf: wgpu::Buffer,
@@ -6371,6 +6372,7 @@ impl Renderer {
             cabin_medium_pose: None,
             atmo_enabled: false,
             atmo_haze: 0.0,
+            atmo_soot: 0.0,
             atmo_dust: 0.0,
             atmo_origin: glam::Vec3::ZERO,
             smoke_buf,
@@ -6520,7 +6522,7 @@ impl Renderer {
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
             track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
-            atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
+            atmo_enabled, atmo_haze, atmo_soot, atmo_dust, atmo_origin, pixel_particle_field,
             pressure_fronts, heat_sources, ui, held_map_surface, order_receipt_surfaces, repair_manual_surfaces,
             repair_manual_presentation);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
@@ -8342,6 +8344,11 @@ impl Renderer {
     /// skips), `dust` the drifting-mote sparkle. Exterior lighting is deliberately absent here:
     /// modeled openings, sun shadows/rays and authored fixtures are the only lighting paths.
 
+    /// A fire's soot load in the cabin air, 0..1 (dark and absorbing, unlike the gun fumes' haze).
+    pub fn set_interior_soot(&mut self, soot: f32) {
+        self.atmo_soot = if soot.is_finite() { soot.clamp(0.0, 1.0) } else { 0.0 };
+    }
+
     pub fn set_interior_atmosphere(&mut self, strength: f32, dust: f32, origin: glam::Vec3) {
         self.atmo_haze = strength.clamp(0.0, 1.0);
         self.atmo_dust = dust.clamp(0.0, 1.0);
@@ -8388,7 +8395,7 @@ impl Renderer {
     /// not keep this pass alive.
     fn smoke_active(&self) -> bool {
         self.fog_density > 1.0e-6
-            || (self.atmo_enabled && self.atmo_haze > 0.001)
+            || (self.atmo_enabled && (self.atmo_haze > 0.001 || self.atmo_soot > 0.001))
             || (self.breech_gas.strength > 0.0 && self.breech_gas.age < 2.2)
             || self
                 .smoke_puffs

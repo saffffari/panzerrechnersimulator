@@ -67,6 +67,8 @@ struct Frame {
     air_rayleigh: vec4<f32>,
     air_aerosol: vec4<f32>,
     air_spectrum: vec4<f32>,
+    // A fire's soot in the cabin air: x its extinction /m (Renderer::set_interior_soot).
+    soot: vec4<f32>,
 };
 // True where a camera pass must leave `world` out: beyond the film's section plane.
 fn rm_beyond_section(world: vec3<f32>) -> bool {

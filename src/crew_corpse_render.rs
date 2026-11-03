@@ -162,7 +162,7 @@ impl Corpses {
                 pages.appearance=appearance;
             }
             // A body solved on its cells is drawn as its cells, never as the figure's triangles or
-            // the skeleton page (the skeleton is voxelised among them).
+            // the skeleton page (the skeleton is voxelised among them); his helmet stays a mesh.
             let peer=body.casualty.peer_id;
             let voxel=self.tissue.as_ref().is_some_and(|tissue|tissue.has_body(peer));
             if voxel {
@@ -186,8 +186,9 @@ impl Corpses {
                 show(r,pages.flesh[i],flesh.then(||crew_ragdoll_segment_model(player,body,part)));
                 show(r,pages.bones[i],bone.then(||crew_ragdoll_bone_segment_model(player,body,part)));
             }
-            // A solved body's helmet is among its cells.
-            show(r,pages.helmet,(!voxel).then(||crew_ragdoll_helmet_model(player,body)).flatten());
+            // The helmet is a rigid body, never cells: on his head until it came away.
+            let loose=self.tissue.as_ref().and_then(|tissue|tissue.loose_helmet_model(peer,player));
+            show(r,pages.helmet,loose.or_else(||crew_ragdoll_helmet_model(player,body)));
             // A solved body's blood is the droplets and their film (`surface_blood`), not the old
             // under-body pool slabs, which float at odd angles off a body that lies on uneven parts.
             show(r,pages.gore,(!voxel&&body.settled&&!living.contains(&body.casualty.peer_id)).then(||crew_ragdoll_gore_model(player,body)));

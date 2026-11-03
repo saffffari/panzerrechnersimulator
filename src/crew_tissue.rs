@@ -2,7 +2,7 @@
 //! the owner's fitted PSX skeleton (`crew_skeleton`) share one grid of `CELL_M` cells: every cell
 //! inside the figure is skin within one cell of its surface and muscle deeper, and every cell a
 //! skeleton triangle passes through is bone (the skeleton is a surface, so its quads are what is
-//! voxelised), and every cell outside him that his steel helmet's triangles pass through is steel.
+//! voxelised). Only organic matter is cells: his steel helmet is a rigid body (`crew_helmet_body`).
 //! A dead man is drawn as his cells, never as the figure's triangles.
 //!
 //! A strike is solved on those cells as a bonded lattice: each cell is a mass bonded to its 18
@@ -25,18 +25,16 @@ const PARTS: usize = crew_physics::CREW_BODY_PART_COUNT;
 /// Below this share of its soft cells a struck part leaves the articulated simulation (what is
 /// left of it then rides the nearest retained segment).
 pub(super) const KEEP_SOFT_SHARE: f32 = 0.2;
-/// Energy to tear one cell free of all its neighbours (J), skin, muscle, bone, helmet steel:
-/// authored, in the owner's order, scaled so a part's soft cells tear for about its pulverizing
-/// work (82–1,250 J over 233–3,400 cell-units of skin 1 : muscle 2.5); the helmet's far stronger.
-const TEAR_J: [f32; 4] = [0.4, 1.0, 3.2, 40.0];
+/// Energy to tear one cell free of all its neighbours (J), skin, muscle, bone: authored, in the
+/// owner's order, scaled so a part's soft cells tear for about its pulverizing work (82–1,250 J
+/// over 233–3,400 cell-units of skin 1 : muscle 2.5).
+const TEAR_J: [f32; 3] = [0.4, 1.0, 3.2];
 /// The stretch at which a bond lets go, in tension or crushed in compression (authored): skin
 /// stretches far, bone hardly.
-const CRITICAL_STRETCH: [f32; 4] = [0.6, 0.35, 0.05, 0.2];
-/// Densities (kg/m³): soft tissue about water's, bone about cortical bone's. A helmet cell's mass
-/// is the helmet's over its cells (a 1 mm shell is not a solid cell).
-const DENSITY: [f32; 4] = [1_060.0, 1_060.0, 1_900.0, 7_850.0];
-/// The steel helmet's mass (kg; authored, about a German M35's).
-const HELMET_MASS_KG: f32 = 1.0;
+const CRITICAL_STRETCH: [f32; 3] = [0.6, 0.35, 0.05];
+/// Densities (kg/m³): soft tissue about water's, bone about cortical bone's.
+const DENSITY: [f32; 3] = [1_060.0, 1_060.0, 1_900.0];
+/// A fragment's steel (kg/m³).
 const STEEL_DENSITY: f32 = 7_850.0;
 /// Drag coefficient of a tumbling fragment in tissue (authored, a blunt body's).
 const DRAG_CD: f32 = 1.0;
@@ -53,12 +51,11 @@ const DAMPING: f32 = 0.001;
 const STOPPED_MPS: f32 = 2.0;
 
 /// Labels for drawing: 1..=SKIN_LABELS are the figure's own colours (the corpse renderer's
-/// palette), then two shades of muscle, the bone and the helmet's steel.
+/// palette), then two shades of muscle and the bone.
 pub(super) const SKIN_LABELS: u8 = 12;
 pub(super) const MUSCLE_LABELS: [u8; 2] = [SKIN_LABELS + 1, SKIN_LABELS + 2];
 pub(super) const BONE_LABEL: u8 = SKIN_LABELS + 3;
-pub(super) const STEEL_LABEL: u8 = SKIN_LABELS + 4;
-pub(super) const LABELS: usize = STEEL_LABEL as usize;
+pub(super) const LABELS: usize = BONE_LABEL as usize;
 
 /// The 18-neighbourhood, owned half (each bond stored once).
 const OFFSETS: [[i32; 3]; 9] = [
@@ -71,8 +68,6 @@ pub(super) enum Tissue {
     Skin,
     Muscle,
     Bone,
-    /// The steel helmet's shell.
-    Steel,
 }
 
 impl Tissue {
@@ -110,7 +105,7 @@ pub(super) struct TissueModel {
     /// Cell index + 1 per grid cell; 0 outside the figure.
     grid: Vec<u32>,
     pub cells: Vec<Cell>,
-    /// Each cell's mass (kg): its tissue's density over the cell, or a share of the helmet's.
+    /// Each cell's mass (kg): its tissue's density over the cell.
     mass_kg: Vec<f32>,
     pub part_cells: [Vec<u32>; PARTS],
     bonds: Vec<Bond>,
@@ -202,13 +197,13 @@ pub(super) fn triangle_box_overlap(centre: Vec3, half: Vec3, tri: [Vec3; 3]) -> 
     true
 }
 
-/// Fill the relaxed `figure` with cells and voxelise the fitted skeleton `bones` and the steel
-/// `helmet` (in the figure's frame) onto the same grid, then bond every cell to its neighbours.
-pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS], helmet: Option<&CpuMesh>) -> TissueModel {
+/// Fill the relaxed `figure` with cells and voxelise the fitted skeleton `bones` (in the figure's
+/// frame) onto the same grid, then bond every cell to its neighbours.
+pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -> TissueModel {
     let triangles = figure.indices.len() / 3;
     let corner = |t: usize, i: usize| figure.vertices[figure.indices[3 * t + i] as usize];
     let points = |t: usize| [0, 1, 2].map(|i| Vec3::from(corner(t, i).pos));
-    let (lo, hi) = helmet.map_or((figure.min, figure.max), |h| (figure.min.min(h.min), figure.max.max(h.max)));
+    let (lo, hi) = (figure.min, figure.max);
     let origin = lo;
     let span = ((hi - lo) / CELL_M).ceil();
     let dims = [span.x as usize, span.y as usize, span.z as usize];
@@ -282,34 +277,7 @@ pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS], h
             }
         }
     }
-    // The helmet's triangles, voxelised outside him: its shell rests on his head.
-    if let Some(helmet) = helmet {
-        for t in helmet.indices.chunks_exact(3) {
-            let tri = [0, 1, 2].map(|i| Vec3::from(helmet.vertices[t[i] as usize].pos));
-            let uv = [0, 1, 2].iter().map(|&i| Vec2::from(helmet.vertices[t[i] as usize].uv)).sum::<Vec2>() / 3.0;
-            let lo = ((tri[0].min(tri[1]).min(tri[2]) - origin) / CELL_M).floor().as_ivec3().max(glam::IVec3::ZERO);
-            let hi = ((tri[0].max(tri[1]).max(tri[2]) - origin) / CELL_M).floor().as_ivec3()
-                .min(glam::IVec3::new(dims[0] as i32 - 1, dims[1] as i32 - 1, dims[2] as i32 - 1));
-            for j in lo.y..=hi.y {
-                for k in lo.z..=hi.z {
-                    for i in lo.x..=hi.x {
-                        let slot = (j as usize * dims[2] + k as usize) * dims[0] + i as usize;
-                        let at = origin + (Vec3::new(i as f32, j as f32, k as f32) + 0.5) * CELL_M;
-                        if grid[slot] == 0 && triangle_box_overlap(at, half, tri) {
-                            cells.push(Cell { at, ijk: [i as u16, j as u16, k as u16], tissue: Tissue::Steel,
-                                part: crew_physics::CrewBodyPart::Head, uv });
-                            grid[slot] = cells.len() as u32;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let steel = cells.iter().filter(|c| c.tissue == Tissue::Steel).count().max(1);
-    let mass_kg: Vec<f32> = cells.iter().map(|c| match c.tissue {
-        Tissue::Steel => HELMET_MASS_KG / steel as f32,
-        tissue => DENSITY[tissue.index()] * CELL_M.powi(3),
-    }).collect();
+    let mass_kg: Vec<f32> = cells.iter().map(|c| DENSITY[c.tissue.index()] * CELL_M.powi(3)).collect();
     let mut part_cells: [Vec<u32>; PARTS] = std::array::from_fn(|_| Vec::new());
     let mut soft_cells = [0usize; PARTS];
     for (n, cell) in cells.iter().enumerate() {
@@ -725,7 +693,6 @@ pub(super) fn label(cell: &Cell, skin_label: u8) -> u8 {
             MUSCLE_LABELS[(hash >> 7) as usize & 1]
         }
         Tissue::Bone => BONE_LABEL,
-        Tissue::Steel => STEEL_LABEL,
     }
 }
 
@@ -847,7 +814,7 @@ mod tests {
         let figure = crate::prims::box_mesh(Vec3::new(-0.06, 1.0, -0.06), Vec3::new(0.06, 1.2, 0.06), [1, 1, 1]);
         let bone = crate::prims::box_mesh(Vec3::new(-0.015, 1.02, -0.015), Vec3::new(0.015, 1.18, 0.015), [1, 1, 1]);
         let bones = std::array::from_fn(|i| (i == crew_physics::CrewBodyPart::Torso.index()).then(|| bone.clone()));
-        build_tissue(&figure, &bones, None)
+        build_tissue(&figure, &bones)
     }
 
     fn count(model: &TissueModel, t: Tissue) -> usize {
@@ -956,8 +923,7 @@ mod tests {
         let figure = load_full_crew_mesh(CREW_RELAXED_GLBS[0], "tissue probe").expect("relaxed figure");
         let (bones, _) = crew_skeleton::fitted_bone_pages(&figure).expect("PSX skeleton");
         let start = std::time::Instant::now();
-        let helmet = load_crew_steel_helmet().ok();
-        let model = build_tissue(&figure, &bones, helmet.as_ref());
+        let model = build_tissue(&figure, &bones);
         println!("built {} cells, {} bonds in {:.0} ms, grid {:?}", model.cell_count(), model.bonds.len(),
             start.elapsed().as_secs_f32() * 1000.0, model.dims);
         let present = vec![true; model.cells.len()];
@@ -966,7 +932,7 @@ mod tests {
             let part_drawn = model.part_cells[part.index()].iter().filter(|&&c| model.exposed(&present, c as usize)).count();
             drawn += part_drawn;
             let t = |kind: Tissue| model.part_cells[part.index()].iter().filter(|&&c| model.cells[c as usize].tissue == kind).count();
-            println!("{part:?}: skin {} muscle {} bone {} steel {}, {part_drawn} cubes drawn", t(Tissue::Skin), t(Tissue::Muscle), t(Tissue::Bone), t(Tissue::Steel));
+            println!("{part:?}: skin {} muscle {} bone {}, {part_drawn} cubes drawn", t(Tissue::Skin), t(Tissue::Muscle), t(Tissue::Bone));
         }
         println!("whole body: {drawn} cubes drawn; {} cells blended at joints", model.blend.iter().filter(|b| b.is_some()).count());
         // A 57 mm shot's 3.1 kg at 377 m/s through the torso, and a 20 g fragment at 700 m/s.

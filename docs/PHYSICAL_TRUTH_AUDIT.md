@@ -359,10 +359,15 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   puffs born at the hole 0.45 s apart over 2.3 s, about the hole's size, leaving along the
   normal (1.6 m x (1 - e^(-age / 0.6 s))) and rising, fading over 6 s. Both are authored plumes
   on the event's origin and normal, not a vented-gas or detonation-products model; the hole's
-  glow is the existing hot rim. Inside the hull the same event fills the compartment: six puffs
-  born over the first second inward along the normal, trapped (no buoyant rise), spreading
-  slowly and thinning over ten seconds; an authored stand-in for the round's smoke, the spall's
-  dust and the burning paint behind the plate, not a vented-gas model. The `fx-review` part
+  glow is the existing hot rim. Inside the hull the same event leaves its own smoke at the hole
+  (2026-11-02, the owner: rapid like an explosion's aftermath, light and scattering, more for
+  heavier hits, emanating from the impact rather than filling the compartment): eight puffs
+  born over the first tenth of a second, blown 0.12-0.57 m inward along the normal and held near
+  the hole, single-scattering albedo about 0.8, gone in five seconds; their reach, size and
+  density scale with (plate work / 1 MJ)^(1/3) bounded to 0.5-1.6 (a 45 mm round about 0.7, a
+  76 mm about 1, a 152 mm about 1.4); the exterior vent's puffs scale the same way and are lighter
+  too (albedo about 0.6). An authored puff envelope for the round's smoke, the spall's dust and
+  the burnt paint behind the plate, not a vented-gas model. The `fx-review` part
   `cabin_hit` (an observer inside behind the radio operator, the crew-solo fixture's wounding
   lane through the hull side) is its evidence. The spall bodies' trails (`HOT_FRAGMENT_TAIL_MAX_LENGTH`
   0.04 m, was 0.145 m) are capped at about one frame of the slow end of their motion: on the
@@ -564,11 +569,16 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   (2026-11-02): 2.5 % at 1,100 K, 1.3e-4 at 900 K, 4e-7 at 750 K of the 1,300 K band's, so the
   pages' display scale (lifted and drawn hotter for legibility) no longer lights the cabin's dust
   orange from a floor of resting dull-red chips.
-- A penetration's trapped interior smoke is a third as dense as its exterior vent (0.55 against
-  1.6) and clears in six seconds instead of ten (2026-11-02): at the vent's density the six
-  puffs were opaque across the turret, and an interior camera saw only sky-lit fog for ten
-  seconds. A compartment does fill with smoke; the density is a named presentation value, not a
-  vented-gas model.
+- A penetration's interior smoke stays at the hole (above) and a fire's smoke is its own soot
+  (2026-11-02, the owner: fires need time to build up smoke, much darker, absorbing the light).
+  The soot is a uniform load in the cabin air (`Game::interior_soot`, 0-1), built at 0.38 per
+  second times the burning surfaces' enclosure heat (`CabinFire::enclosure_diagnostics`) and
+  drained by the fan and an open hatch as the gun fumes are; at a full load its extinction is
+  1.5 /m (`SOOT_EXTINCTION_PER_M`: a lamp two metres off all but hidden), single-scattering albedo
+  0.2 (fresh black carbon's order) and asymmetry 0.5, added to the cabin medium in
+  `rm_medium.wgsl` inside the cabin domain only. The build rate, the extinction scale and the
+  uniform spread are authored (named: no soot transport, no stratified hot layer, no deposition);
+  the gun fumes' light haze only drains.
 - Spall and shrapnel carry tracers, and the solved chips glow by their temperature on the one
   law (2026-11-02; the owner). A flying fragment's tail is still a frame of its own measured
   motion (no rod drawn through a wall; a ricochet starts a new segment), now bounded at 0.45 m
@@ -1175,14 +1185,14 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   relaxed figure (per part a principal-axis turn, 0.78 of the length ratio, shrinks to 70 % while a
   vertex lies outside by winding number, then each vertex still outside set 4–25 mm inside the
   skin; measured: none more than 3 mm outside, the most moved 43 mm). A fitted, not anatomically
-  registered skeleton (named). The figure, the skeleton and the steel helmet share one grid of
-  2 cm cells (7,206; built in about 100 ms at start): skin within a cell of the figure's surface
-  (the clothing is this layer, named), muscle deeper (organs not told apart, named), bone where a
-  skeleton triangle passes through a cell (the skeleton is a surface: its quads are voxelised, so a
-  skull or ribcage is a shell), steel where the helmet's triangles pass through a cell outside
-  him. A man a strike kills is drawn as his cells only (equal runs merged into boxes, coloured from
-  the figure's atlas by a 12-colour palette over the five faces, two authored muscle shades, the
-  skeleton's and the helmet's mean albedo), never as the figure's triangles or the skeleton page.
+  registered skeleton (named). The figure and the skeleton share one grid of 2 cm cells (built
+  in about 100 ms at start): skin within a cell of the figure's surface (the clothing is this
+  layer, named), muscle deeper (organs not told apart, named), bone where a skeleton triangle
+  passes through a cell (the skeleton is a surface: its quads are voxelised, so a skull or ribcage
+  is a shell). Only organic matter is cells (the owner, 2026-11-02): the steel helmet is a rigid
+  body, below. A man a strike kills is drawn as his cells only (coloured from the figure's atlas
+  by a 12-colour palette over the five faces, two authored muscle shades, the skeleton's mean
+  albedo), never as the figure's triangles or the skeleton page; his helmet stays its own mesh.
   The strike is solved on the cells as a bond-based lattice (peridynamic in form, not a
   finite-element model): each cell a mass bonded to its 18 nearest neighbours by a spring that
   fails past a critical stretch in tension or compression (crushing, named). A fragment contact is
@@ -1197,9 +1207,8 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   burst works on, move, the rest of him holding them. Each struck part keeps its largest piece
   still bonded; every other piece comes away with its mass-weighted velocity and spin. Bond
   strengths are authored game-level values in the owner's order: tearing a cell free costs 0.4 J
-  (skin), 1 J (muscle), 3.2 J (bone), 40 J (helmet steel), at critical stretches 0.6 / 0.35 /
-  0.05 / 0.2; a bond takes its weaker cell's values (so a bone tears from the muscle before it
-  breaks, and the helmet comes off the head at skin strength). The scale makes tearing all of a
+  (skin), 1 J (muscle), 3.2 J (bone), at critical stretches 0.6 / 0.35 / 0.05; a bond takes its
+  weaker cell's values (so a bone tears from the muscle before it breaks). The scale makes tearing all of a
   part's soft cells cost about its existing pulverizing work; not measured tissue strengths.
   Measured on the figure: a 3.14 kg 57 mm shot at 377 m/s through the torso tears 265 cells
   (a channel about 10 cm wide); a 20 g fragment at 700 m/s 27; a 2 g one at 400 m/s stops in him
@@ -1223,9 +1232,26 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   the ragdoll do not see it; named), and only while that joint holds. All of it is ordinary moving
   instanced geometry (one page per colour, 8,192 cubes each, allocated at start so a save's draw
   layout keeps its shape): it casts shadows and is in the ray-traced scene, in both presets. The
-  old under-body pool slabs are not drawn for a solved body (its blood is the droplets' film). Limits (named): the parts are rigid segments, so at a
-  bent joint two parts' cells interpenetrate at an angle; a helmet cell is a 2 cm block standing
-  for a 1 mm shell (its mass is the helmet's, shared); cells finer than 2 cm (a small fragment's
+  old under-body pool slabs are not drawn for a solved body (its blood is the droplets' film).
+  The helmet (`game::crew_helmet_body`) rides the head segment while its strap holds. A fragment
+  whose path crosses its shell first (two-sided ray against the helmet's own triangles) punches a
+  plug out of it: shear plugging work ½·P·t²·τ over the fragment cube's perimeter P, with the
+  shell 1.1 mm thick and 600 MPa in shear (authored game-level values, not a measured helmet
+  steel), the residual speed by Recht and Ipson's momentum form with the plug flying on with the
+  fragment (named); one below the plug's ballistic limit stops in the shell. The momentum the
+  fragment loses goes to the helmet. A burst's work on the head reaches the shell in proportion
+  to the shell's mean projected area (its mesh area over four, Cauchy's relation as the part boxes
+  use it; named for an open shell) and drives it at its own speed; its push against the head is
+  that momentum less the head's own. Past 1 N·s against the head (authored: a leather strap's
+  breaking force, about a kilonewton, over about a millisecond), or once less than 20 % of the
+  head's soft cells remain, the helmet comes away: a rigid body of its own mesh (1 kg authored,
+  mass spread over its shell by area, the exact lamina inertia), under gravity, meeting the
+  vehicle's surfaces (`FragmentWorld`) at 32 support points farthest-point sampled from its
+  vertices (named: not its whole surface), with sequential contact impulses, restitution 0.3 above
+  0.5 m/s closing and Coulomb friction 0.45 (authored, steel on painted steel), resting once quiet
+  for 0.3 s. Limits (named): the shell's exit side and the hole a fragment leaves are not
+  modelled or drawn; a loose helmet does not meet bodies, grains or other helmets; the parts are
+  rigid segments, so at a bent joint two parts' cells interpenetrate at an angle; cells finer than 2 cm (a small fragment's
   track) are not resolved; only the strike that kills a man is solved on him; the living crew's
   wounds keep the existing rules; the couch co-op renderer draws a part whole or as bone as before;
   the solved state is not saved (a restored body is whole); dragging and picking a body still use

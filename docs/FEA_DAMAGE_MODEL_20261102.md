@@ -527,7 +527,7 @@ and the skeleton to voxels on one grid and run the simulation on those voxels.
   into the eleven body parts and fitted inside the relaxed figure; a test holds every part inside.
 - **One grid** (`crew_tissue.rs`): 2 cm cells fill the figure (skin, muscle); every cell a
   skeleton triangle passes through is bone (the skeleton is a surface, so its quads are what is
-  voxelised); the helmet's triangles add steel cells over the head. 7,206 cells.
+  voxelised). Only organic matter is cells: the steel helmet is a rigid body (below).
 - **Solved on the cells**: a bond-based lattice (each cell bonded to its 18 neighbours, a bond
   failing past its critical stretch). Each fragment that crossed the man moves through the cells
   as a steel cube of its own mass, slowed by Poncelet's resistance and drag, and pushes the cells
@@ -536,8 +536,14 @@ and the skeleton to voxels on one grid and run the simulation on those voxels.
   tank's own surfaces. A 57 mm shot through the torso tears a channel of about 265 cells; a small
   fast fragment tears a few; a slow one stops in him. Bone holds unless the push is large.
 - **Drawn** (`crew_corpse_tissue.rs`): a dead man with a solved body is drawn only as his cells
-  (merged into boxes by colour), including the helmet; the pieces the same way where they are.
-  Every page is allocated at start, so a save's retained draw layout keeps its shape.
+  (one closed cube each, by colour); the pieces the same way where they are. Every page is
+  allocated at start, so a save's retained draw layout keeps its shape.
+- **The helmet** (`crew_helmet_body.rs`, the owner: helmets are rigid bodies, only organic matter
+  is voxels, which keeps the crew's look): its own textured mesh on the head while the strap
+  holds. A fragment crossing the shell punches a plug out (stopped below the plug's ballistic
+  limit), its lost momentum going to the helmet; a burst drives the light shell harder than the
+  head. Past the strap's hold, or with the head mostly gone, it comes away as a rigid body that
+  bounces and comes to rest on the tank's surfaces.
 - **The pink cabin** (same evening): the hot chips' light outshone the cabin lamps twelvefold
   after a strike and the eye adapted to it. The main line's fix (the chips' light on their band's
   Planck visible share, the drawn pages lifted at the owner's call) is the one kept.
