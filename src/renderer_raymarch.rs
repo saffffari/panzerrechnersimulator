@@ -3246,6 +3246,14 @@ impl Backend {
         let encloses = |mn: Vec3, mx: Vec3| enclosing.is_some_and(|(p, m)| {
             p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
         });
+        // What rides aboard the player's tank (a lamp, a box, a fitting) lies under no world snow:
+        // the lying-snow lift raised the top faces of the cabin's lamp housings off their bodies,
+        // green faces floating by the gunner (owner report, 2026-11-02). Aboard: a part whose box
+        // centre is inside a vehicle-surface frame's own box (oriented, 5 cm grace) and which is
+        // small enough to be a fitting, not a batch spread over the ground. The tank's own snow
+        // is its catch (rm_vsm_core.wgsl), and none is kept on it.
+        let frames = aboard_frames(r);
+        let aboard = |mn: Vec3, mx: Vec3| is_aboard(&frames, mn, mx);
         let visible = r.inst_spatial_index.query(vp);
         let stages = if shadow { wgpu::ShaderStages::VERTEX } else { wgpu::ShaderStages::VERTEX_FRAGMENT };
         pass.set_pipeline(inst_pipe);
@@ -3288,7 +3296,7 @@ impl Backend {
                 // glows), else an ordinary surface (or an effect's incandescent glow).
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor,
                     if flags > 3.5 { 4.0 } else if (flags - 2.0).abs() < 0.5 { 2.0 } else { 0.0 }] },
-                extra: [self.snow_load(r.world_snow_load), 0.0, 0.0, 0.0],
+                extra: [if aboard(b.world_min, b.world_max) { 0.0 } else { self.snow_load(r.world_snow_load) }, 0.0, 0.0, 0.0],
                 scars: [0; 4],
                 vehicle: [0.0; 4],
             };
@@ -3335,7 +3343,8 @@ impl Backend {
             let push = Push {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
-                extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
+                extra: [if m.snow_vehicle { self.snow_load(r.player_snow_load) } else if aboard(m.world_min, m.world_max) { 0.0 }
+                    else { self.snow_load(r.world_snow_load) }, if m.snow_vehicle { 1.0 } else { 0.0 },
                     // z: bit 0 painted steel, bits 1-2 the vehicle surface model's frame (rm_vsm.wgsl).
                     (u32::from(m.painted_steel) | u32::from(m.vsm_frame) << 1) as f32, m.lamp_lens as f32],
                 // scars.w: the running gear's packed snow in bytes 0-2 (rm_snow_lift.wgsl), the film
@@ -3638,6 +3647,7 @@ impl Backend {
             pass.set_bind_group(0, &binds.reflect, &[]);
             pass.set_bind_group(1, &binds.visibility, &[]);
             if let Some(rt) = &self.rt_bind { pass.set_bind_group(3, rt, &[]); }
+            let frames = aboard_frames(r);
             for &i in &self.panes {
                 let m = &r.meshes[i];
                 // A pane of a sectioned vehicle beyond the film's plane goes with its frame.
@@ -3649,7 +3659,8 @@ impl Backend {
                 // sight glass millimetres).
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
                 let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
-                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
+                    extra: [if m.snow_vehicle { self.snow_load(r.player_snow_load) } else if is_aboard(&frames, m.world_min, m.world_max) { 0.0 }
+                        else { self.snow_load(r.world_snow_load) }, if m.snow_vehicle { 1.0 } else { 0.0 },
                         if m.instrument_cover { 1.0 } else { 0.0 }, 0.0], scars: [0; 4], vehicle: [0.0; 4] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
@@ -3880,6 +3891,22 @@ impl Renderer {
     pub fn draws_explosion_volumes(&self) -> bool {
         self.raymarch.as_ref().is_some_and(|rm| rm.explosion_slots.is_some())
     }
+}
+
+/// The vehicle-surface frames' own boxes (inverse model, local box with 5 cm grace): what rides
+/// aboard the player's tank is inside one of them (`is_aboard`).
+fn aboard_frames(r: &Renderer) -> Vec<(Mat4, Vec3, Vec3)> {
+    r.meshes.iter().filter(|m| m.visible && m.vsm_frame > 0)
+        .map(|m| (m.model.inverse(), m.local_min - Vec3::splat(0.05), m.local_max + Vec3::splat(0.05))).collect()
+}
+
+/// A part aboard: its box centre inside a frame's oriented box, and small enough to be a fitting
+/// rather than an instanced batch spread over the ground.
+fn is_aboard(frames: &[(Mat4, Vec3, Vec3)], mn: Vec3, mx: Vec3) -> bool {
+    (mx - mn).length() < 2.0 && frames.iter().any(|&(inv, lo, hi)| {
+        let c = inv.transform_point3((mn + mx) * 0.5);
+        c.cmpge(lo).all() && c.cmple(hi).all()
+    })
 }
 
 #[cfg(test)]
