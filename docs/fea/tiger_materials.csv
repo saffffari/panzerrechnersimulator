@@ -1,0 +1,21 @@
+phys_material,density_kg_m3,E_GPa,poisson,yield_MPa,uts_MPa,hardness,source_status
+armour_rolled_homogeneous,7850,207,0.29,780,950,BHN ~255-300 (to source: Allied examinations of Tiger plate),nominal
+steel_structural_plate,7850,200,0.29,250,410,,nominal (mild steel plate)
+steel_structural,7850,200,0.29,250,410,,nominal (mild steel)
+steel_cast,7850,200,0.29,400,600,,nominal (cast steel)
+steel_track_cast,7900,200,0.29,380,800,as-cast ~200 BHN,nominal (manganese cast steel)
+steel_roadwheel_rubber_tyred,7200,200,0.29,300,450,,composite: steel disc + rubber tyre; split before FEA
+steel_gun,7850,207,0.29,900,1100,,nominal (gun steel)
+iron_cast_machinery,7200,110,0.26,,250,,nominal (grey cast iron)
+radiator_copper_brass,8500,110,0.34,100,300,,nominal (copper/brass core)
+steel_sheet_tank,7850,200,0.29,220,340,,nominal (sheet steel; contents not modelled)
+steel_exhaust,7850,200,0.29,250,410,,nominal
+ammunition_88mm,3000,,,,,,"composite: brass case, propellant, projectile; bulk density estimate"
+glass_laminated,2500,70,0.22,,50,,nominal (laminated vision block)
+copper_cable,6000,,,,,,composite: copper + insulation
+seat_steel_leather,1500,,,,,,composite
+tool_steel_wood,3000,,,,,,composite: steel head + wood haft
+hydraulic_steel_oil,5000,,,,,,composite
+lamp_steel_glass,4000,,,,,,composite
+steel_spring,7850,200,0.29,1100,1400,,nominal (spring steel)
+instrument,3000,,,,,,composite

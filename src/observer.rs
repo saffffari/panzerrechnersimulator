@@ -82,6 +82,53 @@ mod rod_pooling_tests {
         assert!(!include_str!("../shaders/rm_shade.wgsl").contains("point_layer"));
     }
 }
+/// Small bright sources and adaptation: the retina adapts locally, and a source far brighter
+/// than the rest of the field changes that field's adaptation through the light the eye's media
+/// scatter round its image, the veiling luminance of disability glare, L_v = 10 E / theta^2
+/// (theta in degrees from the source, E its illuminance at the eye; Stiles-Holladay, the core of
+/// the CIE 146:2002 glare spread function), not through its share of an arithmetic field average.
+/// In the blue hour a lit window at ~100 cd/m^2 covering 0.3 % of a 0.002 cd/m^2 frame set the
+/// field average 300 times above the rest of the field and crushed it (2026-11-02).
+///
+/// A meter cell brighter than `GLARE_RATIO` times the previous frame's log-average (geometric
+/// mean) luminance, outdoors, enters the fovea, Gaussian and field windows at that log-average
+/// and adds its veil to each window (`glare_cell`, `fovea_veil_per_lux`): over the field and
+/// Gaussian windows the veil integrated over 0.5..30 deg, 2 pi (5 ln(30/0.5) + 10 (1/0.5 - 1/30))
+/// = 252 E deg^2 (the integral the tracers' veil uses, renderer_raymarch.rs), spread over the
+/// field or weighted by the Gaussian at the source; over the fovea its disc mean.
+/// `GLARE_RATIO` is two decades: a cone's response at 100 times its semi-saturation (which
+/// tracks the adaptation level; Valeton & van Norren 1983) is 99 % of its maximum (Naka-Rushton,
+/// n = 1), so brighter light adds no signal there and adapts only its own image. Approximations,
+/// named: the previous frame's log-average stands for the background (one frame late); each cell
+/// is one point source at its centre; the fovea window's veil is taken at its centre for a source
+/// outside it.
+pub const GLARE_RATIO: f64 = 100.0;
+/// The treatment stands down while such cells cover more than this share of the field: a quarter
+/// of the view is no longer a small source (a burning street filling the view adapts the eye
+/// directly). A design bound, named; the log-average already rises with a large bright area.
+pub const GLARE_MAX_COVERAGE: f64 = 0.25;
+pub const GLARE_INTEGRAL_DEG2: f64 = 252.0;
+/// The glare spread function's lower validity bound (CIE 146:2002, 0.1 deg): the fovea window's
+/// mean veil from a source inside it is integrated from here.
+pub const GLARE_MIN_DEG: f64 = 0.1;
+
+/// Whether a meter cell is a small bright source for the glare treatment (exposure.wgsl).
+pub fn glare_cell(luminance: f64, log_average_cd_m2: f64) -> bool {
+    log_average_cd_m2 > 0.0 && luminance > GLARE_RATIO * log_average_cd_m2
+}
+
+/// The fovea window's mean veiling luminance per lux at the eye from a source `theta_deg` from
+/// its centre (exposure.wgsl): inside, the disc mean of 10/r^2 cut at `GLARE_MIN_DEG`,
+/// 20 ln((R^2 - theta^2) / (theta_min R)) / R^2, never under its rim value; outside, 10/theta^2.
+pub fn fovea_veil_per_lux(theta_deg: f64) -> f64 {
+    let r = METER_FOVEA_RADIUS_DEG;
+    if theta_deg <= r {
+        let inside = 20.0 * ((r * r - theta_deg * theta_deg).max(1.0e-6) / (GLARE_MIN_DEG * r)).ln() / (r * r);
+        inside.max(10.0 / (r * r))
+    } else {
+        10.0 / (theta_deg * theta_deg)
+    }
+}
 pub const METER_MIN_CD_M2: f64 = 1.0e-7;
 pub const METER_MAX_CD_M2: f64 = 1.0e7;
 pub const METER_FOVEA_RADIUS_DEG: f64 = 1.0;
@@ -624,6 +671,10 @@ pub fn wgsl_constants() -> String {
     push("OBS_ROD_FULL_DEG", ROD_FULL_DEG);
     push("OBS_POINT_PSF_ARCMIN", POINT_PSF_ARCMIN);
     push("OBS_METER_MIN", METER_MIN_CD_M2);
+    push("OBS_GLARE_RATIO", GLARE_RATIO);
+    push("OBS_GLARE_MAX_COVERAGE", GLARE_MAX_COVERAGE);
+    push("OBS_GLARE_INTEGRAL_DEG2", GLARE_INTEGRAL_DEG2);
+    push("OBS_GLARE_MIN_DEG", GLARE_MIN_DEG);
     push("OBS_METER_MAX", METER_MAX_CD_M2);
     push("OBS_FOVEA_RADIUS_DEG", METER_FOVEA_RADIUS_DEG);
     push("OBS_GAUSSIAN_SIGMA_DEG", METER_GAUSSIAN_SIGMA_DEG);
@@ -1245,6 +1296,52 @@ mod tests {
         let reference = inside_reference_floor(cabin, [log_average(&burning), 240f64.log10()]);
         let damped = inside_meter(Meter::uniform(150.0, 240.0), reference);
         assert!((damped.photopic_cd_m2 / 150.0 - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_small_bright_source_adapts_the_field_through_its_veil_not_its_share_of_the_average() {
+        // The blue-hour frame: 0.3 % of cells at 100 cd/m^2 (lit windows), the rest at 0.002.
+        let mut frame = vec![0.002; 997];
+        frame.extend([100.0; 3]);
+        let background = 10f64.powf(log_average(&frame));
+        assert!(background < 0.0025, "{background}");
+        let arithmetic = frame.iter().sum::<f64>() / frame.len() as f64;
+        assert!(arithmetic > 100.0 * 0.002, "the arithmetic field average is the crush: {arithmetic}");
+        let taken: Vec<f64> = frame.iter().map(|&l| if glare_cell(l, background) { background } else { l }).collect();
+        let treated = taken.iter().sum::<f64>() / taken.len() as f64;
+        assert!(treated < 1.01 * 0.002 + background * 0.003, "{treated}");
+        // A blue-hour sky fifty times the ground stays in the field; so does an even frame.
+        assert!(!glare_cell(0.1, 0.002));
+        assert!(frame.iter().take(997).all(|&l| !glare_cell(l, background)));
+        // The veil kernels: the 252 deg^2 integral and the fovea disc mean against quadrature.
+        let integral = 2.0 * std::f64::consts::PI * (5.0 * (30.0f64 / 0.5).ln() + 10.0 * (1.0 / 0.5 - 1.0 / 30.0));
+        assert!((integral - GLARE_INTEGRAL_DEG2).abs() < 1.0, "{integral}");
+        let r = METER_FOVEA_RADIUS_DEG;
+        for offset in [0.0, 0.3, 0.6] {
+            let (mut sum, n) = (0.0, 2000);
+            for iy in 0..n {
+                for ix in 0..n {
+                    let (x, y) = ((ix as f64 + 0.5) / n as f64 * 2.0 * r - r, (iy as f64 + 0.5) / n as f64 * 2.0 * r - r);
+                    if x * x + y * y > r * r { continue; }
+                    let d2 = (x - offset).powi(2) + y * y;
+                    if d2 < GLARE_MIN_DEG * GLARE_MIN_DEG { continue; }
+                    sum += 10.0 / d2 * (2.0 * r / n as f64).powi(2);
+                }
+            }
+            let mean = sum / (std::f64::consts::PI * r * r);
+            let model = fovea_veil_per_lux(offset);
+            assert!((model / mean - 1.0).abs() < 0.25, "offset {offset}: model {model}, quadrature {mean}");
+        }
+        assert_eq!(fovea_veil_per_lux(2.0 * r), 10.0 / (4.0 * r * r));
+        let generated = wgsl_constants();
+        let shader = include_str!("../shaders/exposure.wgsl");
+        for name in ["OBS_GLARE_RATIO", "OBS_GLARE_MAX_COVERAGE", "OBS_GLARE_INTEGRAL_DEG2", "OBS_GLARE_MIN_DEG"] {
+            assert!(generated.contains(name));
+            assert!(shader.contains(name), "{name} unused by the GPU eye");
+        }
+        // Outdoors only, and the GPU tests every cell, the fovea's included.
+        assert!(shader.contains("let glare_on = outdoors &&"));
+        assert!(shader.contains("if (glare_on && glare_cell) {"));
     }
 
     #[test]

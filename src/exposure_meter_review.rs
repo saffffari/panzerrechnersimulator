@@ -45,7 +45,7 @@ pub(crate) fn run(path: &str) -> Result<()> {
         let view = texture.create_view(&Default::default());
         let clock = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-        let scratch = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: 256 * 48,
+        let scratch = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: 256 * 80,
             usage: wgpu::BufferUsages::STORAGE, mapped_at_creation: false });
         let mut initial = [0.0f32; 32]; initial[1] = -1.0;
         let states: Vec<_> = (0..2).map(|_| d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
