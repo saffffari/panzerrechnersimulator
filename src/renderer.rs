@@ -13487,8 +13487,9 @@ mod atmosphere_tests {
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8)"));
         // A view starts adapted to its first frame; an optic's own eye also when it is returned to
-        // (observer::OPTIC_RESNAP_GAP_S), and only then.
-        assert!(eye.contains("if (state[1] < 0.0 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP))"),
+        // (observer::OPTIC_RESNAP_GAP_S), and only then. Lane 30 holds an outdoor first snap one
+        // frame for the glare split's background (the small-bright-source veil, 2 Nov 2026).
+        assert!(eye.contains("if (state[1] < 0.0 || state[30] > 0.5 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP))"),
             "a view starts adapted to its first frame");
         // An authored lighting record cannot expose the camera; only the debug gate can fix it.
         let authored = renderer.split("pub fn apply_authored_lighting").nth(1).unwrap()
