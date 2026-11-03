@@ -19,6 +19,25 @@ rotation. 1,433 game parts match a kit part one to one (centroid within 1 cm, vo
 64 are pieces of a kit part, 21 are authored in the game master. The kit has 38 parts the game
 master lacks (crew seats, some covers and arms, the turret-floor fuel cans, a gasket).
 
+## Scale: the kit is true to the vehicle at 1:35; the game Tiger is 11 % too large
+
+Measured live in `tiger_gen2_live.blend` (the kit conversion x35, ground at z = 0), against the
+Tiger I Ausf. E's published dimensions:
+
+| Dimension | Historical | Kit x35 | Game Tiger (x38.905) |
+|---|---|---|---|
+| Length with gun | 8.45 m | 8.47 m | 9.42 m |
+| Width over combat tracks | 3.705 m | 3.71 m | 4.12 m |
+| Road wheel diameter | 800 mm | 797-800 mm (vertex radius) | 889 mm |
+| Combat track width | 725 mm | 730 mm | 812 mm |
+| Belly clearance | 0.47 m | 0.454 m | 0.51 m |
+| Track centres | ~2.82 m | 2.78 m | 3.09 m |
+| Height to cupola | ~3.0 m | ~3.0 m (open hatch and rear-deck ring 3.13-3.27) | ~3.4 m |
+
+So gen2 is built at x35. Moving the game to it changes the Tiger's size everywhere the runtime uses
+it (`TIGER_PARTS`, collision, suspension, crew eyes, interior apertures, workshop catalogs), so the
+switch is its own step with its own regression.
+
 ## What the kit model gives and what it lacks
 
 Gives: every part, named by kit number and part (`28U05_MAIN` = engine block), grouped by kit

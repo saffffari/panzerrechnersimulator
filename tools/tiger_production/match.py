@@ -124,6 +124,13 @@ for name, (m, rec) in out.items():
     cat[name] = entry
     counts[rec['match']] += 1; mats[entry['phys_material']] += 1; fea[entry['fea_group'].split(':')[0] if ':' not in entry['fea_group'] else entry['fea_group']] += 1
 json.dump(cat, open(D+'tags.json', 'w'), indent=0)
+# The other direction: each kit part (by its CAD object name) -> the master objects drawn from it.
+kit_map = collections.defaultdict(list)
+for name, (m, rec) in out.items():
+    for j in rec['kit']:
+        kit_map[cad[j]['name']].append(name)
+json.dump(dict(kit_to_master=kit_map, game_authored=[n for n, (m, rec) in out.items() if rec['match'] == 'game_authored']),
+          open(D+'kit_map.json', 'w'), indent=0)
 print('match kinds', dict(counts)); print('kit parts used', len(used), 'of', len(cad))
 print('materials', mats.most_common()); print('fea', sorted(fea.items(), key=lambda x: x[0]))
 missing = [cad[j]['kit_name'] for j in range(len(cad)) if j not in used]
