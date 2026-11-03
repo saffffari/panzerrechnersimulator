@@ -171,6 +171,8 @@ pub(super) struct Checkpoint {
     tissue: Option<crew_corpse_tissue::TissueState>,
     receipts: Vec<game_fea::FeaChainReceipt>,
     current: Option<game_fea::ImpactSolve>,
+    /// What the game changes in a run that the world save does not hold (`Unsaved`).
+    unsaved: Arc<Unsaved>,
     /// The surface blood: a copy (its world-save encoding sorts every map and set entry by its
     /// bytes, a tenth of a second a frame late in a run, where a copy takes milliseconds but holds
     /// about 12 MB); past `ENCODE_BLOOD_ABOVE_BYTES`, encoded and patched on the rewind's worker.
@@ -276,6 +278,177 @@ impl BloodWorker {
         Self { jobs, done, pending: 0 }
     }
 }
+
+/// What the game changes in a run that the world save does not hold, kept as copies: the thrown
+/// turret and the cook-off, the scars' solved rim cooling (the save skips it), the queued and
+/// travelling blast fronts and what they last did, the strike's effects and flashes, the player
+/// Tiger's ground contact, the armour's own surface fires and the rest named below. Every other
+/// field of `Game` is held by the world save or listed in `NOT_KEPT` (test
+/// `every_game_field_is_kept_or_named`).
+#[derive(Clone)]
+struct Unsaved {
+    turret_thrown: Option<Mat4>,
+    cookoff: game_cookoff::Cookoff,
+    armor_scars: crate::armor_damage::ArmorField,
+    wreck_turrets: Vec<Option<wreck_turret::Body>>,
+    interior_soot: f32,
+    fea_effects: game_fea_effects::FeaEffects,
+    pending_fronts: Vec<(u64, Vec3, f32, bool)>,
+    pressure_sweep_t: f32,
+    pressure_sweep_fronts: Vec<crate::pressure_front::Front>,
+    pressure_sweep_window: (f32, f32),
+    pressure_observer: Option<Vec3>,
+    pressure_startled: u32,
+    pressure_last_kick: f32,
+    pressure_grass_peak: f32,
+    pressure_tree_peak: f32,
+    last_exterior_strike: Option<serde_json::Value>,
+    /// The armour's own surface fires (`CabinFire`, kept as its world-save fields).
+    projectile_player_armor: StateFields,
+    projectile_enemy_armor: StateFields,
+    armour_flashes: Vec<ArmourFlash>,
+    tableau_smoke: Vec<crate::urban_tableaux::SmokeSource>,
+    tank_ground: solid_city::TankGroundState,
+    enemy_stall_s: Vec<f32>,
+    enemy_room: Vec<[f32; 4]>,
+    enemy_room_frame: u32,
+    couch_crew_frame: crate::lan::CrewFrame,
+    couch_crew_identities: CouchCrewIdentities,
+    last_frame_dt: f32,
+    brass_cost: BrassCost,
+    fire_presentation_phase: u32,
+    replay_scar_cutoff: Option<f32>,
+}
+
+impl Unsaved {
+    fn capture(g: &Game) -> anyhow::Result<Self> {
+        Ok(Self {
+            turret_thrown: g.player.turret_thrown,
+            cookoff: g.cookoff.clone(),
+            armor_scars: g.armor_scars.clone(),
+            wreck_turrets: g.wrecks.iter().map(|w| w.t_body.clone()).collect(),
+            interior_soot: g.interior_soot,
+            fea_effects: g.fea_effects.clone(),
+            pending_fronts: g.pending_fronts.clone(),
+            pressure_sweep_t: g.pressure_sweep_t,
+            pressure_sweep_fronts: g.pressure_sweep_fronts.clone(),
+            pressure_sweep_window: g.pressure_sweep_window,
+            pressure_observer: g.pressure_observer,
+            pressure_startled: g.pressure_startled,
+            pressure_last_kick: g.pressure_last_kick,
+            pressure_grass_peak: g.pressure_grass_peak,
+            pressure_tree_peak: g.pressure_tree_peak,
+            last_exterior_strike: g.last_exterior_strike.clone(),
+            projectile_player_armor: g.projectile_player_armor.export_world_state()?,
+            projectile_enemy_armor: g.projectile_enemy_armor.export_world_state()?,
+            armour_flashes: g.armour_flashes.clone(),
+            tableau_smoke: g.tableau_smoke.clone(),
+            tank_ground: g.tank_ground.clone(),
+            enemy_stall_s: g.enemy_stall_s.clone(),
+            enemy_room: g.enemy_room.clone(),
+            enemy_room_frame: g.enemy_room_frame,
+            couch_crew_frame: g.couch_crew_frame,
+            couch_crew_identities: g.couch_crew_identities.clone(),
+            last_frame_dt: g.last_frame_dt,
+            brass_cost: g.brass_cost,
+            fire_presentation_phase: g.fire_presentation_phase,
+            replay_scar_cutoff: g.replay_scar_cutoff,
+        })
+    }
+
+    /// Put back (after the world-save owners, whose `player` and `armor_scars` these complete).
+    fn restore(&self, g: &mut Game) -> anyhow::Result<()> {
+        g.player.turret_thrown = self.turret_thrown;
+        g.cookoff = self.cookoff.clone();
+        g.armor_scars = self.armor_scars.clone();
+        for (wreck, body) in g.wrecks.iter_mut().zip(&self.wreck_turrets) {
+            wreck.t_body = body.clone();
+        }
+        g.interior_soot = self.interior_soot;
+        g.fea_effects = self.fea_effects.clone();
+        g.pending_fronts = self.pending_fronts.clone();
+        g.pressure_sweep_t = self.pressure_sweep_t;
+        g.pressure_sweep_fronts = self.pressure_sweep_fronts.clone();
+        g.pressure_sweep_window = self.pressure_sweep_window;
+        g.pressure_observer = self.pressure_observer;
+        g.pressure_startled = self.pressure_startled;
+        g.pressure_last_kick = self.pressure_last_kick;
+        g.pressure_grass_peak = self.pressure_grass_peak;
+        g.pressure_tree_peak = self.pressure_tree_peak;
+        g.last_exterior_strike = self.last_exterior_strike.clone();
+        g.projectile_player_armor.import_world_state(self.projectile_player_armor.clone())?;
+        g.projectile_enemy_armor.import_world_state(self.projectile_enemy_armor.clone())?;
+        g.armour_flashes = self.armour_flashes.clone();
+        g.tableau_smoke = self.tableau_smoke.clone();
+        g.tank_ground = self.tank_ground.clone();
+        g.enemy_stall_s = self.enemy_stall_s.clone();
+        g.enemy_room = self.enemy_room.clone();
+        g.enemy_room_frame = self.enemy_room_frame;
+        g.couch_crew_frame = self.couch_crew_frame;
+        g.couch_crew_identities = self.couch_crew_identities.clone();
+        g.last_frame_dt = self.last_frame_dt;
+        g.brass_cost = self.brass_cost;
+        g.fire_presentation_phase = self.fire_presentation_phase;
+        g.replay_scar_cutoff = self.replay_scar_cutoff;
+        Ok(())
+    }
+
+    /// Checksums of the parts that print (`Checkpoint::prints`).
+    fn prints(&self, out: &mut BTreeMap<String, u64>) {
+        use crate::expedition_world_save::checksum;
+        let mut put = |k: &str, text: String| {
+            out.insert(format!("unsaved/{k}"), checksum(text.as_bytes()));
+        };
+        put("turret_thrown", format!("{:?}", self.turret_thrown));
+        let c = &self.cookoff;
+        put("cookoff", format!("{:?}", (c.clock_s, c.first_s, c.first_at, c.black_from_s, c.launched_s, c.turret.is_some(),
+            &c.path, c.holes_m2, c.ignitions, c.detonations, c.fuel_kg)));
+        put("armor_scars", format!("{:?}", self.armor_scars));
+        put("wreck_turrets", format!("{:?}", self.wreck_turrets.iter().map(Option::is_some).collect::<Vec<_>>()));
+        put("interior_soot", format!("{:?}", self.interior_soot));
+        put("fea_effects", format!("{:?}", self.fea_effects));
+        put("pressure", format!("{:?}", (&self.pending_fronts, self.pressure_sweep_t, &self.pressure_sweep_fronts,
+            self.pressure_sweep_window, self.pressure_observer, self.pressure_startled, self.pressure_last_kick,
+            self.pressure_grass_peak, self.pressure_tree_peak)));
+        put("last_exterior_strike", format!("{:?}", self.last_exterior_strike));
+        put("armour_flashes", format!("{:?}", self.armour_flashes));
+        put("tank_ground", format!("{:?}", self.tank_ground));
+        put("couch_crew_frame", format!("{:?}", self.couch_crew_frame));
+    }
+}
+
+/// `Game` fields neither the world save nor `Unsaved` holds, each with why a run does not need
+/// it back (test `every_game_field_is_kept_or_named`).
+pub(super) const NOT_KEPT: &[(&str, &str)] = &[
+    ("cigarette_fx_slots", "renderer slots"), ("act", "the act's authored data"), ("tank_editor_scene", "editor scene"),
+    ("grass", "the grass about the camera (see the module doc)"), ("platoon", "radio orders, not in the range"),
+    ("enemy_report_audit", "an audit log"), ("campaign", "campaign coordinator, not in the range"),
+    ("expedition_runtime", "expedition, not in the range"), ("support_camp", "expedition camp"),
+    ("halftrack_runtime", "expedition halftrack"), ("theatre", "expedition theatre"), ("river", "expedition rivers"),
+    ("workshop", "workshop runtime, untouched by a strike"), ("crew_status_panel", "a panel's display"),
+    ("tpz_cover", "a periscope cover's presentation"), ("cabin_panels", "instrument panels' presentation"),
+    ("enemy_gear_snow", "presentation of enemy running gear"), ("ally_gear_snow", "presentation of ally running gear"),
+    ("weather_view", "the view's weather sample"), ("winter_mission", "mission authoring"), ("slots", "renderer slots"),
+    ("tiger_dressing", "authored dressing"), ("enigma_dressing", "authored dressing"), ("order_printer", "printer presentation"),
+    ("stab_net", "radio language model"), ("projectile_cover", "acceleration structure"),
+    ("projectile_flight_audio", "sound voices"), ("crew_battle_audit", "an audit log"), ("armor_net_cursor", "a lookup cursor"),
+    ("scar_geometry_cache", "a cache keyed by the scars"), ("rtt_screens", "periscope render targets"),
+    ("rtt_dev", "GPU device"), ("cupola_grip_source", "source mesh"), ("cupola_spindle_source", "source mesh"),
+    ("last_player_damage_sound", "the last sound's parameters"), ("hover", "the crosshair's hover"),
+    ("hover_label", "the crosshair's hover"), ("scheduled_audio_audit", "an audit log"), ("audio", "the sound device"),
+    ("tableau_attachments", "authored tableaux"), ("enemy_policy_over_orders", "AI policy setting"),
+    ("scatter_heavy", "source data"), ("destructible_groups", "source index"), ("world_index", "source index"),
+    ("story_cover_shared", "source data"), ("door_links", "source data"), ("manifest_walk_surfaces", "source data"),
+    ("lan_ai_frame", "LAN, not in the range"), ("street_plan", "source data"), ("canyon_spec", "source data"),
+    ("canyon_run", "canyon run bookkeeping"), ("sim_phase", "profiling"), ("canyon_siting", "source data"),
+    ("street_siting", "source data"), ("harness_streets", "harness setting"), ("harness_gun_shots", "harness setting"),
+    ("wreck_fire_surfaces", "source triangles"), ("wreck_patch_cache", "a cache"), ("player_fire_surfaces", "source triangles"),
+    ("wreck_turret_sources", "source meshes"), ("death_replay", "the death's kill-cam (not used in the range)"),
+    ("lan_local_role", "LAN, not in the range"), ("soviet_pose_batches", "renderer batches"),
+    ("german_pose_batches", "renderer batches"), ("enemy_ai_stats", "AI statistics"),
+    ("campaign_pedestrian_shots", "campaign telemetry"), ("campaign_foot_decisions", "campaign telemetry"),
+    ("abandoned_collision", "colliders of abandoned tanks (campaign)"),
+];
 
 /// The owner's fields, as its restore takes them.
 fn owner_fields(fields: &BTreeMap<String, Vec<u8>>, owner: &str) -> StateFields {
@@ -391,6 +564,7 @@ impl Checkpoint {
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         own_bytes += g.surface_blood.copy_bytes();
         Ok((Self { id, fields, tissue, receipts: g.fea.receipts.clone(), current: g.fea.current.clone(),
+            unsaved: Arc::new(Unsaved::capture(g)?),
             blood: BloodKept::Copy(Arc::new(g.surface_blood.clone())), clock_s: r.time, own_bytes, shot_t: 0.0, tape_len: 0 }, raw))
     }
 
@@ -413,6 +587,7 @@ impl Checkpoint {
         }
         out.insert("fea/receipts".into(), checksum(format!("{:?}", self.receipts).as_bytes()));
         out.insert("renderer/time".into(), u64::from(self.clock_s.to_bits()));
+        self.unsaved.prints(&mut out);
         out.insert("environment/surface_blood".into(), self.blood.bytes().map_or(0, |b| checksum(&b)));
         out
     }
@@ -502,6 +677,7 @@ impl Checkpoint {
         }
         g.fea.receipts = self.receipts.clone();
         g.fea.current = self.current.clone();
+        self.unsaved.restore(g)?;
         if changed("hand_props") {
             restored.push(format!("hand_props {:.0} ms", started.elapsed().as_secs_f32() * 1000.0));
             if let (Some(props), Some(p)) = (x.take::<Option<StateFields>>("hand_props")?, g.hand_props.as_mut()) {
@@ -661,6 +837,15 @@ pub(super) const ENCODE_BLOOD_ABOVE_BYTES: usize = 8_000_000_000;
 pub(super) const SPARSE_EVERY: u32 = 8;
 
 impl Rewind {
+    /// No run: its checkpoints let go (a reset).
+    pub(super) fn clear_run(&mut self) {
+        self.frames.clear();
+        self.step_s.clear();
+        self.fired = None;
+        self.bytes = 0;
+        self.run_serial += 1;
+    }
+
     /// A new run: its frames' checkpoints dropped, the moment of the shot kept.
     pub(super) fn start_run(&mut self, g: &Game, r: &Renderer, total: u32, tape_len: usize) {
         self.frames = (0..total).map(|_| None).collect();
@@ -808,6 +993,48 @@ impl Rewind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every field of `Game` is held by a checkpoint (a world-save owner `encode` captures, or read
+    /// from the game in this file's `encode` or `Unsaved`) or named in `NOT_KEPT` with its reason:
+    /// a field added to `Game` fails here until it is one or the other (the owner, 2026-11-03: a
+    /// thrown turret and a cook-off outlived every reset because neither was held).
+    #[test]
+    fn every_game_field_is_kept_or_named() {
+        let game = std::fs::read_to_string("src/game.rs").unwrap();
+        let start = game.find("\npub struct Game {").unwrap();
+        let body = &game[start..start + game[start..].find("\n}\n").unwrap()];
+        let fields: Vec<String> = body.lines().skip(1).filter_map(|line| {
+            let rest = line.strip_prefix("    ")?;
+            if rest.starts_with(' ') || rest.starts_with("//") || rest.starts_with('#') {
+                return None;
+            }
+            let rest = rest.strip_prefix("pub(crate) ").or_else(|| rest.strip_prefix("pub(super) "))
+                .or_else(|| rest.strip_prefix("pub ")).unwrap_or(rest);
+            let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            (!name.is_empty() && rest[name.len()..].trim_start().starts_with(':') && !rest[name.len()..].trim_start().starts_with("::"))
+                .then_some(name)
+        }).collect();
+        assert!(fields.len() > 400, "Game's fields not found ({})", fields.len());
+        let saved = std::fs::read_to_string("src/game_world_state.rs").unwrap();
+        let mut kept: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for owner in ["capture_physical", "capture_tanks", "capture_personal", "capture_projectiles", "capture_infantry",
+            "capture_environment"] {
+            let at = saved.find(&format!("fields_owner!({owner},")).unwrap();
+            let list = &saved[at..][saved[at..].find(';').unwrap() + 1..];
+            kept.extend(list[..list.find(");").unwrap()].split(',').map(|f| f.trim().to_string()).filter(|f| !f.is_empty()));
+        }
+        let ours = std::fs::read_to_string("src/game_fea_range/rewind.rs").unwrap();
+        let ours = &ours[..ours.find("#[cfg(test)]").unwrap()];
+        for (i, _) in ours.match_indices("g.") {
+            let name: String = ours[i + 2..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            kept.insert(name);
+        }
+        kept.extend(NOT_KEPT.iter().map(|(f, _)| f.to_string()));
+        let missing: Vec<&String> = fields.iter().filter(|f| !kept.contains(*f)).collect();
+        assert!(missing.is_empty(), "Game fields neither kept by a checkpoint nor named in NOT_KEPT: {missing:?}");
+        let stale: Vec<&str> = NOT_KEPT.iter().map(|(f, _)| *f).filter(|f| !fields.iter().any(|g| g == f)).collect();
+        assert!(stale.is_empty(), "NOT_KEPT names fields Game no longer has: {stale:?}");
+    }
 
     /// The environment owner's fields, as `encode` lists them with the surface blood apart, are
     /// the world save's (`game_world_state`): a field added there is not missed here.
