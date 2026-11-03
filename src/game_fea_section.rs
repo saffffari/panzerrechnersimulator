@@ -702,7 +702,8 @@ fn system_colour(system: components::System) -> [u8; 3] {
         S::Radio => [90, 79, 122],
         S::HullMg | S::CoaxMg | S::MainGun => [85, 85, 90],
         S::GunnerSight => [70, 110, 120],
-        S::TurretTraverse => [100, 80, 60],
+        S::TurretTraverse | S::Elevation => [100, 80, 60],
+        S::Basket => [72, 72, 68],
         S::Seat => [60, 60, 64],
     }
 }

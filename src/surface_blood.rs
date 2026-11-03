@@ -665,6 +665,20 @@ impl SurfaceBlood {
         }
         out
     }
+    /// The heap a copy of it holds (bytes, from its containers' lengths and its maps' buckets): a
+    /// review checkpoint's cost (`fea-range`).
+    pub fn copy_bytes(&self) -> usize {
+        use std::mem::size_of;
+        size_of::<Self>()
+            + self.grains.len() * size_of::<Option<Grain>>()
+            + self.cells.len() * size_of::<Cell>()
+            + (self.lookup.capacity() + self.queued.capacity()) * (size_of::<(Key, usize)>() + 1)
+            + self.rejected.capacity() * (size_of::<Key>() + 1)
+            + self.pools.iter().map(|p| size_of::<Pool>() + p.sources.capacity() * (size_of::<(u32, u32)>() + 1)
+                + p.frontier.len() * size_of::<Candidate>()).sum::<usize>()
+            + self.scheduled.len() * size_of::<usize>()
+            + self.runs.len() * size_of::<RenderRun>()
+    }
     pub fn render_runs(&self) -> &[RenderRun] {
         &self.runs
     }

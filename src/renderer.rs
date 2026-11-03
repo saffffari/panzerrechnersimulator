@@ -3204,6 +3204,9 @@ pub struct Renderer {
     // ---- volumetric muzzle-blast smoke (ray-marched over the HDR target, before bloom) ----
     smoke_puffs: [PuffGpu; MAX_PUFFS],
     breech_gas: PuffGpu,
+    /// The gun's fumes in the player's crew compartment (`Game` drives `cabin_fumes::CabinFumes`;
+    /// raymarch backend only).
+    pub cabin_fumes: [[f32; 4]; crate::cabin_fumes::LANES],
     cabin_medium: Option<std::sync::Arc<cabin_medium::Medium>>,
     cabin_medium_texture: wgpu::Texture,
     cabin_medium_view: wgpu::TextureView,
@@ -6416,6 +6419,7 @@ impl Renderer {
                 strength: 0.0,
                 shape: [0.0;4],
             },
+            cabin_fumes: [[0.0; 4]; crate::cabin_fumes::LANES],
             cabin_medium: Some(cabin_medium),
             cabin_medium_texture,cabin_medium_view,
             cabin_medium_uniform: bytemuck::Zeroable::zeroed(),
@@ -6574,7 +6578,7 @@ impl Renderer {
             optic_mask, loupe, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
-            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
+            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas, cabin_fumes,
             atmo_enabled, atmo_haze, atmo_soot, atmo_dust, atmo_origin, pixel_particle_field,
             pressure_fronts, heat_sources, ui, held_map_surface, order_receipt_surfaces, repair_manual_surfaces,
             repair_manual_presentation);
@@ -11206,16 +11210,6 @@ impl Renderer {
         drop(mapped);
         readback.unmap();
         Ok(state)
-    }
-
-    /// The eye's local adaptation strength (`observer::LOCAL_ADAPTATION_STRENGTH` unless a review
-    /// tool such as `fea-range` sets it; 0 is the single global adaptation).
-    pub fn local_adaptation(&self) -> f32 {
-        self.eye_local.strength
-    }
-
-    pub fn set_local_adaptation(&mut self, strength: f32) {
-        self.eye_local.strength = strength.clamp(0.0, 1.0);
     }
 
     /// The eye's local adaptation for the frame just metered (both backends call it right after

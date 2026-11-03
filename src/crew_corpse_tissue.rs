@@ -55,6 +55,14 @@ struct Actor {
     helmet: Option<HelmetBody>,
 }
 
+/// What `TissueDraw` simulates (its drawing caches aside): each struck body's cells and bonds and
+/// loose helmet, and the pieces in flight or at rest.
+#[derive(Clone)]
+pub(super) struct TissueState {
+    pub actors: Vec<(u32, std::sync::Arc<CasualtyTissue>, Option<HelmetBody>)>,
+    pub pieces: Vec<ChunkBody>,
+}
+
 /// A body's solve started on a worker (`TissueDraw::begin_strike`), finished in order by
 /// `TissueDraw::finish_strike`.
 pub(super) struct StrikeJob {
@@ -210,6 +218,26 @@ impl TissueDraw {
     pub(super) fn reset(&mut self) {
         self.actors.clear();
         self.pieces.clear();
+    }
+
+    /// The struck bodies' simulated state, for a review checkpoint (`fea-range`). A body whose
+    /// cells and bonds are unchanged since `previous` shares that checkpoint's copy.
+    pub(super) fn state(&self, previous: Option<&TissueState>) -> TissueState {
+        let actors = self.actors.iter().map(|a| {
+            let shared = previous.and_then(|p| p.actors.iter().find(|(peer, _, _)| *peer == a.peer))
+                .map(|(_, tissue, _)| tissue)
+                .filter(|t| t.revision == a.tissue.revision && t.present == a.tissue.present && t.broken == a.tissue.broken);
+            let tissue = shared.cloned().unwrap_or_else(|| std::sync::Arc::new(a.tissue.clone()));
+            (a.peer, tissue, a.helmet.clone())
+        }).collect();
+        TissueState { actors, pieces: self.pieces.clone() }
+    }
+
+    /// Put the bodies back as `state` holds them; the drawing's cell lists are rebuilt.
+    pub(super) fn restore(&mut self, state: &TissueState) {
+        self.actors = state.actors.iter().map(|(peer, tissue, helmet)|
+            Actor { peer: *peer, tissue: (**tissue).clone(), cache: None, helmet: helmet.clone() }).collect();
+        self.pieces = state.pieces.clone();
     }
 
     /// Solve the strikes that killed the ragdoll's man and throw what came away: the share of

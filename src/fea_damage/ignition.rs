@@ -98,7 +98,14 @@ pub fn flammable(spec: &ComponentSpec) -> Option<Flammable> {
         System::Engine => Some(Flammable::Engine),
         System::AirFilters | System::Gearbox | System::Steering | System::FinalDrive(_) =>
             Some(Flammable::Oil { hot_surface_k: LUBRICATING_OIL_K }),
-        System::TurretTraverse => Some(Flammable::Oil { hot_surface_k: HYDRAULIC_OIL_K }),
+        // The hydraulic drive's oil, the traverse gearbox's lubricant; the flywheel and the pedal
+        // are steel.
+        System::TurretTraverse => match spec.id {
+            "traverse_gearbox" => Some(Flammable::Oil { hot_surface_k: LUBRICATING_OIL_K }),
+            "traverse_flywheel" | "traverse_pedal" => None,
+            _ => Some(Flammable::Oil { hot_surface_k: HYDRAULIC_OIL_K }),
+        },
+        System::Elevation | System::Basket => None,
         // The cradle carries the recoil brake's oil; the breech is steel.
         System::MainGun => (spec.id == "gun_cradle").then_some(Flammable::Oil { hot_surface_k: HYDRAULIC_OIL_K }),
         System::Seat => Some(Flammable::Upholstery),

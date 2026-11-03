@@ -533,6 +533,21 @@ impl Medium {
         result
     }
 
+    /// The compartments' air (frame units³): what lies above `layer_y` in the turret's frame (the
+    /// turret and cupola domains; the hull's lies below the turret ring) and all of it. Solids inside
+    /// the source shells (the gun, racks, seats) are counted as air, in both alike.
+    pub fn volume_split(&self, layer_y: f32) -> (f32, f32) {
+        let (mut above, mut total) = (0.0f64, 0.0f64);
+        for (i, domain) in self.source.domains.iter().enumerate() {
+            for &[floor, roof] in &domain.cells {
+                if roof <= floor { continue; }
+                total += f64::from(roof - floor);
+                if i > 0 { above += f64::from((roof - floor.max(layer_y)).max(0.0)); }
+            }
+        }
+        let cell = f64::from(PITCH_M * PITCH_M);
+        ((above * cell) as f32, (total * cell) as f32)
+    }
     pub fn diagnostics(&self) -> serde_json::Value {
         serde_json::json!({"representation":"source floor/roof vertical interval grids with source ring-interface membranes",
             "pitch_m":PITCH_M,"texture_size":self.texture_size(),"uniform_bytes":std::mem::size_of::<Uniform>(),

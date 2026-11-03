@@ -25,6 +25,10 @@ impl StateFields {
     }
     pub fn finish(self)->Result<()> {ensure!(self.fields.is_empty(),"unconsumed state fields: {:?}",self.fields.keys());Ok(())}
     pub fn keys(&self)->impl Iterator<Item=&str> {self.fields.keys().map(String::as_str)}
+    /// The encoded fields by key, and back (the FEA range's in-memory checkpoints keep them and
+    /// share a field unchanged since the previous checkpoint).
+    pub fn into_raw(self)->std::collections::BTreeMap<String,Vec<u8>> {self.fields}
+    pub fn from_raw(fields:std::collections::BTreeMap<String,Vec<u8>>)->Self {Self{fields}}
     pub fn fingerprints(&self)->std::collections::BTreeMap<String,(usize,u64)> {
         self.fields.iter().map(|(key,bytes)|(key.clone(),(bytes.len(),checksum(bytes)))).collect()
     }

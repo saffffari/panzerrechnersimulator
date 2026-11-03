@@ -168,7 +168,9 @@ pub fn fovea_veil_per_lux(theta_deg: f64) -> f64 {
 ///   set (`KESSEL_EYE_LOCAL=sigma_deg,strength` for review; strength 0 is the single-state eye).
 pub const LOCAL_POOLING_SIGMA_DEG: f64 = 0.428;
 pub const LOCAL_SIMULTANEOUS_RANGE_LOG: f64 = 3.7;
-pub const LOCAL_ADAPTATION_STRENGTH: f64 = 0.5;
+/// Off (2026-11-03): at 0.5 the owner found the picture flattened ("this looks way worse", "we
+/// look like we are on low graphics mode"); 0 is the single-state eye. The machinery stays for review.
+pub const LOCAL_ADAPTATION_STRENGTH: f64 = 0.0;
 
 /// The pooling sigma and strength in use: the constants, or `KESSEL_EYE_LOCAL=sigma_deg,strength`
 /// (a review override, read once like `KESSEL_EYE_RANGE`; never set by a launcher or preset).
@@ -1680,7 +1682,8 @@ mod local_adaptation_tests {
     /// simultaneous range; at night the cone TVI is flat and the local term fades by itself.
     #[test]
     fn local_adaptation_lifts_the_dark_holds_the_bright_and_keeps_the_field() {
-        let k = LOCAL_ADAPTATION_STRENGTH;
+        // The law at a reviewable strength (the shipped strength is 0, the single-state eye).
+        let k = 0.5;
         let (a, m) = (1000.0, 1000.0);
         assert!((local_cone_gain(a, m, m.log10(), k) - 1.0).abs() < 1e-12);
         assert_eq!(local_cone_gain(a, m, -3.0, 0.0), 1.0, "strength 0 is the single-state eye");
@@ -1806,7 +1809,7 @@ mod local_adaptation_tests {
         for forbidden in ["GraphicsPreset", "graphics::", "debug_gates", "cfg!(debug_assertions)"] {
             assert!(!local.contains(forbidden), "the local eye may not depend on {forbidden}");
         }
-        assert!(LOCAL_ADAPTATION_STRENGTH > 0.0);
+        assert_eq!(LOCAL_ADAPTATION_STRENGTH, 0.0, "the owner turned local adaptation off (2026-11-03)");
         if std::env::var_os("KESSEL_EYE_LOCAL").is_none() {
             assert_eq!(local_adaptation_setting(), (LOCAL_POOLING_SIGMA_DEG, LOCAL_ADAPTATION_STRENGTH));
         }

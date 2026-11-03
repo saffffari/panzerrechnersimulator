@@ -773,12 +773,12 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   (2026-11-02, the owner: fires need time to build up smoke, much darker, absorbing the light).
   The soot is a uniform load in the cabin air (`Game::interior_soot`, 0-1), built at 0.38 per
   second times the burning surfaces' enclosure heat (`CabinFire::enclosure_diagnostics`) and
-  drained by the fan and an open hatch as the gun fumes are; at a full load its extinction is
+  drained linearly by the fan and an open hatch (`update_haze`); at a full load its extinction is
   1.5 /m (`SOOT_EXTINCTION_PER_M`: a lamp two metres off all but hidden), single-scattering albedo
   0.2 (fresh black carbon's order) and asymmetry 0.5, added to the cabin medium in
   `rm_medium.wgsl` inside the cabin domain only. The build rate, the extinction scale and the
-  uniform spread are authored (named: no soot transport, no stratified hot layer, no deposition);
-  the gun fumes' light haze only drains.
+  uniform spread are authored (named: no soot transport, no stratified hot layer, no deposition).
+  The gun's fumes are their own two-zone model since 2026-11-03 (`cabin_fumes`, below).
 - Spall and shrapnel carry tracers, and the solved chips glow by their temperature on the one
   law (2026-11-02; the owner). A flying fragment's tail is still a frame of its own measured
   motion (no rod drawn through a wall; a ricochet starts a new segment), now bounded at 0.45 m
@@ -1292,14 +1292,30 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   is placed and reset by state, enemies are banished and hold fire, the racks may be emptied, the
   cabin lamps switched, the sky clock is held at the chosen date and time, the eye's exposure may
   be held (a camera setting), and the section is the film section above (camera only, labelled on
-  screen). Recorded frames are the renderer's own frames read back; "live here" re-runs the same
-  shot step for step on a fresh Tiger. Measured (`fea-range --shots`, 2026-11-03): the game does
-  not repeat bit for bit (the chain and scars agreed; the crew's tissue and the surface blood
-  differed between the recording and the re-run, and between two re-runs), so "live here" is a
-  sibling outcome, not a copy, and says so on screen. Cause not found (reset state or iteration
-  order are candidates).
+  screen). Recorded frames are the renderer's own frames read back.
+  **Rewind** (2026-11-03, `src/game_fea_range/rewind.rs`, review-only; no play path builds one): a
+  backward seek puts back a checkpoint of the game's state kept at the end of each run frame
+  instead of re-running the shot. A checkpoint is the world save's own lossless owner state
+  (`game_world_state`, every field by name, encoded as the save encodes it) plus what the save does
+  not keep: the voxel tissue and its pieces, the FEA chain receipts, the game clock (the renderer's
+  `time`, which `Game::update` advances and reads) and the renderer's pressure fronts and wind. The
+  frame is then stepped again from the checkpoint before it, so its picture is the frame's own
+  update; a frame whose update was slow (the strike's solves, about 3 s) is put back, drawn from a
+  1 µs update and put back again (named in the status line). Not kept: the renderer's draw state,
+  sky and camera, and the grass about the camera. Cause of the earlier non-repeat (measured with
+  per-field checksums over three runs): `reset_match` leaves the game clock, the projectile serial,
+  the armour clock, the renderer's pressure fronts, the infantry and a few presentation counters
+  running on, and every range step began from whichever camera the previous frame left, while
+  the game reads the renderer camera as its eye and ears. The range now keeps its settled fresh
+  Tiger and puts it back for every run (and for the tape re-run), and poses the editor's camera
+  before every step. With that, three runs agree in all 361 checked fields at every frame, and the
+  tape re-run and a second re-run agree with the first run (`fea-range --shots`, 2026-11-03),
+  except three listener-side fields named and left out of the comparison
+  (`rewind::LISTENER_FIELDS`): the sound's room tracing (its import empties a per-frame job and
+  cache), and the player's hearing and first-person arms, which follow the sound. The shipping
+  `reset_match` is unchanged: a restarted match in play still starts from the running clock.
   Review-only display switches (EFFECTS, off by default in the range, the game unchanged): the
-  crewman's concussion defocus, the eye's flash afterimage and its local adaptation. With the
+  crewman's concussion defocus and the eye's flash afterimage. With the
   section on, a body solved on its cells also draws its inside cells within 1.5 cells of the plane
   (`crew_corpse_tissue::set_review_section`, set by the range alone), so the cut shows cells, not
   the inside of the drawn shell; the solve and the cells present are unchanged.
@@ -1407,9 +1423,9 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   moving on a wall or roof eight contacts past its budget is stopped where it is (named: no
   sliding or resting-contact solver). The rest of a sub-step after a contact is not flown (named:
   at most 2.1 ms per contact). Each segment's first 0.2 mm is not tested, so a burst born on the
-  struck plate's back face leaves it. A fragment cannot perforate any surface: thin sheet (a fuel
-  tank's wall, a radiator, the firewall) stops it as armour would (named; the layered chain
-  perforates components for the round itself only). A body 12 m from its frame's origin has left
+  struck plate's back face leaves it. Since 2026-11-03 a fragment goes through a thin part it
+  strikes (see "Every object inside stops or slows fragments" below); before, no surface could be
+  perforated and thin sheet stopped it as armour would. A body 12 m from its frame's origin has left
   the vehicle and is dropped (it meets no ground; named). The damage pass follows the same bodies
   and meets modules where a body's path, ended at the first surface and carried 3 cm on (named:
   the drawn face and the voxel envelope differ by up to a cell), enters their CAD-measured
@@ -1695,6 +1711,45 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     response is the owner's art direction, not a measured property. The droplets, the coat and the
     pools under the couch dead share it.
   - Not yet seen rendered (no renders while the owner works).
+- **Every object inside stops or slows fragments** (2026-11-03, `FragmentWorld::perforation`,
+  `game_fea::InteriorDamage`, `tools/tiger_game_part_components.py`; the owner: fragments passed
+  straight through the traverse gearing, and every object inside should stop or slow them and be
+  damaged by it).
+  - What was wrong: the fragments' surfaces were the hull, turret and gun meshes and a list of
+    hatches, periscopes, workshop parts and glass. The interior pieces drawn as meshes of their own
+    were not in it, so fragments flew through them in the simulation, not only on screen: both
+    handwheels (the gunner's elevation wheel and the commander's traverse flywheel over the
+    traverse gearbox), the TPZ needle, the driver's yoke and button, the radio set and the order
+    printer's head. They are now in it (the handwheels at rest about their hubs and the needle at
+    zero bearing: their turning is not followed; the radio set at its base, a moved dressing prop
+    not followed; named). The gearbox itself and the hydraulic drive are part of the turret mesh
+    and always stopped fragments. The live rounds are still met only as cartridges (the rack), not
+    as surfaces (named).
+  - Through a part: at each surface a fragment strikes, the part's thickness along its path is the
+    distance to the next surface ahead (its far face). It goes through when its kinetic energy
+    exceeds 400 MPa (named: the nominal cast and structural steels) times its face area times that
+    thickness, the embedding rule carried through the wall, and leaves the far face with the rest
+    of its energy along the same line. A part with no far face within 20 mm (the cabin's 25 mm and
+    thicker armour, solid parts, and open single-sided sheets: named) stops it as before, and so
+    does a measured component with a solid interior, which keeps what enters it. One strength for
+    every interior steel part (named: the sweep does not know which node it met).
+  - New components from the game's own meshes (closed-mesh volumes, envelopes by the CAD
+    voxeliser, casings and masses estimates): the commander's traverse gearbox (Turret_0137, kit
+    05J27) and flywheel (wheel2), the hydraulic traverse pedal (Turret_0068), the elevation gearbox
+    (Turret_0084, kit 06J56) and handwheel (wheel1), and the basket floor and its plates (TURRET
+    FLOOR, Turret_0007, Turret_0204); the basket's drive is the existing hydraulic traverse motor.
+    The basket floor's plates, about a cell thick, over-fill their 2 cm envelope by 18 % (named).
+    Not identified: the gunner's own traverse handwheel (Turret_0086, 'HAND', is a 1.75 m rail).
+  - Function: each strike's energy at a mechanism (a fragment's kinetic energy where it enters,
+    the round's where it crosses) is summed per part. A traverse gearbox struck turns the turret
+    stiffly in proportion, to a quarter of its free rate, and jams at 3 kJ like a jammed ring
+    (powered and hand traverse alike); its flywheel counts half. The elevation gearbox does the
+    same to the gun's elevation, jamming at 1.5 kJ, its handwheel counting half. The pedal is the
+    hydraulic drive's control (the module, as before); the floor records its strikes. Thresholds
+    authored (named: no damage-to-function data for these gears was found). Saved; not cleared by
+    the field repair yet (named).
+  - Not done: the struck parts do not yet change shape (no dents or bends drawn); the energy is
+    recorded for it.
 - **The round as a deformable body** (2026-11-03, `fea_damage::shot`, review film
   `fea-shot-film`; the owner: shells must squash, bend, ricochet and spin off the armour and break
   into shrapnel, each by its kind). Status: joined to play for perforations and ricochets. The round of a
@@ -4843,7 +4898,7 @@ No grade, no tint, no change to any emitter: both changes are to the eye's repro
 
 | Part | What the live code computes | Named approximation and source |
 | --- | --- | --- |
-| Local adaptation (`LOCAL_POOLING_SIGMA_DEG`, `LOCAL_SIMULTANEOUS_RANGE_LOG`, `LOCAL_ADAPTATION_STRENGTH`) | After the meter, each meter cell's mean photopic luminance (up to 4 x 4 pixels, 256 x 144 cells) is taken as log10 and pooled by a separable Gaussian of 0.428 deg (`eye_local.wgsl`, CPU twin `pool_log_luminance`). In the crush each pixel's cone term is scaled by Ferwerda's visibility-matching law at a local adaptation luminance log La = log A + k clamp(P - log Lm, -1.85, 1.85) instead of at the eye's A: TVI(A) / TVI(La) (`local_cone_gain`, generated into the shaders as `obs_local_cone_gain`). A eye's cone adaptation (lane 12), Lm the luminance metered this frame (lane 15), P the pooled log luminance, k = 0.5. A region at the metered level is shown as before; a decade darker is lifted 10^k, a decade brighter held down as much, never reordered. The rods keep their own local response (`rod_response`). Off under a fixed debug exposure. Identical in both presets. | Spatial extent: Vangorp, Myszkowski, Graf & Mantiuk 2015 (ACM TOG 34(6) 166), the wide term of their best model (sigma 0.428 deg, weight 0.654), pooled in the log domain as their model #7 does (their best model pools through fitted sigmoids; the 0.0824 deg term is below a pixel here; a cell is 4 x 4 pixels). Range: 3.7 log units of simultaneous range (Kunkel & Reinhard 2010, APGV; Jiang & Fairchild 2021 measured 3.3): a neighbourhood beyond half of it from the adapted level adapts no further. Strength k: a reproduction choice, the owner's to set. Single cones adapt on their own (MacLeod, Williams & Makous 1992) so at a fixated point in daylight it approaches 1, but the whole picture is shown at once while a crewman's gaze would have moved over it. `KESSEL_EYE_LOCAL=sigma_deg,strength` overrides both for review (strength 0: the single-state eye); no launcher sets it. The cone TVI is flat below 10^-2.6 cd/m^2, so at night the local cone term fades by itself (the site of adaptation moves to broader post-receptoral pools at low light, Dunn, Lankheet & Rieke 2007). Tests: `local_adaptation_tests`. |
+| Local adaptation (`LOCAL_POOLING_SIGMA_DEG`, `LOCAL_SIMULTANEOUS_RANGE_LOG`, `LOCAL_ADAPTATION_STRENGTH`) | After the meter, each meter cell's mean photopic luminance (up to 4 x 4 pixels, 256 x 144 cells) is taken as log10 and pooled by a separable Gaussian of 0.428 deg (`eye_local.wgsl`, CPU twin `pool_log_luminance`). In the crush each pixel's cone term is scaled by Ferwerda's visibility-matching law at a local adaptation luminance log La = log A + k clamp(P - log Lm, -1.85, 1.85) instead of at the eye's A: TVI(A) / TVI(La) (`local_cone_gain`, generated into the shaders as `obs_local_cone_gain`). A eye's cone adaptation (lane 12), Lm the luminance metered this frame (lane 15), P the pooled log luminance, k = 0 since 2026-11-03 (was 0.5; the owner found it flattened the picture, "we look like we are on low graphics mode"), so the shipped eye is the single-state eye and this term is inert unless `KESSEL_EYE_LOCAL` sets a strength for review. A region at the metered level is shown as before; a decade darker is lifted 10^k, a decade brighter held down as much, never reordered. The rods keep their own local response (`rod_response`). Off under a fixed debug exposure. Identical in both presets. | Spatial extent: Vangorp, Myszkowski, Graf & Mantiuk 2015 (ACM TOG 34(6) 166), the wide term of their best model (sigma 0.428 deg, weight 0.654), pooled in the log domain as their model #7 does (their best model pools through fitted sigmoids; the 0.0824 deg term is below a pixel here; a cell is 4 x 4 pixels). Range: 3.7 log units of simultaneous range (Kunkel & Reinhard 2010, APGV; Jiang & Fairchild 2021 measured 3.3): a neighbourhood beyond half of it from the adapted level adapts no further. Strength k: a reproduction choice, the owner's to set. Single cones adapt on their own (MacLeod, Williams & Makous 1992) so at a fixated point in daylight it approaches 1, but the whole picture is shown at once while a crewman's gaze would have moved over it. `KESSEL_EYE_LOCAL=sigma_deg,strength` overrides both for review (strength 0: the single-state eye); no launcher sets it. The cone TVI is flat below 10^-2.6 cd/m^2, so at night the local cone term fades by itself (the site of adaptation moves to broader post-receptoral pools at low light, Dunn, Lankheet & Rieke 2007). Tests: `local_adaptation_tests`. |
 | A step into daylight (`OUTSIDE_DAZZLE_FROM_LOG` 0.2, `OUTSIDE_DAZZLE_RAMP_LOG` 0.3, `OUTSIDE_DAZZLE_MESOPIC_FROM` 0.75) | Outside the hull and at the optics the neural adaptation rising toward a target more than 0.2 decades above it relaxes toward the dazzle time constant (0.6 s, full from 0.5 decades), in proportion to how photopic the target is (the CIE 191 mesopic coefficient from 0.75, about 0.9 cd/m^2, to 1, 5 cd/m^2); inside the hull the 2026-10-28 rule stands (from 0.5 decades, full at 1.0). Below the onset, and toward a mesopic or scotopic target, the owner's comfortable 4.5 s stands, so an outdoor glance between sky and snow does not swing the picture and a fire's glow over the night field does not cost the night for seconds after it dies. Before: climbing out of the cupola into the noon snow held 60 % of the frame at white a quarter second out, 47 % at one second, 26 % at three, 11 % at six. | Light adaptation to a photopic step up does most of its work in the first second (Crawford 1947, Proc. R. Soc. B 134:283; Baker 1949, J. Opt. Soc. Am. 39:172), measured with photopic fields; the 0.6 s is the existing dazzle constant. The onset and the mesopic gate are design bounds named here; outdoors no `inside_meter` damping stands in front of the rate. Test: `a_flash_dazzles_briefly_and_a_step_into_daylight_recovers_within_seconds`. |
 | A weapon's flash acts through its afterimage only | While the meter registers a flash (a transient source, a field-energy onset and bright cells 30 times the adaptation), the neural rise keeps the comfortable rate: the dazzle rate is not applied on top of the flash-blindness fit (lanes 10-11). | The recovery fit of the 1968 flash-blindness review already is the eye's response to a flash of that energy; under the dazzle rate a night muzzle flash's 83 ms raised the neural state 0.45 decades, which then fell at the 6 s dark rate (counted twice). |
 | The snap holds a quarter second (`SNAP_HOLD_S` 0.25, lane 31) | A view's snap to its field (its first frame; an optic's eye returned to after `OPTIC_RESNAP_GAP_S`) repeats for 0.25 s of frames. | Scheduling of the snap only (`Eye::adapted` of each frame). A view's first frames come from temporal histories as old as its last use: the TZF at night first metered 2.8 cd/m^2 of the noon it last saw, snapped and bleached its cones to it (adaptation 2,000 cd/m^2 falling to 25 and held there by the bleach) and stayed black for the minute (eye-review, 2026-11-03). |
@@ -4876,3 +4931,31 @@ below about 1 cd/m^2 the cone TVI flattens and the rods carry the picture, so th
 is small there by the law, and the dark ground beside the fires stays dark (the fires' veil, 2
 November). Cost: `eye-local` 0.012 ms a frame (gfxbench-drive, 1200 frames, KESSEL_GPU_PROFILE=1),
 `crush` +0.001 ms, `exposure` unchanged at 0.415 ms.
+
+## The gun's fumes in the crew compartment, 2026-11-03 (`src/cabin_fumes.rs`; `rm_medium.wgsl` `rm_fume_density`, `rm_case_plume`, `rm_gas_density`)
+
+The owner, of a range still with sunlit haze in the turret: a lighter haze should leave the breech as
+the spent case is pulled, the case should go on venting for about three seconds wherever it is, many
+shots should stack as in a real Tiger, and the fan up top should draw the haze out slowly. Before
+this a shot added a flat 0.11 of the cabin haze at the trigger (with the breech shut) and the breech's
+opening 0.035, drained linearly at 0.03 a second: one shot was gone in a few seconds and nothing
+stacked. Those kicks are removed; `interior_haze` now carries only a hit's residue.
+
+Sources. Foreign Military Studies P-002 "Tank ventilation" (via kamenn.eu): in the Tiger, roof
+ventilator drawing, hatches shut, empties left inside, carbon monoxide stood at 0.05-0.1 % after each
+shot and fell to practically nothing one to two minutes after firing stopped; lidding each case as it
+came out improved it; the powder gas is about half carbon monoxide. The turret ventilator is rated at
+12 m³ a minute (the Tiger turret manual, via tiger1.info). It runs while the engine turns, as its hum
+does (`game_acoustics`).
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| Two zones | Litres of undiluted fume in an upper layer (the turret air above 2.00 turret-frame units, a little over the breech, `LAYER_Y`) and a lower one, in the 10 m³ of free air (`fea_damage::compartment::TIGER_CREW_AIR_M3`, named there). Fresh fume is hot and rises into the upper layer; the fan's 0.2 m³/s and the hull's leakage draw from it while the same flow comes in low and rises through the interface; 0.05 m³/s exchanges the layers; an open hatch exchanges 0.05 m³/s with the outside on its layer (the cupola, loader's and escape hatches upper, driver's and radio operator's lower; open past half travel). Integrated in 50 ms steps. The upper layer's share of the air is measured from the source compartments (`cabin_medium::Medium::volume_split`). | A zone model: each layer well mixed, a fixed interface 15 cm thick, the fume a passive tracer once in a layer (no cooling of the layer, no deposition on the walls). Estimates: the interface height, the exchange 0.05 m³/s, the leakage half an air change an hour, the hatch exchange (buoyant exchange through a 0.5 m opening with Δρ/ρ 0.15, 0.035 m³/s, rounded up for wind). Test: a shot's fume is of P-002's measured carbon monoxide (0.04 % against 0.05-0.1 %, a factor of two allowed); five shots stack; the fan clears them to 5 % in 45-150 s (P-002: one to two minutes); buttoned with the engine off they stay; an open hatch clears faster; the fume is conserved until the air carries it out. |
+| The breech puff | Nothing leaves while the block stays shut after the shot (the owner, 2026-11-03): the bore's gas is released only once the block is open (the loader's lever past its open threshold, the solo crew's opening, the lone survivor's fumble), the case's venting only as it is drawn out (test `fume_leaves_only_an_opened_breech`). When the block opens on a fired case, 5 L of the bore's gas leave the breech; the drawn puff (`rm_gas_density`, the shape's axes unchanged) carries the fume not yet spread, at its centre the fume over the shape's volume-weighted fill (`PUFF_PROFILE_MOMENT`, its profile integrated), at most undiluted; the fume passes to the upper layer with a 0.7 s e-folding as the puff spreads. The fan's sink flow (0.2 m³/s through a hemisphere about the intake under the roof, `sink_velocity`) carries the puff toward the intake by its age. The former fixed envelope (0.30 cap, a fade from 1.2 to 2.2 s) is removed. | Estimates: 5 L (the 8.8 cm L/56 bore, 30 L, and a 4 L chamber of gas at ambient pressure near 1,000 K is about 10 L at 293 K; half leaves rearward), the 0.7 s spreading time. The puff's shape and growth stay authored; the sink is a point sink in a flat open roof. The puffs' shared saturation at 0.6 /m (`rm_puff_extinction`) still holds it, so its first second is drawn lighter than its fume (up to 17 /m). |
+| The case venting | Each case drawn out of the breech (the loader's pull and the crew's ejection) carries 3 L of fume and vents it from its mouth with a 1 s e-folding, ended at 3.5 s, wherever its body is: in the hands, the rack, on the floor; inside the hull's box its fume joins the upper layer. It is drawn as a pure buoyant plume from the mouth (Morton, Taylor and Turner: half-width 1.2 alpha (z + z0) with alpha 0.1, centreline concentration (z0 / (z + z0))^(5/3) of the mouth's, Gaussian across), its strength at the mouth the undiluted fume's extinction times the source flux to the two-thirds, leaning with the fan's sink flow against a 0.3 m/s rise, ending where it meets the upper layer. | Estimates: 3 L (the case's 5.5 L of hot gas, about 1.6 L at 293 K, and its residue's first seconds), the 1 s e-folding (the owner's three seconds; a buoyant exchange through the 81 mm mouth is of that order), the rise speed. Similarity profiles from the mouth, a straight leaning axis; a case thrown out of the hull vents into the open, undrawn. The reload fixture (`debug_reload`) never opens the block and releases no fume. |
+| Visibility | The layers and plumes add to the cabin haze's extinction inside the cabin domain (its scattering: albedo 0.8, asymmetry 0.55); the undiluted fume's extinction is 17 /m. | Estimate; no measured smoke yield of the propellant was found. The chain: 0.5 % of the Pzgr 39's 2.5 kg charge (JH.Dv. 481/60, via Wikipedia) taken as smoke-forming (the flash reducer's potassium salts and residue; flash-reducer patents note those salts make the smoke), 12.5 g a shot; the compartment's share is its 8 L of the charge's ~2,200 L of gas at 293 K, 0.36 %, about 45 mg; a fine salt smoke's mass extinction taken as 3 m²/g. A case mouth's 8 cm of fume is nearly opaque; one shot spread through the compartment is 0.014 /m, under the roof right after it about ten times that. |
+
+Not yet: the hit residue (`interior_haze`) and a fire's soot (`interior_soot`) still drain linearly
+at the old fan and hatch rates, not through this zone model; machine-gun fumes are not modelled.
+No render has checked the look yet (the owner's editor holds the GPU); `cargo run -- haze` and
+`fx-review` stills will.

@@ -4715,6 +4715,37 @@ impl<'a> FragmentWorld<'a> {
         out
     }
 
+    /// Whether a fragment of edge `size` moving at `vel` (its frame) through the surface it struck
+    /// at `at` goes through the part (2026-11-03, the owner: every object inside stops or slows
+    /// fragments). The part's thickness along the path is the distance to the next surface ahead,
+    /// its far face; a part with none within `PART_PERFORATION_MAX_M` (a thick or solid part, or an
+    /// open sheet with no far face: named) stops it, and so does a measured component with a solid
+    /// interior, which keeps what enters it. Otherwise it goes through when its kinetic energy
+    /// exceeds the flow stress times its face area times that thickness: the embedding rule
+    /// (`fea_damage::fragments::embed_depth`) carried through the wall. Returns the exit point
+    /// and the work done on the part.
+    fn perforation(&self, frame: BloodFrame, at: Vec3, vel: Vec3, size: f32) -> Option<(Vec3, f32)> {
+        use crate::fea_damage::components::{Interior, COMPONENT_SPECS};
+        let surfaces = self.surfaces.as_ref()?;
+        let speed = vel.length();
+        if speed < 1.0 || size <= 0.0 {
+            return None;
+        }
+        let dir = vel / speed;
+        if self.components_entered(frame, at, at + dir * HOT_FRAGMENT_COMPONENT_REACH_M, 0.0).iter()
+            .any(|&(_, spec)| !matches!(COMPONENT_SPECS[spec].interior, Interior::Empty)) {
+            return None;
+        }
+        let i = blood_frame_index(frame);
+        let start = at + dir * PART_FACE_SKIP_M;
+        let far = at + dir * PART_PERFORATION_MAX_M;
+        let contact = surfaces.sweep(self.parent[i].transform_point3(start), self.parent[i].transform_point3(far))?;
+        let thickness = PART_FACE_SKIP_M + contact.fraction * (PART_PERFORATION_MAX_M - PART_FACE_SKIP_M);
+        let energy = 0.5 * crate::fea_damage::fragments::cube_mass(size) * speed * speed;
+        let work = PART_FLOW_STRESS_PA * size * size * thickness;
+        (energy > work).then_some((at + dir * thickness, work))
+    }
+
     /// The modules those components stand for (`game_fea::module_for_system`), nearest first.
     fn modules_of(entered: &[(f32, usize)]) -> Vec<(f32, ModuleKind)> {
         let mut out: Vec<(f32, ModuleKind)> = Vec::new();
@@ -4728,6 +4759,14 @@ impl<'a> FragmentWorld<'a> {
     }
 }
 
+/// A part thicker than this along a fragment's path stops it (named; the cabin's armour is 25 mm and
+/// more, its fittings sheet, castings and handwheels a few millimetres to a centimetre or two).
+const PART_PERFORATION_MAX_M: f32 = 0.02;
+/// The first tenth of a millimetre past a struck face is not searched for the far face.
+const PART_FACE_SKIP_M: f32 = 1.0e-4;
+/// Flow stress of the interior's steel parts against a fragment going through (named: the nominal
+/// cast and structural steels of docs/fea/tiger_materials.csv, 250-400 MPa, at the upper end).
+const PART_FLOW_STRESS_PA: f32 = 400.0e6;
 /// A fragment's flight between surface tests is at most this long (one swept segment).
 const HOT_FRAGMENT_SWEEP_STEP_M: f32 = 0.25;
 /// Each swept segment's first fifth of a millimetre is not tested (a body born on a face leaves it).
@@ -4803,6 +4842,27 @@ fn integrate_hot_fragment_traced(
         fragment.ang += fragment.spin * step_dt;
         let to = from + fragment.vel * step_dt;
         let (end, surface) = match world.first_surface(fragment.frame, from, to) {
+            Some((fraction, _)) if world.perforation(fragment.frame, from.lerp(to, fraction), fragment.vel, fragment.size).is_some() => {
+                // Through the part it struck, slowed by the work it did on it.
+                let at = from.lerp(to, fraction);
+                let (exit, work) = world.perforation(fragment.frame, at, fragment.vel, fragment.size).unwrap();
+                let speed = fragment.vel.length();
+                let energy = 0.5 * crate::fea_damage::fragments::cube_mass(fragment.size) * speed * speed;
+                let dir = fragment.vel / speed;
+                fragment.vel *= ((energy - work) / energy).max(0.0).sqrt();
+                fragment.pos = exit + dir * (radius + HOT_FRAGMENT_CONTACT_GAP_M);
+                // The renderer draws only history since the far face, never a beam through the part.
+                fragment.prev_pos = fragment.pos;
+                fragment.spin *= 0.8;
+                fragment.bounces = fragment.bounces.saturating_add(1);
+                *collision_count = collision_count.saturating_add(1);
+                if collisions.len() < MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME {
+                    let normal = -dir;
+                    collisions.push(HotFragmentCollision { turret_local: fragment.frame == BloodFrame::Turret,
+                        local_pos: at, local_normal: normal, speed, seed: fragment.seed, bounce_count: fragment.bounces });
+                }
+                (at, true)
+            }
             Some((fraction, normal)) => {
                 let at = from.lerp(to, fraction);
                 fragment.pos = at + normal * (radius + HOT_FRAGMENT_CONTACT_GAP_M);
@@ -6422,20 +6482,20 @@ struct BreechGasSample {
     strength: f32,
 }
 
-/// The soft bore-gas emitter in gun-local space. Density is intentionally low: the renderer gives
-/// it coherent billowing/parallax while this envelope ensures it never becomes an opaque smoke ball.
-fn breech_gas_sample(age: f32) -> Option<BreechGasSample> {
+/// The bore-gas emitter in gun-local space. `extinction` is the puff's at its centre
+/// (`cabin_fumes::CabinFumes::breech_extinction`: its unspread fume over the drawn shape, thinning as
+/// it spreads); the block's opening ramps it in over 80 ms.
+fn breech_gas_sample(age: f32, extinction: f32) -> Option<BreechGasSample> {
     if !(0.0..BREECH_GAS_DUR).contains(&age) {
         return None;
     }
     let attack = smoothstep(0.0, 0.08, age);
-    let release = 1.0 - smoothstep(0.48, BREECH_GAS_DUR, age);
     Some(BreechGasSample {
         // Rear face of the recoiling 8.8 cm breech; transformed by visual_gun_model at draw time.
         emitter: Vec3::new(0.0, 0.08, -1.06),
         direction: Vec3::new(0.0, 0.24, -1.0).normalize(),
         age,
-        strength: 0.30 * attack * release,
+        strength: extinction.max(0.0) / crate::cabin_fumes::PUFF_DENSITY_TO_EXTINCTION * attack,
     })
 }
 
@@ -6986,6 +7046,9 @@ pub struct SpallResult {
     /// The hottest fragment that struck each man (K): his crew peer id, or None for the solo
     /// player's body (`fea_damage::ignition::clothing_chance`).
     pub clothing: Vec<(Option<u32>, f32)>,
+    /// The interior mechanisms the fragments and the round met, and the energy each brought
+    /// (`game_fea::InteriorDamage`): (`components::COMPONENT_SPECS` index, J), once per body.
+    pub part_strikes: Vec<(usize, f32)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -7379,6 +7442,7 @@ fn resolve_fragment_damage(
         let mut contacted_parts_by_body = vec![0u16; couch_bodies.len()];
         // One ignition trial per component per fragment.
         let mut tried_components = 0u64;
+        let mut struck_parts = 0u64;
         while fragment.active
             && !fragment.settled
             && fragment.age < fragment.life.min(HOT_FRAGMENT_DAMAGE_MAX_S)
@@ -7497,6 +7561,13 @@ fn resolve_fragment_damage(
                 let entered = FragmentWorld::modules_of(&components_entered);
                 // What burns in a component it enters (`fea_damage::ignition`): the entry, with the
                 // fragment's temperature there; the strike's trials follow (`SpallResult::ignite`).
+                for &(_, spec) in &components_entered {
+                    let bit = 1u64 << spec;
+                    if game_fea::InteriorDamage::tracks(spec) && struck_parts & bit == 0 {
+                        struck_parts |= bit;
+                        result.part_strikes.push((spec, energy));
+                    }
+                }
                 for &(fraction, spec) in &components_entered {
                     let bit = 1u64 << spec;
                     if tried_components & bit != 0 || energy < ignition_casing_j(spec) {
@@ -9903,12 +9974,13 @@ pub struct Game {
     walk_pos: Vec3,
     loader_crouch_t: f32, // held Ctrl lowers the actual cabin eye/body
     walk_sounds: footsteps::Cadence,
-    /// INTERIOR HAZE (0..1): propellant smoke fills the buttoned-up fighting compartment. A shot
-    /// adds a little (muzzle backdraft); OPENING THE BREECH to reload adds the big puff (gas vents
-    /// off the hot casing). The bore-evacuator FAN drains a steady rate; an OPEN HATCH vents it
-    /// fast (natural draft). Rapid sustained fire without venting → you're firing blind in your own
-    /// smoke. Pushed to the crush veil, gated by being buttoned up inside.
+    /// INTERIOR HAZE (0..1): the residue a hit's pressure front leaves in the compartment's air,
+    /// drained by the fan and an open hatch (`update_haze`). The gun's own fumes are
+    /// `cabin_fumes`. Pushed to the crush veil, gated by being buttoned up inside.
     interior_haze: f32,
+    /// The gun's fumes in the crew compartment: the breech's puff and the spent cases venting,
+    /// layered under the roof and drawn out by the turret ventilator (`cabin_fumes.rs`).
+    cabin_fumes: crate::cabin_fumes::CabinFumes,
     /// A fire's soot in the cabin air, 0..1: dark and absorbing, built by the fire's heat in the
     /// enclosure over time and drained by the fan and open hatches (`update_haze`).
     interior_soot: f32,
@@ -13006,6 +13078,19 @@ impl Game {
         // by the live articulated frame. The source scene and its authored hinges remain unchanged.
         let cupola_spindle_source = scene[slots.hatchlever].clone().transformed(
             Mat4::from_translation(HATCHLEVER_POS - CUPOLA_HINGE));
+        // Interior pieces drawn as their own meshes stand in a fragment's way like the rest
+        // (2026-11-03, the owner: fragments passed straight through the handwheels): the two
+        // handwheels about their hubs at rest (their turning is not followed: named), the TPZ
+        // needle at its dial (zero bearing, its drawn thinning not followed: named), the radio set
+        // at its base (a moved dressing prop not followed: named). The yoke, its button and the
+        // order printer's head are authored in their frames.
+        let wheel1_source = scene[slots.wheel1].clone()
+            .transformed(Mat4::from_translation(crate::interior_rig::WHEEL1_POS));
+        let wheel2_source = scene[slots.wheel2].clone()
+            .transformed(Mat4::from_translation(crate::interior_rig::WHEEL2_POS));
+        let tpz_needle_source = scene[slots.tpz_needle].clone()
+            .transformed(Mat4::from_translation(crate::interior_rig::TPZ_NEEDLE_POS));
+        let enigma_source = scene[slots.enigma].clone().transformed(enigma_radio_model(Mat4::IDENTITY));
         let player_fire_surfaces = std::array::from_fn(|part|
             wreck_surface_fire::Surface::from_mesh(&scene[slots.tiger[part]]));
         let mut fire_surfaces = vec![
@@ -13035,6 +13120,9 @@ impl Game {
         for (frame, slot) in slots.tiger_glass.iter().enumerate() {
             if let Some(slot)=slot {fire_surfaces.push((frame, &scene[*slot]));}
         }
+        fire_surfaces.extend([(1, &wheel1_source), (1, &wheel2_source), (1, &tpz_needle_source), (0, &enigma_source),
+            (0, &scene[slots.driver_controls[0]]), (0, &scene[slots.driver_controls[1]]),
+            (1, &scene[slots.order_printer_head])]);
         // Armor-only source cache excludes cabin equipment, crew, ammunition and glass.
         let mut armor_surfaces=vec![(0,&scene[slots.tiger[0]]),(1,&scene[slots.tiger[1]]),
             (3,&scene[slots.roof_hatches[0]]),(4,&scene[slots.roof_hatches[1]]),
@@ -14487,6 +14575,7 @@ impl Game {
             hover_hatch: false,
             hover_lever: false,
             interior_haze: 0.0,
+            cabin_fumes: Default::default(),
             interior_soot: 0.0,
             weather_baseline: None,
             weather_view: crate::weather_visibility::WeatherView::default(),
@@ -17213,8 +17302,11 @@ impl Game {
             // engine dead, a hydraulic fault — the gunner cranks the handwheel ("Wer keines hat,
             // würgt mit der Hand", TF p.63): check valves let the oil bypass, so the hand drive
             // always works. Only a jammed or wrecked ring stops the turret outright.
+            // A jammed traverse gearbox stops the turret like a jammed ring; a struck one turns it
+            // stiffly (`game_fea::InteriorDamage`).
             let ring_blocked = matches!(self.module_fault(ModuleKind::TurretTraverse),
-                tiger_damage::Fault::RingJammed | tiger_damage::Fault::RingWrecked);
+                tiger_damage::Fault::RingJammed | tiger_damage::Fault::RingWrecked)
+                || self.fea.interior.traverse_jammed();
             let powered = self.engine_running()
                 && self.module_ok(ModuleKind::TurretTraverse);
             let traverse = if !lay_ok || ring_blocked {
@@ -17223,13 +17315,14 @@ impl Game {
                 chase_yaw
             } else {
                 chase_yaw.clamp(-HAND_TRAVERSE_FRACTION, HAND_TRAVERSE_FRACTION)
-            };
+            } * self.fea.interior.traverse_factor();
             // A leaking recoil brake only cuts the firing circuit; the gun still elevates. A
             // sheared mount leaves it stuck in recoil (Zabel), as other gun damage always did.
-            let gun_elevates = self.module_ok(ModuleKind::MainGun)
-                || self.module_fault(ModuleKind::MainGun) == tiger_damage::Fault::RecoilLeak;
+            let gun_elevates = (self.module_ok(ModuleKind::MainGun)
+                || self.module_fault(ModuleKind::MainGun) == tiger_damage::Fault::RecoilLeak)
+                && !self.fea.interior.elevation_jammed();
             let elevate = if lay_ok && gun_elevates {
-                chase_pitch
+                chase_pitch * self.fea.interior.elevation_factor()
             } else {
                 0.0
             };
@@ -19758,18 +19851,18 @@ impl Game {
         self.bore_smoke_pending = true;
     }
 
-    /// Consume the single trapped-gas charge belonging to the most recent shot. The independent
-    /// cubes carry the immediate visual; the smaller haze addition is the smoke that remains after
-    /// the grains have dispersed into the sealed compartment.
+    /// Consume the single trapped-gas charge belonging to the most recent shot: the block opens and
+    /// the bore's blowback leaves the breech as a puff, which spreads into the compartment's air
+    /// under the roof (`cabin_fumes`). Called only where the block has opened: until then the gas
+    /// stays sealed in the bore and the case (the owner, 2026-11-03; test
+    /// `fume_leaves_only_an_opened_breech`).
     fn vent_bore_smoke(&mut self) {
         if !self.bore_smoke_pending {
             return;
         }
         self.bore_smoke_pending = false;
         self.breech_gas_t = BREECH_GAS_DUR;
-        // Most of the visible discharge is the local volume at the block. Only a faint remainder
-        // joins the cabin atmosphere; the old 0.11 dose made one reload fog the entire compartment.
-        self.interior_haze = (self.interior_haze + 0.035).min(1.0);
+        self.cabin_fumes.breech_opened();
     }
 
     /// Headless auto-crew: the scripted Tiger opponent (playtest / duel / trainer) services the
@@ -19800,10 +19893,11 @@ impl Game {
             Breech::Spent => {
                 // Lone survivor freeing the hot casing: a short fumble while posted at the breech.
                 self.eject_t += dt;
-                if self.lever_open < LEVER_OPEN && self.bore_smoke_pending {
+                self.lever_open = 1.0; // the auto path throws the lever as part of the fumble
+                // The block open releases the bore's gas, sealed until now.
+                if self.lever_open >= LEVER_OPEN && self.bore_smoke_pending {
                     self.vent_bore_smoke();
                 }
-                self.lever_open = 1.0; // the auto path throws the lever as part of the fumble
                 if self.eject_t >= EJECT_FUMBLE && self.can_spawn_casing() {
                     self.eject_t = 0.0;
                     self.breech = Breech::Empty;
@@ -19872,6 +19966,7 @@ impl Game {
             + Vec3::Y * (0.65 + 0.35 * s(2)) + back * (2.0 + 0.60 * s(3));
         let Some(k) = self.spawn_casing_from(position, velocity) else { return; };
         self.casings[k].rotation = rotation.normalize();
+        self.cabin_fumes.case_freed(k);
         // The solo crew's loader stows the empty upright in the rear rack unless he is rushed,
         // hurt, or the rack is full; then it tumbles as before.
         self.crew_solo_offer_stow(k, position, rotation.normalize());
@@ -20723,9 +20818,33 @@ impl Game {
         let (_, _, enclosure_heat) = self.cabin_fire.enclosure_diagnostics(&self.fire_surface_models());
         // A fire's smoke is its own soot (dark, absorbing), built by the enclosure's heat over time
         // (2026-11-02, the owner: fires need time to build up smoke, much darker than a
-        // penetration's); the gun fumes' light haze only drains here.
+        // penetration's); a hit's residue haze only drains here (the gun's fumes: `cabin_fumes`).
         self.interior_soot = (self.interior_soot + (enclosure_heat * 0.38 - drain) * dt).clamp(0.0, 1.0);
         self.interior_haze = (self.interior_haze - drain * dt).clamp(0.0, 1.0);
+        self.update_cabin_fumes(dt);
+    }
+
+    /// The gun's fumes: the ventilator runs off the generator while the engine turns (as its hum,
+    /// `game_acoustics`); a hatch counts open past half its travel (as `game_fea::crew_openings`).
+    fn update_cabin_fumes(&mut self, dt: f32) {
+        let lids = self.roof_hatches.phase;
+        let open = |phase: f32| u32::from(phase > 0.5);
+        // tiger_hatches order: the driver's, the loader's, the radio operator's, the turret's escape.
+        let air = crate::cabin_fumes::Air {
+            fan: self.engine_on && self.player.alive,
+            upper_hatches: open(lids[1]) + open(lids[3]) + open(self.hatch_t),
+            lower_hatches: open(lids[0]) + open(lids[2]),
+        };
+        let hull_inverse = self.player.hull_model().inverse();
+        let casings = &self.casings;
+        self.cabin_fumes.step(dt, air, |k| {
+            let c = casings.get(k).filter(|c| c.active)?;
+            let mouth = c.pos + c.rotation * (Vec3::Z * SPENT_CASE_HALF_LENGTH);
+            // Inside the hull's box (as the range's inside test): its fume is the compartment's.
+            let local = hull_inverse.transform_point3(mouth);
+            let aboard = local.x.abs() < 1.6 && local.y > 0.4 && local.y < 2.9 && local.z > -3.2 && local.z < 3.4;
+            Some((mouth, aboard))
+        });
     }
 
     fn fire_surface_models(&self) -> [Mat4; surface_fire::FRAMES] {
@@ -23837,6 +23956,7 @@ impl Game {
     pub fn debug_reload(&mut self) {
         // This explicit fixture creates a replacement serviceable cartridge. Ordinary reloads
         // always move the existing rack/held round through transfer_cartridge_state instead.
+        // The fixture never opens the block, so the fired case's gas stays sealed: no fume.
         self.cartridge_primers.consume(cartridge_primer::CHAMBER);
         self.breech = Breech::Loaded;
         self.lever_open = 0.0; // headless force: breech closed and ready
@@ -24423,6 +24543,7 @@ impl Game {
         self.bore_smoke_pending = false;
         self.breech_gas_t = 0.0;
         self.interior_haze = 0.0;
+        self.cabin_fumes = Default::default();
         self.interior_soot = 0.0;
         self.ram = 0.0;
         self.eject_t = 0.0;
@@ -26120,6 +26241,10 @@ impl Game {
     pub fn haze_level(&self) -> f32 {
         self.interior_haze
     }
+    /// The gun's fumes in the crew compartment: their mean extinction, /m (`cabin_fumes`).
+    pub fn gun_fume_level(&self) -> f32 {
+        self.cabin_fumes.mean_extinction()
+    }
     /// Is the interior fire alight?
     pub fn is_fire_active(&self) -> bool {
         self.fire_active
@@ -27698,7 +27823,7 @@ impl Game {
         self.fx.muzzle_t = 0.09;
         self.fx.smoke_t = 1.4;
         self.fx.smoke_dur = 1.4;
-        self.interior_haze = (self.interior_haze + 0.11).min(1.0);
+        // The breech is shut at the shot: the fumes enter when it opens (`vent_bore_smoke`).
         self.gun_shots = sequence;
         if let Some(audio)=&self.audio {audio.soundscape_main_gun_fired();}
         if let Some(runtime) = self.campaign.as_mut() {
@@ -27898,7 +28023,6 @@ impl Game {
         self.fx.muzzle_t = 0.09;
         self.fx.smoke_t = 1.4; // slow drifting plume at the muzzle
         self.fx.smoke_dur = 1.4;
-        self.interior_haze = (self.interior_haze + 0.11).min(1.0); // muzzle backdraft into the compartment
         self.fx.tracer_active = true;
         self.fx.tracer_t = 0.0;
         // REAL time of flight from the ballistic solve when a tank was struck (the 88 takes ~0.66 s
@@ -29803,6 +29927,7 @@ impl Game {
         // path through crew and live rounds (`game_fea`).
         self.fea_penetration_consequences(entry_w, shell_dir_w, &ev, armor_part, penetration_id, frame,
             body, &couch_bodies, &live_ammunition, burst_fragment_kinetic_j, &mut result, &mut contacts);
+        self.fea_apply_part_strikes(&result.part_strikes);
         result.ignite(penetration_id);
         // The player's own clothing, struck by a hot fragment (`fea_damage::ignition::CLOTHING`).
         let player_peer = if self.singleplayer_crew_active {
@@ -31983,15 +32108,18 @@ impl Game {
         // Opening the fired breech vents a light, continuous propellant-gas volume from the rear
         // face of the moving gun group. This deliberately does not consume a cubic-soot page.
         let breech_age = BREECH_GAS_DUR - self.breech_gas_t;
-        if let Some(gas) = breech_gas_sample(breech_age) {
+        if let Some(gas) = breech_gas_sample(breech_age, self.cabin_fumes.breech_extinction()) {
             let gun = self.player.visual_gun_model();
+            let emitter = gun.transform_point3(gas.emitter);
+            // The ventilator's sink flow carries the puff toward its intake.
             r.set_breech_gas(
-                gun.transform_point3(gas.emitter),
+                emitter + self.cabin_fumes.breech_drift(emitter, self.player.turret_model()),
                 gun.transform_vector3(gas.direction).normalize_or_zero(),
                 gas.age,
                 gas.strength,
             );
         }
+        r.cabin_fumes = self.cabin_fumes.lanes(self.player.turret_model());
         // A detonation throws a dirty hot cloud behind the white core. It starts compact and rides
         // the same wind field as fire and weather, making the blast feel anchored in the scene.
         for (i, b) in self.blasts.iter().enumerate() {
@@ -38935,6 +39063,47 @@ mod tests {
     }
 
     #[test]
+    fn a_fast_fragment_goes_through_a_thin_part_slowed_and_a_thick_one_stops_it() {
+        let hf = crate::terrain::Heightfield { res: 2, spacing: 1000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0,
+            openings: Default::default(), detail: None };
+        let tank = Tank::new(0.0, 0.0, 0.0, &hf, crate::tank::TIGER_PARTS);
+        let mut models = [Mat4::IDENTITY; surface_fire::FRAMES];
+        models[0] = tank.hull_model();
+        models[1] = tank.turret_model();
+        // A 3 mm sheet and, a metre on, a 50 mm block, both across the fragment's path (turret frame,
+        // clear of every measured component).
+        let sheet = crate::prims::box_mesh(Vec3::new(-0.2, 2.2, -1.2), Vec3::new(0.2, 2.6, -1.197), [90; 3]);
+        let block = crate::prims::box_mesh(Vec3::new(-0.2, 2.2, -0.2), Vec3::new(0.2, 2.6, -0.15), [90; 3]);
+        let source = surface_fire::CabinFire::new(&[(1, &sheet), (1, &block)]);
+        let world = FragmentWorld::new(&source, &models, &tank,
+            crate::fea_damage::components::Articulation::rest(tank.parts.turret_pivot));
+        let fly = |speed: f32| {
+            let mut fragment = HotFragment { active: true, frame: BloodFrame::Turret, pos: Vec3::new(0.0, 2.4, -1.4),
+                vel: Vec3::new(0.0, 0.0, speed), size: 0.01, life: 1.0, ..HotFragment::default() };
+            let (mut collisions, mut count) = (Vec::new(), 0);
+            for _ in 0..40 {
+                integrate_hot_fragment(&mut fragment, 1.0 / 480.0, &mut collisions, &mut count, &world);
+            }
+            fragment
+        };
+        // 1 cm of steel at 500 m/s carries 980 J; the sheet takes 400 MPa x 1 cm² x 3 mm = 120 J.
+        let fast = fly(500.0);
+        assert!(fast.pos.z > -1.19 && fast.pos.z < -0.2, "through the sheet, stopped by the block: {:?}", fast.pos);
+        assert!(fast.bounces >= 2);
+        // 100 m/s carries 39 J: the sheet stops or turns it.
+        let slow = fly(100.0);
+        assert!(slow.pos.z < -1.2, "the sheet holds a slow fragment: {:?}", slow.pos);
+        // Through the sheet it keeps sqrt(1 - 120/980) of its speed, about 94 per cent.
+        let mut once = HotFragment { active: true, frame: BloodFrame::Turret, pos: Vec3::new(0.0, 2.4, -1.21),
+            vel: Vec3::new(0.0, 0.0, 500.0), size: 0.01, life: 1.0, ..HotFragment::default() };
+        let (mut collisions, mut count) = (Vec::new(), 0);
+        integrate_hot_fragment(&mut once, 1.0 / 4800.0, &mut collisions, &mut count, &world);
+        assert!(once.pos.z > -1.197, "{:?}", once.pos);
+        let kept = once.vel.length() / 500.0;
+        assert!((0.90..0.97).contains(&kept), "{kept}");
+    }
+
+    #[test]
     fn high_speed_hot_steel_cannot_tunnel_through_breech_and_retires_bounded() {
         // The block is a source surface in the turret frame (the fragment world's triangles).
         let hf = crate::terrain::Heightfield { res: 2, spacing: 1000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0,
@@ -39997,15 +40166,17 @@ mod tests {
 
     #[test]
     fn breech_gas_is_a_light_finite_volume_not_a_cubic_soot_burst() {
-        let early = breech_gas_sample(0.04).expect("gas attacks immediately");
-        let body = breech_gas_sample(0.42).expect("gas remains visible while the block is open");
-        let tail = breech_gas_sample(1.80).expect("a faint haze tail should linger");
+        // The puff's strength is the fume model's (cabin_fumes tests hold it light and spreading);
+        // here only the block's opening ramp, the emitter and the drawn life.
+        let undiluted = crate::cabin_fumes::FUME_EXTINCTION_PER_M;
+        let early = breech_gas_sample(0.04, undiluted).expect("gas attacks immediately");
+        let body = breech_gas_sample(0.42, undiluted).expect("gas remains visible while the block is open");
         assert!(early.strength > 0.0 && early.strength < body.strength);
-        assert!(body.strength <= 0.30, "bore gas must remain translucent");
-        assert!(tail.strength < body.strength);
+        assert!(body.strength <= undiluted / crate::cabin_fumes::PUFF_DENSITY_TO_EXTINCTION);
         assert_eq!(body.emitter, Vec3::new(0.0, 0.08, -1.06));
         assert!(body.direction.y > 0.0 && body.direction.z < -0.9);
-        assert!(breech_gas_sample(BREECH_GAS_DUR).is_none());
+        assert!(breech_gas_sample(BREECH_GAS_DUR, undiluted).is_none());
+        assert_eq!(BREECH_GAS_DUR, crate::cabin_fumes::BREECH_PUFF_S);
         // The persistent fire pool now contains only actual flame/soot sources; opening a breech
         // cannot allocate or draw an opaque cube instance.
         assert_eq!(
