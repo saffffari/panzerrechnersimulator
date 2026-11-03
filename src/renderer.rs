@@ -5513,7 +5513,7 @@ impl Renderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(256 * 3 * 16),
+                        min_binding_size: wgpu::BufferSize::new(256 * 5 * 16),
                     },
                     count: None,
                 },
@@ -5523,7 +5523,7 @@ impl Renderer {
         // execute serially in the command stream; only the persistent eye state is per-view.
         let exp_meter_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("exposure-meter-sums"),
-            size: 256 * 3 * 16,
+            size: 256 * 5 * 16,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
