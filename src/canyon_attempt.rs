@@ -277,6 +277,11 @@ pub(crate) fn build_course(seed: u64) -> anyhow::Result<(wgpu::Device, wgpu::Que
 /// within 0.25 m of the deck and the drive reaches the far bank.
 pub fn bridge_check(prefix: &str, seed: u64) -> anyhow::Result<()> {
     let (_device, _queue, mut r, mut g, manifest) = build_course(seed)?;
+    // A deck-support and traversal proof, never a survivability result: the course's enemy
+    // platoons arrive during the minute of settling and their hits (FEA engine-bay bursts) would
+    // stop the Tiger before the drive. The receipt's `god` discloses it.
+    g.god = true;
+    println!("[bridge-check] INVINCIBLE traversal proof: the Tiger takes no damage");
     let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
     let c = value["crossings"].get(0).ok_or_else(|| anyhow::anyhow!("the map declares no crossing"))?;
     let (cx, cz) = (c["center"][0].as_f64().unwrap_or(0.0) as f32, c["center"][1].as_f64().unwrap_or(0.0) as f32);
@@ -313,7 +318,7 @@ pub fn bridge_check(prefix: &str, seed: u64) -> anyhow::Result<()> {
     let crossed = g.player.pos.x > cx + half;
     let receipt = serde_json::json!({"schema": "panzer.bridge-check.v1", "manifest": manifest, "deck_y": deck,
         "half_length": half, "settled": rows, "worst_on_deck_m": worst_on_deck, "drive": track, "crossed": crossed,
-        "staging": "debug_place_tiger on the crossing's axis; the drive is the ordinary input at full throttle"});
+        "staging": "debug_place_tiger on the crossing's axis; the drive is the ordinary input at full throttle", "god": true});
     std::fs::write(format!("{prefix}_result.json"), serde_json::to_vec_pretty(&receipt)?)?;
     anyhow::ensure!(worst_on_deck <= 0.25, "FAIL: a point on the deck settled {worst_on_deck:.2} m off the deck");
     anyhow::ensure!(crossed, "FAIL: the driven Tiger did not reach the far bank");

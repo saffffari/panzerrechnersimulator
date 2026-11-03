@@ -1296,6 +1296,33 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     edits['low_clouds'] = dict(seed=11, count=variant['low_clouds'],
         area=[-CROP_HALF+100, -CROP_HALF+100, CROP_HALF-100, CROP_HALF-100], base_m=[0, 60], size_m=[50, 260],
         depth_m=[15, 70], lwc_g_m3=[0.08, 0.3], droplet_radius_um=8, drift=1.0)
+    # The course's lane stays open: the war's litter lies on the verges and in the gutters, never
+    # in the 2.6 m either side of the route's centre a Tiger drives (the vehicle's half width plus a
+    # margin); a lane choked with stacked bricks and crates held the bridge check's Tiger fast.
+    litter_names = {n for n, _ in MASONRY+HOUSEHOLD+KIT+WRECKAGE} | {
+        'brick', 'debris_bricks', 'debris_bricks2', 'bricks_stacked', 'bricks_stacked1', 'gravel', 'board', 'plank',
+        'plank4', 'scrap2', 'cement_bag', 'tire2', 'stone_m', 'stone_l', 'branch', 'stump', 'wagon_wreck', 'panje',
+        'horse_dead', 'horse_butchered', 'wire_stake', 'stretcher_occ', 'grave_mound', 'grave_cross', 'rifle_grave'}
+    litter_ids = {manifest['assets'].index(ASSET[n]) for n in litter_names if n in ASSET and ASSET[n] in manifest['assets']}
+    lane = np.asarray(course['route'], dtype=np.float64)
+    lane = np.vstack([np.linspace(lane[i], lane[i+1], max(int(np.hypot(*(lane[i+1]-lane[i]))/1.0), 1), endpoint=False)
+                      for i in range(len(lane)-1)]+[lane[-1:]])
+    cells = {}
+    for x, z in lane:
+        cells.setdefault((int(math.floor(x/4.0)), int(math.floor(z/4.0))), []).append((x, z))
+    def lane_dist(x, z):
+        i, j = int(math.floor(x/4.0)), int(math.floor(z/4.0))
+        pts = [p for di in (-1, 0, 1) for dj in (-1, 0, 1) for p in cells.get((i+di, j+dj), ())]
+        return min((math.hypot(x-a, z-b) for a, b in pts), default=1e9)
+    keep = []
+    cleared = 0
+    for q in manifest['placements']:
+        if q[0] in litter_ids and lane_dist(q[1], q[3]) < 2.6:
+            cleared += 1
+            continue
+        keep.append(q)
+    manifest['placements'] = keep
+    print(f'[spring-bridge-v2] lane: {cleared} pieces of litter cleared from the route')
     # Any tree still from the PSX library (the grammars' own) becomes a spring tree of the set.
     import re
     weights = np.cumsum([w for _, w in WOOD_MIX])/sum(w for _, w in WOOD_MIX)
