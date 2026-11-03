@@ -70,6 +70,10 @@ enum View {
     Outside(Vec3, Vec3, f32),
     /// An observer camera inside the vehicle (its interior light and air kept).
     Inside(Vec3, Vec3, f32),
+    /// A cook-off death's shots as the player sees them (`Game::render_cookoff_outside`,
+    /// `Game::render_cookoff_crew`) at their phase.
+    CookoffOutside(f32),
+    CookoffCrew(f32),
 }
 
 struct Ctx<'a> {
@@ -115,6 +119,8 @@ impl Ctx<'_> {
         }
         match view {
             View::Game => {}
+            View::CookoffOutside(phase) => g.render_cookoff_outside(phase, r),
+            View::CookoffCrew(phase) => g.render_cookoff_crew(phase, r),
             View::Outside(eye, at, fov) | View::Inside(eye, at, fov) => {
                 r.camera.pos = eye;
                 r.camera.set_forward(at - eye);
@@ -394,6 +400,151 @@ struct CasualtyStudy {
     entry: fn(Vec3) -> Vec3,
     /// Candidate eyes, in order; the first with a clear line to his torso is used.
     eyes: fn(Vec3) -> Vec<Vec3>,
+}
+
+/// The cook-off study (see the clip list, 17). Disclosed: the fire's first patch is staged on a
+/// real surface (`debug_start_surface_fire`) and the strike is a real round launched at the rack;
+/// everything after (spread, heating, ignitions, pressure, the throw) is the game's own.
+fn cookoff_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, name: &str, struck: bool,
+    idle_input: &dyn Fn(u32) -> TankInput) -> anyhow::Result<serde_json::Value> {
+    let stills = std::env::var("KESSEL_FEA_FILM_STILLS").as_deref() == Ok("1");
+    let day_clock = ctx.clock;
+    ctx.clock = ephemeris::UtcInstant::parse_iso("1942-12-21T09:30:00Z")?;
+    g.enable_singleplayer_crew();
+    fresh_tiger(ctx, g, r, 0x5EC7_C00C ^ u32::from(struck), true)?;
+    g.set_cabin_lights(true);
+    g.jump_station(Station::Commander);
+    ctx.run(g, r, 1.0, TICK)?;
+    let hull = g.player.hull_model();
+    let ring = hull.transform_point3(g.player.parts.turret_pivot);
+    let side = hull.transform_vector3(Vec3::X).normalize();
+    let back = hull.transform_vector3(Vec3::NEG_Z).normalize();
+    let ground = |g: &Game, p: Vec3| Vec3::new(p.x, p.y.max(g.hf.height_at(p.x, p.z) + 1.7), p.z);
+    let wide = View::Outside(ground(g, ring + side * 24.0 + back * 9.0 + Vec3::Y * 2.5), ring + Vec3::Y * 4.0, 42.0);
+    let still = |ctx: &mut Ctx, g: &Game, r: &mut Renderer, view: View, tag: &str| -> anyhow::Result<()> {
+        let rgba = ctx.shoot(g, r, view, None)?;
+        let path = format!("{prefix}_{name}_{tag}.png");
+        save_still(&path, &rgba)?;
+        println!("[fea-film] wrote {path}");
+        Ok(())
+    };
+    ctx.banner = Some(if struck { "THE COOK-OFF: A 122 MM BR-471 INTO THE RIGHT SPONSON'S HE ROUNDS, 500 M; RACKS LOADED".into() }
+        else { "THE COOK-OFF: A FIRE BESIDE THE LEFT SPONSON'S RACK; RACKS LOADED; THE CASES HEAT TO THEIR PROPELLANT'S IGNITION".into() });
+    let mut film = if stills { None } else { Some(Clip::start(prefix, name)?) };
+    ctx.cut(g, r, wide)?;
+    match film.as_mut() {
+        Some(clip) => { clip.mark("the Tiger", "real time"); clip.real_time(ctx, g, r, 1.0, idle_input, &|_, _| wide)?; }
+        None => still(ctx, g, r, wide, "before")?,
+    }
+    let mut log = Vec::new();
+    if struck {
+        // Into the right sponson's group of SprGr (HE) rounds (`interior_rig::HE_RACK_SOURCE_IDS`).
+        g.debug_launch_round(&crate::ballistics::BR_471, false, hull.transform_point3(Vec3::new(-1.95, 1.69, 0.62)),
+            hull.transform_vector3(Vec3::new(1.0, -0.02, 0.0)), 500.0, 0x5EC7_C0DE);
+    } else {
+        // A first flame on the rack's fitting, inboard of the left sponson's rounds.
+        let staged = g.debug_start_surface_fire("hull", Vec3::new(0.85, 1.85, 0.05), Vec3::new(1.75, 1.55, 0.05), 1.0)?;
+        println!("[fea-film] {name}: fire staged {staged}");
+        // Unfilmed until the hottest case is close to igniting (a minute at most of game time).
+        let mut t = 0.0;
+        while g.cookoff.first_s.is_none() && g.cookoff.ammo_urgency() < 0.85 && t < 300.0 {
+            ctx.run(g, r, 1.0, TICK)?;
+            t += 1.0;
+            if (t as u32) % 10 == 0 {
+                println!("[fea-film] {name}: {t:.0} s, fire {:.2}, soot {:.2}, {}", g.fire, g.interior_soot, g.cookoff_receipt());
+            }
+        }
+        log.push(json!({"heated_s": t, "state": g.cookoff_receipt()}));
+    }
+    // Until the bang (filmed wide while the cases heat): then what the player sees in a cook-off
+    // death (`main::cookoff_shot`): black while the bang rings, the world held; the tank from
+    // outside as the stowage goes and the turret is thrown, the world running on, silent; the dead
+    // from above the open ring. Stills: the outside shot at its start, at the turret's apex and at
+    // its end, and the dead.
+    let mut steps = 0u32;
+    while !g.cookoff_death() && steps < (if struck { 6 } else { 90 }) * 60 {
+        match film.as_mut() {
+            Some(clip) => {
+                if steps == 0 { clip.mark(if struck { "the strike" } else { "the cases heat" }, "real time"); }
+                clip.real_time(ctx, g, r, 1.0 / 30.0, idle_input, &|_, _| wide)?;
+                steps += 2;
+            }
+            None => {
+                ctx.update(g, r, &TankInput::default(), TICK)?;
+                steps += 1;
+            }
+        }
+    }
+    log.push(json!({"to_the_bang_s": steps as f32 * TICK, "player_died_in_it": g.cookoff_death(), "state": g.cookoff_receipt()}));
+    if g.cookoff_death() {
+        // Black, the world held; the bang's sound drained as the app drains it.
+        let black_frames = (COOKOFF_BLACK_S * FPS as f32).round() as u32;
+        let (w, h) = frame();
+        let black = vec![0u8; (w * h * 4) as usize];
+        let mut t = 0.0;
+        for _ in 0..black_frames {
+            t += 1.0 / FPS as f32;
+            if let Some(clip) = film.as_mut() {
+                g.advance_terminal_audio(1.0 / FPS as f32, r, t);
+                ctx.audio_debt += acoustics::SAMPLE_RATE as f64 / FPS as f64;
+                let n = ctx.audio_debt.floor();
+                ctx.audio_debt -= n;
+                let sound = g.render_audio_capture_frames(n as usize)?;
+                clip.push(&black, Some(&sound))?;
+            }
+        }
+        if let Some(clip) = film.as_mut() { clip.mark("black from the bang, while it rings", "real time"); }
+        // Outside, the world running on (two updates a frame), silent as in the app.
+        let frames = (COOKOFF_THROW_S * FPS as f32).round() as u32;
+        let mut apex_written = false;
+        if let Some(clip) = film.as_mut() { clip.mark("outside: the stowage goes, the turret is thrown", "real time, silent"); }
+        ctx.cut(g, r, View::CookoffOutside(0.0))?;
+        if stills { still(ctx, g, r, View::CookoffOutside(0.0), "outside_start")?; }
+        for f in 0..frames {
+            let rising = g.cookoff.turret.as_ref().map(|b| b.velocity.y > 0.0);
+            for _ in 0..2 {
+                ctx.update(g, r, &TankInput::default(), TICK)?;
+            }
+            let view = View::CookoffOutside(f as f32 / frames as f32);
+            if let Some(clip) = film.as_mut() {
+                let rgba = ctx.shoot(g, r, view, None)?;
+                clip.push(&rgba, None)?;
+            }
+            if stills && !apex_written && rising == Some(true) && g.cookoff.turret.as_ref().is_some_and(|b| b.velocity.y <= 0.0) {
+                ctx.cut(g, r, view)?;
+                still(ctx, g, r, view, "outside_apex")?;
+                apex_written = true;
+            }
+        }
+        if stills { ctx.cut(g, r, View::CookoffOutside(1.0))?; still(ctx, g, r, View::CookoffOutside(1.0), "outside_end")?; }
+        // The dead, from above the open ring.
+        let frames = (COOKOFF_CREW_S * FPS as f32).round() as u32;
+        if let Some(clip) = film.as_mut() { clip.mark("the dead, from above the open ring", "real time, silent"); }
+        ctx.cut(g, r, View::CookoffCrew(0.0))?;
+        if stills { still(ctx, g, r, View::CookoffCrew(0.0), "crew_start")?; }
+        for f in 0..frames {
+            for _ in 0..2 {
+                ctx.update(g, r, &TankInput::default(), TICK)?;
+            }
+            if let Some(clip) = film.as_mut() {
+                let rgba = ctx.shoot(g, r, View::CookoffCrew(f as f32 / frames as f32), None)?;
+                clip.push(&rgba, None)?;
+            }
+        }
+        if stills { ctx.cut(g, r, View::CookoffCrew(1.0))?; still(ctx, g, r, View::CookoffCrew(1.0), "crew_end")?; }
+    }
+    log.push(json!({"after_s": steps as f32 * TICK, "state": g.cookoff_receipt()}));
+    ctx.banner = None;
+    ctx.clock = day_clock;
+    let mut receipt = match film {
+        Some(clip) => clip.finish()?,
+        None => json!({"clip": name, "stills": true}),
+    };
+    receipt["outcome"] = strike_outcome(g);
+    receipt["cookoff"] = g.cookoff_receipt();
+    receipt["log"] = json!(log);
+    receipt["corpses"] = g.crew_corpse_render_receipt();
+    Ok(receipt)
 }
 
 /// The fallen man's head (world), from his body's head segment.
@@ -1459,6 +1610,15 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
             if let Some(receipt) = casualty_study(&mut ctx, &mut g, &mut r, prefix, study, &idle_input)? {
                 clips.push(receipt);
             }
+        }
+    }
+
+    // ── 17. The cook-off (`game_cookoff`, `cabin_heat`): a fire beside the left sponson's rounds
+    // until a case reaches its propellant's ignition, or a 122 mm round into that rack; watched
+    // from outside, wide enough for the turret's whole throw, then the open hull from above.
+    for (name, struck) in [("cookoff_fire", false), ("cookoff_struck", true)] {
+        if wanted(name) {
+            clips.push(cookoff_study(&mut ctx, &mut g, &mut r, prefix, name, struck, &idle_input)?);
         }
     }
 

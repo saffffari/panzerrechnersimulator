@@ -291,22 +291,27 @@ mod tests {
 
     #[test]
     fn disabled_original_hull_cookoff_spends_one_real_cartridge_and_cannot_repeat() {
+        use crate::cabin_heat::{CabinHeat, Env, Event, LiveRound};
         let state = Expedition::new(1944);
-        let mut fire = ammunition_fire::AmmunitionFire::default();
-        let mut live = vec![42_u32];
+        let mut heat = CabinHeat::new(293.0);
+        let mut live = vec![LiveRound { id: 42, center: glam::Vec3::ZERO, propellant_kg: 2.5, filler_kg: 0.0 }];
         let mut blasts = 0;
-        // Still burning after its fuse starts: removing the physical round on detonation
-        // must prevent a second event even while exposure and disabled-hull eligibility persist.
-        for _ in 0..240 {
-            let detonated = fire.advance(0.05, &live, Some(42), 0.9);
-            if detonated && damage_eligible(false, Some(&state)) {
-                assert_eq!(live, vec![42]);
-                live.clear();
-                blasts += 1;
+        // The round in a flame cooks off once (`cabin_heat`); with the physical round spent on
+        // the detonation, the persisting fire and disabled-hull eligibility cannot repeat it.
+        for _ in 0..1200 {
+            let flux = vec![80_000.0; live.len()];
+            let env = Env { ambient_k: 293.0, fire_w: 200_000.0, soot: 0.5, openings: &[], rounds: &live,
+                flame_flux_w_m2: &flux, turret: None };
+            for event in heat.advance(0.05, &env) {
+                if matches!(event, Event::Ignited { id: 42, .. }) && damage_eligible(false, Some(&state)) {
+                    assert_eq!(live.len(), 1);
+                    live.clear();
+                    blasts += 1;
+                }
             }
         }
         assert_eq!(blasts, 1);
         assert!(live.is_empty());
-        assert!(fire.burning_round().is_none());
+        assert!(heat.has_ignited(42));
     }
 }

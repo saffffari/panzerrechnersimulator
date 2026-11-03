@@ -99,6 +99,26 @@ fn surface_samples(triangles: &[([Vec3; 3], f32)]) -> (Vec<Vec3>, f32) {
 }
 
 impl Source {
+    /// Keep one support sample per cube of `cell_m` (the first in a fixed order), for a detailed
+    /// source whose samples would number in the hundreds of thousands (the player's Tiger: its
+    /// interior fittings); the gap bound grows to the cell's diagonal (named).
+    pub fn decimated(mut self, cell_m: f32) -> Self {
+        let thin = |points: &[Vec3]| {
+            let mut kept = BTreeMap::new();
+            for &p in points {
+                let key = (p / cell_m).floor().as_ivec3();
+                kept.entry((key.x, key.y, key.z)).or_insert(p);
+            }
+            kept.into_values().collect::<Vec<Vec3>>()
+        };
+        self.turret_points = thin(&self.turret_points);
+        self.gun_points = thin(&self.gun_points);
+        self.support_gap_bound_m = self.support_gap_bound_m.max(cell_m * 3f32.sqrt());
+        self
+    }
+    pub fn support_samples(&self) -> usize {
+        self.turret_points.len() + self.gun_points.len()
+    }
     /// The turret's highest point (turret frame): the roof, where its hatches are.
     pub fn turret_top_y(&self) -> f32 {
         self.turret_points.iter().map(|p| p.y).fold(0.0f32, f32::max)
@@ -185,6 +205,19 @@ impl Body {
             center, initial_center:center, highest_center_y:center.y, max_contact_correction_m:0.0,
             rotation, velocity:impulse/mass, momentum:lever.cross(impulse),
             launched_energy_j:energy, settled:false, quiet_s:0.0, rest_hull:None, rest_age_s:0.0 })
+    }
+
+    /// The turret and gun leaving the ring `ring_world` (rigid, the source's units) with its
+    /// centre of mass at `velocity` and spinning at `angular_velocity` (world): a throw whose speed
+    /// the caller has solved (the player's cook-off, `cabin_heat`).
+    pub fn thrown(source: Arc<Source>, gun_local: Mat4, ring_world: Mat4, velocity: Vec3, angular_velocity: Vec3) -> Option<Self> {
+        let mut body = Self::launch(source, gun_local, ring_world, 0.0, ring_world.transform_point3(Vec3::ZERO), Vec3::Y)?;
+        let r = Mat3::from_quat(body.rotation);
+        let inertia_world = (r * body.inverse_inertia * r.transpose()).inverse();
+        body.velocity = velocity;
+        body.momentum = inertia_world * angular_velocity;
+        body.launched_energy_j = body.kinetic_energy();
+        Some(body)
     }
 
     pub fn model(&self) -> Mat4 {

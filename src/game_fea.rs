@@ -627,6 +627,10 @@ impl Game {
         self.fea_record_lodged(&line, &chain_result, event, part, now, grip);
         // Without a lattice solve the hole is the calibre's (named).
         let hole = hole_area_m2.unwrap_or(std::f32::consts::PI * radius * radius);
+        // A hole into the crew compartments vents them in a cook-off (`game_cookoff`).
+        if matches!(event.terminal, crate::ballistics::Terminal::Penetration) && in_crew_air(part, line.entry) {
+            self.cookoff.holes_m2 += hole;
+        }
         self.fea_breach_effects(&line, &chain_result, hole);
         let compartment = if chain_result.burst {
             self.fea_compartment_burst(&line, &chain_result, event, part, hole, burst_fragment_kinetic_j)

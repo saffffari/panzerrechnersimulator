@@ -74,6 +74,9 @@ mod crew_skeleton;
 mod crew_tissue;
 #[path = "crew_helmet_body.rs"]
 mod crew_helmet_body;
+#[path = "game_cookoff.rs"]
+mod game_cookoff;
+pub use game_cookoff::{COOKOFF_BLACK_S, COOKOFF_CREW_S, COOKOFF_THROW_S};
 #[path = "crew_corpse_tissue.rs"]
 mod crew_corpse_tissue;
 #[path = "game_recorded_fx.rs"]
@@ -6136,7 +6139,6 @@ const CREW_VULN: f32 = 0.90; // crewmen are soft targets in the cone
 
 // Interior fire / cook-off.
 const FIRE_MAX: f32 = 1.4;
-const FIRE_TO_AMMO: f32 = ammunition_fire::COOKOFF_SECONDS;
 
 const CREW_KO_DUR: f32 = 2.1; // s — full crew-KO screen effect (red splatter + hand-wipe)
 const N_INT_FIRE_SPOTS: usize = surface_fire::MAX_PATCHES;
@@ -10125,6 +10127,8 @@ pub struct Game {
     wreck_turret_sources: [std::sync::Arc<wreck_turret::Source>; 6],
     fire_t: f32,                             // fire clock (drives flicker)
     ammo_fire: ammunition_fire::AmmunitionFire, // latched to the ignited live round
+    /// The compartment's heat, its ammunition's cook-off and the thrown turret (`game_cookoff`).
+    cookoff: game_cookoff::Cookoff,
     fire_ammo_ids: Vec<u32>, // exposure history belongs to this exact inventory ordering
     fire_origin: Option<(Vec3, Vec3, Vec3)>, // (shooter, entry, shell_dir) that lit the fire — for the death record
     crew_ko_t: f32, // crew-KO screen-effect timer (counts down from CREW_KO_DUR)
@@ -11479,6 +11483,7 @@ impl Game {
         let tiger0 = scene.len();
         let (player_tiger, mut roof_lids, visor_holder, periscope_parts, sight, shutters, cupola_grip_source, controls_source) = tiger_hatches::load_player_tiger()?;
         let radio_roof_pane = tiger_front_optics::split_radio_roof_pane(&mut roof_lids[2])?;
+        let player_turret_source = game_cookoff::player_turret_source(&player_tiger, tank::TIGER_FRAME_SCALE);
         scene.extend(player_tiger);
         let cupola_grip_source = tiger_cupola::into_hatch_frame(cupola_grip_source);
         let cupola_grip = scene.len();
@@ -14505,6 +14510,7 @@ impl Game {
             wreck_turret_sources,
             fire_t: 0.0,
             ammo_fire: ammunition_fire::AmmunitionFire::default(),
+            cookoff: game_cookoff::Cookoff::with_source(player_turret_source),
             fire_ammo_ids: Vec::new(),
             fire_origin: None,
             crew_ko_t: 0.0,
@@ -19473,6 +19479,7 @@ impl Game {
     fn transfer_cartridge_state(&mut self, from: u32, to: u32) {
         if let Some(mission) = &mut self.winter_mission { mission.transfer(from,to); }
         self.ammo_fire.transfer(from, to);
+        self.cookoff.transfer(from, to);
         self.cartridge_primers.transfer(from, to);
     }
 
@@ -20522,13 +20529,9 @@ impl Game {
                 self.hear_fuel_ignition(source,(self.fire_t*1000.0) as u32 ^ 0x1a17_10a0);
             }
         }
-        let exposed = state.hottest_ammunition.and_then(|i| rounds.get(i)).map(|round| round.stable_id);
-        let was_burning = self.ammo_fire.burning_round();
-        let detonate = self.ammo_fire.advance(dt, &live_ids, exposed, state.ammo_heat);
-        if was_burning.is_none() && self.ammo_fire.burning_round().is_some() {
-            println!("[panzerrechnersystem] LIVE ROUND IGNITED — ammunition cook-off in {FIRE_TO_AMMO:.0}s");
-        }
-        if detonate && self.tiger_accepts_damage() { self.kill_fire_cookoff(was_burning); }
+        // The rounds cook off by their own heat (`game_cookoff`, `cabin_heat`): the compartment's
+        // gas and the flames in sight of each case, not an exposure fuse.
+        self.update_cookoff(dt, &rounds);
     }
 
     // ── ABSITZEN headless-verification accessors ──
@@ -21049,6 +21052,7 @@ impl Game {
                 self.fire = 0.0;
                 self.fire_active = false;
                 self.ammo_fire.reset();
+                self.cookoff.reset();
                 self.breech = Breech::Loaded;
                 // The spare is another vehicle: its own chambered AP round, stowage and plates.
                 // The lost hull's cook-off marked every aboard post dead and emptied its racks;
@@ -24086,6 +24090,8 @@ impl Game {
         self.fire = 0.0;
         self.fire_active = false;
         self.ammo_fire.reset();
+        self.cookoff.reset();
+        self.player.turret_thrown = None;
         self.fire_origin = None;
         self.crew_ko_t = 0.0;
         self.crew_ko_world_dir = Vec3::Z;
@@ -29917,9 +29923,26 @@ impl Game {
         fragments: Vec<HotFragment>,
         fragment_contacts: Vec<FragmentDamageContact>,
     ) {
+        // The rounds the strike crossed, and those its flame and fragments reach (within 0.2 m of
+        // where it met the stowage; authored), go at once; the rest of the stowage follows by its
+        // own heat (`game_cookoff`), and the pressure throws the turret. The blast that kills the
+        // crew is those rounds' own: their fillers and their propellant's TNT equivalent.
+        const STRUCK_REACH_M: f32 = 0.2;
+        let rounds = self.live_ammunition_in_frame(fragment_frame);
+        let origin_local = blood_parent_model(&self.player, fragment_frame).inverse().transform_point3(ammo_blast.origin_world);
+        let crossed: Vec<Vec3> = fragment_contacts.iter().filter_map(|c| c.internal_blast_origin_local).chain([origin_local]).collect();
+        let struck: Vec<&LiveAmmoRound> = rounds.iter()
+            .filter(|r| crossed.iter().any(|c| r.center.distance(*c) <= STRUCK_REACH_M)).collect();
+        let propellant_tnt_j = crate::sound_levels::TNT_PER_KG_PROPELLANT
+            * crate::sound_levels::propellant_charge_kg(88.0, 10.2, 773.0) * 4_184_000.0;
+        let struck_blast = InternalAmmoBlast {
+            explosive_energy_j: struck.iter().map(|r| r.explosive_energy_j + propellant_tnt_j).sum::<f32>().max(propellant_tnt_j),
+            ..ammo_blast
+        };
+        // Struck rounds in the turret's frame are found in the hull's by the same identity.
+        let struck_ids: Vec<u32> = struck.iter().map(|r| r.stable_id).collect();
         self.player.alive = false;
-        self.kill_all_couch_crew_from_blast(ammo_blast, fragment_frame, &fragment_contacts);
-        self.consume_live_ammunition_for_detonation();
+        self.kill_all_couch_crew_from_blast(struck_blast, fragment_frame, &fragment_contacts);
         self.disable_detonated_stowage();
         cold_recommission::mark_legacy_catastrophic_crew(
             self.singleplayer_crew_active, self.couch_crew_active, &mut self.crew);
@@ -29934,8 +29957,10 @@ impl Game {
         // Persistent furnace illumination comes from the actual burning cabin cells.
         self.spawn_interior_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
         self.spawn_debris(centre, 12, 16.0, self.armor_tick.wrapping_mul(2246822519));
-        self.schedule_player_internal_sound(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
-        self.schedule_player_internal_sound(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
+        if self.mode == Mode::Tank {
+            self.cookoff_black_now(ammo_blast.origin_world);
+        }
+        self.cookoff_strike(&struck_ids);
         let mut hit_modules = res.hit_modules;
         if !hit_modules.contains(&ModuleKind::AmmoRack) {
             hit_modules.push(ModuleKind::AmmoRack);
@@ -29954,64 +29979,6 @@ impl Game {
             fragment_contacts,
         });
         println!("[panzerrechnersystem] CATASTROPHIC — ammunition detonation, Tiger destroyed.");
-    }
-
-    /// The interior fire reached the ammunition — a delayed cook-off catastrophic kill (fuel-fire
-    /// death cause). Records the actual ignited ammunition as the fatal origin.
-    fn kill_fire_cookoff(&mut self, ignited_round: Option<u32>) {
-        if self.god {
-            return;
-        } // invincible: the fire burns, the ammo never goes
-        let centre = self.player.center();
-        let preferred_origin = self.live_ammunition_in_frame(BloodFrame::Hull).iter()
-            .find(|round| Some(round.stable_id) == ignited_round)
-            .map(|round| self.player.hull_model().transform_point3(round.center));
-        let Some(ammo_blast) = self.internal_ammo_blast(
-            BloodFrame::Hull,
-            &[],
-            preferred_origin,
-            self.kill_tick ^ 0xC00F_F1A5,
-        ) else {
-            // Fire can persist in an evacuated tank, but an empty rack has nothing to cook off.
-            // `update_fire` also refuses to arm a new countdown while this remains true.
-            println!("[panzerrechnersystem] FIRE crossed the ammo threshold, but no live rounds remain");
-            return;
-        };
-        self.player.alive = false;
-        self.kill_all_couch_crew_from_blast(ammo_blast, BloodFrame::Hull, &[]);
-        self.consume_live_ammunition_for_detonation();
-        cold_recommission::mark_legacy_catastrophic_crew(
-            self.singleplayer_crew_active, self.couch_crew_active, &mut self.crew);
-        self.disable_detonated_stowage();
-        self.fire = FIRE_MAX;
-        self.recompute_hp();
-        self.cue_engine_death(0.7); // the wreck's motor dies under the cook-off
-        self.death_cause = Some(DeathCause::FuelFire);
-        self.spawn_interior_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
-        self.spawn_debris(
-            centre,
-            12,
-            16.0,
-            self.kill_tick.wrapping_add(777).wrapping_mul(2246822519),
-        );
-        // The same ammunition reservoir detonated as in a direct rack hit. A heat-triggered
-        // catastrophic loss must retain that blast scale, not use a single secondary pop.
-        self.schedule_player_internal_sound(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
-        self.schedule_player_internal_sound(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
-        self.death_replay = None;
-        self.last_fatal = Some(FatalHit {
-            shooter_pos: self.station_eye(self.station),
-            shell_dir: Vec3::ZERO,
-            entry_point: ammo_blast.origin_world,
-            spall_dir: Vec3::ZERO,
-            hit_body: true,
-            hit_modules: vec![ModuleKind::AmmoRack],
-            cause: DeathCause::FuelFire,
-            fragment_frame: BloodFrame::Hull,
-            fragments: Vec::new(),
-            fragment_contacts: Vec::new(),
-        });
-        println!("[panzerrechnersystem] FIRE reached the ammunition — cook-off, Tiger burned out.");
     }
 
     /// A player round PENETRATED and killed enemy `idx` — the payoff. Marks the enemy dead, sets up
@@ -33078,9 +33045,8 @@ impl Game {
         let pulse = |rate: f32, hi: f32, lo: f32| if (t * rate).sin() > 0.0 { hi } else { lo };
 
         let fire = if self.fire_active || self.ammo_fire.remaining().is_some() {
-            let urgency = self.ammo_fire.remaining()
-                .map(|time| (1.0 - time / FIRE_TO_AMMO).clamp(0.0, 1.0))
-                .unwrap_or(0.0);
+            // Faster as the hottest case nears its propellant's ignition (`cabin_heat`).
+            let urgency = if self.ammo_fire.remaining().is_some() { 1.0 } else { self.cookoff.ammo_urgency() };
             pulse(6.0 + 22.0 * urgency, 6.0, 0.5)
         } else {
             0.0
@@ -37671,6 +37637,7 @@ mod tests {
             ride: Default::default(),
             ride_layout: None,
             grade_pitch: 0.0,
+            turret_thrown: None,
         };
         let driver_before = crew_live_hit_center(&player, crate::lan::LanRole::Driver);
         let gunner_before = crew_live_hit_center(&player, crate::lan::LanRole::Gunner);
