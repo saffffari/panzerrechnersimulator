@@ -2666,7 +2666,7 @@ fn lan_crew_mesh(color: [u8; 3]) -> CpuMesh {
 /// of paper-thin irregular pools and a few solid fragments rather than a luminous red decal. The
 /// local frame matches `corpse_mesh`: head toward +Z, floor at y=0.
 fn crew_gore_mesh() -> CpuMesh {
-    let color = [110, 9, 7];
+    let color = WET_BLOOD[0];
     let boxes: [(Vec3, Vec3); 9] = [
         (Vec3::new(-0.32, 0.006, 0.22), Vec3::new(0.28, 0.026, 0.65)),
         (Vec3::new(-0.45, 0.008, 0.32), Vec3::new(-0.18, 0.024, 0.78)),
@@ -2691,7 +2691,9 @@ fn crew_gore_mesh() -> CpuMesh {
         mn = mn.min(lo);
         mx = mx.max(hi);
     }
-    CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx)
+    let mut mesh = CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx);
+    blood_material(&mut mesh);
+    mesh
 }
 
 /// The one and only wet-blood render primitive: one unit cube, never a packed cluster. Runtime
@@ -2699,12 +2701,27 @@ fn crew_gore_mesh() -> CpuMesh {
 /// strict visible-grain == physics-body contract while hundreds of grains share this tiny mesh.
 fn blood_grain_mesh(color: [u8; 3]) -> CpuMesh {
     let mut mesh = box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), color);
-    // Fresh droplets are a dark, wet dielectric: the highlight comes from the scene lights, not
-    // metallic response or self-emission. Keep the low roughness even on tiny facets so a furnace
-    // flash catches individual grains instead of turning the whole cloud into matte red dust.
-    mesh.metallic_factor = 0.0;
-    mesh.roughness_factor = 0.08;
+    blood_material(&mut mesh);
     mesh
+}
+
+/// Blood's look (2026-11-03, the owner: "an opaque dark red, make sure it's shiny though and a bit
+/// metallic", then "more red and brighter, but use the metallic knob to make it really dark like
+/// almost black"): an opaque, saturated red base, glossy, and mostly metallic, so it reads nearly
+/// black except where it catches a reflection. An owner-directed presentation choice: blood is a
+/// dielectric, and its metallic response is not a measured property (ledger).
+pub(super) const BLOOD_METALLIC: f32 = 0.86;
+pub(super) const BLOOD_ROUGHNESS: f32 = 0.12;
+pub(super) const WET_BLOOD: [[u8; 3]; 4] = [[178, 14, 12], [196, 20, 14], [160, 10, 10], [186, 16, 12]];
+
+fn blood_material(mesh: &mut CpuMesh) {
+    mesh.metallic_factor = BLOOD_METALLIC;
+    mesh.roughness_factor = BLOOD_ROUGHNESS;
+}
+
+/// The crew anatomy's cell (m): blood droplets are this size (`surface_blood::DROPLET_M`).
+pub(crate) fn crew_tissue_cell_m() -> f32 {
+    0.01
 }
 
 /// The one and only live hot-steel primitive: one unit cube. Each independently simulated
@@ -2789,7 +2806,7 @@ fn micro_spark_tail_pose(spark: &MicroSpark) -> Option<(Vec3, Quat, Vec3)> {
 /// stays dark, non-emissive and present in the physical ray scene.
 fn dried_blood_stain_mesh(color: [u8; 3]) -> CpuMesh {
     let mut mesh = crate::prims::box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), color);
-    mesh.roughness_factor = 0.34;
+    blood_material(&mut mesh);
     mesh
 }
 
@@ -12435,9 +12452,9 @@ impl Game {
         // a stable tail; only the four wet materials are selected here.
         // Fresh blood stays optically dark even under the amber furnace beat; low material roughness
         // supplies the wet highlight, so the diffuse albedo must not glow candy-red in shadow.
-        let wet_blood = [[92, 5, 4], [112, 7, 5], [74, 3, 3], [101, 6, 4]];
+        let wet_blood = WET_BLOOD;
         let blood_cube_batch = [usize::MAX; N_BLOOD_BATCHES];
-        let dry_blood = [[92, 7, 5], [108, 10, 7], [80, 6, 5], [99, 8, 6]];
+        let dry_blood = WET_BLOOD;
         let blood_stain_batch = [usize::MAX; N_BLOOD_BATCHES];
         let hot_fragment_batch = [usize::MAX; N_HOT_FRAGMENT_BATCHES];
         let hot_fragment_tail_batch = [usize::MAX; N_HOT_FRAGMENT_BATCHES];
@@ -30823,6 +30840,8 @@ impl Game {
         let severity = severity.clamp(0.20, 1.65);
         let ejection_strength = ejection_strength.clamp(0.55, 2.80);
         let blood_owner = owner.min(self.physical_crew_capacity() - 1) as u8;
+        // The wound's count is of the former small droplets; the same blood leaves as 1 cm ones.
+        let count = surface_blood::droplets_for(count);
 
         for j in 0..count.min(N_BLOOD_CUBES) {
             let s = seed
@@ -38127,9 +38146,12 @@ mod tests {
         assert_eq!(allocation.iter().sum::<usize>(), N_BLOOD_CUBES / 4);
         assert_eq!(visual_blood_request(usize::MAX), N_BLOOD_CUBES);
         assert!(
-            (0..1000).all(|seed| surface_blood::droplet_m(seed) <= 0.006),
-            "droplets must stay small"
+            (0..1000).all(|seed| surface_blood::droplet_m(seed) == crew_tissue_cell_m()),
+            "droplets are the anatomy's cells"
         );
+        // A horror burst's full count is about a litre of blood in 1 cm droplets, not 33.
+        let litres = surface_blood::droplets_for(N_BLOOD_CUBES) as f32 * surface_blood::DROPLET_M.powi(3) * 1000.0;
+        assert!((0.8..1.3).contains(&litres), "{litres} l");
         assert_eq!(
             N_BLOOD_STAINS,
             surface_blood::MAX_CELLS
@@ -38144,11 +38166,10 @@ mod tests {
         assert_eq!(N_BLOOD_CUBES * (mesh.indices.len() / 36), 32768);
         assert_eq!(mesh.min, Vec3::splat(-0.5));
         assert_eq!(mesh.max, Vec3::splat(0.5));
-        assert_eq!(mesh.metallic_factor, 0.0);
-        assert!(
-            mesh.roughness_factor <= 0.10,
-            "fresh grains must read as wet"
-        );
+        // The owner's look: glossy and mostly metallic over a saturated red, so nearly black.
+        assert_eq!(mesh.metallic_factor, BLOOD_METALLIC);
+        assert!(BLOOD_METALLIC > 0.8 && mesh.roughness_factor <= 0.15, "glossy, nearly black blood");
+        assert!(WET_BLOOD.iter().all(|c| c[0] > 150 && c[0] > 8 * c[1].max(c[2])), "a bright, saturated red base");
     }
 
     #[test]
@@ -38793,7 +38814,7 @@ mod tests {
         assert_eq!(film.min, Vec3::splat(-0.5));
         assert_eq!(film.max, Vec3::splat(0.5));
         assert_eq!(film.indices.len(), 36);
-        assert_eq!(film.roughness_factor, 0.34);
+        assert_eq!((film.metallic_factor, film.roughness_factor), (BLOOD_METALLIC, BLOOD_ROUGHNESS), "the coat matches the droplets");
         assert_eq!(N_BLOOD_STAINS, surface_blood::MAX_CELLS);
         assert_eq!(N_BLOOD_CUBES, surface_blood::MAX_GRAINS);
     }
