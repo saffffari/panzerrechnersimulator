@@ -557,6 +557,12 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   approximations: the scene's acceleration structure and the sky-cover map keep the bare
   geometry, so shadows, ray-query occlusion and the cover map ignore the lift (at most 6 cm);
   the thickness is a display estimate of a night's fall on a deck, not a deposition model.
+  What rides aboard the player's tank (a part, a batch or a pane whose box is under 2 m across and
+  whose box centre lies inside a vehicle-surface frame's oriented box with 5 cm grace;
+  `is_aboard`, renderer_raymarch.rs) takes no lying snow from the world's load: the lift raised
+  the cabin lamps' top faces off their bodies, green faces floating by the gunner (owner report,
+  2 November 2026). The tank's own snow is its catch, of which none is kept. Named approximation:
+  a box-centre test, so a small object under the hull between the tracks is counted aboard.
 - The winter running gear (2026-11-02; `snow_cover::step_pack`, `Renderer::set_running_gear_snow`,
   `snow_gear_crust`). Nothing packed the tracks before: the Tiger's belt carried only
   centimetre flecks (`track_snow`), the enemies' nothing, and lying snow stays off every
@@ -4456,7 +4462,12 @@ November 2026. `KESSEL_VSM_LAYERS=N` keeps layers 1..N for review; 255 shows the
 old swatches were aligned the same day so the friendly Tigers, the German wrecks and every part off
 the field match: exterior sRGB 105/108/115 (satin), compartment 221/216/206, basket floor a neutral
 93/93/91 (it took the source's green-grey 58/70/64). The cupola's lid is its own bake, added to the
-turret's field at its hinge, closed.
+turret's field at its hinge, closed. Within a marked part the finish replaces only pixels whose
+authored base colour is one the field repaints (the fallback grey and white, the floor paint, track
+and cable steel, or the source's metal at metallic 0.5 and above; `vsm_repaints`, rm_gbuffer.wgsl):
+a painted instrument face, a dial's white back and a lamp keep their own material. A 1 cm cell's
+class cannot resolve a 4 cm dial in the gunner's contact zone; the turret position indicator's white
+face read as worn steel until this gate (owner report, 2 November 2026).
 
 | Part | What the live code computes | Named approximation and source |
 | --- | --- | --- |

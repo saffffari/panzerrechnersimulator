@@ -764,6 +764,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         let views = views.iter().chain([
             ("int_wall", true, 1u8, Vec3::new(-0.45, 2.1, 0.2), Vec3::new(-1.2, 1.9, 0.35), 60.0f32, "the turret wall at the loader's station, 0.8 m"),
             ("int_breech", true, 1u8, Vec3::new(-0.5, 2.15, -0.1), Vec3::new(0.0, 1.85, 0.6), 60.0, "the breech and the loader's working space"),
+            ("int_gunner", true, 1u8, Vec3::new(0.45, 1.95, 0.42), Vec3::new(0.884, 1.757, 0.635), 55.0, "the gunner's station: the TPZ dial and its panel"),
         ].iter()).copied().collect::<Vec<_>>();
         let only = std::env::var("KESSEL_VSM_REVIEW_VIEWS").ok().or_else(|| (std::env::var("KESSEL_VSM_REVIEW").as_deref() != Ok("field"))
             .then(|| "ext_close,ext_corner,ext_lowfront,ext_deck,ext_exhaust,ext_side,int_loader,int_wall,int_breech".to_owned()));

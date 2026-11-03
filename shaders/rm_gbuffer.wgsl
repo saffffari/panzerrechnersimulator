@@ -153,6 +153,22 @@ fn paint_source_metal(albedo: vec3<f32>, metallic: f32, world: vec3<f32>, face: 
 // The exterior grey (tank::tiger_paint_finish's exact swatch, sRGB 105/108/115; rm_vsm.wgsl
 // `VSM_GREY`): the friendly Tigers' finish and the cabin-side check below find the paint by it.
 const RM_TIGER_PAINT: vec3<f32> = vec3<f32>(0.1413, 0.1500, 0.1714);
+// The other swatches of tank::tiger_paint_finish the vehicle surface model repaints: the basket
+// floor (93/93/91) and the exhaust and cable steel (73/72/68); the track steel is RM_TRACK_STEEL.
+const RM_FLOOR_PAINT: vec3<f32> = vec3<f32>(0.1095, 0.1095, 0.1046);
+const RM_CABLE_STEEL: vec3<f32> = vec3<f32>(0.0666, 0.0648, 0.0578);
+// Whether a pixel's source material is one the vehicle surface model builds from its causes: the
+// source model's default steel (`Material.001`) or one of the finish swatches. Anything else keeps
+// its own material whatever the field's cell says: the instrument faces (the TPZ's white dial, the
+// black enamel dials, the red needles), seat pads, glass and textured markings. The field's class
+// is one per centimetre cell, too coarse to tell a small dial from the wall it sits on (the owner,
+// 2 November 2026: "dial back for tpz is now metal and should be white").
+fn vsm_repaints(albedo: vec3<f32>, metallic: f32) -> bool {
+    return (metallic >= 0.5 && all(abs(albedo - RM_SOURCE_METAL) < vec3(0.012)))
+        || all(abs(albedo - RM_TIGER_PAINT) < vec3(0.006)) || all(abs(albedo - RM_INTERIOR_PAINT) < vec3(0.006))
+        || all(abs(albedo - RM_FLOOR_PAINT) < vec3(0.006)) || all(abs(albedo - RM_TRACK_STEEL) < vec3(0.006))
+        || all(abs(albedo - RM_CABLE_STEEL) < vec3(0.006));
+}
 
 
 // ---- Other vehicles' finish (2026-10-28, "the T-34 is too bright ... looks brand new"; vehicle_finish.rs) ----
@@ -412,7 +428,7 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     // its cause in the field, in place of the plain fallback paint below (paint_source_metal) and
     // the shade pass's screen-space worn edges.
     var vsm_used = false;
-    if (vsm_frame > 0u && fr.vsm[6].y > 0.5 && fr.vsm[6].w < 254.5 && kind < 0.5) {
+    if (vsm_frame > 0u && fr.vsm[6].y > 0.5 && fr.vsm[6].w < 254.5 && kind < 0.5 && vsm_repaints(albedo, metallic)) {
         let linear = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
         let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
         let to_local = transpose(linear);
