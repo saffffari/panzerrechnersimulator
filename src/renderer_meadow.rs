@@ -64,6 +64,8 @@ pub struct MeadowGpu {
     flower_gbuffer: wgpu::RenderPipeline,
     blade_depth: wgpu::RenderPipeline,
     heights: Vec<f32>,
+    /// The canopy as a medium for the ray queries (meadow::canopy_grid).
+    canopy_view: wgpu::TextureView,
     height_res: usize,
     height_spacing: f32,
     cover_half: f32,
@@ -106,6 +108,10 @@ impl MeadowGpu {
         let cover_res = build.cover.res as u32;
         let cover_tex = tex(device, "meadow-cover", cover_res, cover_res, wgpu::TextureFormat::Rg8Unorm);
         write(queue, &cover_tex, [0, 0], [cover_res, cover_res], 2, &build.cover.rg);
+        let canopy = meadow::canopy_grid(&build.heights, build.height_res, build.height_spacing, &build.cover);
+        let canopy_tex = tex(device, "meadow-canopy", res, res, wgpu::TextureFormat::Rgba32Float);
+        write(queue, &canopy_tex, [0, 0], [res, res], 16, bytemuck::cast_slice(&canopy));
+        let canopy_view = canopy_tex.create_view(&Default::default());
         let n = meadow::WIND_CELLS as u32;
         let wind_tex = tex(device, "meadow-wind", n, n, wgpu::TextureFormat::Rg32Float);
         write(queue, &wind_tex, [0, 0], [n, n], 8, &vec![0u8; (n * n * 8) as usize]);
@@ -198,12 +204,14 @@ impl MeadowGpu {
         Self {
             view_bufs, binds, wind_tex, track_table, track_atlas, tiles,
             ranges: [[(0, 0); LEVELS]; VIEWS], far_ranges: [(0, 0); LEVELS], flowers: (0, 0), slab: [(0, 0); 2], slab_gbuffer, blade_gbuffer, flower_gbuffer, blade_depth,
-            heights: build.heights, height_res: build.height_res, height_spacing: build.height_spacing, cover_half: build.cover.half_extent,
+            heights: build.heights, canopy_view, height_res: build.height_res, height_spacing: build.height_spacing, cover_half: build.cover.half_extent,
             pending: None, wind_origin: Vec2::ZERO, mean_wind: Vec2::ZERO, time: 0.0, track_pages: 0,
             stats: MeadowStats::default(),
             skip: std::env::var("KESSEL_MEADOW_SKIP").as_deref() == Ok("1"),
         }
     }
+
+    pub(super) fn canopy_view(&self) -> &wgpu::TextureView { &self.canopy_view }
 
     pub fn set_frame(&mut self, frame: meadow::Frame) {
         // Keep pages of a frame that was never presented.

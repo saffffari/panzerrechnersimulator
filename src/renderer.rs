@@ -7165,6 +7165,8 @@ impl Renderer {
     /// Install the map's spring meadow on the GPU (`meadow.rs`).
     pub fn install_meadow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, build: crate::meadow::Build) {
         if self.raymarch.is_some() { self.meadow = Some(renderer_meadow::MeadowGpu::new(device, queue, build)); }
+        // The shade and reflection passes bind the canopy for their rays: rebuild their groups.
+        if let Some(rm) = &mut self.raymarch { rm.invalidate_binds(); }
     }
     /// This frame's wind grid and new tread pages for the meadow.
     pub fn set_meadow_frame(&mut self, frame: crate::meadow::Frame) {

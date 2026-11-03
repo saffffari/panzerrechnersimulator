@@ -502,6 +502,30 @@ pub struct Frame {
     pub track_pages: Vec<((i32, i32), u32, Vec<u8>)>,
 }
 
+/// The canopy as a medium for secondary rays (`renderer_raymarch`, `rm_canopy_transmittance`): per
+/// node of the terrain grid, the ground height, the stand's canopy height and its leaf area index
+/// (the mean over the node's cell of the cover map), and the grid's half extent.
+pub fn canopy_grid(heights: &[f32], res: usize, spacing: f32, cover: &CoverMap) -> Vec<[f32; 4]> {
+    let half = (res as f32 - 1.0) * 0.5;
+    let extent = half * spacing;
+    let mut out = Vec::with_capacity(res * res);
+    for j in 0..res {
+        for i in 0..res {
+            let (x, z) = ((i as f32 - half) * spacing, (j as f32 - half) * spacing);
+            let (mut h, mut lai) = (0.0f32, 0.0f32);
+            for (dx, dz) in [(-0.25f32, -0.25f32), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25), (0.0, 0.0)] {
+                let (px, pz) = (x + dx * spacing, z + dz * spacing);
+                let (presence, lush) = (cover.presence(px, pz), cover.lush(px, pz));
+                let height = (HEIGHT_MIN_M + HEIGHT_SPAN_M * lush) * (0.55 + 0.45 * presence);
+                h += height * (presence > 0.004) as u32 as f32;
+                lai += NEAR_DENSITY * BLADE_WIDTH_M * height * 0.81 * presence;
+            }
+            out.push([heights[j * res + i], h / 5.0, lai / 5.0, extent]);
+        }
+    }
+    out
+}
+
 /// The ground and cover the GPU meadow is built over (once per map).
 pub struct Build {
     pub heights: Vec<f32>,
@@ -660,6 +684,21 @@ mod tests {
         assert_eq!(m.pending.last().unwrap().2[0], 6);
         m.push((9999, 0), &[0u8; 1024]);
         assert_eq!(m.dropped, 1);
+    }
+
+    #[test]
+    fn the_canopy_grid_carries_the_stand_and_nothing_on_bare_ground() {
+        let mat: Vec<u8> = [84u8, 108, 36, 255].repeat(32 * 32);
+        let cover = build_cover(Some((&mat, 32)), None, 40.0, None, &|_, _| 0.0);
+        let grid = canopy_grid(&vec![1.5; 9 * 9], 9, 10.0, &cover);
+        let c = grid[4 * 9 + 4];
+        assert_eq!(c[0], 1.5);
+        assert!(c[1] > 0.15 && c[1] < 0.61, "{c:?}");
+        // Leaf area index: density x width x mean height, about 1.5-3 for a lush stand.
+        assert!(c[2] > 0.7 && c[2] < 3.5, "{c:?}");
+        assert_eq!(c[3], 40.0);
+        let bare = build_cover(Some((&[36u8, 36, 36, 255].repeat(32 * 32), 32)), None, 40.0, None, &|_, _| 0.0);
+        assert_eq!(canopy_grid(&vec![0.0; 81], 9, 10.0, &bare)[40][2], 0.0);
     }
 
     #[test]
