@@ -1851,6 +1851,36 @@ march's six samples a crossing, not a cached texel. Lamps, fires and flashes lig
 banks through the froxel grid like any medium, but without the two-stream diffusion (their light
 scatters once). The shader and physical backends draw no banks.
 
+## Blue haze: the spectral aerosol and the surfaces' clear air (2026-11-02)
+
+The owner: "more blue haze in the atmosphere its just white scatter right now". Before, a surface's
+aerial perspective on this backend was only the weather layer (`fog_density`, grey, albedo 0.70,
+with a painted (0.94, 0.97, 1) tint); the sky cache marched Rayleigh and aerosol, the surfaces
+did not, and the aerosol itself was grey in every band.
+
+- The atmosphere's aerosol follows the Angstrom law per band (`physical_environment.rs`
+  `aerosol_band_factor`, WGSL `physical_aerosol_band_factor`; the exponent rides
+  `PhysicalEnvironment.ground_glow.w`). Default winter background alpha 1.0 at AOD 0.05.
+- A map may author `environment_lighting.aerosol: {"aod_550": 0.2, "angstrom": 1.6,
+  "scale_height_m": 1500}` (`environment_authoring::AerosolTuning`; absent: the campaign's). It
+  replaces the column for the sky, the sky cache, the CPU source sampling (`raymarch_atmosphere`)
+  and the other backends (`Renderer::apply_aerosol`), and sets the weather layer's exponent.
+- `fog_to` (rm_shade.wgsl) returns per-band transmittance. For a surface it adds the clear air,
+  molecules with the Rayleigh phase and the aerosol with its Henyey-Greenstein lobe, from the frame
+  lanes `air_rayleigh`, `air_aerosol`, `air_spectrum` (`rm_air_segment`): two steps inside the
+  grid's reach composited behind the grid's media, then six steps of weather plus air past the
+  grid, then four of air alone to 40 km. A sky pixel adds none (the cache holds that path).
+- The weather layer (rm_medium.wgsl `rm_world_parts`, `rm_world_spectrum`) is 550 nm extinction:
+  its snow share is grey, the rest takes the aerosol's band factor, in the grid's scattering (the
+  grid's extinction stays the 550 nm band's) and in the far march's extinction and scattering.
+
+Stills (spring-bridge-v2 copies `assets/worldgen/workshops/spring-bridge-haze-test` and
+`-haze-test-aerosol`, 15:28 local solar, east across the valley, the locked look):
+`/home/alex/panzer/captures/agent-ac1a9bff69ecfa515-haze_bridge_20261102_{before,after_default,
+after_aod020_a16,after_aod025_a16_fog015}_east.jpg`; Canyon v2 `..._haze_canyon_20261102_{before,after}.jpg`.
+On the hills: B-R +6.7 before, +25.7 after with the map unchanged, +20.8 with AOD 0.2 / alpha 1.6.
+Cost: rm-shade 0.739 → 0.762 ms (4090, 1024x576).
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -1894,6 +1924,12 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   by the screen-space contact test. The froxel medium's lamp in-scatter is unshadowed for them
   either way.
 - Beyond 320 m the world medium is a six-step march without geometric occlusion.
+- The clear air on surfaces (Rayleigh and the atmosphere's aerosol): two steps within 320 m
+  composited behind the froxel media, six with the weather layer beyond, four alone past it to
+  40 km; single scattering of the isotropic sky and the key beam (cloud shadow only), no secondary
+  body. The froxel grid's transmittance is the 550 nm band's (grey) inside 320 m; scattering there
+  is spectral. Aerosol albedo and asymmetry are the same in every band; the bands are point samples
+  at 680/550/440 nm.
 - Cloud shadows: a flat layer crossed from the eye's altitude in twelve samples, a 16 m map over
   4 km around the eye (clamped beyond); the cloud does not shadow the skylight.
 - Fog banks: a drifting two-scale footprint field times a height profile below a floor altitude

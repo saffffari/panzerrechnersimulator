@@ -26,11 +26,12 @@ fn rm_fog_bank_density(p: vec3<f32>) -> f32 {
 }
 
 // World weather: a bounded height layer of blowing snow / aerosol with extinction fr.medium.x,
-// and the fog banks within it.
-fn rm_world_density(p: vec3<f32>) -> f32 {
+// and the fog banks within it. x: the layer (its aerosol share is spectral, rm_world_spectrum),
+// y: the grey parts (spindrift, fog banks).
+fn rm_world_parts(p: vec3<f32>) -> vec2<f32> {
     if(fr.samples.y>0.5){
-        if(p.y<fr.medium.z||p.y>fr.medium.w){return 0.0;}
-        return theatre_extinction(fr.medium.x,p,fr.samples.y)*weather_relative_density(p,vec3(fr.samples.z,0.0,fr.samples.w),fr.medium.y,fr.samples.y);
+        if(p.y<fr.medium.z||p.y>fr.medium.w){return vec2(0.0);}
+        return vec2(theatre_extinction(fr.medium.x,p,fr.samples.y)*weather_relative_density(p,vec3(fr.samples.z,0.0,fr.samples.w),fr.medium.y,fr.samples.y), 0.0);
     }
     let bottom = fr.medium.z;
     let top = fr.medium.w;
@@ -63,7 +64,18 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
             }
         }
     }
-    return fr.medium.x * above * gust + spindrift + rm_fog_bank_density(p);
+    return vec2(fr.medium.x * above * gust, spindrift + rm_fog_bank_density(p));
+}
+fn rm_world_density(p: vec3<f32>) -> f32 {
+    let parts = rm_world_parts(p);
+    return parts.x + parts.y;
+}
+// The weather layer's extinction per band relative to its 550 nm value (fr.medium.x is that
+// value): its snow is grey (crystals far larger than the wavelength), its aerosol share follows
+// the map's aerosol spectrum, the Angstrom law (fr.air_spectrum; 2 November 2026). `snow` is the
+// layer's snow fraction at the point.
+fn rm_world_spectrum(snow: f32) -> vec3<f32> {
+    return mix(fr.air_spectrum.xyz, vec3(1.0), clamp(snow, 0.0, 1.0));
 }
 // The cabin haze fills the cabin air (`inside`: rm_cabin_domain). Without registered cabin air
 // (no posed player Tiger) it falls back to an ellipsoid about the crew compartment.
@@ -170,19 +182,26 @@ fn rm_puff_extinction(p: vec3<f32>) -> vec2<f32> {
 fn rm_medium_at(p: vec3<f32>) -> Medium {
     var m = rm_medium_zero();
     let inside = rm_cabin_domain(p) >= 0;
-    var world = 0.0;
+    var parts = vec2(0.0);
     var drops = 0.0;
-    if (!inside) { world = rm_world_density(p); drops = rm_low_density(p); }
+    if (!inside) { parts = rm_world_parts(p); drops = rm_low_density(p); }
+    let world = parts.x + parts.y;
     let snow = fr.medium.y*theatre_north_weight(p.z,fr.samples.y);
     let world_albedo = mix(0.70, 0.92, snow);
     let cabin = rm_cabin_density(p, inside);
     let puff = rm_puff_extinction(p);
     let sigma_t = world + cabin + puff.x + drops;
     if (sigma_t <= 0.0) { return m; }
-    let sigma_s_rest = world * world_albedo + cabin * 0.80 + puff.x * puff.y;
     m.sigma_t = sigma_t;
-    // Water drops scatter neutrally (Mie, size parameter ~60); the weather's tint stays its own.
-    m.sigma_s = vec3(sigma_s_rest) * mix(vec3(0.94, 0.97, 1.0), vec3(1.0), snow) + vec3(drops * fr.low_cloud.z);
+    // The weather layer's aerosol scatters by the Angstrom law (rm_world_spectrum), its snow, the
+    // spindrift, the fog banks and the drops (Mie, size parameter ~60) neutrally. The grid holds one
+    // extinction, the 550 nm band's (named approximation, docs/PHYSICAL_TRUTH_AUDIT.md): its
+    // transmittance is grey over the grid's 320 m; the far march and the sky are spectral.
+    let world_s = (parts.x * rm_world_spectrum(snow) + vec3(parts.y)) * world_albedo;
+    // The cabin haze and the plumes keep the tint they had (an unsourced (0.94, 0.97, 1) left
+    // outside this change's scope; docs/PHYSICAL_TRUTH_AUDIT.md).
+    let rest_s = vec3(cabin * 0.80 + puff.x * puff.y) * mix(vec3(0.94, 0.97, 1.0), vec3(1.0), snow);
+    m.sigma_s = min(world_s, vec3(world)) + rest_s + vec3(drops * fr.low_cloud.z);
     m.g = (world * mix(0.74, 0.62, snow) + cabin * 0.55 + puff.x * 0.65 + drops * fr.low_cloud.y) / sigma_t;
     return m;
 }
