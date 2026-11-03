@@ -72,6 +72,8 @@ pub(crate) mod game_fea_film;
 mod crew_skeleton;
 #[path = "crew_tissue.rs"]
 mod crew_tissue;
+#[path = "crew_helmet_body.rs"]
+mod crew_helmet_body;
 #[path = "crew_corpse_tissue.rs"]
 mod crew_corpse_tissue;
 #[path = "game_recorded_fx.rs"]
@@ -9679,6 +9681,9 @@ pub struct Game {
     /// fast (natural draft). Rapid sustained fire without venting → you're firing blind in your own
     /// smoke. Pushed to the crush veil, gated by being buttoned up inside.
     interior_haze: f32,
+    /// A fire's soot in the cabin air, 0..1: dark and absorbing, built by the fire's heat in the
+    /// enclosure over time and drained by the fan and open hatches (`update_haze`).
+    interior_soot: f32,
     weather_baseline: Option<(f32, f32)>,
     weather_view: crate::weather_visibility::WeatherView,
     weather_wind_scale: f32,
@@ -14201,6 +14206,7 @@ impl Game {
             hover_hatch: false,
             hover_lever: false,
             interior_haze: 0.0,
+            interior_soot: 0.0,
             weather_baseline: None,
             weather_view: crate::weather_visibility::WeatherView::default(),
             weather_wind_scale: 1.0,
@@ -18504,9 +18510,11 @@ impl Game {
                 let hull_o = self.player.hull_model().transform_point3(Vec3::ZERO);
                 // Low background dust; firing/fire accumulation retains its separate strength.
                 r.set_interior_atmosphere(0.025 + self.interior_haze * 0.78, 0.035, hull_o);
+                r.set_interior_soot(self.interior_soot);
                 r.set_interior_atmosphere_enabled(view_inside);
             } else {
                 r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
+                r.set_interior_soot(0.0);
             }
         }
 
@@ -20396,8 +20404,11 @@ impl Game {
         // Actual connected wall/overhead contacts feed smoke into the compartment. There is
         // no permanent furnace overlay: suppressing the sources leaves the fan/hatch to clear it.
         let (_, _, enclosure_heat) = self.cabin_fire.enclosure_diagnostics(&self.fire_surface_models());
-        self.interior_haze = (self.interior_haze
-            + (enclosure_heat * 0.38 - drain) * dt).clamp(0.0, 1.0);
+        // A fire's smoke is its own soot (dark, absorbing), built by the enclosure's heat over time
+        // (2026-11-02, the owner: fires need time to build up smoke, much darker than a
+        // penetration's); the gun fumes' light haze only drains here.
+        self.interior_soot = (self.interior_soot + (enclosure_heat * 0.38 - drain) * dt).clamp(0.0, 1.0);
+        self.interior_haze = (self.interior_haze - drain * dt).clamp(0.0, 1.0);
     }
 
     fn fire_surface_models(&self) -> [Mat4; surface_fire::FRAMES] {
@@ -23960,6 +23971,7 @@ impl Game {
         self.bore_smoke_pending = false;
         self.breech_gas_t = 0.0;
         self.interior_haze = 0.0;
+        self.interior_soot = 0.0;
         self.ram = 0.0;
         self.eject_t = 0.0;
         self.ext_t = 0.0;

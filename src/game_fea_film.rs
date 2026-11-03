@@ -396,6 +396,13 @@ struct CasualtyStudy {
     eyes: fn(Vec3) -> Vec<Vec3>,
 }
 
+/// The fallen man's head (world), from his body's head segment.
+fn head_point(g: &Game, role: CrewRole) -> Option<Vec3> {
+    let actor = g.singleplayer_casualty_identity(role).peer_id;
+    let body = g.couch_ragdolls.iter().find(|b| b.casualty.peer_id == actor)?;
+    Some(body.parent_model(&g.player).transform_point3(body.segments[crew_physics::CrewBodyPart::Head.index()].pos))
+}
+
 /// Whether the line from `eye` to `target` meets none of the tank's own surfaces (the source
 /// triangles fragments and fire meet), short of the last 5 %.
 fn sight_clear(g: &Game, eye: Vec3, target: Vec3) -> bool {
@@ -477,7 +484,10 @@ fn casualty_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, s
             for _ in 0..96 {
                 ctx.update(g, r, &TankInput::default(), SLOW_DT)?;
             }
-            ctx.run(g, r, 10.0, TICK)?;
+            // The strike's smoke a second on, gathered at the hole.
+            ctx.run(g, r, 0.8, TICK)?;
+            still(ctx, g, r, open, "smoke")?;
+            ctx.run(g, r, 9.2, TICK)?;
             still(ctx, g, r, open, "after")?;
             // The lights of that frame, strongest first, and how far each is from the camera.
             let mut lights: Vec<_> = r.offered_lights().to_vec();
@@ -522,6 +532,22 @@ fn casualty_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, s
                 let view = View::Inside(eye, target, 50.0);
                 ctx.cut(g, r, view)?;
                 still(ctx, g, r, view, &format!("orbit{n}"))?;
+            }
+            // His head (and his helmet, a rigid body), from the first of sixteen eyes about it with
+            // a clear line, about a metre off.
+            if let Some(head) = head_point(g, study.role) {
+                let eyes = (0..16).map(|k| {
+                    let a = (k as f32 * 22.5).to_radians();
+                    let (reach, rise) = if k % 2 == 0 { (0.85, 0.45) } else { (0.6, 0.7) };
+                    head + (side * a.cos() + ahead * a.sin()) * reach + up * rise
+                });
+                if let Some(eye) = eyes.clone().find(|&e| sight_clear(g, e, head)) {
+                    let view = View::Inside(eye, head, 40.0);
+                    ctx.cut(g, r, view)?;
+                    still(ctx, g, r, view, "head")?;
+                } else {
+                    println!("[fea-film] {}: no clear line to his head", study.name);
+                }
             }
         }
         _ => println!("[fea-film] {}: the {:?} was not killed; no close view", study.name, study.role),

@@ -59,6 +59,8 @@ struct Frame {
     // w 1 when filled this frame; its texel size xyz, w the refresh (2 all, 0/1 that z parity).
     low_vol_min: vec4<f32>,
     low_vol_cell: vec4<f32>,
+    // A fire's soot in the cabin air: x its extinction /m (Renderer::set_interior_soot).
+    soot: vec4<f32>,
 };
 // True where a camera pass must leave `world` out: beyond the film's section plane.
 fn rm_beyond_section(world: vec3<f32>) -> bool {
