@@ -19,21 +19,25 @@
 use super::*;
 use crate::gltf_load::CpuMesh;
 
-/// Cell size (m).
+/// Cell size of the procedural build (m); an anatomical volume brings its own (`TissueModel::cell`).
 pub(super) const CELL_M: f32 = 0.02;
 const PARTS: usize = crew_physics::CREW_BODY_PART_COUNT;
 /// Below this share of its soft cells a struck part leaves the articulated simulation (what is
 /// left of it then rides the nearest retained segment).
 pub(super) const KEEP_SOFT_SHARE: f32 = 0.2;
-/// Energy to tear one cell free of all its neighbours (J), skin, muscle, bone: authored, in the
-/// owner's order, scaled so a part's soft cells tear for about its pulverizing work (82–1,250 J
-/// over 233–3,400 cell-units of skin 1 : muscle 2.5).
-const TEAR_J: [f32; 3] = [0.4, 1.0, 3.2];
+/// Energy to tear one cell free of all its neighbours per cell volume (J/m³), skin, muscle, bone,
+/// fluid: authored, in the owner's order, scaled so a part's soft cells tear for about its
+/// pulverizing work (82–1,250 J over 233–3,400 cell-units of skin 1 : muscle 2.5; at the
+/// procedural 2 cm cell 0.4, 1.0 and 3.2 J). A fluid (blood, CSF, gut contents) is held by a
+/// quarter of skin's, so it stays until struck and then spills (its flow is the blood system's;
+/// named).
+const TEAR_J_M3: [f32; 4] = [50_000.0, 125_000.0, 400_000.0, 12_500.0];
 /// The stretch at which a bond lets go, in tension or crushed in compression (authored): skin
-/// stretches far, bone hardly.
-const CRITICAL_STRETCH: [f32; 3] = [0.6, 0.35, 0.05];
-/// Densities (kg/m³): soft tissue about water's, bone about cortical bone's.
-const DENSITY: [f32; 3] = [1_060.0, 1_060.0, 1_900.0];
+/// stretches far, bone hardly, a fluid as far as it is pulled.
+const CRITICAL_STRETCH: [f32; 4] = [0.6, 0.35, 0.05, 1.0];
+/// Densities of the procedural build (kg/m³): soft tissue about water's, bone about cortical
+/// bone's (an anatomical volume gives each cell its tissue's own, `crew_anatomy`).
+const DENSITY: [f32; 4] = [1_060.0, 1_060.0, 1_900.0, 1_050.0];
 /// A fragment's steel (kg/m³).
 const STEEL_DENSITY: f32 = 7_850.0;
 /// Drag coefficient of a tumbling fragment in tissue (authored, a blunt body's).
@@ -55,7 +59,10 @@ const STOPPED_MPS: f32 = 2.0;
 pub(super) const SKIN_LABELS: u8 = 12;
 pub(super) const MUSCLE_LABELS: [u8; 2] = [SKIN_LABELS + 1, SKIN_LABELS + 2];
 pub(super) const BONE_LABEL: u8 = SKIN_LABELS + 3;
-pub(super) const LABELS: usize = BONE_LABEL as usize;
+/// An anatomical volume's other tissues draw as `BONE_LABEL + id` (`crew_anatomy` table ids up to
+/// `MAX_ANATOMY_ID`), each in its table colour.
+pub(super) const MAX_ANATOMY_ID: u8 = 48;
+pub(super) const LABELS: usize = BONE_LABEL as usize + MAX_ANATOMY_ID as usize;
 
 /// The 18-neighbourhood, owned half (each bond stored once).
 const OFFSETS: [[i32; 3]; 9] = [
@@ -68,6 +75,7 @@ pub(super) enum Tissue {
     Skin,
     Muscle,
     Bone,
+    Fluid,
 }
 
 impl Tissue {
@@ -75,7 +83,7 @@ impl Tissue {
         self as usize
     }
     fn soft(self) -> bool {
-        matches!(self, Tissue::Skin | Tissue::Muscle)
+        !matches!(self, Tissue::Bone)
     }
 }
 
@@ -88,6 +96,15 @@ pub(super) struct Cell {
     pub part: crew_physics::CrewBodyPart,
     /// The figure's atlas coordinate at the nearest point of its surface (a skin cell's colour).
     pub uv: Vec2,
+    /// Its row in the anatomical tissue table (`crew_anatomy`); 0 in the procedural build.
+    pub label: u8,
+}
+
+impl Cell {
+    /// The body's outer shell, drawn in the figure's own colours (its uniform, hands and face).
+    pub(super) fn outer(&self) -> bool {
+        if self.label == 0 { self.tissue == Tissue::Skin } else { self.label == 1 }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -100,6 +117,12 @@ struct Bond {
 }
 
 pub(super) struct TissueModel {
+    /// Cell size (m).
+    pub cell: f32,
+    /// The anatomical volume it was built from, if any (receipts).
+    pub anatomy: Option<String>,
+    /// The anatomical table's colours for the tissues present (id, sRGB); empty when procedural.
+    pub tissue_colours: Vec<(u8, [u8; 3])>,
     pub origin: Vec3,
     pub dims: [usize; 3],
     /// Cell index + 1 per grid cell; 0 outside the figure.
@@ -140,7 +163,7 @@ impl TissueModel {
     }
 
     fn cell_at(&self, p: Vec3) -> Option<usize> {
-        let g = ((p - self.origin) / CELL_M).floor();
+        let g = ((p - self.origin) / self.cell).floor();
         self.lookup([g.x as i32, g.y as i32, g.z as i32])
     }
 
@@ -200,6 +223,94 @@ pub(super) fn triangle_box_overlap(centre: Vec3, half: Vec3, tri: [Vec3; 3]) -> 
 /// Fill the relaxed `figure` with cells and voxelise the fitted skeleton `bones` (in the figure's
 /// frame) onto the same grid, then bond every cell to its neighbours.
 pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -> TissueModel {
+    match crate::crew_anatomy::load() {
+        Ok(Some(volume)) => build_anatomical(figure, &volume),
+        Ok(None) => build_procedural(figure, bones),
+        Err(error) => {
+            eprintln!("[crew] the anatomical volume could not be read ({error:#}); the figure and skeleton build the tissue");
+            build_procedural(figure, bones)
+        }
+    }
+}
+
+/// The figure's atlas coordinate at its surface point nearest `at`.
+fn nearest_uv(figure: &CpuMesh, at: Vec3) -> Vec2 {
+    let corner = |t: usize, i: usize| figure.vertices[figure.indices[3 * t + i] as usize];
+    let points = |t: usize| [0, 1, 2].map(|i| Vec3::from(corner(t, i).pos));
+    let mut nearest = (f32::INFINITY, 0usize, at);
+    for t in 0..figure.indices.len() / 3 {
+        let [a, b, c] = points(t);
+        let q = crew_skeleton::closest_point_on_triangle(at, a, b, c);
+        let d = q.distance_squared(at);
+        if d < nearest.0 {
+            nearest = (d, t, q);
+        }
+    }
+    let [a, b, c] = points(nearest.1);
+    let w = barycentric(nearest.2, a, b, c);
+    [0, 1, 2].iter().zip([w.x, w.y, w.z]).map(|(&n, weight)| Vec2::from(corner(nearest.1, n).uv) * weight).sum::<Vec2>()
+}
+
+/// The tissue from an anatomical volume (`crew_anatomy`): every voxel of a tissue that is not a
+/// gas is a cell of its label, its strength class's bonds and its table density's mass; the outer
+/// shell takes the figure's colours at its nearest surface point.
+fn build_anatomical(figure: &CpuMesh, volume: &crate::crew_anatomy::Volume) -> TissueModel {
+    use crate::crew_anatomy::Strength;
+    let started = std::time::Instant::now();
+    let dims = volume.dims;
+    let cell_m = volume.cell_m;
+    let mut cells: Vec<Cell> = Vec::new();
+    let mut mass_kg: Vec<f32> = Vec::new();
+    for j in 0..dims[1] {
+        for k in 0..dims[2] {
+            for i in 0..dims[0] {
+                let label = volume.label(i, j, k);
+                let Some(row) = volume.tissue(label) else { continue };
+                let tissue = match row.strength {
+                    Strength::Skin => Tissue::Skin,
+                    Strength::Muscle => Tissue::Muscle,
+                    Strength::Bone => Tissue::Bone,
+                    Strength::Fluid => Tissue::Fluid,
+                    Strength::Gas => continue,
+                };
+                let at = volume.origin + (Vec3::new(i as f32, j as f32, k as f32) + 0.5) * cell_m;
+                cells.push(Cell { at, ijk: [i as u16, j as u16, k as u16], tissue,
+                    part: crew_physics::classify_relaxed_mesh_point(at), uv: Vec2::ZERO, label });
+                mass_kg.push(row.density_kg_m3 * cell_m.powi(3));
+            }
+        }
+    }
+    // The outer shell's colours, from the figure's atlas (threads over the shell's cells).
+    let shell: Vec<usize> = (0..cells.len()).filter(|&n| cells[n].outer()).collect();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 12);
+    let uvs: Vec<Vec<(usize, Vec2)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads).map(|thread| {
+            let (shell, cells) = (&shell, &cells);
+            scope.spawn(move || shell.iter().skip(thread).step_by(threads).map(|&n| (n, nearest_uv(figure, cells[n].at))).collect())
+        }).collect();
+        handles.into_iter().map(|h| h.join().expect("anatomy shell colours")).collect()
+    });
+    for (n, uv) in uvs.into_iter().flatten() {
+        cells[n].uv = uv;
+    }
+    let mut grid = vec![0u32; dims[0] * dims[1] * dims[2]];
+    for (n, cell) in cells.iter().enumerate() {
+        let [i, j, k] = cell.ijk.map(|v| v as usize);
+        grid[(j * dims[2] + k) * dims[0] + i] = n as u32 + 1;
+    }
+    let mut model = finish_model(cell_m, Some(volume.source.clone()), volume.origin, dims, grid, cells, mass_kg);
+    let present: std::collections::BTreeSet<u8> = model.cells.iter().map(|c| c.label).collect();
+    model.tissue_colours = volume.tissues.iter().filter(|t| present.contains(&t.id)).map(|t| (t.id, t.colour)).collect();
+    println!("[crew] anatomical tissue from {}: {} cells of {:.0} mm in {} tissues, {:.1} kg, built in {:.0} ms",
+        volume.source, model.cells.len(), cell_m * 1000.0,
+        model.cells.iter().map(|c| c.label).collect::<std::collections::BTreeSet<u8>>().len(),
+        model.mass_kg.iter().sum::<f32>(), started.elapsed().as_secs_f32() * 1000.0);
+    model
+}
+
+/// The figure's cells, skin within one cell of its surface and muscle deeper, and bone where the
+/// fitted skeleton's triangles pass (see the module doc).
+fn build_procedural(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -> TissueModel {
     let triangles = figure.indices.len() / 3;
     let corner = |t: usize, i: usize| figure.vertices[figure.indices[3 * t + i] as usize];
     let points = |t: usize| [0, 1, 2].map(|i| Vec3::from(corner(t, i).pos));
@@ -236,7 +347,7 @@ pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -
                                 .sum::<Vec2>();
                             let tissue = if nearest.0.sqrt() < CELL_M { Tissue::Skin } else { Tissue::Muscle };
                             out.push(Cell { at, ijk: [i as u16, j as u16, k as u16], tissue,
-                                part: crew_physics::classify_relaxed_mesh_point(at), uv });
+                                part: crew_physics::classify_relaxed_mesh_point(at), uv, label: 0 });
                         }
                     }
                 }
@@ -278,6 +389,12 @@ pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -
         }
     }
     let mass_kg: Vec<f32> = cells.iter().map(|c| DENSITY[c.tissue.index()] * CELL_M.powi(3)).collect();
+    finish_model(CELL_M, None, origin, dims, grid, cells, mass_kg)
+}
+
+/// The parts' cells, the joints' blend and the bonds, for either build.
+fn finish_model(cell_m: f32, anatomy: Option<String>, origin: Vec3, dims: [usize; 3], grid: Vec<u32>, cells: Vec<Cell>,
+    mass_kg: Vec<f32>) -> TissueModel {
     let mut part_cells: [Vec<u32>; PARTS] = std::array::from_fn(|_| Vec::new());
     let mut soft_cells = [0usize; PARTS];
     for (n, cell) in cells.iter().enumerate() {
@@ -288,8 +405,8 @@ pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -
     }
     // Bonds: each pair's energy to break is its weaker cell's tearing energy over a full
     // neighbourhood; its stiffness follows from that energy at that cell's critical stretch.
-    let mut model = TissueModel { origin, dims, grid, cells, mass_kg, part_cells, bonds: Vec::new(), bond_start: Vec::new(),
-        bond_list: Vec::new(), soft_cells, blend: Vec::new() };
+    let mut model = TissueModel { cell: cell_m, anatomy, tissue_colours: Vec::new(), origin, dims, grid, cells, mass_kg, part_cells, bonds: Vec::new(),
+        bond_start: Vec::new(), bond_list: Vec::new(), soft_cells, blend: Vec::new() };
     // Joints: a cell within 3.5 cells of the segment across a joint (parent or child) is drawn
     // pulled toward it, half way at the boundary, nothing at 3.5 cells.
     const BLEND_CELLS: f32 = 3.5;
@@ -322,9 +439,11 @@ pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -
         let [x, y, z] = cell.ijk.map(i32::from);
         for o in OFFSETS {
             let Some(b) = model.lookup([x + o[0], y + o[1], z + o[2]]) else { continue };
-            let weaker = cell.tissue.index().min(model.cells[b].tissue.index());
-            let rest_m = CELL_M * ((o[0] * o[0] + o[1] * o[1] + o[2] * o[2]) as f32).sqrt();
-            let energy = TEAR_J[weaker] / 18.0;
+            // The weaker cell's hold (the lower tearing energy), and its stretch.
+            let weaker = if TEAR_J_M3[cell.tissue.index()] <= TEAR_J_M3[model.cells[b].tissue.index()] { cell.tissue }
+                else { model.cells[b].tissue }.index();
+            let rest_m = cell_m * ((o[0] * o[0] + o[1] * o[1] + o[2] * o[2]) as f32).sqrt();
+            let energy = TEAR_J_M3[weaker] * cell_m.powi(3) / 18.0;
             let critical = CRITICAL_STRETCH[weaker];
             let stiffness = 2.0 * energy / (critical * rest_m).powi(2);
             bonds.push(Bond { a: a as u32, b: b as u32, rest_m, stiffness, critical });
@@ -559,7 +678,7 @@ impl CasualtyTissue {
                 for &c in &cells {
                     let r = model.cells[c as usize].at + disp[c as usize] - centre;
                     momentum += r.cross(vel[c as usize] - velocity) * mass[c as usize];
-                    inertia += mass[c as usize] * (r.length_squared() + CELL_M * CELL_M / 6.0);
+                    inertia += mass[c as usize] * (r.length_squared() + model.cell * model.cell / 6.0);
                 }
                 for &c in &cells {
                     self.present[c as usize] = false;
@@ -589,8 +708,9 @@ impl CasualtyTissue {
         let body = 2.0 * strike.work_j / (strike.speed_mps * strike.speed_mps);
         let side = (body / STEEL_DENSITY).cbrt();
         let area = side * side;
-        let reach = 0.5 * side + 0.5 * CELL_M;
-        let step = 0.25 * CELL_M;
+        let cell_m = model.cell;
+        let reach = 0.5 * side + 0.5 * cell_m;
+        let step = 0.25 * cell_m;
         let mut speed = strike.speed_mps;
         let mut s = 0.0;
         // Along its path through the part (1.2 m covers any part from its box's face).
@@ -604,16 +724,16 @@ impl CasualtyTissue {
             }
             // Poncelet's form: the tissue's own resistance (its tearing energy per volume, authored)
             // and Newtonian drag.
-            let tearing = TEAR_J[cell.tissue.index()] / CELL_M.powi(3) * area * step;
+            let tearing = TEAR_J_M3[cell.tissue.index()] * area * step;
             let kinetic = 0.5 * body * speed * speed - tearing;
             let resisted = if kinetic > 0.0 { (2.0 * kinetic / body).sqrt() } else { 0.0 };
-            let density = mass[here] / CELL_M.powi(3);
+            let density = mass[here] / cell_m.powi(3);
             let next = resisted * (-density * DRAG_CD * area * step / (2.0 * body)).exp();
             let lost = body * (speed - next);
             speed = next;
             // The cells within the body's reach of this point share the momentum it lost.
-            let g = ((p - model.origin) / CELL_M).floor();
-            let r = (reach / CELL_M).ceil() as i32;
+            let g = ((p - model.origin) / cell_m).floor();
+            let r = (reach / cell_m).ceil() as i32;
             let mut near: Vec<usize> = Vec::new();
             for dz in -r..=r {
                 for dy in -r..=r {
@@ -622,7 +742,7 @@ impl CasualtyTissue {
                             let q = model.cells[c].at;
                             let off = (q - p) - dir * (q - p).dot(dir);
                             if active[c] && model.cells[c].part == strike.part && off.length() <= reach
-                                && (q - p).dot(dir).abs() <= 0.5 * CELL_M + 1.0e-4 {
+                                && (q - p).dot(dir).abs() <= 0.5 * cell_m + 1.0e-4 {
                                 near.push(c);
                             }
                         }
@@ -683,18 +803,33 @@ impl CasualtyTissue {
     }
 }
 
-/// The drawing label of a cell (`skin_label` gives a skin cell its colour, 1..=SKIN_LABELS).
+/// The drawing label of a cell (`skin_label` gives an outer cell its colour, 1..=SKIN_LABELS).
+/// In an anatomical volume the outer shell takes the figure's colours, muscle its two shades,
+/// cortical bone the skeleton's, and every other tissue its table colour (`BONE_LABEL + id`).
 pub(super) fn label(cell: &Cell, skin_label: u8) -> u8 {
+    let muscle = || {
+        let [a, b, c] = cell.ijk.map(u32::from);
+        let hash = a.wrapping_mul(73_856_093) ^ b.wrapping_mul(19_349_663) ^ c.wrapping_mul(83_492_791);
+        MUSCLE_LABELS[(hash >> 7) as usize & 1]
+    };
+    if cell.label != 0 {
+        return match cell.label {
+            1 => skin_label.clamp(1, SKIN_LABELS),
+            ANATOMY_MUSCLE => muscle(),
+            ANATOMY_CORTICAL_BONE => BONE_LABEL,
+            other => BONE_LABEL + other.min(MAX_ANATOMY_ID),
+        };
+    }
     match cell.tissue {
         Tissue::Skin => skin_label.clamp(1, SKIN_LABELS),
-        Tissue::Muscle => {
-            let [a, b, c] = cell.ijk.map(u32::from);
-            let hash = a.wrapping_mul(73_856_093) ^ b.wrapping_mul(19_349_663) ^ c.wrapping_mul(83_492_791);
-            MUSCLE_LABELS[(hash >> 7) as usize & 1]
-        }
+        Tissue::Muscle | Tissue::Fluid => muscle(),
         Tissue::Bone => BONE_LABEL,
     }
 }
+
+/// The tissue table's skeletal muscle and cortical bone (`catalog/crew_anatomy_tissues.v1.json`).
+pub(super) const ANATOMY_MUSCLE: u8 = 3;
+pub(super) const ANATOMY_CORTICAL_BONE: u8 = 4;
 
 /// The strikes one killing event delivers to a casualty, in the relaxed figure's frame: every
 /// exact fragment contact that crossed him (its own energy, speed, point and direction) and the
@@ -760,7 +895,7 @@ pub(super) fn chunk_bodies(model: &TissueModel, ragdoll: &CrewRagdoll, chunks: V
         let figure_to_local = crew_segment_local_pose(segment) * Mat4::from_scale(Vec3::splat(ragdoll.scale))
             * Mat4::from_translation(-chunk.part.rest_center());
         let radius = chunk.cells.iter().map(|&c| model.cells[c as usize].at.distance(chunk.centre)).fold(0.0f32, f32::max)
-            * ragdoll.scale + 0.5 * CELL_M * 3f32.sqrt() * ragdoll.scale;
+            * ragdoll.scale + 0.5 * model.cell * 3f32.sqrt() * ragdoll.scale;
         ChunkBody {
             actor: ragdoll.casualty.peer_id,
             frame: ragdoll.frame,
@@ -808,6 +943,19 @@ pub(super) fn integrate_chunks(corpses: &std::cell::RefCell<Option<crew_corpse_r
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_classes_hold_in_order_and_keep_their_2_cm_energies() {
+        // Fluid gives first, then skin, muscle, bone; at the procedural 2 cm cell the old per-cell
+        // tearing energies (0.4, 1.0, 3.2 J) are unchanged.
+        let [skin, muscle, bone, fluid] = TEAR_J_M3;
+        assert!(fluid < skin && skin < muscle && muscle < bone);
+        let per_cell = |density: f32| density * CELL_M.powi(3);
+        for (got, want) in [(per_cell(skin), 0.4), (per_cell(muscle), 1.0), (per_cell(bone), 3.2)] {
+            assert!((got - want).abs() < 1e-6, "{got} {want}");
+        }
+        assert!(Tissue::Fluid.soft() && !Tissue::Bone.soft());
+    }
 
     /// A box "figure" (12 x 20 x 12 cm) with a bar of "bone" (3 x 16 x 3 cm) through it.
     fn toy() -> TissueModel {

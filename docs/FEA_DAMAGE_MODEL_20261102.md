@@ -636,3 +636,20 @@ did in the war.
   repeated unfilmed on a fresh Tiger until one strike lights, then that strike is replayed
   exactly and filmed.
 
+## The crew's anatomical tissue (2026-11-02, night, preliminary)
+
+The owner: the crew's voxels from the character model, with the skeleton and organs inside, each
+tissue with its own properties.
+
+- **The volume** (`crew_anatomy`): a `.kvox` file of 1 cm voxels in the relaxed figure's frame,
+  built by `tools/anatomy/build_anatomy.py`. It holds about 29 tissues: skin, fat, muscle,
+  cortical and cancellous bone, marrow, brain, CSF, lungs, heart, the great vessels' blood, liver,
+  kidneys, spleen, the gut and its contents, bladder and eyes. Each tissue has a density, a
+  strength class and a blood fraction (`catalog/crew_anatomy_tissues.v1.json`).
+- **In the lattice** (`crew_tissue`): a cell's mass is its tissue's density. Its bonds come from
+  the class: skin, muscle and bone keep their existing hold, organs take the skin or muscle
+  class, and fluids are held weakly enough to spill when struck. The outer shell keeps the
+  figure's colours; inside, every tissue draws in its own colour.
+- **Preliminary:** read from `KESSEL_CREW_ANATOMY` until the final volume lands at its asset
+  path. Native-resolution clips: `fea-damage-fea_anatomy_native_v4b_{crew_impact,tissue_loader,penetration_death}`.
+
