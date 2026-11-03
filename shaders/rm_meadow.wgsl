@@ -23,6 +23,9 @@ struct View {
 @group(0) @binding(4) var wind_tex: texture_2d<f32>;
 @group(0) @binding(5) var track_table: texture_2d<u32>;
 @group(0) @binding(6) var track_atlas: texture_2d<u32>;
+// Bodies pushing the grass aside (meadow.rs PushGrid): tip displacement of a reference blade;
+// the grid's origin rides in lod.w (x) and air.w (z).
+@group(0) @binding(7) var push_tex: texture_2d<f32>;
 
 const MD_TAU: f32 = 6.2831853;
 
@@ -101,6 +104,14 @@ fn md_wind(p: vec2<f32>) -> vec2<f32> {
     let c01 = textureLoad(wind_tex, clamp(i + vec2(0, 1), vec2(0), vec2(n - 1)), 0).rg;
     let c11 = textureLoad(wind_tex, clamp(i + vec2(1, 1), vec2(0), vec2(n - 1)), 0).rg;
     return mix(mix(c00, c10, t.x), mix(c01, c11, t.x), t.y);
+}
+
+fn md_push(p: vec2<f32>) -> vec2<f32> {
+    let g = (p - vec2(mv.lod.w, mv.air.w)) / MD_PUSH_CELL;
+    let i = vec2<i32>(floor(g));
+    let n = i32(MD_PUSH_CELLS);
+    if (any(i < vec2(0)) || any(i >= vec2(n))) { return vec2(0.0); }
+    return textureLoad(push_tex, i, 0).rg;
 }
 
 // The grass contact memory (grass_filament.rs TrackMemory): the heading code (0..63) of the
@@ -296,7 +307,8 @@ fn vs_blade(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsO
 
     // The wind grid's bend for this blade's height and stiffness, and the blade's own flutter at
     // its hashed natural frequency (named in the ledger).
-    let bend = md_wind(root2) * (height / MD_WIND_REFERENCE_HEIGHT) * (0.75 + 0.5 * r4);
+    let bend = md_wind(root2) * (height / MD_WIND_REFERENCE_HEIGHT) * (0.75 + 0.5 * r4)
+        + md_push(root2) * (height / MD_WIND_REFERENCE_HEIGHT);
     let speed = length(mv.air.xy);
     let across = vec3(-facing.z, 0.0, facing.x);
     let flutter = across * (0.0035 * speed * height / MD_WIND_REFERENCE_HEIGHT)
@@ -385,7 +397,7 @@ fn vs_flower(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> Vs
     let r5 = md_unit(md_hash(h ^ 0x05u));
     let azimuth = r2 * MD_TAU;
     let facing = vec3(cos(azimuth), 0.0, sin(azimuth));
-    let bend = md_wind(root2) * (stem / MD_WIND_REFERENCE_HEIGHT) * 0.7;
+    let bend = md_wind(root2) * (stem / MD_WIND_REFERENCE_HEIGHT) * 0.7 + md_push(root2) * (stem / MD_WIND_REFERENCE_HEIGHT);
     let speed = length(mv.air.xy);
     let sway = facing * (0.004 * speed * stem / MD_WIND_REFERENCE_HEIGHT) * sin(MD_TAU * (1.8 + 1.2 * r5) * mv.origin.w + r3 * MD_TAU);
     var rise = vec3(0.0, stem, 0.0) + facing * (stem * 0.12 * r3) + vec3(bend.x, 0.0, bend.y) + sway;
