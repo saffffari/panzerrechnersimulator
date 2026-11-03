@@ -35,6 +35,11 @@ const TEAR_J_M3: [f32; 4] = [50_000.0, 125_000.0, 400_000.0, 12_500.0];
 /// The stretch at which a bond lets go, in tension or crushed in compression (authored): skin
 /// stretches far, bone hardly, a fluid as far as it is pulled.
 const CRITICAL_STRETCH: [f32; 4] = [0.6, 0.35, 0.05, 1.0];
+/// A uniform's woollen cloth breaks at about a quarter's stretch (wool fabric's elongation at break,
+/// roughly 25-35 %; the lower end taken: named). A bond to a cloth cell holds no further than this,
+/// whatever the review tune does to the flesh's stretch, and its energy is the weaker cell's: cloth
+/// never outlasts the flesh under it.
+pub(super) const CLOTH_BREAKING_STRAIN: f32 = 0.25;
 /// Densities of the procedural build (kg/m³): soft tissue about water's, bone about cortical
 /// bone's (an anatomical volume gives each cell its tissue's own, `crew_anatomy`).
 const DENSITY: [f32; 4] = [1_060.0, 1_060.0, 1_900.0, 1_050.0];
@@ -215,6 +220,12 @@ impl Cell {
     /// The body's outer shell, drawn in the figure's own colours (its uniform, hands and face).
     pub(super) fn outer(&self) -> bool {
         if self.label == 0 { self.tissue == Tissue::Skin } else { self.label == 1 }
+    }
+
+    /// The uniform: the outer shell everywhere but the head (2026-11-03, the owner: the uniform
+    /// stood as an intact shell round a destroyed body).
+    pub(super) fn cloth(&self) -> bool {
+        self.outer() && self.part != crew_physics::CrewBodyPart::Head
     }
 }
 
@@ -629,7 +640,10 @@ fn finish_model(cell_m: f32, anatomy: Option<String>, origin: Vec3, dims: [usize
                 else { model.cells[b].tissue }.index();
             let rest_m = cell_m * ((o[0] * o[0] + o[1] * o[1] + o[2] * o[2]) as f32).sqrt();
             let energy = TEAR_J_M3[weaker] * tune().tear * cell_m.powi(3) / 18.0;
-            let critical = CRITICAL_STRETCH[weaker] * tune().stretch;
+            let mut critical = CRITICAL_STRETCH[weaker] * tune().stretch;
+            if cell.cloth() || model.cells[b].cloth() {
+                critical = critical.min(CLOTH_BREAKING_STRAIN);
+            }
             let stiffness = 2.0 * energy / (critical * rest_m).powi(2);
             bonds.push(Bond { a: a as u32, b: b as u32, rest_m, stiffness, critical, class: weaker as u8 });
         }
@@ -688,6 +702,8 @@ pub(super) struct Solve {
     pub bonds_broken: usize,
     /// Cells crushed along a fragment's track (its permanent cavity), drawn as gone.
     pub crushed: usize,
+    /// Cloth cells left with nothing of the body under them, blown away as single cells.
+    pub cloth_shredded: usize,
     pub steps: usize,
 }
 
@@ -921,6 +937,34 @@ impl CasualtyTissue {
                         model.cells[c].tissue, disp[c], vel[c]);
                 }
             }
+        }
+        // Cloth with nothing of the body left under it does not stand as a shell: a cloth cell of
+        // a struck part is held when it keeps an intact bond to a present cell of flesh, or one to
+        // cloth that is (a shell's edges and corners lie over cloth, not flesh). Every other one
+        // comes away on its own, with its own motion (shredded and blown off; named: a cell, not a
+        // hanging rag).
+        let flesh_held = |tissue: &Self, c: usize| model.bonds_of(c).iter().any(|&b| {
+            let bond = model.bonds[b as usize];
+            let other = if bond.a as usize == c { bond.b } else { bond.a } as usize;
+            !tissue.broken[b as usize] && tissue.present[other] && !model.cells[other].cloth()
+        });
+        let cloth: Vec<usize> = crew_physics::CrewBodyPart::ALL.into_iter().filter(|p| struck[p.index()])
+            .flat_map(|part| model.part_cells[part.index()].iter().map(|&c| c as usize))
+            .filter(|&c| self.present[c] && model.cells[c].cloth()).collect();
+        let held: std::collections::HashSet<usize> = cloth.iter().copied().filter(|&c| flesh_held(self, c)).collect();
+        let unsupported: Vec<usize> = cloth.iter().copied().filter(|c| !held.contains(c)).filter(|&c| !model.bonds_of(c).iter().any(|&b| {
+            let bond = model.bonds[b as usize];
+            let other = if bond.a as usize == c { bond.b } else { bond.a } as usize;
+            !self.broken[b as usize] && held.contains(&other)
+        })).collect();
+        for &c in &unsupported {
+            self.present[c] = false;
+            out.cloth_shredded += 1;
+            out.chunks.push(Chunk { part: model.cells[c].part, cells: vec![c as u32], centre: model.cells[c].at,
+                velocity: vel[c], spin: Vec3::ZERO, cohesion_j: 0.0 });
+        }
+        if !unsupported.is_empty() {
+            self.revision = self.revision.wrapping_add(1);
         }
         // Each struck part keeps its largest piece still bonded together; every other piece of it
         // comes away (bonds across parts do not hold a piece on: the parts are separate bodies).
@@ -1374,6 +1418,39 @@ mod tests {
         let slow = tissue.solve(&model, &[Strike { part, at: entry, dir: Vec3::NEG_X, work_j: 0.5 * 0.01 * 15.0 * 15.0, speed_mps: 15.0 }]);
         assert!(slow.chunks.is_empty(), "{slow:?}");
         assert_eq!(slow.lodged, 1, "it stops in him");
+    }
+
+    #[test]
+    fn a_strike_that_destroys_the_flesh_takes_the_cloth_over_it() {
+        let model = toy();
+        assert!(model.cells.iter().any(|c| c.cloth()), "the toy's outer shell is its uniform");
+        let part = crew_physics::CrewBodyPart::Torso;
+        let mut tissue = CasualtyTissue::new(&model);
+        // A heavy burst on one side and a fast fragment through: flesh torn and crushed.
+        let solve = tissue.solve(&model, &[Strike { part, at: Vec3::new(0.0, 1.1, 0.6), dir: Vec3::ZERO, work_j: 4_000.0, speed_mps: 0.0 },
+            Strike { part, at: Vec3::new(0.07, 1.1, 0.03), dir: Vec3::NEG_X, work_j: 0.5 * 0.05 * 700.0 * 700.0, speed_mps: 700.0 }]);
+        assert!(solve.crushed + solve.chunks.len() > 0);
+        // No cloth stands on its own: every cloth cell still there holds to flesh still there, or
+        // to cloth that does.
+        let on_flesh = |c: usize| model.bonds_of(c).iter().any(|&b| {
+            let bond = model.bonds[b as usize];
+            let other = if bond.a as usize == c { bond.b } else { bond.a } as usize;
+            !tissue.broken[b as usize] && tissue.present[other] && !model.cells[other].cloth()
+        });
+        for c in (0..model.cells.len()).filter(|&c| tissue.present[c] && model.cells[c].cloth()) {
+            let held = on_flesh(c) || model.bonds_of(c).iter().any(|&b| {
+                let bond = model.bonds[b as usize];
+                let other = if bond.a as usize == c { bond.b } else { bond.a } as usize;
+                !tissue.broken[b as usize] && tissue.present[other] && on_flesh(other)
+            });
+            assert!(held, "cloth cell {:?} left as a shell", model.cells[c].ijk);
+        }
+        // Where the flesh under the fragment's track is gone, the cloth over it is gone too.
+        let track = |c: usize| { let at = model.cells[c].at; (at.y - 1.1).abs() < 0.012 && (at.z - 0.03).abs() < 0.012 };
+        assert!((0..model.cells.len()).filter(|&c| track(c) && model.cells[c].cloth()).all(|c| !tissue.present[c]));
+        // A cloth bond lets go at the textile's stretch at most.
+        assert!(model.bonds.iter().filter(|b| model.cells[b.a as usize].cloth() || model.cells[b.b as usize].cloth())
+            .all(|b| b.critical <= CLOTH_BREAKING_STRAIN + 1e-6));
     }
 
     #[test]

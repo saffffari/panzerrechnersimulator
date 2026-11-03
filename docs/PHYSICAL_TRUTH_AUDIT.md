@@ -1727,6 +1727,18 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     response is the owner's art direction, not a measured property. The droplets, the coat and the
     pools under the couch dead share it.
   - Not yet seen rendered (no renders while the owner works).
+- **The uniform tears and comes away with the flesh** (2026-11-03, `crew_tissue::Cell::cloth`,
+  `CLOTH_BREAKING_STRAIN`; the owner: struck men left intact uniform shells round destroyed
+  bodies). The body's outer shell of cells except the head is its uniform. Its bonds held as skin,
+  whose authored stretch (0.6) the range's review tune multiplied four times, so the shell outlasted
+  the muscle under it and stood on its own once the flesh inside was gone. Now a bond to a cloth
+  cell lets go at a woollen fabric's stretch at break, 0.25 (wool fabric's elongation at break,
+  roughly 25-35 %, the lower end: named), whatever the tune does to the flesh's, at the weaker
+  cell's energy, so the cloth never outlasts the flesh. After each solve, a cloth cell with no
+  intact bond to present flesh, or to cloth that has one, comes away as a single cell with its own
+  motion (named: shredded cloth is cells, not a hanging rag). Not yet: the cloth's burning in a
+  fire or under a hot fragment (the player's own clothing catches above 850 K,
+  `ignition::CLOTHING_K`; the dead's cloth does not yet burn away: named).
 - **The gun mantlet is armour on the gun's frame** (2026-11-03, `projectile_armor_source::plate_on`,
   `TIGER_MANTLET_NODE`; the owner: the mantlet appeared to be left out of the FEA). The armour
   contact surfaces held the hull, turret, hatches and visors but not the gun's frame, so a shell
