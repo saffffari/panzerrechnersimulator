@@ -751,7 +751,6 @@ fn current_tiger_part_mesh(index: usize) -> Option<CpuMesh> {
     let path = *CURRENT_TIGER_PART_GLBS.get(index)?;
     crate::gltf_load::load_glb(path)
         .ok()
-        .map(crate::tank::repaint_german_grey)
         .or_else(|| crate::tank::build_tiger().into_iter().nth(index))
 }
 
@@ -2862,7 +2861,6 @@ mod tests {
         for (index, retired) in RETIRED_HALF_TIGER_GLBS.into_iter().enumerate() {
             let replacement = load_module(retired).expect("semantic Tiger replacement loads");
             let expected = crate::gltf_load::load_glb(CURRENT_TIGER_PART_GLBS[index])
-                .map(crate::tank::repaint_german_grey)
                 .expect("current Tiger part loads");
             assert_eq!(
                 replacement.vertices.len(),

@@ -1673,7 +1673,7 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
-    /// A lamp lens (`mark_lamp_lens`): 0 none, 1 bare, 2 behind a wire cage; 4 an indicator cube,
+    /// A lamp: 0 none; 4 an indicator cube (`mark_indicator_lamp`),
     /// uniformly lit, dark glass when off (`mark_indicator_lamp`).
     lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
@@ -2840,9 +2840,6 @@ pub struct Renderer {
     /// Wear on the player's vehicle (`surface_wear`): interior grime, exterior grime, glass grime,
     /// mechanical wear, each 0..1; set by the game each update (raymarch backend).
     pub wear: [f32; 4],
-    /// The player's Tiger's winter whitewash, 0 (none) to 1 (a full field coat): the raymarch
-    /// G-buffer lays it over the exterior paint (`rm_gbuffer.wgsl` `apply_whitewash`).
-    pub whitewash: f32,
     /// The film/review section plane (world normal xyz into the removed half, offset w), set only
     /// through `set_film_section`; None in play and in both shipping presets.
     film_section: Option<[f32; 4]>,
@@ -6285,7 +6282,6 @@ impl Renderer {
             player_snow_load: 0.0,
             world_snow_load: 0.0,
             wear: [0.0; 4],
-            whitewash: 0.0,
             film_section: None,
             section_window: [0.0; 4],
             worn_vehicles: Vec::new(),
@@ -7109,13 +7105,6 @@ impl Renderer {
     pub fn mark_indicator_lamp(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.lamp_lens = 4;
-        }
-    }
-    /// Flag own-colour emissive mesh `idx` as a lamp: the raymarch G-buffer draws each face as a
-    /// round lens in a dark bezel (`rm_gbuffer.wgsl` `lamp_lens`), behind a wire cage if `caged`.
-    pub fn mark_lamp_lens(&mut self, idx: usize, caged: bool) {
-        if let Some(g) = self.meshes.get_mut(idx) {
-            g.lamp_lens = if caged { 2 } else { 1 };
         }
     }
     /// Flag mesh `idx` as an OWN-COLOUR emissive that is NOT night-gated: a warm interior bulb or a
@@ -9784,7 +9773,7 @@ impl Renderer {
                 GpuInstanceMaterialState::disabled(regular_object_custom_data(slot, mesh.temporal_dynamic), SurfaceId(surface))
             } else {
                 let tint = if mode == InstanceEmissionMode::RasterFxOrange {
-                    [1.0, 0.24, 0.03]
+                    crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(mesh.emissive))
                 } else {
                     [1.0; 3]
                 };
@@ -9837,7 +9826,7 @@ impl Renderer {
                     let (mode, tint) = if own_colour {
                         (InstanceEmissionMode::BaseColorUngated, [1.0; 3])
                     } else {
-                        (InstanceEmissionMode::RasterFxOrange, [1.0, 0.24, 0.03])
+                        (InstanceEmissionMode::RasterFxOrange, crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(batch.emissive)))
                     };
                     GpuInstanceMaterialState::emissive(
                         custom_data,

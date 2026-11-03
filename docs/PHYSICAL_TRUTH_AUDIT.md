@@ -103,8 +103,9 @@ Named approximations (limits):
   the beam in the clear air, no secondary body (the Moon while the Sun keys) in it, single
   scattering only, altitude as y above the local planet surface (flat over the map).
 - The weather layer's albedo (0.70 aerosol, 0.92 snow) and asymmetry are the values it had,
-  unsourced; the cabin haze and the plumes keep the (0.94, 0.97, 1) scattering tint (outside this
-  change); both are open.
+  unsourced; the cabin haze and the plumes kept the (0.94, 0.97, 1) scattering tint until 2 November
+  2026, when it was removed as unsourced (it cast the cabin blue): they scatter neutrally. The
+  weather layer's values remain open.
 
 Measured (spring-bridge-v2 copy, 15:28 local solar, looking east across the valley to the hills
 1.8 km away, the locked look; sRGB means over the hill band): before (128, 131, 134 → B-R +6.7);
@@ -1933,7 +1934,8 @@ are presented as ray tracing, GI or a combustion/solver result:
   `cabin_medium.rs`); the exterior grey swatch on a cabin-facing surface is read as the ivory there
   (a reclassification by exact swatch, not per-part source data).
 - Crew compartment paint, grime, lamps (2026-10-28; `tank.rs` `tiger_paint_finish`,
-  `rm_gbuffer.wgsl` `cabin_grime` and `lamp_lens`, `surface_wear::CAMPAIGN_START`): ivory from a
+  `surface_wear::CAMPAIGN_START`; `cabin_grime` and the `lamp_lens` profile were removed on 2
+  November 2026, superseded by the vehicle surface model and unreached): ivory from a
   common RAL 1001 conversion, not a measured surviving interior; grime an authored mask (dust up,
   oil low, soot high) at one scalar load, 0.65 at the start (an estimate of weeks in the cauldron);
   lamp lenses an authored profile (core, rim, glint, cage) carrying the cube face's emission (the
@@ -1995,7 +1997,9 @@ are presented as ray tracing, GI or a combustion/solver result:
   (`lamp_mounts::SIGHT`), real emitters at the
   cabin lamps' power, driven by the reload machine's state, never by the player's selection. The
   APCR lens never lights because the reload machine chambers APCR as the armour-piercing round.
-- Winter whitewash (2026-10-28; `rm_gbuffer.wgsl` `apply_whitewash`, `Renderer::whitewash`): in
+- Winter whitewash (2026-10-28; removed 2 November 2026 with its frame lane, its renderer field and
+  `KESSEL_WHITEWASH`: the owner keeps the Tiger grey in every season, and the vehicle surface model
+  has no whitewash layer; the description below is the former coat): in
   winter acts the player's Tiger's exterior paint (recognised by its exact swatch) takes a chalky
   white coat (linear 0.56-0.72), thin where the brush ran dry, worn through on the decks, streaked
   down the sides; an authored mask in the mesh frame, raymarch backend only. Gate: `raymarch-cabin`
@@ -2067,8 +2071,9 @@ are presented as ray tracing, GI or a combustion/solver result:
   banks; the shader and physical backends draw none (the editor shows them with
   `KESSEL_RENDERER=raymarch`). Gate: `KESSEL_RM_SKIP=4194304` (debug A/B, removes the banks);
   `cargo test -- low_clouds` (extinction law, absent block, round trip, drift, optical depth).
-- Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`, `rm_gbuffer.wgsl`
-  `apply_wear`, the shade pass's worn edges and cavity grime, the glass film): four scalar loads,
+- Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`; its `apply_wear` noise was
+  removed on 2 November 2026 and the loads now set the vehicle surface model's amounts; the shade
+  pass's worn edges and cavity grime serve the other vehicles; the glass film): four scalar loads,
   mechanical wear (+0.4 % of the remainder per round), interior grime (toward full over 40 min
   crewed, +3 % per round), exterior grime (toward full over 3 km driven), glass grime (+2 % per
   round, over 8 km, toward full over an hour of full snowfall; a wipe leaves 0.05), starting at
@@ -4081,7 +4086,10 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   instead of skewing hue, which is what the owner's "oversaturated, deep fried" sunset was: the
   ACES fit turning the orange of a three-band sunset yellow. A reproduction transform like the fit
   it replaces; it changes no light. The CPU reference `observer::aces` stays as the mapping's
-  monotonic reference in the tests.
+  monotonic reference in the tests. The exposure into the curve, ×1.3, is the named
+  `observer::AGX_KEY_TRIM` (the key at about 0.27 display-linear as under the former fit; AgX
+  alone gives 0.21), a reproduction choice kept on 2 November 2026 when the leftover constants were
+  reviewed.
 - **The aerosol is a winter continental background** (`AtmosphereParameters::default`:
   Mie scattering 4.0e-5 and extinction 4.444e-5 per metre at sea level over the 1,200 m scale
   height, optical depth about 0.05 at 550 nm, single-scattering albedo 0.9; first set at 0.08,
@@ -4421,15 +4429,34 @@ Gates: `observer::tests::fire_lit_ground_keeps_its_cones_colour_and_the_dark_fie
 eye lane at 192, the three lane copies on both backends), `observer::spatial_meter_tests`
 (shader validation). Identical in both presets.
 
+## Effect glow on the one incandescence law, 2026-11-02 (`incandescence::fx_kelvin`, `fx_glow`; the shaders' `incandescent_glow`)
+
+An emissive effect mesh (gunfire, an impact, a burning box) and its light were drawn in a
+hand-tinted orange, (1, 0.24, 0.03) mixed 18 % toward the mesh's colour, with an added white-hot term
+above a drive of 6, in five places (`rm_gbuffer.wgsl`, `mesh.wgsl`, `gbuf.wgsl`, `stylized_mesh.wgsl`,
+`combine.wgsl`) and three CPU copies (the main flash's light, the volumetric flash colour, the
+ray-traced emission tint). Now each is the Planck colour (red band 1) of 1,500 K plus 150 K per unit
+of drive, to 2,800 K, at 0.30 of the drive: the old orange was that law at about 1,800 K, so a low
+drive looks as before and a strong one turns white-hot by the same law the fire, the sparks and the
+glowing metal use (test: `an_effect_glows_on_the_planck_law_and_matches_the_old_orange_at_a_low_drive`).
+The drive-to-temperature map is an estimate. In the raymarch backend an own-colour glowing instance
+batch is now pushed as kind 2 (its authored colour, `set_batch_own_emissive`), not kind 0.
+
 ## The vehicle surface model, 2026-11-02 (`src/vehicle_surface.rs`, `shaders/rm_vsm.wgsl`; `docs/VEHICLE_SURFACE_MODEL_20261102.md`)
 
 Every material layer on the player's Tiger is placed by its cause. Phase 1 measures the causes the
 geometry carries; phase 2 builds the paint and steel on them; phase 3 simulates the processes that
 act on a vehicle in the field. With the field installed, the player's hull, turret, gun, roof
-hatches, visor holder and cupola grip take this finish in place of `paint_source_metal`,
-`apply_whitewash`, `apply_wear`, `cabin_grime` and the shade pass's screen-space worn edges and
-corner grime (which stand down for every pixel near the player's vehicle). `KESSEL_VSM_LAYERS=N`
-keeps layers 1..N for review; 255 restores the former finish for the before/after.
+hatches, visor holder and guides, cupola grip and lid, periscope housings, deck plate and fuel caps
+take this finish in place of the plain fallback paint (`paint_source_metal`, drawn only until the
+field is installed or with it switched off, at the same grey and white) and the shade pass's
+screen-space worn edges and corner grime (which stand down for every pixel near the player's
+vehicle). The former noise layers (`apply_whitewash`, `apply_wear`, `cabin_grime`) were removed on 2
+November 2026. `KESSEL_VSM_LAYERS=N` keeps layers 1..N for review; 255 shows the fallback paint. The
+old swatches were aligned the same day so the friendly Tigers, the German wrecks and every part off
+the field match: exterior sRGB 105/108/115 (satin), compartment 221/216/206, basket floor a neutral
+93/93/91 (it took the source's green-grey 58/70/64). The cupola's lid is its own bake, added to the
+turret's field at its hinge, closed.
 
 | Part | What the live code computes | Named approximation and source |
 | --- | --- | --- |

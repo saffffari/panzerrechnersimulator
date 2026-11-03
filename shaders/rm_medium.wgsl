@@ -201,9 +201,9 @@ fn rm_medium_at(p: vec3<f32>) -> Medium {
     // extinction, the 550 nm band's (named approximation, docs/PHYSICAL_TRUTH_AUDIT.md): its
     // transmittance is grey over the grid's 320 m; the far march and the sky are spectral.
     let world_s = (parts.x * rm_world_spectrum(snow) + vec3(parts.y)) * world_albedo;
-    // The cabin haze and the plumes keep the tint they had (an unsourced (0.94, 0.97, 1) left
-    // outside this change's scope; docs/PHYSICAL_TRUTH_AUDIT.md).
-    let rest_s = vec3(cabin * 0.80 + soot * 0.20 + puff.x * puff.y) * mix(vec3(0.94, 0.97, 1.0), vec3(1.0), snow);
+    // The cabin haze, the soot and the plumes scatter neutrally (their unsourced cool tint
+    // (0.94, 0.97, 1) was removed on 2 November 2026: it cast the cabin blue).
+    let rest_s = vec3(cabin * 0.80 + soot * 0.20 + puff.x * puff.y);
     m.sigma_s = min(world_s, vec3(world)) + rest_s + vec3(drops * fr.low_cloud.z);
     m.g = (world * mix(0.74, 0.62, snow) + cabin * 0.55 + soot * 0.5 + puff.x * 0.65 + drops * fr.low_cloud.y) / sigma_t;
     return m;

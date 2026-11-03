@@ -799,14 +799,10 @@ fn main_flash_edge(remaining: f32) -> f32 { 1.2 + 8.0 * remaining.clamp(0.0, 0.0
 /// Total-power-equivalent source calibrated against the legacy six-face muzzle cube. This
 /// replaces the unrelated pale 420-unit light. The shader backend draws the separate weapon
 /// grain field, so this is still a reference-emitter approximation, not that field's exact flux.
-/// Mode-zero emission matches gbuf/stylized_mesh, including its small hot core.
+/// Mode-zero emission matches the shaders' `incandescent_glow` (incandescence::fx_glow).
 fn main_flash_light(position: Vec3, remaining: f32) -> Option<PointLight> {
     if remaining <= 0.0 { return None; }
-    let raw = Vec3::from_array(MAIN_FLASH_COLOR.map(|v|
-        crate::rt_surface::srgb_to_linear(v as f32 / 255.0)));
-    let emission = Vec3::new(1.0, 0.24, 0.03).lerp(raw, 0.18)
-        * MAIN_FLASH_EMISSIVE * 0.30
-        + Vec3::new(1.0, 0.88, 0.62) * (MAIN_FLASH_EMISSIVE - 6.0).max(0.0) * 0.18;
+    let emission = Vec3::from_array(crate::incandescence::fx_glow(MAIN_FLASH_EMISSIVE));
     let edge = main_flash_edge(remaining);
     let peak = emission.max_element();
     Some(PointLight {pos: position, color: emission / peak,
@@ -11670,9 +11666,9 @@ impl Game {
         let driver_visor_holder=scene.len();
         scene.push(visor_holder);
         let driver_visor_guides=scene.len();
-        scene.push(tank::repaint_german_grey(shutters.guides));
+        scene.push(shutters.guides);
         let driver_visor_moving=[scene.len(),scene.len()+1,scene.len()+2];
-        scene.extend(shutters.moving.map(tank::repaint_german_grey));
+        scene.extend(shutters.moving);
         let (driver_visor_glass, other_hull_eyepieces, driver_roof_pane)=tiger_driver_visor::load_optics()?;
         let driver_roof_eyepiece=scene.len();
         scene.push(driver_roof_pane);
@@ -12170,7 +12166,7 @@ impl Game {
                 );
                 // Same panzer-grey repaint as the hull/turret/gun bakes — the raw albedo is
                 // authored near-black and vanishes against the cupola well in the crushed frame.
-                scene.push(crate::tank::repaint_german_grey(m));
+                scene.push(m);
             }
             Err(e) => {
                 println!("[panzerrechnersystem] cupola hatch: bake missing ({e}) — procedural stand-in");
@@ -13048,6 +13044,9 @@ impl Game {
             }
             renderer.mark_vsm_part(slots.driver_visor_holder, 1, Vec3::ZERO);
             renderer.mark_vsm_part(slots.cupola_grip, 2, CUPOLA_HINGE);
+            // The cupola's lid: its own bake, origin on the hinge as the grip's.
+            renderer.mark_vsm_part(slots.hatch, 2, CUPOLA_HINGE);
+            renderer.mark_snow_vehicle(slots.hatch);
             // Parts split off the source meshes and drawn at their frame's model: the visor's
             // guides (hull) and the periscope housings (turret).
             renderer.mark_vsm_part(slots.driver_visor_guides, 1, Vec3::ZERO);
@@ -17441,10 +17440,8 @@ impl Game {
         // precipitation (`surface_wear`).
         self.surface_wear.update(dt, self.player.speed, self.rounds_spent, r.precipitation);
         r.wear = self.surface_wear.uniform();
-        // The scratched, worn Dunkelgrau in every season, the owner's choice of 2 November 2026
-        // over the winter coat. A crew in the snow would often carry a washable white coat
-        // (December 1942); `KESSEL_WHITEWASH=1` lays it on (renderer_raymarch's override).
-        r.whitewash = 0.0;
+        // The player's Tiger carries its grey in every season, the owner's choice of 2 November
+        // 2026 over the winter coat (vehicle_surface.rs: no whitewash layer).
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
@@ -20423,7 +20420,7 @@ impl Game {
             // The cabin lights' switch (`set_cabin_lights`): off, every lamp is an unlit cube and
             // its light is zero.
             let power = if self.cabin_lights { 1.0 } else { 0.0 };
-            let practical_gain = rig::cabin_practical_gain(r.shader_backend) * power;
+            let practical_gain = power;
             let hm = self.player.hull_model();
             let tm = self.player.turret_model();
             let gm = self.player.visual_gun_model();

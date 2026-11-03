@@ -294,18 +294,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     if (!sparse_cubic_smoke && pc.params.x > 0.0 && pc.params.w < 0.5) {
-        // Gunfire: searing saturated orange with a white-hot core, driven hard into HDR so it
-        // blooms through the crush and pops against the cold blue world (ART_BIBLE §2). Unlit —
-        // never PBR-shaded, so it stays bright regardless of any material data on the FX mesh.
-        let orange = vec3(1.0, 0.24, 0.03); // saturated fire orange/red
-        let tinted = mix(orange, raw, 0.18);  // mostly orange, a little of the source hue
-        // Scale the raw FX intensity down so the tonemap keeps the HUE instead of clipping every
-        // channel to flat white — the body stays a searing saturated orange.
-        var col = tinted * pc.params.x * 0.30;
-        // A restrained white-hot bias only on the very brightest flashes (muzzle / big impact),
-        // so their centre reads incandescent without washing the whole box to white.
-        col = col + vec3(1.0, 0.88, 0.62) * max(pc.params.x - 6.0, 0.0) * 0.18;
-        return vec4(col, 1.0);
+        // Gunfire: incandescent at a temperature rising with the drive (the one Planck law),
+        // unlit, so it stays bright regardless of any material data on the FX mesh.
+        return vec4(incandescent_glow(pc.params.x), 1.0);
     }
 
     // The sampled sRGB texture has already been decoded to linear by the texture format. Preserve
@@ -390,4 +381,17 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var col = direct;
 
     return vec4(col, 1.0);
+}
+
+// The one incandescence law (incandescence.rs `fx_kelvin`, `fx_glow`): an effect mesh driven at
+// `x` glows at the Planck colour of 1,500 K plus 150 K per unit of drive (to 2,800 K), red band 1,
+// at 0.30 of the drive.
+fn incandescent_glow(x: f32) -> vec3<f32> {
+    let kelvin = clamp(1500.0 + 150.0 * x, 1500.0, 2800.0);
+    let c2 = 14387769.0;
+    let reference = exp(c2 / (650.0 * kelvin)) - 1.0;
+    let lambda = vec3(650.0, 550.0, 450.0);
+    let ratio = vec3(650.0) / lambda;
+    let chroma = ratio * ratio * ratio * ratio * ratio * reference / (exp(vec3(c2) / (lambda * kelvin)) - vec3(1.0));
+    return chroma * x * 0.30;
 }

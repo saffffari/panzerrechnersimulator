@@ -234,12 +234,15 @@ fn vsm_view_colour(view: u32, frame: u32, p: vec3<f32>, n: vec3<f32>) -> vec3<f3
 // lit faces, sunlit snow measured R/G 1.05, B/G 0.95 on the display) it reads a neutral grey, as
 // the owner asked ("exterior still looks green can we make it neutral grey"). RAL 7021's
 // blue-black (0.041, 0.045, 0.051) read too dark.
-const VSM_GREY: vec3<f32> = vec3<f32>(0.142, 0.151, 0.170);
+const VSM_GREY: vec3<f32> = vec3<f32>(0.1413, 0.1500, 0.1714);
 // The fighting compartment's paint: a white (the owner's choice, 2 November 2026, over the period's
 // Elfenbein RAL 1001), at the chromaticity of a real white paint (RAL 9010 Reinweiss, slightly
 // warm) and the same reflectance as before (0.69 luminance): a cool neutral read blue in the
 // daylight that reaches the compartment through its blocks and hatches.
-const VSM_IVORY: vec3<f32> = vec3<f32>(0.72, 0.688, 0.62);
+const VSM_IVORY: vec3<f32> = vec3<f32>(0.7231, 0.6867, 0.6172);
+// The turret basket's floor plate: a neutral mid grey (the owner's neutral-grey call; it took the
+// source's green-grey 58/70/64 before).
+const VSM_FLOOR: vec3<f32> = vec3<f32>(0.1095, 0.1095, 0.1046);
 const VSM_OIL: vec3<f32> = vec3<f32>(0.022, 0.016, 0.010);
 const VSM_PRIMER: vec3<f32> = vec3<f32>(0.156, 0.039, 0.034);
 const VSM_STEEL: vec3<f32> = vec3<f32>(0.56, 0.56, 0.555);
@@ -405,7 +408,7 @@ fn vsm_finish(frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32>, up: vec3<f32
     }
     // 3 topcoat, with the spray's thickness varying over tens of centimetres.
     var paint = select(VSM_GREY, VSM_IVORY, inside);
-    if (cls == 6u) { paint = source; }
+    if (cls == 6u) { paint = VSM_FLOOR; }
     let spray = vsm_noise(p * 2.2) * 0.6 + vsm_noise(p * 7.0) * 0.4;
     paint *= 0.95 + 0.10 * spray;
     // Outside a little shinier than a flat field paint (the owner, 2 November 2026: "lower the

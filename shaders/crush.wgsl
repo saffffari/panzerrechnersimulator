@@ -174,9 +174,9 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
         vec3(-0.0529716355144438, -0.0980434501171241, 1.15107367264116));
     let min_ev = -12.47393;
     let max_ev = 4.026069;
-    // The exposure trim that puts the eye's key where the former fit put it (0.18 scene to
-    // about 0.27 display-linear; AgX alone lands it at 0.21), so midday is as bright as before.
-    var v = inset * max(x * 1.3, vec3(1.0e-10));
+    // The display's exposure into the curve (observer::AGX_KEY_TRIM: the key lands about 0.27
+    // display-linear, AgX alone puts it at 0.21).
+    var v = inset * max(x * OBS_AGX_KEY_TRIM, vec3(1.0e-10));
     v = clamp(log2(v), vec3(min_ev), vec3(max_ev));
     v = (v - min_ev) / (max_ev - min_ev);
     if (cr.look.x > 5.5) {
