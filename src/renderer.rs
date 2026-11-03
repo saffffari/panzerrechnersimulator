@@ -2785,7 +2785,14 @@ impl Default for BlitRect {
     }
 }
 
+#[path = "renderer_scene_cache.rs"]
+mod scene_cache;
+pub(crate) use scene_cache::SceneFrame;
+
 pub struct Renderer {
+    scene_cache_enabled: bool,
+    scene_cache_vertices: HashMap<usize, Arc<Vec<crate::gltf_load::Vertex>>>,
+    scene_cache_indices: HashMap<usize, Arc<Vec<u32>>>,
     pub shader_backend: bool,
     /// The raymarch frame pipeline (`KESSEL_RENDERER=raymarch`); None on the other backends.
     raymarch: Option<raymarch::Backend>,
@@ -6244,6 +6251,9 @@ impl Renderer {
             iw,
             ih,
             graphics_preset,
+            scene_cache_enabled: false,
+            scene_cache_vertices: HashMap::new(),
+            scene_cache_indices: HashMap::new(),
             shader_backend,
             raymarch,
             scatter_field: None,
@@ -6892,7 +6902,9 @@ impl Renderer {
         mesh.ibuf=self.pose_device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label:Some("private wounded actor indices"),contents:bytemuck::cast_slice(indices),
             usage:wgpu::BufferUsages::INDEX|wgpu::BufferUsages::COPY_DST,
-        });true
+        });
+        if self.scene_cache_enabled { self.scene_cache_indices.insert(slot, Arc::new(indices.to_vec())); }
+        true
     }
     pub fn upload_pose_vertices(&mut self, slot: usize, vertices: &[crate::gltf_load::Vertex]) -> bool {
         let Some(mesh) = self.meshes.get_mut(slot) else { return false; };
@@ -6929,6 +6941,11 @@ impl Renderer {
         mesh.pose_revision=mesh.pose_revision.wrapping_add(1);
         mesh.local_min=lo;mesh.local_max=hi;
         (mesh.world_min,mesh.world_max)=transform_aabb(mesh.model,lo,hi);
+        if self.scene_cache_enabled {
+            let same = self.scene_cache_vertices.get(&slot).is_some_and(|v|
+                bytemuck::cast_slice::<_, u8>(v.as_slice()) == bytemuck::cast_slice::<_, u8>(vertices));
+            if !same { self.scene_cache_vertices.insert(slot, Arc::new(vertices.to_vec())); }
+        }
         true
     }
     /// Register fallback actor bodies and attached weapons, including actors rendered while

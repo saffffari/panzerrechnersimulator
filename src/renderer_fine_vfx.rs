@@ -8,7 +8,7 @@ const MAX_PER_VIEW: u64 = 8_388_608;
 const FIRE_FLAG: f32 = 5.0;
 const SOOT_FLAG: f32 = 6.0;
 #[derive(Clone, Copy)]
-struct Material { color:[f32;3], soot:bool, minimum:u32, density:u32 }
+pub(super) struct Material { color:[f32;3], soot:bool, minimum:u32, density:u32 }
 #[repr(C)]
 #[derive(Clone,Copy,bytemuck::Pod,bytemuck::Zeroable)]
 struct Instance { model:[[f32;4];4], emission:[f32;4], parameters:[f32;4] }
@@ -36,7 +36,7 @@ pub(super) struct Frame {
 }
 pub(super) struct FineVfx {
     layout:wgpu::BindGroupLayout, pipeline:wgpu::RenderPipeline,
-    materials:HashMap<usize,Material>, pub(super) particle_ids:HashMap<usize,Vec<[u32;4]>>,
+    pub(super) materials:HashMap<usize,Material>, pub(super) particle_ids:HashMap<usize,Vec<[u32;4]>>,
     frames:HashMap<usize,Frame>,
 }
 

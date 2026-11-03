@@ -117,9 +117,9 @@ pub struct CabinShadows {
     inst_pipe: wgpu::RenderPipeline,
     cameras: Vec<wgpu::Buffer>,
     binds: Vec<wgpu::BindGroup>,
-    lights: RefCell<Vec<PointLight>>, // named emitter metadata only
+    pub(super) lights: RefCell<Vec<PointLight>>, // named emitter metadata only
     active: RefCell<Vec<(PointLight, Option<usize>)>>, // exact packed light list rendered this frame
-    emitting_meshes: RefCell<Vec<Option<usize>>>,
+    pub(super) emitting_meshes: RefCell<Vec<Option<usize>>>,
     caches: RefCell<[LampCache; MAX_LIGHTS]>,
     dynamic_meshes: Vec<usize>,
     dynamic_flags: Vec<bool>,

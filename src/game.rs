@@ -35400,9 +35400,9 @@ mod tests {
             assert_eq!(emitters[15],Some(500));
             assert_eq!(emitters[23],work_installed.then_some(900));
             assert_eq!(active.len(),before_work+usize::from(work_installed));
-            for i in [10,11] {assert_eq!(named[i].radiant_intensity,0.0);}
-            if work_installed { assert_eq!(named[21].radiant_intensity,0.001); }
-            else { assert_eq!(named[21].radiant_intensity,0.0); }
+            for i in [12,13] {assert_eq!(named[i].radiant_intensity,0.0);}
+            if work_installed { assert_eq!(named[23].radiant_intensity,0.001); }
+            else { assert_eq!(named[23].radiant_intensity,0.0); }
         }
     }
 

@@ -37,6 +37,8 @@
 use super::*;
 #[path = "game_fea_range/rewind.rs"]
 mod rewind;
+#[path = "game_fea_range/cache.rs"]
+mod cache;
 use crate::{act_manifest, celestial_sky, ephemeris, graphics, world};
 use std::collections::HashSet;
 use glam::Vec4;
@@ -275,7 +277,7 @@ enum Tape {
 /// Every adjustable row of the sidebar.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Knob {
-    Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot,
+    Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot, CacheSim, RenderShot,
     Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
     MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame, SmokeDensity, SmokeDelay, EffectsAuthored, Concussion, FlashAfterimage,
     Focal, SavedCam, AddCam, DeleteCam, ExportCams,
@@ -304,7 +306,7 @@ fn kind(knob: Knob) -> Kind {
         Shell | TargetKind | Seed | SavedShot | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
         Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance
         | Concussion | FlashAfterimage => Kind::Toggle,
-        AddShot | AddCam | DeleteCam | ExportCams | EffectsAuthored | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
+        CacheSim | RenderShot | AddShot | AddCam | DeleteCam | ExportCams | EffectsAuthored | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
         _ => Kind::Dial,
     }
 }
@@ -356,8 +358,8 @@ fn group_rows(group: usize) -> Vec<Knob> {
     use Knob::*;
     match group {
         0 => vec![Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot],
-        1 => vec![TimeSpeed, Loop, Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength],
-        2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams, MovingCamera],
+        1 => vec![TimeSpeed, Loop, Racks, Lamps, LampPower, Engine, SlowSpan, RunLength],
+        2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
         4 => vec![Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure],
         5 => vec![Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
@@ -410,7 +412,7 @@ const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
 /// The bar's left margin.
 const LEFT_X: f32 = 0.007;
-const BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
+const BUTTONS: [(&str, usize, usize); 7] = [("START", 0, 0), ("SIMULATE", 1, 0), ("PLAY", 2, 0), ("RENDER", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
     ("LOOP", 0, 2)];
 /// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
 /// the saved layouts (`BATTLE_LAYOUTS`).
@@ -676,6 +678,7 @@ struct Range {
     frame_image: u32,
     shown_frame: Option<usize>,
     status: String,
+    cache: cache::Cache,
     shot_presets: Vec<serde_json::Value>,
     shot_preset_at: Option<usize>,
     help: bool,
@@ -789,7 +792,7 @@ impl Range {
             past_run: false,
             captured: false,
             shot_t: 0.0,
-            playing: true,
+            playing: false,
             time_speed: 1.0,
             play_clock: 0.0,
             clip: None,
@@ -803,6 +806,7 @@ impl Range {
             frame_image,
             shown_frame: None,
             status: "RESET: a fresh Tiger and crew".into(),
+            cache: cache::Cache::default(),
             shot_presets: std::fs::read_to_string(PRESETS_PATH).ok()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                 .and_then(|v| v["presets"].as_array().cloned()).unwrap_or_default(),
@@ -837,7 +841,7 @@ impl Range {
             live_image: false,
             tiger_at: TIGER_AT,
             tiger_heading: TIGER_HEADING,
-            open: [true, true, false, true, false, false, false, true, false],
+            open: [true, false, false, false, false, false, false, false, false],
             cameras: std::fs::read_to_string(CAMERAS_PATH).ok().and_then(|t| serde_json::from_str(&t).ok())
                 .or_else(|| std::fs::read_to_string(CAMERA_CATALOG).ok()
                     .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
@@ -1069,6 +1073,7 @@ impl Range {
     }
 
     fn reset(&mut self) {
+        self.clear_caches();
         self.mode = Mode::Live;
         self.fresh();
         self.run = None;
@@ -1094,6 +1099,7 @@ impl Range {
 
     /// F: the shot fired into the present state at once; its run starts on the timeline.
     fn fire_now(&mut self) {
+        self.clear_caches();
         self.apply_tuning();
         self.shown_frame = None;
         let total = self.total_frames(&self.scene);
@@ -1144,6 +1150,7 @@ impl Range {
     /// with the frame's own checkpoint. Without a checkpoint, a fresh Tiger given the same steps and
     /// shots again (the tape). The camera is the editor's and is never moved by it.
     fn seek(&mut self, index: u32) {
+        if self.cached_seek(index as usize) { return; }
         self.mode = Mode::Live;
         let Some(run) = self.run else { return };
         let index = index.min(run.total.saturating_sub(1));
@@ -1264,6 +1271,7 @@ impl Range {
 
     /// The camera, the section and the crew drawing for this frame.
     fn pose_view(&mut self) {
+        if self.pose_cached_view() { return; }
         // Playing the Tiger: the game placed its own camera, sights and crew for the player's
         // station; the editor's camera follows it so a pause (Esc) orbits from there.
         if self.player_control && !self.play_paused {
@@ -1301,9 +1309,8 @@ impl Range {
         }
         // Restarting the history every frame (tried 2026-11-03 against the held-camera haze) left the
         // picture unconverged: TV static. The history restarts only when the camera moves.
-        if !self.accumulate_moving && self.last_pose.is_some_and(|p| p != pose) {
-            self.r.reset_history();
-        }
+        // Camera motion is reprojected by the renderer; explicit cuts reset history.
+        // Clearing all lighting histories here made illumination build up after every move.
         self.last_pose = Some(pose);
         self.r.optic_mask = 0.0;
         self.r.reticle = false;
@@ -1448,6 +1455,8 @@ impl Range {
         let a = crew_tissue::TissueTuning::AUTHORED;
         let mark = |changed: bool| if changed { " *" } else { "" };
         match knob {
+            Knob::CacheSim => ("CACHE SIM".into(), "BAKE / CANCEL".into()),
+            Knob::RenderShot => ("RENDER SHOT".into(), "CACHE FRAMES + MP4".into()),
             Knob::SavedShot => ("SHOT PRESET".into(), self.shot_preset_at
                 .and_then(|i| self.shot_presets.get(i)).and_then(|v| v["name"].as_str())
                 .unwrap_or("SELECT < >").to_uppercase()),
@@ -1544,6 +1553,8 @@ impl Range {
         let n = shells().len() as i32;
         match knob {
             // The range is kept; the new shell's own velocity at it follows.
+            Knob::CacheSim => self.cache_simulation(),
+            Knob::RenderShot => self.render_cached_shot(),
             Knob::SavedShot => {
                 if !self.shot_presets.is_empty() {
                     let n = self.shot_presets.len() as i32;
@@ -1932,6 +1943,7 @@ impl Range {
     /// the run when LOOP is on, stopping at a clip's end without it, and real time past the run.
     fn tick(&mut self, dt: f32) {
         self.captured = false;
+        if self.tick_cache(dt) { return; }
         if self.sky.running {
             self.sky.local_h += dt * self.sky.rate / 3600.0;
             while self.sky.local_h >= 24.0 {
@@ -2004,6 +2016,9 @@ impl Range {
 
     /// Space: the run (or its clip) again from its start, playing.
     fn replay(&mut self) {
+        if self.cached_seek(self.clip.map_or(0, |c| c.0 as usize)) {
+            self.playing = true; return;
+        }
         if self.run.is_some() {
             let start = self.clip.map_or(0, |c| c.0);
             self.seek(start);
@@ -2152,28 +2167,28 @@ impl Range {
     /// A shot handle dragged to `c`: the bearing from where the cursor's ray meets the hull's
     /// horizontal plane through the aim point, or the elevation from where it meets the shot's
     /// vertical plane.
-    fn drag_shot_handle(&mut self, which: usize, c: [f32; 2]) {
+    fn shot_cursor_angle(&self, which: usize, c: [f32; 2]) -> Option<f32> {
         let (aim, dir) = self.aim_line();
         let (_, (h, up, _, _)) = self.shot_frames(aim, dir);
         let (o, d) = self.ray(c);
         let normal = if which == 0 { up } else { h.cross(up).normalize_or_zero() };
         let denom = d.dot(normal);
-        if denom.abs() < 1.0e-4 {
-            return;
-        }
+        if denom.abs() < 1.0e-4 { return None; }
         let t = (aim - o).dot(normal) / denom;
-        if t <= 0.0 {
-            return;
-        }
+        if t <= 0.0 { return None; }
         let v = o + d * t - aim;
         if which == 0 {
             let local = self.g.player.hull_model().inverse().transform_vector3(v);
-            if local.x.hypot(local.z) > 1.0e-3 {
-                self.shot.from_az = local.x.atan2(local.z).to_degrees();
-            }
+            (local.x.hypot(local.z) > 1.0e-3).then(|| local.x.atan2(local.z).to_degrees())
         } else {
-            self.shot.from_el = v.dot(up).atan2(v.dot(h).max(1.0e-3)).to_degrees().clamp(-60.0, 80.0);
+            Some(v.dot(up).atan2(v.dot(h)).to_degrees())
         }
+    }
+
+    fn drag_shot_handle(&mut self, which: usize, offset: f32, c: [f32; 2]) {
+        let Some(angle) = self.shot_cursor_angle(which,c) else { return };
+        if which == 0 { self.shot.from_az = (angle + offset + 180.0).rem_euclid(360.0)-180.0; }
+        else { self.shot.from_el = (angle + offset).clamp(-60.0,80.0); }
         self.status = format!("SHOT FROM BEARING {:+.0}, ELEVATION {:+.0}", self.shot.from_az, self.shot.from_el);
     }
 
@@ -2664,6 +2679,10 @@ impl Range {
         if let Some(x) = f(&v["tiger"]["heading"]) { self.tiger_heading = x; }
         if let Some(o) = v["open"].as_array().filter(|o| o.len() == GROUPS.len()) {
             for (slot, x) in self.open.iter_mut().zip(o) { *slot = x.as_bool().unwrap_or(*slot); }
+            // Normalize settings saved by builds which allowed several open panels.
+            if let Some(first) = self.open.iter().position(|&open| open) {
+                self.open = [false; GROUPS.len()]; self.open[first] = true;
+            }
         }
         self.status = format!("SETTINGS FROM THE LAST LAUNCH ({STATE_PATH})");
     }
@@ -3025,9 +3044,21 @@ impl Range {
                 (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some()) || (label == "LOOP" && self.looping)
             };
             let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
-            let fill = if label == "FIRE" || (self.battle && label == "PLAY" && !lit) { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
+            let fill = if label == "SIMULATE" || (self.battle && label == "PLAY" && !lit) { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
                 else if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX };
             self.r.fill_rect(x, y, w, h, fill);
+            if hover && !self.battle {
+                let hint = match label {
+                    "START" => "FIRST FRAME; KEEPS YOUR SHOT SETTINGS AND CACHE",
+                    "SIMULATE" => "FRESH TANK -> SIMULATE ONCE -> CACHE; CLICK AGAIN TO CANCEL",
+                    "PLAY" => "PLAY / PAUSE THE CACHE; MOVE THE CAMERA WHILE IT PLAYS",
+                    "RENDER" => "CURRENT VIEW -> CACHED IMAGES + MP4; EVERY FRAME, NO REAL-TIME LIMIT",
+                    "REC" => "RECORD THE VIEWPORT AS YOU USE IT; CLICK AGAIN TO STOP",
+                    "STILL" => "SAVE A CONVERGED STILL OF THE CURRENT VIEW",
+                    _ => "REPEAT THE SHOT OR SELECTED CLIP",
+                };
+                self.text(hint, LEFT_X, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
+            }
             let rec_label = self.recorder.as_ref().map(|r| format!("REC {:.0} S", r.frames as f32 / 30.0));
             let loop_label = match (self.looping, self.clip) {
                 (true, Some(_)) => "LOOP: CLIP",
@@ -3035,6 +3066,8 @@ impl Range {
                 (false, _) => "LOOP OFF",
             };
             let text = match label {
+                "SIMULATE" if self.cache.busy() => "CANCEL",
+                "RENDER" if self.cache.rendering() => "CANCEL",
                 "WATCH" | "PLAY" if self.battle && lit => "STOP",
                 "LAYOUTS" => "NEXT LAYOUT",
                 "PLAY" if !self.battle && self.playing => "PAUSE",
@@ -3126,12 +3159,12 @@ impl Range {
                 "LMB ON THE TANK: AIM (DIRECTION FROM THE CAMERA)    CTRL+LMB: AIM, KEEP DIRECTION",
                 "SHOT HANDLES: GREEN ON THE RING SETS THE BEARING, RED ON THE ARC THE ELEVATION (SHIFT+LMB DRAG: BOTH)",
                 "C: SECTION ON/OFF    V: AXIS NEAREST THE CAMERA    G: AXIS NEAREST THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 90",
-                "PANEL: A TAB OPENS/CLOSES ITS GROUP (SHIFT: ALONE); DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
+                "PANEL: ONE TAB OPEN AT A TIME; DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
-                "F: FIRE THE SHOT NOW (INTO THE PRESENT STATE)    ENTER: RUN ON A FRESH TIGER    Z (OR .): CENTRE ON THE TIGER",
-                "SPACE: REPLAY THE RUN (OR CLIP) FROM ITS START    SHIFT+SPACE: PAUSE/PLAY    BACKSPACE: RESET",
+                "ENTER (OR F): SIMULATE AND CACHE A FRESH SHOT    Z (OR .): CENTRE ON THE TIGER",
+                "SPACE: PLAY / PAUSE THE CACHED SHOT    BACKSPACE: FIRST FRAME    RENDER: FRAMES + MP4",
                 "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
-                "BACK IN TIME RE-RUNS THE SAME SHOTS TO THAT FRAME (A FEW SECONDS; TISSUE DETAIL CAN DIFFER)",
+                "CACHED PLAYBACK NEVER RE-RUNS PHYSICS; CAMERA, SECTION, LIGHTING AND LOOK STAY LIVE",
                 "TAB OR HIDE: THE PANEL    R: RECORD THE VIEWPORT    F12: FULL-FRAME STILL 5120X2880    SETTINGS AND CAMERAS KEPT",
                 "P: PRINT TISSUE KNOBS    M: MUTE    H: THIS HELP    ESC TWICE: QUIT",
             ];
@@ -3180,7 +3213,7 @@ impl Range {
                 self.text(&label, head + if head > 0.85 { -0.004 } else { 0.004 }, base - 4.0 * thick - 0.008, TEXT * 0.7, INK, align);
             }
         } else if hovered {
-            self.text("NO RUN YET (ENTER RUNS)", 0.5 * (1.0 + self.view_x()), base - 0.012, TEXT * 0.7, DIM, crate::ui::Align::Center);
+            self.text("SET UP SHOT, THEN SIMULATE (ENTER)", 0.5 * (1.0 + self.view_x()), base - 0.012, TEXT * 0.7, DIM, crate::ui::Align::Center);
         }
     }
 
@@ -3206,13 +3239,10 @@ impl Range {
             return Click::Used;
         }
         if let Some(g) = self.header_rects().iter().position(|[x, y, w, h]| cursor[0] >= *x && cursor[0] <= x + w && cursor[1] >= *y && cursor[1] <= y + h) {
-            // A header opens or closes its group in place; Shift opens it alone.
-            if coarse {
-                self.open = [false; GROUPS.len()];
-                self.open[g] = true;
-            } else {
-                self.open[g] = !self.open[g];
-            }
+            // One settings panel at a time; clicking the active tab closes it.
+            let opening = !self.open[g];
+            self.open = [false; GROUPS.len()];
+            self.open[g] = opening;
             return Click::Used;
         }
         if let Some((knob, cx)) = self.row_at(cursor) {
@@ -3306,10 +3336,10 @@ impl Range {
             return;
         }
         match label {
-            "RESET" => self.reset(),
-            "RUN" => self.run(),
-            "PLAY" => self.playing = !self.playing,
-            "FIRE" => self.fire_now(),
+            "START" | "RESET" => self.start_cached_shot(),
+            "SIMULATE" | "RUN" | "FIRE" => self.cache_simulation(),
+            "PLAY" => self.play_cached_shot(),
+            "RENDER" => self.render_cached_shot(),
             "LOOP" => self.looping = !self.looping,
             "REC" => self.toggle_recording(),
             "STILL" => self.still(),
@@ -3321,6 +3351,7 @@ impl Range {
     /// the slow-motion span, 1/30 s after it) or 1/30 s of real time past the run; back seeks.
     fn step_frame(&mut self, forward: bool, count: u32) {
         self.playing = false;
+        if self.step_cached_frame(forward,count) { return; }
         if forward {
             for _ in 0..count {
                 match self.next_run_frame() {
@@ -3471,7 +3502,7 @@ enum Drag {
     /// RMB on the timeline: marking a clip from the frame first pressed.
     Clip(usize),
     /// LMB on a shot handle: 0 the bearing ring, 1 the elevation arc.
-    ShotHandle(usize),
+    ShotHandle(usize, f32),
     /// LMB on a dial: the dial, its position when taken and the cursor's height then.
     Dial(Knob, f32, f32),
     /// LMB on the section handle's pad: 90° steps per `HANDLE_DRAG_STEP` of motion (the motion
@@ -3523,7 +3554,7 @@ impl App {
     fn busy(&self) -> bool {
         self.state.as_ref().is_some_and(|s| {
             let r = &s.range;
-            r.playing
+            r.playing || r.cache.busy()
         }) || self.input.look || !self.input.keys.is_empty() || self.input.drag.is_some()
             || self.active.is_some_and(|t| t.elapsed().as_secs_f32() < IDLE_AFTER_S)
     }
@@ -3594,10 +3625,10 @@ impl App {
                     rg.status = "ESC AGAIN TO QUIT".into();
                 }
             }
-            KeyCode::Enter | KeyCode::NumpadEnter => rg.run(),
-            KeyCode::Backspace => rg.reset(),
+            KeyCode::Enter | KeyCode::NumpadEnter => rg.button("SIMULATE"),
+            KeyCode::Backspace => rg.button("START"),
             KeyCode::Space if self.input.shift => rg.button("PLAY"),
-            KeyCode::Space => rg.replay(),
+            KeyCode::Space => rg.button("PLAY"),
             KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::ArrowUp | KeyCode::ArrowDown if self.input.alt => {
                 let step = match code { KeyCode::ArrowLeft => (-1, 0), KeyCode::ArrowRight => (1, 0), KeyCode::ArrowUp => (0, 1), _ => (0, -1) };
                 rg.rotate_section(step.0, step.1);
@@ -3618,7 +3649,7 @@ impl App {
             KeyCode::KeyG => rg.adjust(Knob::SnapToShot, 1.0, false, false),
             KeyCode::Tab => rg.hide_ui = !rg.hide_ui,
             // F fires into the present state and plays on: it never loops back (owner, 2026-11-03).
-            KeyCode::KeyF => { rg.fire_now(); rg.free_fire = true; }
+            KeyCode::KeyF => rg.button("SIMULATE"),
             KeyCode::Period | KeyCode::NumpadDecimal | KeyCode::KeyZ => rg.frame_tiger(),
             KeyCode::KeyC => rg.section.on = !rg.section.on,
             KeyCode::KeyV => {
@@ -3819,6 +3850,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 if let Some(st) = self.state.as_mut() {
                     st.range.save_state();
+                    st.range.finish_cached_render();
                     if st.range.recorder.is_some() {
                         st.range.toggle_recording();
                     }
@@ -3883,7 +3915,7 @@ impl ApplicationHandler for App {
                                 return;
                             }
                         }
-                        Drag::ShotHandle(which) => rg.drag_shot_handle(which, c),
+                        Drag::ShotHandle(which, offset) => rg.drag_shot_handle(which, offset, c),
                         Drag::T34(i) => rg.move_t34(i, c),
                         Drag::Clip(a) => {
                             if let Some(b) = rg.track_hit([c[0], rg.timeline_y()]) {
@@ -4000,8 +4032,11 @@ impl ApplicationHandler for App {
                             rg.mode = Mode::Scrub(i);
                             rg.playing = false;
                             self.input.drag = Some((Drag::Track, c));
-                        } else if let Some(which) = rg.shot_handle_hit(c) {
-                            self.input.drag = Some((Drag::ShotHandle(which), c));
+                        } else if let Some(which) = rg.shot_handle_hit(c).filter(|_| !rg.in_panel(c) && !rg.on_hide_button(c)) {
+                            let angle = rg.shot_cursor_angle(which,c).unwrap_or(
+                                if which == 0 { rg.shot.from_az } else { rg.shot.from_el });
+                            let value = if which == 0 { rg.shot.from_az } else { rg.shot.from_el };
+                            self.input.drag = Some((Drag::ShotHandle(which,value-angle), c));
                         } else if let Some(step) = rg.handle_hit(c).filter(|_| rg.mode == Mode::Live) {
                             if step == (0, 0) {
                                 self.input.drag = Some((Drag::Rotate([0.0, 0.0]), c));
@@ -4138,6 +4173,10 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let mut rg = Range::new(device, queue, true)?;
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("cache") {
+        rg.load_state();
+        return rg.cache_probe();
+    }
     // KESSEL_FEA_RANGE_PROBE=media: a still and a short recording (fired shot), then stop.
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("media") {
         rg.still();

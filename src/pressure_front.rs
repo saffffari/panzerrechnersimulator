@@ -176,7 +176,7 @@ pub struct Arrival {
     pub strength: f32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Fronts {
     events: VecDeque<Front>,
