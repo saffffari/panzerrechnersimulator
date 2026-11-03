@@ -228,12 +228,18 @@ fn vsm_view_colour(view: u32, frame: u32, p: vec3<f32>, n: vec3<f32>) -> vec3<f3
 //   9 weather     UV chalking of the paint where the sky sees it
 // Reflectances are linear sRGB; the paints from their RAL CIELAB (L* 25 / 75 / 30), steel and
 // oxides from published ranges (docs/PHYSICAL_TRUTH_AUDIT.md names each estimate).
-// The exterior topcoat: a neutral grey a little lighter than RAL 7021's blue-black (L* 34 against
-// 25), the owner's choice of 2 November 2026 ("too dark and blue and green ... more neutral").
-const VSM_GREY: vec3<f32> = vec3<f32>(0.080, 0.079, 0.076);
-// The fighting compartment's paint: a neutral white (the owner's choice, 2 November 2026, over the
-// period's Elfenbein RAL 1001; the light is to carry the warmth).
-const VSM_IVORY: vec3<f32> = vec3<f32>(0.70, 0.69, 0.645);
+// The exterior topcoat: a medium grey matched to the owner's reference image of 2 November 2026
+// (its lit faces sRGB ~135 and mid faces ~95 under studio light: an albedo near 0.15), with the
+// slight blue lean of the period's German greys, so that under the low winter sun (warm on the
+// lit faces, sunlit snow measured R/G 1.05, B/G 0.95 on the display) it reads a neutral grey, as
+// the owner asked ("exterior still looks green can we make it neutral grey"). RAL 7021's
+// blue-black (0.041, 0.045, 0.051) read too dark.
+const VSM_GREY: vec3<f32> = vec3<f32>(0.142, 0.151, 0.170);
+// The fighting compartment's paint: a white (the owner's choice, 2 November 2026, over the period's
+// Elfenbein RAL 1001), at the chromaticity of a real white paint (RAL 9010 Reinweiss, slightly
+// warm) and the same reflectance as before (0.69 luminance): a cool neutral read blue in the
+// daylight that reaches the compartment through its blocks and hatches.
+const VSM_IVORY: vec3<f32> = vec3<f32>(0.72, 0.688, 0.62);
 const VSM_OIL: vec3<f32> = vec3<f32>(0.022, 0.016, 0.010);
 const VSM_PRIMER: vec3<f32> = vec3<f32>(0.156, 0.039, 0.034);
 const VSM_STEEL: vec3<f32> = vec3<f32>(0.56, 0.56, 0.555);
@@ -363,8 +369,8 @@ fn vsm_finish(frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32>, up: vec3<f32
         if (cls == 2u) {
             // Manganese track steel, oxidised dark; its running faces polished by the wheels.
             f.albedo = vec3(0.085, 0.072, 0.062);
-            f.roughness = 0.72;
-            f.metallic = 0.45;
+            f.roughness = 0.60;
+            f.metallic = 0.55;
         } else if (cls == 3u || cls == 9u) {
             // Exhaust steel, heat-scaled; the tow cables' wire rope, oiled and weathered.
             f.albedo = vec3(0.065, 0.048, 0.040);
@@ -402,11 +408,14 @@ fn vsm_finish(frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32>, up: vec3<f32
     if (cls == 6u) { paint = source; }
     let spray = vsm_noise(p * 2.2) * 0.6 + vsm_noise(p * 7.0) * 0.4;
     paint *= 0.95 + 0.10 * spray;
-    let paint_rough = select(0.68, 0.62, inside);
+    // Outside a little shinier than a flat field paint (the owner, 2 November 2026: "lower the
+    // roughness and increase metallic a bit ... a bit shinier"): satin, with a small metallic share.
+    let paint_rough = select(0.50, 0.62, inside);
+    let paint_metal = select(0.15, 0.0, inside);
     if (keep >= 3u && painted) {
         f.albedo = paint;
         f.roughness = paint_rough;
-        f.metallic = 0.0;
+        f.metallic = paint_metal;
     }
     return vsm_wear(f, frame, s, p, n, up, inside, keep, painted, paint, paint_rough, steel, mech, grime_load, face_up);
 }
@@ -522,11 +531,12 @@ fn vsm_wear(f_in: VsmFinish, frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32
         let primer_seen = select(mix(VSM_PRIMER, vec3(0.085, 0.040, 0.030), 0.5 * s.sky), VSM_PRIMER, inside);
         f.albedo = mix(f.albedo, primer_seen, through_top);
         f.roughness = mix(f.roughness, 0.78, through_top);
+        f.metallic = mix(f.metallic, 0.0, through_top);
         var bare = steel;
-        var bare_rough = 0.38;
+        var bare_rough = 0.30;
         // Steel the crew keep touching stays bright and smooth; elsewhere it darkens.
         bare = mix(VSM_DARK_STEEL, bare, contact);
-        bare_rough = mix(0.5, 0.2, contact);
+        bare_rough = mix(0.42, 0.18, contact);
         f.albedo = mix(f.albedo, bare, through_primer);
         f.roughness = mix(f.roughness, bare_rough, through_primer);
         f.metallic = mix(f.metallic, 1.0, through_primer);
@@ -554,7 +564,7 @@ fn vsm_wear(f_in: VsmFinish, frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32
         let chalk = s.sky * 0.55 * (0.8 + 0.4 * vsm_noise(p * 3.0)) * (1.0 - 0.7 * contact) * (1.0 - through_top);
         let grey = dot(f.albedo, vec3(0.2126, 0.7152, 0.0722));
         f.albedo = mix(f.albedo, mix(f.albedo, vec3(grey), 0.4) * 1.45 + vec3(0.008), chalk);
-        f.roughness = mix(f.roughness, 0.86, chalk);
+        f.roughness = mix(f.roughness, 0.70, chalk);
     }
     return vsm_processes(f, frame, s, p, n, up, inside, keep, painted);
 }
