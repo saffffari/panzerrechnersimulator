@@ -1308,8 +1308,15 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   `time`, which `Game::update` advances and reads) and the renderer's pressure fronts and wind. The
   frame is then stepped again from the checkpoint before it, so its picture is the frame's own
   update; a frame whose update was slow (the strike's solves, about 3 s) is put back, drawn from a
-  1 µs update and put back again (named in the status line). Not kept: the renderer's draw state,
-  sky and camera, and the grass about the camera. Cause of the earlier non-repeat (measured with
+  1 µs update and put back again (named in the status line). Also kept, as copies, what a run
+  changes that the world save does not hold (`rewind::Unsaved`, 2026-11-03, after a thrown turret
+  outlived every reset): the thrown turret and the cook-off, the scars' solved rim cooling (the
+  save skips it), queued and travelling blast fronts, the strike's effects and flashes, interior
+  soot, the Tiger's ground contact and the armour's surface fires. Every other `Game` field is held
+  by the save or named in `rewind::NOT_KEPT` with its reason (source data, caches, audio, UI,
+  campaign/expedition owners); test `every_game_field_is_kept_or_named` fails on a field that is
+  neither. Not kept: the renderer's draw state, sky and camera, and the grass about the camera. A
+  frame that ends with a casualty's tissue solving on its worker is not kept (a seek steps it). Cause of the earlier non-repeat (measured with
   per-field checksums over three runs): `reset_match` leaves the game clock, the projectile serial,
   the armour clock, the renderer's pressure fronts, the infantry and a few presentation counters
   running on, and every range step began from whichever camera the previous frame left, while

@@ -1034,7 +1034,11 @@ impl Range {
         self.past_run = false;
         self.run_tape.clear();
         self.shown_frame = None;
-        self.status = "RESET: a fresh Tiger and crew".into();
+        self.rewind.clear_run();
+        // Held at the fresh Tiger (the owner, 2026-11-03: "reset is playing not reseting": with no
+        // run left the tick played on in real time from it).
+        self.playing = false;
+        self.status = "RESET: A FRESH TIGER AND CREW (PAUSED; SPACE PLAYS)".into();
     }
 
     /// RUN: the shot on a fresh Tiger (or, with FRESH EACH RUN off, into the present state).
@@ -4116,6 +4120,43 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    // KESSEL_FEA_RANGE_PROBE=reset: a full cook-off (every round in the racks struck) played on
+    // until the turret is thrown, then RESET, and the state against the kept fresh Tiger's field
+    // by field, with the Tiger's place, its turret, the cook-off, the fire and the crew named.
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("reset") {
+        rg.scene.racks_loaded = true;
+        rg.reset();
+        let fresh = rg.rewind.fresh.as_ref().map(|(_, c)| c.prints()).unwrap_or_default();
+        let summary = |g: &Game| format!("tiger at {:.3?} heading {:.4}, turret {}, cook-off {:.2} s ({} rounds gone), fire {:.2}, cabin fire {}, crew alive {}",
+            g.player.pos, g.player.heading, if g.player.turret_thrown.is_some() { "THROWN" } else { "on" },
+            g.cookoff.clock_s, g.cookoff.ignitions + g.cookoff.detonations, g.fire, g.cabin_fire.export_world_state().map_or(0, |f| f.fingerprints().len()),
+            g.crew.iter().filter(|c| c.ok).count());
+        let before = summary(&rg.g);
+        let ids: Vec<u32> = rg.g.live_ammunition_in_frame(BloodFrame::Hull).iter().map(|r| r.stable_id).collect();
+        rg.g.cookoff_strike(&ids);
+        let mut steps = 0;
+        while rg.g.player.turret_thrown.is_none() && steps < 60 * 20 {
+            rg.step(TICK);
+            rg.g.settle_casualty_tissue(true);
+            steps += 1;
+        }
+        for _ in 0..60 {
+            rg.step(TICK);
+        }
+        rg.g.settle_casualty_tissue(true);
+        let during = summary(&rg.g);
+        rg.reset();
+        let after = summary(&rg.g);
+        let now = rewind::Checkpoint::capture(&rg.g, &rg.r, None).map(|(c, _)| c.prints()).unwrap_or_default();
+        let differ = rewind::parted(&fresh, &now);
+        println!("[fea-range] reset probe: {} rounds struck; {:.1} s played", ids.len(), steps as f32 * TICK + 1.0);
+        println!("[fea-range]   fresh:      {before}");
+        println!("[fea-range]   cooked off: {during}");
+        println!("[fea-range]   reset:      {after}");
+        println!("[fea-range] {} reset gives the fresh Tiger in all {} fields{}", if differ.is_empty() && !fresh.is_empty() { "PASS" } else { "FAIL" },
+            now.len(), if differ.is_empty() { String::new() } else { format!(" but {differ:?}") });
+        return Ok(());
+    }
     // KESSEL_FEA_RANGE_PROBE=rewind-memory: the editor's default run (its scene as set) played to
     // its end with its checkpoints; their memory and timings.
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("rewind-memory") {
@@ -4242,7 +4283,8 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     // frame, the strike's own (its update slow: put back and drawn from a 1 us step) and the
     // probe frame last (the still below), each against its checkpoint from the first run.
     rg.rewind.disabled = false;
-    let slowest = (0..total).max_by(|a, b| rg.rewind.step_s(*a).total_cmp(&rg.rewind.step_s(*b))).unwrap_or(0);
+    let slowest = (0..total).filter(|k| rg.rewind.at(*k).is_some())
+        .max_by(|a, b| rg.rewind.step_s(*a).total_cmp(&rg.rewind.step_s(*b))).unwrap_or(0);
     for (name, index) in [("first", 0), ("slowest", slowest), ("probe", probe)] {
         rg.seek(total - 1);
         let started = std::time::Instant::now();

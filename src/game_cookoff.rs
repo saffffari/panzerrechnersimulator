@@ -51,7 +51,7 @@ fn charge_kg() -> f32 {
     crate::sound_levels::propellant_charge_kg(88.0, 10.2, 773.0)
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct Cookoff {
     heat: Option<CabinHeat>,
     flux: Vec<(u32, f32)>,
