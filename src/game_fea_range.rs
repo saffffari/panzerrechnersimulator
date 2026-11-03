@@ -319,16 +319,10 @@ const LOOKS: [(f32, &str); 7] = [(0.0, "STANDARD"), (6.0, "DELTAP REAL"), (1.0, 
     (4.0, "PASTEL"), (2.0, "PICO-8"), (3.0, "DELTAP RAW")];
 const DITHERS: [&str; 4] = ["SCREEN BAYER4", "BLUE NOISE", "SPHERE BAYER8", "SCREEN BAYER8"];
 
-// The sidebar (window fractions, top-left origin): every control on the left, the viewport right.
-const SIDEBAR_W: f32 = 0.17;
-/// The timeline shows (over the bottom of the window) while the cursor is below this height; the
-/// viewport runs to the bottom edge.
-const BAR_TOP: f32 = 0.975;
-const VIEW_H: f32 = 1.0;
-/// The timeline's line: its ends and height.
-const TL_X0: f32 = 0.0;
-const TL_X1: f32 = 1.0;
-const TL_Y: f32 = 0.995;
+// The panel along the bottom (window fractions, top-left origin): the viewport above it is the
+// window's whole width. Left, the title, the buttons, the status and the hull's axes; right, the
+// groups as tabs, the chosen group's rows in columns.
+const PANEL_H: f32 = 0.20;
 /// The timeline line's thickness (px) and the clip's colour (Blender's orange, linear).
 const TL_PX: f32 = 5.0;
 const AMBER: [f32; 4] = [0.807, 0.205, 0.006, 1.0];
@@ -336,28 +330,25 @@ const RED: [f32; 4] = [0.95, 0.22, 0.18, 1.0];
 const GREEN: [f32; 4] = [0.35, 0.9, 0.3, 1.0];
 const BLUE: [f32; 4] = [0.3, 0.5, 1.0, 1.0];
 /// Very dark grey (linear).
-const SIDEBAR_FILL: [f32; 4] = [0.007, 0.007, 0.007, 1.0];
+const PANEL_FILL: [f32; 4] = [0.007, 0.007, 0.007, 1.0];
 const INK: [f32; 4] = [0.92, 0.92, 0.92, 1.0];
 const DIM: [f32; 4] = [0.42, 0.42, 0.42, 1.0];
 const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const BOX: [f32; 4] = [0.035, 0.035, 0.035, 1.0];
-const PANEL_X: f32 = 0.008;
-const PANEL_W: f32 = SIDEBAR_W - 2.0 * PANEL_X;
 const ROW_H: f32 = 0.0185;
-const HEADER_H: f32 = 0.024;
 const TEXT: f32 = 0.0145;
-const VALUE_X: f32 = PANEL_X + 0.058;
-const BTN_W: f32 = 0.011;
-const MINUS_X: f32 = PANEL_X + PANEL_W - 2.0 * BTN_W - 0.003;
-const PLUS_X: f32 = PANEL_X + PANEL_W - BTN_W;
-/// The buttons: label, column, row (three a row), under the title.
+/// The left block's margin and width, and the buttons there (label, column, row).
+const LEFT_X: f32 = 0.008;
+const LEFT_W: f32 = 0.15;
 const BUTTONS: [(&str, usize, usize); 6] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1)];
 const BUTTON_H: f32 = 0.028;
-const BUTTONS_Y: f32 = 0.044;
-
-/// The groups' region (scrolled when they do not fit) and the status block under it.
-const GROUPS_TOP: f32 = BUTTONS_Y + 2.0 * BUTTON_H + 0.021;
-const GROUPS_BOTTOM: f32 = 0.86;
+/// The groups' area: its left edge, the tabs' row and the rows' columns.
+const GROUPS_X: f32 = 0.215;
+const COLS_W: f32 = 0.195;
+const ROWS_PER_COL: usize = 8;
+const BTN_W: f32 = 0.011;
+/// The panel's hide button (its show button sits in the same corner when it is hidden).
+const HIDE_W: f32 = 0.045;
 /// A dial turns through its whole range over this much vertical drag (window height).
 const DIAL_DRAG: f32 = 0.3;
 /// The shot handle's distance from the aim point (m).
@@ -370,19 +361,19 @@ const HANDLE_NEAR: f32 = 0.06;
 /// Screen distance of a centre-pad drag per 45° step.
 const HANDLE_DRAG_STEP: f32 = 0.04;
 
-/// A button's rectangle (x, y, w, h).
+/// A button's rectangle (x, y, w, h) in the panel's left block.
 fn button_rect(col: usize, row: usize) -> [f32; 4] {
     let gap = 0.004;
-    let w = (PANEL_W - 2.0 * gap) / 3.0;
-    [PANEL_X + col as f32 * (w + gap), BUTTONS_Y + row as f32 * (BUTTON_H + 0.005), w, BUTTON_H]
+    let w = (LEFT_W - 2.0 * gap) / 3.0;
+    [LEFT_X + col as f32 * (w + gap), 1.0 - PANEL_H + 0.034 + row as f32 * (BUTTON_H + 0.005), w, BUTTON_H]
 }
 
-/// One drawn line of the groups: a group's header or one of its rows, at its centre's height.
-#[derive(Clone, Copy, Debug)]
-enum Line {
-    Header(usize),
-    Row(Knob),
+/// The panel's hide (or, hidden, show) button.
+fn hide_rect(hidden: bool) -> [f32; 4] {
+    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [1.0 - HIDE_W - 0.006, 1.0 - PANEL_H + 0.006, HIDE_W, 0.024] }
 }
+
+
 
 /// What a press in the sidebar did.
 enum Click {
@@ -531,9 +522,8 @@ struct Range {
     /// Where the Tiger stands (x, z) and its heading (rad).
     tiger_at: Vec2,
     tiger_heading: f32,
-    /// The sidebar's groups folded shut, and how far the groups are scrolled.
-    collapsed: [bool; GROUPS.len()],
-    scroll: f32,
+    /// The group whose rows the panel shows.
+    tab: usize,
     cameras: Vec<SavedCam>,
     camera_at: Option<usize>,
     /// The fog density set by the LOOK group's dial (the physical medium), held each frame.
@@ -627,8 +617,7 @@ impl Range {
             live_image: false,
             tiger_at: TIGER_AT,
             tiger_heading: TIGER_HEADING,
-            collapsed: [false, false, false, false, true, true, true, true],
-            scroll: 0.0,
+            tab: 0,
             cameras: std::fs::read_to_string(CAMERAS_PATH).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
             camera_at: None,
             dial_image: 0,
@@ -1714,9 +1703,25 @@ impl Range {
         println!("[fea-range] {}", self.status);
     }
 
-    /// The sidebar's width (none while the interface is hidden).
-    fn side(&self) -> f32 {
-        if self.hide_ui { 0.0 } else { SIDEBAR_W }
+    /// The viewport's height (the whole window while the panel is hidden).
+    fn view_h(&self) -> f32 {
+        if self.hide_ui { 1.0 } else { 1.0 - PANEL_H }
+    }
+
+    /// Whether `c` is on the panel's hide (or show) button.
+    fn on_hide_button(&self, c: [f32; 2]) -> bool {
+        let [x, y, w, h] = hide_rect(self.hide_ui);
+        c[0] >= x && c[0] <= x + w && c[1] >= y && c[1] <= y + h
+    }
+
+    /// Whether `c` is on the panel.
+    fn in_panel(&self, c: [f32; 2]) -> bool {
+        !self.hide_ui && c[1] >= 1.0 - PANEL_H
+    }
+
+    /// The timeline line's height (the panel's top edge, or the window's bottom when hidden).
+    fn timeline_y(&self) -> f32 {
+        self.view_h()
     }
 
     /// Frame the Tiger: the camera keeps its direction and stands 10 m from the hull's middle.
@@ -1764,7 +1769,7 @@ impl Range {
             "engine": self.engine, "accumulate_moving": self.accumulate_moving, "wear": self.wear, "snow": self.snow,
             "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm},
             "tiger": {"at": self.tiger_at.to_array(), "heading": self.tiger_heading},
-            "collapsed": self.collapsed,
+            "tab": self.tab,
         })
     }
 
@@ -1851,9 +1856,7 @@ impl Range {
             self.tiger_at = Vec2::new(f(&a[0]).unwrap_or(TIGER_AT.x), f(&a[1]).unwrap_or(TIGER_AT.y));
         }
         if let Some(x) = f(&v["tiger"]["heading"]) { self.tiger_heading = x; }
-        if let Some(c) = v["collapsed"].as_array().filter(|c| c.len() == GROUPS.len()) {
-            for (slot, x) in self.collapsed.iter_mut().zip(c) { *slot = x.as_bool().unwrap_or(*slot); }
-        }
+        if let Some(t) = v["tab"].as_u64() { self.tab = (t as usize).min(GROUPS.len() - 1); }
         self.status = format!("SETTINGS FROM THE LAST LAUNCH ({STATE_PATH})");
     }
 
@@ -1897,8 +1900,8 @@ impl Range {
         let up = right.cross(f).normalize_or_zero();
         let depth = (pivot - self.eye).dot(f).max(0.5);
         let span = 2.0 * depth * (self.fov_deg().to_radians() * 0.5).tan();
-        let aspect = (1.0 - self.side()) * self.win[0] / (VIEW_H * self.win[1].max(1.0));
-        self.eye += (-right * dx / (1.0 - self.side()) * aspect + up * dy / VIEW_H) * span;
+        let aspect = self.win[0] / (self.view_h() * self.win[1].max(1.0));
+        self.eye += (-right * dx * aspect + up * dy / self.view_h()) * span;
         self.camera_at = None;
     }
 
@@ -1945,7 +1948,8 @@ impl Range {
         let f = self.forward();
         let right = f.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(f).normalize_or_zero();
-        let centre = [self.side() + 0.075 / aspect, VIEW_H - 0.075];
+        // On the panel, right of the buttons; with the panel hidden, the viewport's corner.
+        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [LEFT_X + LEFT_W + 0.03 / aspect + 0.012, 1.0 - PANEL_H + 0.07] };
         let hull = self.g.player.hull_model();
         for (axis, colour, name) in [(Vec3::X, RED, "X"), (Vec3::Y, GREEN, "Y"), (Vec3::Z, BLUE, "Z")] {
             let d = hull.transform_vector3(axis).normalize_or_zero();
@@ -1994,9 +1998,10 @@ impl Range {
     fn draw_handle(&mut self, centre: Vec3) {
         let aspect = self.win[0] / self.win[1].max(1.0);
         let margin = (HANDLE_REACH + HANDLE_BOX) / aspect;
-        let at = self.project(centre).filter(|p| p[0] > self.side() + margin && p[0] < 1.0 - margin
-            && p[1] > HANDLE_REACH + HANDLE_BOX && p[1] < VIEW_H - HANDLE_REACH - 2.0 * HANDLE_BOX)
-            .unwrap_or([1.0 - margin - 0.01, VIEW_H - HANDLE_REACH - 2.0 * HANDLE_BOX]);
+        let view_h = self.view_h();
+        let at = self.project(centre).filter(|p| p[0] > margin && p[0] < 1.0 - margin
+            && p[1] > HANDLE_REACH + HANDLE_BOX && p[1] < view_h - HANDLE_REACH - 2.0 * HANDLE_BOX)
+            .unwrap_or([1.0 - margin - 0.01, view_h - HANDLE_REACH - 2.0 * HANDLE_BOX]);
         self.handle_at = Some(at);
         let near = ((self.cursor[0] - at[0]) * aspect).hypot(self.cursor[1] - at[1]) < HANDLE_NEAR;
         let w = 0.008;
@@ -2037,46 +2042,33 @@ impl Range {
         lines
     }
 
-    /// Characters a sidebar line holds at text size `size` (the regular pixel font is about 0.45
-    /// of its size wide).
-    fn line_chars(&self, size: f32) -> usize {
-        ((PANEL_W * self.win[0]) / (0.45 * size * self.win[1])).max(10.0) as usize
+    /// The chosen group's rows: each with its column's left edge and its centre's height.
+    fn rows(&self) -> Vec<(Knob, f32, f32)> {
+        let top = 1.0 - PANEL_H + 0.042;
+        group_rows(self.tab).into_iter().enumerate().map(|(i, k)| {
+            (k, GROUPS_X + (i / ROWS_PER_COL) as f32 * COLS_W, top + ((i % ROWS_PER_COL) as f32 + 0.5) * ROW_H)
+        }).collect()
     }
 
-    /// The groups' lines, each with the height of its centre (scrolled).
-    fn lines(&self) -> Vec<(Line, f32)> {
-        let mut y = GROUPS_TOP - self.scroll;
-        let mut out = Vec::new();
-        for g in 0..GROUPS.len() {
-            out.push((Line::Header(g), y + HEADER_H * 0.5));
-            y += HEADER_H;
-            if !self.collapsed[g] {
-                for k in group_rows(g) {
-                    out.push((Line::Row(k), y + ROW_H * 0.5));
-                    y += ROW_H;
-                }
-            }
-            y += 0.004;
-        }
-        out
-    }
-
-    /// How far the groups can scroll.
-    fn max_scroll(&self) -> f32 {
-        let h: f32 = (0..GROUPS.len()).map(|g| HEADER_H + 0.004
-            + if self.collapsed[g] { 0.0 } else { ROW_H * group_rows(g).len() as f32 }).sum();
-        (h - (GROUPS_BOTTOM - GROUPS_TOP)).max(0.0)
-    }
-
-    /// The group line under `c` (only lines inside the groups' region).
-    fn line_at(&self, c: [f32; 2]) -> Option<Line> {
-        if c[0] < PANEL_X || c[0] > PANEL_X + PANEL_W || c[1] < GROUPS_TOP || c[1] > GROUPS_BOTTOM {
+    /// The row under `c`, with its column's left edge.
+    fn row_at(&self, c: [f32; 2]) -> Option<(Knob, f32)> {
+        if !self.in_panel(c) {
             return None;
         }
-        self.lines().into_iter().find(|(line, y)| {
-            let h = if matches!(line, Line::Header(_)) { HEADER_H } else { ROW_H };
-            (c[1] - y).abs() <= h * 0.5
-        }).map(|(line, _)| line)
+        self.rows().into_iter().find(|(_, x, y)| c[0] >= *x && c[0] <= x + COLS_W - 0.008 && (c[1] - y).abs() <= ROW_H * 0.5)
+            .map(|(k, x, _)| (k, x))
+    }
+
+    /// The tabs' rectangles (x, y, w, h), one a group.
+    fn tab_rects(&self) -> Vec<[f32; 4]> {
+        let size = TEXT * 0.8;
+        let mut x = GROUPS_X;
+        GROUPS.iter().map(|name| {
+            let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.012;
+            let rect = [x, 1.0 - PANEL_H + 0.008, w, 0.022];
+            x += w + 0.006;
+            rect
+        }).collect()
     }
 
     /// A label on an inverted (white) box, like the panel headers.
@@ -2117,18 +2109,22 @@ impl Range {
             self.show_frame(i);
         }
         if shown.is_some() || self.captured || self.live_image {
-            self.r.draw_image(self.frame_image, self.side(), 0.0, 1.0 - self.side(), VIEW_H, [1.0, 1.0, 1.0, 1.0]);
+            self.r.draw_image(self.frame_image, 0.0, 0.0, 1.0, self.view_h(), [1.0, 1.0, 1.0, 1.0]);
         }
         if self.hide_ui {
             self.draw_timeline(cursor);
+            let [x, y, w, h] = hide_rect(true);
+            self.r.fill_rect(x, y, w, h, [0.0, 0.0, 0.0, 0.6]);
+            self.text_bold("PANEL", x + w * 0.5, y + h * 0.5, TEXT * 0.75, INK, crate::ui::Align::Center);
             return;
         }
         if self.mode == Mode::Live {
             self.draw_gizmos();
         }
+        let top = 1.0 - PANEL_H;
+        self.r.fill_rect(0.0, top, 1.0, PANEL_H, PANEL_FILL);
         self.draw_axes_gizmo();
-        // The sidebar.
-        self.r.fill_rect(0.0, 0.0, SIDEBAR_W, 1.0, SIDEBAR_FILL);
+        // The left block: title and time, the buttons, the status.
         let mode = match (self.mode, self.run) {
             (Mode::Scrub(i), _) => format!("PREVIEW {}", i + 1),
             (Mode::Live, _) if !self.playing => "PAUSED".into(),
@@ -2139,9 +2135,8 @@ impl Range {
             Mode::Scrub(i) => self.frames.get(i).map_or(0.0, |f| f.t),
             _ => self.shot_t,
         };
-        self.label_box("FEA RANGE", PANEL_X, 0.022, TEXT * 0.85);
-        self.text(&format!("{mode}  T {:.4} S", t), PANEL_X + PANEL_W, 0.022, TEXT * 0.85, INK, crate::ui::Align::Right);
-        // Buttons.
+        self.label_box("FEA RANGE", LEFT_X, top + 0.018, TEXT * 0.85);
+        self.text(&format!("{mode}  T {:.4} S", t), LEFT_X + LEFT_W, top + 0.018, TEXT * 0.8, INK, crate::ui::Align::Right);
         for (label, col, row) in BUTTONS {
             let [x, y, w, h] = button_rect(col, row);
             let lit = (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some());
@@ -2153,68 +2148,8 @@ impl Range {
                 "REC" if rec_label.is_some() => rec_label.as_deref().unwrap_or("REC"),
                 other => other,
             };
-            self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.9, if lit { BLACK } else { INK }, crate::ui::Align::Center);
+            self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.85, if lit { BLACK } else { INK }, crate::ui::Align::Center);
         }
-        self.draw_timeline(cursor);
-        // The groups.
-        let aspect = self.win[0] / self.win[1].max(1.0);
-        for (line, y) in self.lines() {
-            let h = if matches!(line, Line::Header(_)) { HEADER_H } else { ROW_H };
-            if y - h * 0.5 < GROUPS_TOP - 1.0e-4 || y + h * 0.5 > GROUPS_BOTTOM + 1.0e-4 {
-                continue;
-            }
-            match line {
-                Line::Header(g) => {
-                    self.label_box(GROUPS[g], PANEL_X, y, TEXT * 0.8);
-                    self.text_bold(if self.collapsed[g] { "+" } else { "-" }, PANEL_X + PANEL_W, y, TEXT, DIM,
-                        crate::ui::Align::Right);
-                }
-                Line::Row(knob) => {
-                    let hover = cursor[0] >= PANEL_X && cursor[0] <= PANEL_X + PANEL_W && (cursor[1] - y).abs() <= ROW_H * 0.5;
-                    if hover {
-                        self.r.fill_rect(PANEL_X - 0.003, y - ROW_H * 0.5, PANEL_W + 0.006, ROW_H, [0.05, 0.05, 0.05, 1.0]);
-                    }
-                    let (label, value) = self.knob_label(knob);
-                    self.text(&label, PANEL_X + 0.004, y, TEXT * 0.8, DIM, crate::ui::Align::Left);
-                    match kind(knob) {
-                        Kind::Stepper => {
-                            self.text(&value, VALUE_X, y, TEXT * 0.8, INK, crate::ui::Align::Left);
-                            for (x, sign) in [(MINUS_X, "<"), (PLUS_X, ">")] {
-                                self.r.fill_rect(x, y - ROW_H * 0.4, BTN_W, ROW_H * 0.8, BOX);
-                                self.text_bold(sign, x + BTN_W * 0.5, y, TEXT * 0.85, INK, crate::ui::Align::Center);
-                            }
-                        }
-                        Kind::Toggle => {
-                            let on = matches!(value.as_str(), "ON" | "YES" | "LOADED") || value.starts_with("ON ");
-                            self.text(&value, VALUE_X, y, TEXT * 0.8, if on { INK } else { DIM }, crate::ui::Align::Left);
-                            let w = 2.0 * BTN_W + 0.003;
-                            self.r.fill_rect(MINUS_X, y - ROW_H * 0.4, w, ROW_H * 0.8, if on { INK } else { BOX });
-                            self.text_bold(if on { "ON" } else { "OFF" }, MINUS_X + w * 0.5, y, TEXT * 0.75,
-                                if on { BLACK } else { DIM }, crate::ui::Align::Center);
-                        }
-                        Kind::Dial => {
-                            self.text(&value, VALUE_X, y, TEXT * 0.8, INK, crate::ui::Align::Left);
-                            let t = self.dial_t(knob);
-                            self.dial(PANEL_X + PANEL_W - ROW_H * 0.5 / aspect, y, t);
-                        }
-                        Kind::Action => {
-                            let w = PANEL_X + PANEL_W - VALUE_X;
-                            self.r.fill_rect(VALUE_X, y - ROW_H * 0.4, w, ROW_H * 0.8, BOX);
-                            self.text(&value, VALUE_X + w * 0.5, y, TEXT * 0.75, INK, crate::ui::Align::Center);
-                        }
-                    }
-                }
-            }
-        }
-        if self.max_scroll() > 0.0 {
-            let span = GROUPS_BOTTOM - GROUPS_TOP;
-            let k = span / (span + self.max_scroll());
-            let y = GROUPS_TOP + self.scroll / (span + self.max_scroll()) * span;
-            self.r.fill_rect(SIDEBAR_W - 0.003, y, 0.0015, span * k, DIM);
-        }
-        // Status, the chain and the crew, wrapped to the sidebar.
-        self.r.fill_rect(PANEL_X, GROUPS_BOTTOM + 0.006, PANEL_W, 0.001, DIM);
-        let mut y = GROUPS_BOTTOM + 0.020;
         let alive = CrewRole::ALL.iter().filter(|&&role| !self.g.crew_solo.man(role).dead).count();
         let mut notes: Vec<(String, [f32; 4])> = vec![(self.status.to_uppercase(), INK)];
         notes.push((format!("CREW ALIVE {alive}/5. {}", self.last_chain.to_uppercase()), DIM));
@@ -2224,40 +2159,90 @@ impl Range {
         if scrubbing {
             notes.push(("PREVIEW: LET GO OF THE TIMELINE TO GO LIVE AT THIS FRAME".into(), INK));
         }
-        let chars = self.line_chars(TEXT * 0.75);
+        let chars = ((GROUPS_X - LEFT_X - 0.01) * self.win[0] / (0.45 * TEXT * 0.72 * self.win[1])).max(10.0) as usize;
+        let mut y = top + 0.112;
         'notes: for (text, colour) in notes {
             for line in Self::wrap(&text, chars).into_iter().take(3) {
-                if y > 0.975 {
+                if y > 0.992 {
                     break 'notes;
                 }
-                self.text(&line, PANEL_X, y, TEXT * 0.75, colour, crate::ui::Align::Left);
-                y += 0.018;
+                self.text(&line, LEFT_X, y, TEXT * 0.72, colour, crate::ui::Align::Left);
+                y += 0.016;
             }
         }
+        // The tabs and the hide button.
+        for (g, [x, y, w, h]) in self.tab_rects().into_iter().enumerate() {
+            let chosen = g == self.tab;
+            if chosen {
+                self.r.fill_rect(x, y, w, h, INK);
+            }
+            self.text_bold(GROUPS[g], x + w * 0.5, y + h * 0.5, TEXT * 0.8, if chosen { BLACK } else { DIM }, crate::ui::Align::Center);
+        }
+        let [x, y, w, h] = hide_rect(false);
+        self.r.fill_rect(x, y, w, h, BOX);
+        self.text_bold("HIDE", x + w * 0.5, y + h * 0.5, TEXT * 0.75, INK, crate::ui::Align::Center);
+        self.text("H: HELP", x - 0.008, y + h * 0.5, TEXT * 0.7, DIM, crate::ui::Align::Right);
+        // The chosen group's rows.
+        let aspect = self.win[0] / self.win[1].max(1.0);
+        for (knob, cx, y) in self.rows() {
+            let right = cx + COLS_W - 0.012;
+            let minus = right - 2.0 * BTN_W - 0.003;
+            let plus = right - BTN_W;
+            let value_x = cx + 0.074;
+            if cursor[0] >= cx && cursor[0] <= right && (cursor[1] - y).abs() <= ROW_H * 0.5 {
+                self.r.fill_rect(cx - 0.003, y - ROW_H * 0.5, right - cx + 0.006, ROW_H, [0.05, 0.05, 0.05, 1.0]);
+            }
+            let (label, value) = self.knob_label(knob);
+            self.text(&label, cx + 0.004, y, TEXT * 0.8, DIM, crate::ui::Align::Left);
+            match kind(knob) {
+                Kind::Stepper => {
+                    self.text(&value, value_x, y, TEXT * 0.8, INK, crate::ui::Align::Left);
+                    for (x, sign) in [(minus, "<"), (plus, ">")] {
+                        self.r.fill_rect(x, y - ROW_H * 0.4, BTN_W, ROW_H * 0.8, BOX);
+                        self.text_bold(sign, x + BTN_W * 0.5, y, TEXT * 0.85, INK, crate::ui::Align::Center);
+                    }
+                }
+                Kind::Toggle => {
+                    let on = matches!(value.as_str(), "ON" | "YES" | "LOADED") || value.starts_with("ON ") || value.starts_with("ON:");
+                    self.text(&value, value_x, y, TEXT * 0.8, if on { INK } else { DIM }, crate::ui::Align::Left);
+                    let w = 2.0 * BTN_W + 0.003;
+                    self.r.fill_rect(minus, y - ROW_H * 0.4, w, ROW_H * 0.8, if on { INK } else { BOX });
+                    self.text_bold(if on { "ON" } else { "OFF" }, minus + w * 0.5, y, TEXT * 0.75,
+                        if on { BLACK } else { DIM }, crate::ui::Align::Center);
+                }
+                Kind::Dial => {
+                    self.text(&value, value_x, y, TEXT * 0.8, INK, crate::ui::Align::Left);
+                    let t = self.dial_t(knob);
+                    self.dial(right - ROW_H * 0.5 / aspect, y, t);
+                }
+                Kind::Action => {
+                    let w = right - value_x;
+                    self.r.fill_rect(value_x, y - ROW_H * 0.4, w, ROW_H * 0.8, BOX);
+                    self.text(&value, value_x + w * 0.5, y, TEXT * 0.75, INK, crate::ui::Align::Center);
+                }
+            }
+        }
+        self.draw_timeline(cursor);
         if self.help {
             let lines = [
                 "RMB HOLD: LOOK    WASD/QE: FLY    SHIFT: FAST    CTRL: SLOW    WHEEL: FLY SPEED    [ ]: FOCAL LENGTH",
-                "ALT+LMB: ORBIT    ALT+MMB (OR MMB): PAN    ALT+RMB: DOLLY    CLICK X/Y/Z (CORNER): VIEW ALONG IT, AGAIN TO FLIP",
+                "ALT+LMB: ORBIT    ALT+MMB (OR MMB): PAN    ALT+RMB: DOLLY    CLICK X/Y/Z (PANEL): VIEW ALONG IT, AGAIN TO FLIP",
                 "LMB ON THE TANK: AIM (DIRECTION FROM THE CAMERA)    CTRL+LMB: AIM, KEEP DIRECTION",
                 "DRAG THE SHOT HANDLE (OR SHIFT+LMB DRAG): TURN THE SHOT",
                 "C: SECTION ON/OFF    V: FACING THE CAMERA    G: IN THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 45",
-                "SIDEBAR: DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL ON A VALUE STEPS, WHEEL ON A LABEL SCROLLS, CLICK A HEADER FOLDS",
+                "PANEL: TABS PICK A GROUP; DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL ON A VALUE STEPS, RMB ON A DIAL RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
-                "ENTER: RUN    BACKSPACE: RESET    SPACE: PAUSE/PLAY (THE SIMULATION ALWAYS PLAYS UNLESS PAUSED)",
-                "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
-                "BACK IN TIME RE-RUNS THE SAME SHOT TO THAT FRAME (A FEW SECONDS; TISSUE DETAIL CAN DIFFER)",
                 "F: FIRE THE SHOT NOW (INTO THE PRESENT STATE)    ENTER: RUN ON A FRESH TIGER    . : FRAME THE TIGER",
-                "TAB: HIDE THE INTERFACE    RMB ON A DIAL: RESET IT    SETTINGS AND CAMERAS KEPT BETWEEN LAUNCHES",
-                "R: RECORD THE VIEWPORT (AGAIN STOPS)    F12: FULL-FRAME STILL AT 5120X2880, CONVERGED    TO CAPTURES",
+                "SPACE: PAUSE/PLAY (THE SIMULATION ALWAYS PLAYS UNLESS PAUSED)    BACKSPACE: RESET",
+                "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
+                "BACK IN TIME RE-RUNS THE SAME SHOTS TO THAT FRAME (A FEW SECONDS; TISSUE DETAIL CAN DIFFER)",
+                "TAB OR HIDE: THE PANEL    R: RECORD THE VIEWPORT    F12: FULL-FRAME STILL 5120X2880    SETTINGS AND CAMERAS KEPT",
                 "P: PRINT TISSUE KNOBS    M: MUTE    H: THIS HELP    ESC TWICE: QUIT",
             ];
-            let x = self.side() + 0.01;
-            self.r.fill_rect(x, 0.02, 0.98 - x, 0.03 * lines.len() as f32 + 0.02, [0.0, 0.0, 0.0, 0.85]);
+            self.r.fill_rect(0.01, 0.02, 0.98, 0.03 * lines.len() as f32 + 0.02, [0.0, 0.0, 0.0, 0.85]);
             for (k, l) in lines.iter().enumerate() {
-                self.text(l, x + 0.01, 0.04 + 0.03 * k as f32, TEXT * 0.9, INK, crate::ui::Align::Left);
+                self.text(l, 0.02, 0.04 + 0.03 * k as f32, TEXT * 0.9, INK, crate::ui::Align::Left);
             }
-        } else {
-            self.text("H: HELP", PANEL_X + PANEL_W, BAR_TOP - 0.01, TEXT * 0.75, DIM, crate::ui::Align::Right);
         }
     }
 
@@ -2265,7 +2250,8 @@ impl Range {
     fn draw_timeline(&mut self, cursor: [f32; 2]) {
         // The timeline: a 5 px white line along the bottom edge from the left to the frame the
         // simulation stands at; a clip in orange; on hover the playhead's tick and a readout.
-        let hovered = cursor[1] >= BAR_TOP || matches!(self.mode, Mode::Scrub(_));
+        let base = self.timeline_y();
+        let hovered = (cursor[1] - base).abs() < 0.018 || matches!(self.mode, Mode::Scrub(_));
         if let Some(run) = self.run {
             let n = run.total.max(1) as f32;
             let px = 1.0 / self.win[1].max(1.0);
@@ -2275,14 +2261,14 @@ impl Range {
                 Mode::Live if self.past_run => n,
                 Mode::Live => self.frame_at.map_or(0.0, |f| f as f32 + 1.0),
             };
-            let x = |k: f32| TL_X0 + (TL_X1 - TL_X0) * k / n;
+            let x = |k: f32| 0.0 + (1.0 - 0.0) * k / n;
             if let Some((a, b)) = self.clip {
-                self.r.fill_rect(x(a as f32), 1.0 - thick, x(b as f32 + 1.0) - x(a as f32), thick, AMBER);
+                self.r.fill_rect(x(a as f32), base - thick, x(b as f32 + 1.0) - x(a as f32), thick, AMBER);
             }
-            self.r.fill_rect(TL_X0, 1.0 - thick, x(at) - TL_X0, thick, INK);
+            self.r.fill_rect(0.0, base - thick, x(at) - 0.0, thick, INK);
             if hovered {
                 let head = x(at);
-                self.r.fill_rect(head - 1.0 / self.win[0], 1.0 - 4.0 * thick, 2.0 / self.win[0], 4.0 * thick, INK);
+                self.r.fill_rect(head - 1.0 / self.win[0], base - 4.0 * thick, 2.0 / self.win[0], 4.0 * thick, INK);
                 let t = match self.mode {
                     Mode::Scrub(i) => self.frames.get(i).map_or(0.0, |f| f.t),
                     _ => self.shot_t,
@@ -2290,16 +2276,21 @@ impl Range {
                 let clip = self.clip.map_or(String::new(), |(a, b)| format!("  CLIP {}-{}{}", a + 1, b + 1, if self.looping { " LOOP" } else { "" }));
                 let label = format!("{:.0}/{} {t:.3} S{clip}", at, run.total);
                 let align = if head > 0.85 { crate::ui::Align::Right } else { crate::ui::Align::Left };
-                self.text(&label, head + if head > 0.85 { -0.004 } else { 0.004 }, 1.0 - 4.0 * thick - 0.008, TEXT * 0.7, INK, align);
+                self.text(&label, head + if head > 0.85 { -0.004 } else { 0.004 }, base - 4.0 * thick - 0.008, TEXT * 0.7, INK, align);
             }
         } else if hovered {
-            self.text("NO RUN YET (ENTER RUNS)", 0.5, 1.0 - 0.012, TEXT * 0.7, DIM, crate::ui::Align::Center);
+            self.text("NO RUN YET (ENTER RUNS)", 0.5, base - 0.012, TEXT * 0.7, DIM, crate::ui::Align::Center);
         }
     }
 
-    /// A press in the sidebar: what it did.
+    /// A press on the panel: what it did.
     fn click_ui(&mut self, cursor: [f32; 2], fine: bool, coarse: bool) -> Click {
-        if cursor[0] > self.side() {
+        let [x, y, w, h] = hide_rect(self.hide_ui);
+        if cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h {
+            self.hide_ui = !self.hide_ui;
+            return Click::Used;
+        }
+        if !self.in_panel(cursor) {
             return Click::Viewport;
         }
         for (label, col, row) in BUTTONS {
@@ -2309,36 +2300,41 @@ impl Range {
                 return Click::Used;
             }
         }
-        match self.line_at(cursor) {
-            Some(Line::Header(g)) => {
-                self.collapsed[g] = !self.collapsed[g];
-                self.scroll = self.scroll.min(self.max_scroll());
-            }
-            Some(Line::Row(knob)) => match kind(knob) {
+        if let Some(g) = self.tab_rects().iter().position(|[x, y, w, h]| cursor[0] >= *x && cursor[0] <= x + w && cursor[1] >= *y && cursor[1] <= y + h) {
+            self.tab = g;
+            return Click::Used;
+        }
+        if let Some((knob, cx)) = self.row_at(cursor) {
+            let right = cx + COLS_W - 0.012;
+            let minus = right - 2.0 * BTN_W - 0.003;
+            match kind(knob) {
                 Kind::Dial => return Click::Dial(knob),
                 Kind::Stepper => {
-                    let dir = if cursor[0] >= MINUS_X && cursor[0] < PLUS_X { -1.0 } else { 1.0 };
+                    let dir = if cursor[0] >= minus && cursor[0] < right - BTN_W { -1.0 } else { 1.0 };
                     self.adjust(knob, dir, fine, coarse);
                 }
                 Kind::Toggle | Kind::Action => self.adjust(knob, 1.0, fine, coarse),
-            },
-            None => {}
+            }
+        }
+        if let Some(axis) = self.axis_hit(cursor) {
+            self.snap_view(axis);
         }
         Click::Used
     }
 
-    /// The wheel in the sidebar: on a row's value it steps the row, elsewhere it scrolls.
+    /// The wheel on the panel: on a row it steps the row; elsewhere it changes the tab.
     fn wheel_ui(&mut self, cursor: [f32; 2], dy: f32, fine: bool, coarse: bool) {
-        match self.line_at(cursor) {
-            Some(Line::Row(knob)) if cursor[0] >= VALUE_X && kind(knob) != Kind::Action => self.adjust(knob, dy.signum(), fine, coarse),
-            _ => self.scroll = (self.scroll - dy * ROW_H * 2.0).clamp(0.0, self.max_scroll()),
+        match self.row_at(cursor) {
+            Some((knob, _)) if kind(knob) != Kind::Action => self.adjust(knob, dy.signum(), fine, coarse),
+            Some(_) => {}
+            None => self.tab = (self.tab as i32 - dy.signum() as i32).rem_euclid(GROUPS.len() as i32) as usize,
         }
     }
 
     fn track_hit(&self, cursor: [f32; 2]) -> Option<usize> {
         let n = self.run.map_or(0, |r| r.total as usize);
-        (n > 0 && cursor[1] >= BAR_TOP && cursor[0] >= TL_X0 - 0.01 && cursor[0] <= TL_X1 + 0.01)
-            .then(|| ((((cursor[0] - TL_X0) / (TL_X1 - TL_X0)).clamp(0.0, 1.0) * n as f32) as usize).min(n - 1))
+        (n > 0 && (cursor[1] - self.timeline_y()).abs() < 0.012)
+            .then(|| ((cursor[0].clamp(0.0, 1.0) * n as f32) as usize).min(n - 1))
     }
 
     fn button(&mut self, label: &str) {
@@ -2380,7 +2376,7 @@ impl Range {
     /// The window's crop of the internal frame shown in the viewport (uv offset, uv size): the
     /// centre of the frame at the viewport's own aspect, so pixels stay square.
     fn crop(&self) -> [f32; 4] {
-        let viewport = (1.0 - self.side()) * self.win[0] / (VIEW_H * self.win[1].max(1.0));
+        let viewport = self.win[0] / (self.view_h() * self.win[1].max(1.0));
         let frame = self.r.iw as f32 / self.r.ih.max(1) as f32;
         if viewport <= frame {
             let w = viewport / frame;
@@ -2393,18 +2389,18 @@ impl Range {
 
     /// A window point (0..1) as a point of the internal frame (0..1); None in the sidebar.
     fn to_frame(&self, c: [f32; 2]) -> Option<[f32; 2]> {
-        if c[0] < self.side() || c[1] > VIEW_H {
+        if c[1] > self.view_h() {
             return None;
         }
         let k = self.crop();
-        Some([k[0] + (c[0] - self.side()) / (1.0 - self.side()) * k[2], k[1] + c[1] / VIEW_H * k[3]])
+        Some([k[0] + c[0] * k[2], k[1] + c[1] / self.view_h() * k[3]])
     }
 
     /// A point of the internal frame as a window point; None outside the viewport.
     fn to_window(&self, f: [f32; 2]) -> Option<[f32; 2]> {
         let k = self.crop();
         let (x, y) = ((f[0] - k[0]) / k[2], (f[1] - k[1]) / k[3]);
-        ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| [self.side() + x * (1.0 - self.side()), y * VIEW_H])
+        ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| [x, y * self.view_h()])
     }
 
     /// The crop of a full internal-grid frame the viewport shows, and its size.
@@ -2479,7 +2475,7 @@ impl Range {
             self.pose_view();
             self.r.set_active_view(0);
             let rect = crate::renderer::BlitRect { src_uv: self.crop(),
-                dst_px: [self.side() * w as f32, 0.0, (1.0 - self.side()) * w as f32, VIEW_H * h as f32], clear: true };
+                dst_px: [0.0, 0.0, w as f32, self.view_h() * h as f32], clear: true };
             self.r.render_to_surface_view(&self.device, &self.queue, view, format, &rect);
         }
         self.draw_ui(cursor);
@@ -2790,12 +2786,12 @@ impl ApplicationHandler for App {
                         }
                         Drag::ShotHandle => rg.drag_shot_handle(c),
                         Drag::Clip(a) => {
-                            if let Some(b) = rg.track_hit([c[0], TL_Y]) {
+                            if let Some(b) = rg.track_hit([c[0], rg.timeline_y()]) {
                                 rg.clip = (a != b).then(|| (a.min(b) as u32, a.max(b) as u32));
                             }
                         }
                         Drag::Track => {
-                            if let Some(i) = rg.track_hit([c[0], TL_Y]) {
+                            if let Some(i) = rg.track_hit([c[0], rg.timeline_y()]) {
                                 rg.mode = Mode::Scrub(i);
                                 rg.playing = false;
                             }
@@ -2818,7 +2814,7 @@ impl ApplicationHandler for App {
                 let rg = &mut st.range;
                 if rg.track_hit(c).is_some() {
                     rg.step_frame(dy < 0.0, if coarse { 10 } else { 1 });
-                } else if c[0] <= rg.side() {
+                } else if rg.in_panel(c) {
                     rg.wheel_ui(c, dy, fine, coarse);
                 } else {
                     rg.speed = (rg.speed * 1.2f32.powf(dy)).clamp(0.05, 200.0);
@@ -2827,11 +2823,11 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state, button, .. } => {
                 let pressed = state == ElementState::Pressed;
                 match button {
-                    MouseButton::Right if pressed && self.state.as_ref().is_some_and(|st| self.input.cursor[0] <= st.range.side()
+                    MouseButton::Right if pressed && self.state.as_ref().is_some_and(|st| st.range.in_panel(self.input.cursor)
                         && st.range.track_hit(self.input.cursor).is_none()) => {
                         let c = self.input.cursor;
                         if let Some(st) = self.state.as_mut() {
-                            if let Some(Line::Row(knob)) = st.range.line_at(c).filter(|l| matches!(l, Line::Row(k) if kind(*k) == Kind::Dial)) {
+                            if let Some((knob, _)) = st.range.row_at(c).filter(|(k, _)| kind(*k) == Kind::Dial) {
                                 st.range.reset_dial(knob);
                             }
                         }
@@ -2892,7 +2888,7 @@ impl ApplicationHandler for App {
                             } else {
                                 rg.rotate_section(step.0, step.1);
                             }
-                        } else if c[0] <= rg.side() {
+                        } else if rg.in_panel(c) || rg.on_hide_button(c) {
                             if let Click::Dial(knob) = rg.click_ui(c, ctrl, shift) {
                                 self.input.drag = Some((Drag::Dial(knob, rg.dial_t(knob), c[1]), c));
                             }
@@ -3033,12 +3029,21 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         rg.r.render_to_png_hud(&rg.device, &rg.queue, &path, w, h)?;
         Ok(path)
     };
+    // KESSEL_FEA_RANGE_PROBE=ui: the interface on two tabs, then stop.
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("ui") {
+        rg.tab = 0;
+        still(&mut rg, "ui_shot", true)?;
+        rg.tab = 5;
+        rg.section.on = true;
+        still(&mut rg, "ui_look", false)?;
+        return Ok(());
+    }
     // 1. Live, the default shot (57 mm at the loader through the right turret side), help shown.
     rg.help = true;
-    rg.collapsed = [false, false, true, false, false, false, true, true];
+    rg.tab = 0;
     let p1 = still(&mut rg, "live", true)?;
     rg.help = false;
-    rg.collapsed = [false, false, false, false, true, true, true, true];
+    rg.tab = 3;
     // 2. The section: the top cut 1.9 m above the ground, the eye above the left side, the cabin
     // lamps at 32 times their power (the review dial), the eye's own exposure.
     rg.section = Section { on: true, yaw: 0.0, pitch: 90.0, offset: 0.5 };
