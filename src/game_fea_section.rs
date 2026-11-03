@@ -802,3 +802,173 @@ pub(crate) fn bench(seeds: usize, out: &str) -> anyhow::Result<()> {
     std::fs::write(out, serde_json::to_string_pretty(&summary)?)?;
     Ok(())
 }
+
+/// `fea-fire-odds [SHOTS] [OUT]` (CPU only): how often a penetration of the Tiger starts a fire,
+/// and what lit it (`fea_damage::ignition`; a round crossed: the ammunition, `cabin_heat`), for the
+/// comparison with the wartime record (docs/FEA_DAMAGE_MODEL_20261102.md). Each shot is a round
+/// of the Soviet anti-tank catalogue at a range drawn from 100-800 m, from an azimuth drawn round
+/// the whole circle and 0-5 deg below level, aimed at a point drawn in the hull's armour box (two
+/// shots in three) or the turret's; only those that perforate count. Each runs the game's own
+/// chain, voxel lattice, fragment population and fragment tracing through the vehicle's surfaces
+/// and measured components. Simplifications (named): the section rig's surfaces (hull and turret
+/// meshes only, no lids, ports or workshop parts), every rack cradle holding a round, fuel 80 %,
+/// no crew aboard, the turret forward and the gun level; the azimuths are uniform, not a battle's.
+pub(crate) fn fire_odds(shots: usize, out: &str) -> anyhow::Result<()> {
+    use crate::ballistics as b;
+    use crate::fea_damage::ignition::{self, Flammable};
+    let started = std::time::Instant::now();
+    let rig = rig();
+    let shells: [&'static b::ShellSpec; 7] = [&b::BR_240, &b::BR_240P, &b::BR_271_ZIS2, &b::BR_350B, &b::BR_354P, &b::BR_365, &b::BR_471];
+    let hull = rig.tank.hull_model();
+    let hull_inv = hull.inverse();
+    let boxes = [
+        (ArmorPart::Hull, rig.tank.hull_model(), rig_armor_bounds(b::ArmorScheme::TigerI, ArmorPart::Hull).expect("Tiger hull bounds")),
+        (ArmorPart::Turret, rig.tank.turret_model(), rig_armor_bounds(b::ArmorScheme::TigerI, ArmorPart::Turret).expect("Tiger turret bounds")),
+    ];
+    let state = chain::VehicleState {
+        articulation: components::Articulation::rest(crate::tank::TIGER_PARTS.turret_pivot),
+        fuel_fill: 0.8, gravity_hull: Vec3::NEG_Y, live_rounds: &rig.rounds,
+    };
+    let rounds_in = |frame: BloodFrame| -> Vec<LiveAmmoRound> {
+        let to_frame = blood_parent_model(&rig.tank, frame).inverse() * hull;
+        rig.rounds.iter().map(|r| {
+            let rotation = Quat::from_mat3(&glam::Mat3::from_cols(r.axes[0], r.axes[1], r.axes[2])).normalize();
+            let (_, rot, centre) = (to_frame * Mat4::from_rotation_translation(rotation, r.center)).to_scale_rotation_translation();
+            LiveAmmoRound { stable_id: r.location_id, center: centre, rotation: rot.normalize(), half_extents: r.half, explosive_energy_j: 0.0 }
+        }).collect()
+    };
+    let mut rows = Vec::new();
+    let (mut penetrations, mut misses, mut terminals) = (0usize, 0usize, std::collections::BTreeMap::<String, usize>::new());
+    let mut causes = std::collections::BTreeMap::<&'static str, usize>::new();
+    let mut by_facing = std::collections::BTreeMap::<String, (usize, usize)>::new();
+    let mut trials_by_kind = std::collections::BTreeMap::<&'static str, (usize, usize, f32)>::new();
+    for i in 0..shots {
+        let h = |k: u32| hash01((i as u32).wrapping_mul(0x9E37_79B9) ^ k.wrapping_mul(0x85EB_CA6B) ^ 0xF1E0_0DD5);
+        let shell = shells[((h(1) * shells.len() as f32) as usize).min(shells.len() - 1)];
+        let range_m = 100.0 + 700.0 * h(2);
+        let azimuth = h(3) * std::f32::consts::TAU;
+        let below = (5.0 * h(4)).to_radians();
+        let (part, model, (lo, hi)) = boxes[if h(5) < 2.0 / 3.0 { 0 } else { 1 }];
+        let local = lo + (hi - lo) * Vec3::new(h(6), h(7), h(8));
+        let aim_w = model.transform_point3(local);
+        // From a shooter at `azimuth` round the hull (0 dead ahead), travelling toward the Tiger.
+        let dir_hull = -Vec3::new(azimuth.sin() * below.cos(), below.sin(), azimuth.cos() * below.cos());
+        let dir_w = hull.transform_vector3(dir_hull).normalize();
+        let facing = if azimuth.cos() > std::f32::consts::FRAC_1_SQRT_2 { "front" }
+            else if azimuth.cos() < -std::f32::consts::FRAC_1_SQRT_2 { "rear" } else { "side" };
+        let Some(contact) = projectile_armor_source::contact(&rig.source, &rig.models, &rig.tank, ProjectileVehicle::Player,
+            b::ArmorScheme::TigerI, aim_w - dir_w * 12.0, aim_w + dir_w * 2.0) else { misses += 1; continue };
+        let ProjectileContactKind::Vehicle(armor) = contact.kind else { misses += 1; continue };
+        let plate = armor.surface_plate.map(|s| s.plate).unwrap_or_else(|| b::ArmorScheme::TigerI.plate(armor.facing));
+        let horizontal = (-dir_w).dot(armor.world_normal).abs().clamp(0.0, 1.0).acos().to_degrees();
+        let seed = 0xF1E0_0000 ^ (i as u32).wrapping_mul(2_654_435_761);
+        let mut event = b::resolve(shell, range_m, plate, horizontal, seed);
+        if let Some(r) = b::ricochet::response(&event, dir_w * event.striking_v, armor.world_normal, 0) {
+            event.terminal = b::Terminal::Ricochet;
+            event.residual_v = r.velocity.length();
+            event.behind_armor = 0.0;
+        }
+        *terminals.entry(format!("{:?}", event.terminal)).or_default() += 1;
+        if !matches!(event.terminal, b::Terminal::Penetration) {
+            continue;
+        }
+        penetrations += 1;
+        let penetration_id = i as u64 + 1;
+        let line = game_fea::shot_line(&rig.source, &rig.models, &rig.tank, contact.pos, dir_w, &event);
+        let layers = chain::build_layers(&line, components::tiger_components(), &state);
+        let chain_result = chain::run(&event, &layers, crate::fea_damage::materials::AIR.density);
+        let frame = if armor.part == ArmorPart::Turret { BloodFrame::Turret } else { BloodFrame::Hull };
+        let parent = blood_parent_model(&rig.tank, frame);
+        let normal_hull = hull_inv.transform_vector3(armor.world_normal).normalize_or_zero();
+        let lattice_seed = crate::armor_damage::position_seed(armor.local_point) ^ seed;
+        let fragments = match game_fea::lattice_problem(&event, &line, &chain_result, normal_hull, lattice_seed) {
+            Some((impact, axes)) => {
+                let t0 = std::time::Instant::now();
+                let mut solver = lattice::Lattice::new(impact);
+                solver.solve();
+                let outcome = game_fea::lattice_outcome(&mut solver, line.entry, axes, t0.elapsed().as_secs_f32() * 1000.0);
+                game_fea::lattice_fragments(&line, chain_result.burst, &outcome, hull, parent, frame, penetration_id, &event, seed)
+            }
+            None => {
+                let entry = parent.inverse().transform_point3(contact.pos);
+                let axis = parent.inverse().transform_vector3(dir_w).normalize_or_zero();
+                generate_penetration_fragments(penetration_id, frame, entry, axis, event, seed)
+            }
+        };
+        let world = FragmentWorld::new(&rig.source, &rig.models, &rig.tank, state.articulation);
+        let live = rounds_in(frame);
+        let mut modules: Vec<Module> = ModuleKind::ALL.iter().map(|&kind| Module { kind, functional: true, fault: Default::default() }).collect();
+        let (mut result, _, _) = resolve_fragment_damage(&fragments, None, &[], &world, &live, &mut modules);
+        // The round itself: the live rounds it crosses, and what burns in the components it breaches
+        // (the game's `fea_penetration_consequences`); then the strike's trials.
+        let round_struck = chain_result.crossings.iter().skip(1).take_while(|c| c.v_in > 0.0)
+            .any(|c| matches!(c.layer.kind, chain::LayerKind::LiveRound { .. }));
+        for hit in chain_result.hits.iter().filter(|h| h.breached) {
+            let Some(what) = ignition::flammable(&components::COMPONENT_SPECS[hit.component]) else { continue };
+            result.enter_flammable(StrikeIgnition { local_point: Vec3::ZERO, local_velocity: Vec3::ZERO, component: hit.component,
+                what, by_round: true, body_k: 0.0 });
+        }
+        result.ignite(penetration_id);
+        let ammo = result.ammo || round_struck;
+        let lit: Vec<&ignition::Trial> = result.ignition_trials.iter().filter(|t| t.lit).collect();
+        let kind_name = |what: Flammable| match what {
+            Flammable::Petrol => "petrol",
+            Flammable::Engine => "engine",
+            Flammable::Oil { .. } => "oil",
+            Flammable::Upholstery => "upholstery",
+            Flammable::Electrical => "electrical",
+        };
+        for t in &result.ignition_trials {
+            let e = trials_by_kind.entry(kind_name(t.what)).or_default();
+            e.0 += 1;
+            e.1 += t.lit as usize;
+            e.2 += t.chance;
+        }
+        let cause = if ammo { "ammunition" } else { lit.first().map_or("none", |t| kind_name(t.what)) };
+        *causes.entry(cause).or_default() += 1;
+        let key = format!("{facing} {}", if part == ArmorPart::Turret { "turret" } else { "hull" });
+        let e = by_facing.entry(key).or_default();
+        e.0 += 1;
+        e.1 += (cause != "none") as usize;
+        rows.push(serde_json::json!({"shot": i, "shell": shell.name, "range_m": range_m, "azimuth_deg": azimuth.to_degrees(),
+            "aimed_part": format!("{part:?}"), "struck_part": format!("{:?}", armor.part), "plate": plate.name, "fragments": fragments.len(),
+            "ammunition": ammo, "round_crossed_a_round": round_struck,
+            "trials": result.ignition_trials.iter().map(|t| serde_json::json!({"component": components::COMPONENT_SPECS[t.component].id,
+                "what": t.what.name(), "by_round": t.by_round, "body_k": t.body_k, "chance": t.chance, "lit": t.lit})).collect::<Vec<_>>(),
+            "cause": cause}));
+        println!("[fea-fire-odds] {i}: {} {range_m:.0} m {facing} {:?}: {} fragments; {cause}{}", shell.name, armor.part, fragments.len(),
+            if result.ignition_trials.is_empty() { String::new() } else { format!(" ({} trials)", result.ignition_trials.len()) });
+    }
+    let fires: usize = causes.iter().filter(|(k, _)| **k != "none").map(|(_, v)| *v).sum();
+    let rate = |n: usize| n as f32 / penetrations.max(1) as f32;
+    let summary = serde_json::json!({
+        "tool": "fea-fire-odds", "shots": shots, "misses": misses, "terminals": terminals, "penetrations": penetrations,
+        "fires": fires, "fires_per_penetration": rate(fires),
+        "causes_per_penetration": causes.iter().map(|(k, v)| (k.to_string(), rate(*v))).collect::<std::collections::BTreeMap<_, _>>(),
+        "causes_count": causes,
+        "by_facing": by_facing.iter().map(|(k, (n, f))| (k.clone(), serde_json::json!({"penetrations": n, "fires": f, "rate": *f as f32 / (*n).max(1) as f32})))
+            .collect::<serde_json::Map<_, _>>(),
+        "trials_by_kind": trials_by_kind.iter().map(|(k, (n, l, c))| (k.to_string(), serde_json::json!({"trials": n, "lit": l, "mean_chance": c / (*n).max(1) as f32})))
+            .collect::<serde_json::Map<_, _>>(),
+        "wartime": {
+            "ors_normandy_1944": "AP-penetrated tanks burnt out: Tiger 4 of 5, Panther 14 of 22, Pz IV 4 of 5, Sherman 33 of 40; 3.25 penetrations per burnt-out Tiger (about 0.31 a penetration)",
+            "ors_report_33_1945": "British tanks, one AP penetration: 55-56 % brewed up (36-37 of 66)",
+            "amrl_1943": "over 90 % of tank fires from propellant lit by hot fragments tearing cases",
+            "mrc_1946": "107 fires seen: fuel 20, ammunition 19, other 3, unknown 65",
+            "nii48_1942": "T-34 (diesel) penetrated with extensive fire: 38 of 154 (repaired tanks; low)",
+        },
+        "simplifications": "section rig surfaces (hull and turret meshes); all rack cradles hold a round; fuel 80 %; no crew; turret forward; uniform azimuths",
+        "wall_s": started.elapsed().as_secs_f32(),
+        "rows": rows,
+    });
+    println!("[fea-fire-odds] {penetrations} penetrations of {shots} shots ({misses} missed the armour): {fires} fires ({:.0} %); causes {}",
+        rate(fires) * 100.0, serde_json::to_string(&summary["causes_per_penetration"])?);
+    println!("[fea-fire-odds] by facing {}", serde_json::to_string(&summary["by_facing"])?);
+    println!("[fea-fire-odds] trials {}", serde_json::to_string(&summary["trials_by_kind"])?);
+    if let Some(dir) = std::path::Path::new(out).parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(out, serde_json::to_string_pretty(&summary)?)?;
+    println!("[fea-fire-odds] wrote {out} ({:.0} s)", started.elapsed().as_secs_f32());
+    Ok(())
+}

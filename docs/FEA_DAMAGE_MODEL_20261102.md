@@ -610,3 +610,29 @@ throw in the frame; then what the cook-off left of the crew.
   shot of where the round came from; then the card. Filmed in `fea-film` `penetration_death`
   (a 122 mm round at the commander through the turret side).
 - **Not yet**: the heat and the thrown turret are not saved.
+
+## A fire lit by the strike (2026-11-02, night)
+
+The owner: a spark or a fragment meeting something flammable may start a fire inside the tank.
+Each material has its own chance, some have none, and fires should start about as often as they
+did in the war.
+
+- **The trial** (`fea_damage::ignition`, `SpallResult::ignite`): the round and every fragment are
+  traced through the measured components. Each flammable component entered is one trial per
+  strike, at the hottest body that entered it: petrol 0.5 (the 1944 Soviet tank-fuel trials),
+  the engine 0.3, mineral oils 0.1 above their hot-surface ignition (623 K, hydraulic 713 K),
+  upholstery 0.02 and insulation 0.01 above 700 K. Coolant, steel and glass never light. The
+  ammunition is as before: a case crossed goes at once.
+- **Where it starts:** where the lighting body entered the component, swept along its path to the
+  first surface. A fire behind the firewall heats the crew compartment at a quarter of its
+  release.
+- **The player's clothing:** a fragment above 850 K striking him lights it at 0.05 a strike; he
+  pats it out or drops and rolls (`player_burn`).
+- **Against the war** (`fea-fire-odds 1500`): 32 % of 498 penetrations started a fire, 80 % of
+  those from the ammunition. The Normandy figure for Tigers is about 31 % a penetration; British
+  tanks in 1945 brewed up after 55 % of single AP penetrations; US 1943 trials put over 90 % of
+  fires on the propellant.
+- **Filmed:** `fea-film` clip `ignition`. A 122 mm round through the lower front plate is
+  repeated unfilmed on a fresh Tiger until one strike lights, then that strike is replayed
+  exactly and filmed.
+

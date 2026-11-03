@@ -4609,7 +4609,10 @@ impl<'a> FragmentWorld<'a> {
     /// fraction of the segment where it first does, nearest first, one entry per module. A
     /// segment that ended on a surface is carried `reach` m past it (the drawn face and the voxel
     /// envelope differ by up to a cell).
-    fn modules_entered(&self, frame: BloodFrame, from: Vec3, to: Vec3, reach: f32) -> Vec<(f32, ModuleKind)> {
+    /// The measured components (`components::COMPONENT_SPECS` indices) a segment enters, with the
+    /// fraction along it where it first does, nearest first. `reach` carries a segment that ended
+    /// on a surface a little on, into the component behind that surface.
+    fn components_entered(&self, frame: BloodFrame, from: Vec3, to: Vec3, reach: f32) -> Vec<(f32, usize)> {
         use crate::fea_damage::components;
         if !self.components {
             return Vec::new();
@@ -4623,18 +4626,29 @@ impl<'a> FragmentWorld<'a> {
         }
         let b = b0 + (b0 - a) / length * reach.max(0.0);
         let stretch = a.distance(b) / length;
-        let mut out: Vec<(f32, ModuleKind)> = Vec::new();
+        let mut out: Vec<(f32, usize)> = Vec::new();
         for env in &components::tiger_components().envelopes {
-            let Some(kind) = game_fea::module_for_system(components::COMPONENT_SPECS[env.spec].system) else { continue };
             let runs = env.segment_runs(self.articulation.to_component(env, a), self.articulation.to_component(env, b));
             let Some(&(entry, _)) = runs.first() else { continue };
             let fraction = entry * stretch;
-            match out.iter_mut().find(|(_, k)| *k == kind) {
+            match out.iter_mut().find(|(_, spec)| *spec == env.spec) {
                 Some(existing) => existing.0 = existing.0.min(fraction),
-                None => out.push((fraction, kind)),
+                None => out.push((fraction, env.spec)),
             }
         }
         out.sort_by(|x, y| x.0.total_cmp(&y.0));
+        out
+    }
+
+    /// The modules those components stand for (`game_fea::module_for_system`), nearest first.
+    fn modules_of(entered: &[(f32, usize)]) -> Vec<(f32, ModuleKind)> {
+        let mut out: Vec<(f32, ModuleKind)> = Vec::new();
+        for &(fraction, spec) in entered {
+            let Some(kind) = game_fea::module_for_system(crate::fea_damage::components::COMPONENT_SPECS[spec].system) else { continue };
+            if !out.iter().any(|(_, k)| *k == kind) {
+                out.push((fraction, kind));
+            }
+        }
         out
     }
 }
@@ -6884,7 +6898,98 @@ pub struct SpallResult {
     pub hit_body: bool,
     pub hit_modules: Vec<ModuleKind>,
     pub ammo: bool, // the ammunition rack was struck — catastrophic
-    pub fire: bool, // fuel or engine was struck — a fire starts
+    pub fire: bool, // the strike lit what a component holds (`ignition`) — a fire starts
+    /// Where the strike lit it (the penetration's frame), the striking body's velocity there, and
+    /// what lit (`fea_damage::ignition`).
+    pub ignition: Option<StrikeIgnition>,
+    /// The flammable components the round and its fragments entered, one each (`ignite`).
+    pub ignition_entries: Vec<StrikeIgnition>,
+    /// The strike's trials against what burns, one per component entered.
+    pub ignition_trials: Vec<crate::fea_damage::ignition::Trial>,
+    /// The hottest fragment that struck each man (K): his crew peer id, or None for the solo
+    /// player's body (`fea_damage::ignition::clothing_chance`).
+    pub clothing: Vec<(Option<u32>, f32)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StrikeIgnition {
+    pub local_point: Vec3,
+    pub local_velocity: Vec3,
+    pub component: usize,
+    pub what: crate::fea_damage::ignition::Flammable,
+    /// The round itself entered it (else only fragments did).
+    pub by_round: bool,
+    /// The hottest body that entered it (K; 0 when none had a solved temperature).
+    pub body_k: f32,
+}
+
+impl SpallResult {
+    /// A fragment at `body_k` struck a man (`peer`, or None for the solo player's body).
+    pub fn struck_clothing(&mut self, peer: Option<u32>, body_k: f32) {
+        match self.clothing.iter_mut().find(|(p, _)| *p == peer) {
+            Some(known) => known.1 = known.1.max(body_k),
+            None => self.clothing.push((peer, body_k)),
+        }
+    }
+
+    /// Whether a man's clothing caught from this strike: one draw for him at the hottest fragment
+    /// that struck him (`fea_damage::ignition::clothing_chance`).
+    pub fn clothing_caught(&self, peer: Option<u32>, penetration_id: u64) -> bool {
+        let Some(&(_, body_k)) = self.clothing.iter().find(|(p, _)| *p == peer) else { return false };
+        let chance = crate::fea_damage::ignition::clothing_chance(body_k);
+        chance > 0.0 && crate::fea_damage::ignition::lights(chance, penetration_id as u32 ^ (penetration_id >> 32) as u32
+            ^ peer.unwrap_or(u32::MAX).wrapping_mul(0x85EB_CA6B) ^ 0xC107_4E5)
+    }
+
+    /// A body entered a flammable component: the first entry keeps its point (where a fire would
+    /// start); the round, entering, takes the point over (it leads its fragments); the hottest
+    /// body's temperature is kept.
+    pub fn enter_flammable(&mut self, entry: StrikeIgnition) {
+        match self.ignition_entries.iter_mut().find(|e| e.component == entry.component) {
+            Some(known) => {
+                let body_k = known.body_k.max(entry.body_k);
+                if entry.by_round && !known.by_round {
+                    *known = entry;
+                }
+                known.body_k = body_k;
+            }
+            None => self.ignition_entries.push(entry),
+        }
+    }
+
+    /// One trial per flammable component the strike entered, at its chance for the hottest body
+    /// that entered it (`fea_damage::ignition`): the wartime trials' rates are per shot, not per
+    /// fragment. A component the round entered lights first; then in the order entered.
+    pub fn ignite(&mut self, penetration_id: u64) {
+        use crate::fea_damage::ignition;
+        self.ignition_trials.clear();
+        self.ignition = None;
+        let mut order: Vec<StrikeIgnition> = self.ignition_entries.clone();
+        order.sort_by_key(|e| !e.by_round);
+        for entry in order {
+            let chance = ignition::chance(entry.what, entry.body_k);
+            let lit = chance > 0.0 && ignition::lights(chance, penetration_id as u32 ^ (penetration_id >> 32) as u32
+                ^ (entry.component as u32).wrapping_mul(0x9E37_79B9) ^ 0x1C17_10E5);
+            self.ignition_trials.push(ignition::Trial { component: entry.component, what: entry.what, by_round: entry.by_round,
+                body_k: entry.body_k, chance, lit });
+            if lit && self.ignition.is_none() {
+                self.ignition = Some(entry);
+            }
+        }
+        self.fire = self.ignition.is_some();
+    }
+}
+
+/// The energy a fragment needs to hole a flammable component's casing and reach what it holds:
+/// its module's resistance (`module_fragment_resistance_j`) where it has one, else a thin sheet's
+/// (the fuel tank's 0.45 J; the seats' cushions take any fragment that reaches them).
+fn ignition_casing_j(spec: usize) -> f32 {
+    use crate::fea_damage::{components::{COMPONENT_SPECS, System}, ignition::Flammable};
+    let spec = &COMPONENT_SPECS[spec];
+    if matches!(crate::fea_damage::ignition::flammable(spec), Some(Flammable::Upholstery)) || spec.system == System::Seat {
+        return 0.0;
+    }
+    game_fea::module_for_system(spec.system).map_or(module_fragment_resistance_j(ModuleKind::Fuel), module_fragment_resistance_j)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7195,6 +7300,8 @@ fn resolve_fragment_damage(
         // times; that grain may still strike a later different part. Resetting per fragment keeps
         // this O(fragments × bodies) rather than searching an ever-growing contact ledger.
         let mut contacted_parts_by_body = vec![0u16; couch_bodies.len()];
+        // One ignition trial per component per fragment.
+        let mut tried_components = 0u64;
         while fragment.active
             && !fragment.settled
             && fragment.age < fragment.life.min(HOT_FRAGMENT_DAMAGE_MAX_S)
@@ -7213,6 +7320,11 @@ fn resolve_fragment_damage(
                 if energy < 0.01 {
                     continue;
                 }
+                // The fragment's temperature on this segment (K; 0 when the lattice did not solve it).
+                let body_k = if initial.temp_k > 0.0 {
+                    crate::fea_damage::fragments::cool(initial.temp_k, initial.size, segment.speed_mps,
+                        crate::fea_damage::materials::AMBIENT_K, fragment.age)
+                } else { 0.0 };
                 if !result.hit_body {
                     if let Some(center) = solo_body {
                         if energy >= CREW_LETHAL_ENERGY_J {
@@ -7223,6 +7335,7 @@ fn resolve_fragment_damage(
                                 CREW_RADIUS_M + initial.size * 0.5,
                             ) {
                                 result.hit_body = true;
+                                result.struck_clothing(None, body_k);
                                 contacts.push(FragmentDamageContact {
                                     fragment_id: initial.id,
                                     target: FragmentDamageTarget::SoloBody,
@@ -7280,6 +7393,7 @@ fn resolve_fragment_damage(
                     // substep. Retain every newly crossed anatomical region in physical order;
                     // selecting only the nearest one would silently discard the deeper wound once
                     // the next step begins beyond it.
+                    result.struck_clothing(Some(body.casualty.peer_id), body_k);
                     for (fraction, body_part) in intersections {
                         let part_bit = 1u16 << body_part.index();
                         contacted_parts_by_body[body_index] |= part_bit;
@@ -7301,8 +7415,22 @@ fn resolve_fragment_damage(
 
                 // Modules are met where the fragment's own path (ended at the first real surface)
                 // enters their CAD-measured component; the rack, where it crosses a live cartridge.
-                let entered = world.modules_entered(fragment.frame, segment.from, segment.to,
+                let components_entered = world.components_entered(fragment.frame, segment.from, segment.to,
                     if segment.surface { HOT_FRAGMENT_COMPONENT_REACH_M } else { 0.0 });
+                let entered = FragmentWorld::modules_of(&components_entered);
+                // What burns in a component it enters (`fea_damage::ignition`): the entry, with the
+                // fragment's temperature there; the strike's trials follow (`SpallResult::ignite`).
+                for &(fraction, spec) in &components_entered {
+                    let bit = 1u64 << spec;
+                    if tried_components & bit != 0 || energy < ignition_casing_j(spec) {
+                        continue;
+                    }
+                    let Some(what) = crate::fea_damage::ignition::flammable(&crate::fea_damage::components::COMPONENT_SPECS[spec]) else { continue };
+                    tried_components |= bit;
+                    result.enter_flammable(StrikeIgnition { local_point: segment.from.lerp(segment.to, fraction),
+                        local_velocity: (segment.to - segment.from).normalize_or_zero() * segment.speed_mps,
+                        component: spec, what, by_round: false, body_k });
+                }
                 for kind in modules.iter().map(|module| module.kind).collect::<Vec<_>>() {
                     let Some(module) = modules.iter_mut().find(|module| module.kind == kind) else {
                         continue;
@@ -7344,7 +7472,6 @@ fn resolve_fragment_damage(
                         module.fault = tiger_damage::Fault::Spall;
                         result.hit_modules.push(kind);
                         result.ammo |= kind == ModuleKind::AmmoRack;
-                        result.fire |= matches!(kind, ModuleKind::Fuel | ModuleKind::Engine);
                         contacts.push(FragmentDamageContact {
                             fragment_id: initial.id,
                             target: FragmentDamageTarget::Module(kind),
@@ -7360,6 +7487,9 @@ fn resolve_fragment_damage(
                 }
             }
         }
+    }
+    if let Some(first) = fragments.first() {
+        result.ignite(first.penetration_id);
     }
     (result, couch_hits, contacts)
 }
@@ -29464,6 +29594,17 @@ impl Game {
         // path through crew and live rounds (`game_fea`).
         self.fea_penetration_consequences(entry_w, shell_dir_w, &ev, armor_part, penetration_id, frame,
             body, &couch_bodies, &live_ammunition, burst_fragment_kinetic_j, &mut result, &mut contacts);
+        result.ignite(penetration_id);
+        // The player's own clothing, struck by a hot fragment (`fea_damage::ignition::CLOTHING`).
+        let player_peer = if self.singleplayer_crew_active {
+            self.singleplayer_crew.as_ref().map(|state| self.singleplayer_casualty_identity(state.identity).peer_id)
+        } else if self.couch_crew_active { self.couch_local_peer } else { None };
+        if result.clothing_caught(player_peer, penetration_id) && !self.player_burn.burning() {
+            self.player_burn.ignite(player_burn::CATCH_HEAT);
+            println!("[fire] a hot fragment set the player's clothing alight");
+            let at = self.ear_pos - Vec3::Y * 0.6;
+            self.foley(crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::BurnCatch), 1.0, 0.0, at);
+        }
         let solution = PenetrationSolution {
             penetration_id,
             frame,
@@ -29601,16 +29742,29 @@ impl Game {
             );
             return sound_context;
         }
-        // Fuel/engine hit → a fire that grows toward the ammo (the cook-off timer runs in update_fire).
-        if res.fire && !self.fire_active {
+        // The strike lit what a component holds (`fea_damage::ignition`): a fire that grows, its heat
+        // reaching the ammunition through the compartment (`game_cookoff`).
+        for trial in &res.ignition_trials {
+            println!("[fea] ignition trial: {} in the {} by the {} at {:.0} K: chance {:.2}, {}",
+                trial.what.name(), crate::fea_damage::components::COMPONENT_SPECS[trial.component].name,
+                if trial.by_round { "round" } else { "fragment" }, trial.body_k, trial.chance, if trial.lit { "LIT" } else { "not lit" });
+        }
+        if let Some(ignition) = res.ignition.filter(|_| !self.fire_active) {
+            use crate::fea_damage::ignition::Flammable;
             self.fire_active = true;
-            self.fire = self.fire.max(0.16);
+            // The first flame's strength by what lit (authored).
+            self.fire = self.fire.max(match ignition.what {
+                Flammable::Petrol | Flammable::Engine => 0.16,
+                Flammable::Oil { .. } => 0.10,
+                Flammable::Upholstery | Flammable::Electrical => 0.06,
+            });
             self.fire_origin = Some((shooter, entry_w, shell_dir_w));
-            // It catches where the fuel or the engine was opened, not at a standing spot.
-            match self.fea_seed_fire_at_breach(parent, &solution.contacts, self.fire) {
-                Some(at) => println!("[panzerrechnersystem] FIRE — fuel/engine alight in the hull at [{:.0}, {:.0}, {:.0}] mm",
+            // It catches where the strike lit it, not at a standing spot.
+            let what = format!("{} in the {}", ignition.what.name(), crate::fea_damage::components::COMPONENT_SPECS[ignition.component].name);
+            match self.fea_seed_fire_at(parent, ignition.local_point, ignition.local_velocity, self.fire) {
+                Some(at) => println!("[panzerrechnersystem] FIRE — the strike lit the {what} at [{:.0}, {:.0}, {:.0}] mm (hull)",
                     at.x * 1000.0, at.y * 1000.0, at.z * 1000.0),
-                None => println!("[panzerrechnersystem] FIRE — fuel/engine alight in the hull (no surface on the breach path: standing first spot)"),
+                None => println!("[panzerrechnersystem] FIRE — the strike lit the {what} (no surface on its path: standing first spot)"),
             }
         }
         // A couch penetration removes only the bodies the cone actually caught. Their authority is

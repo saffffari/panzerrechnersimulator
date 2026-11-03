@@ -351,6 +351,104 @@ pub(super) fn lattice_problem(event: &crate::ballistics::ImpactEvent, line: &cha
     }, [e1, e2, e3]))
 }
 
+/// The penetration's fragment population from a solved lattice (`Game::fea_penetration_fragments`
+/// and the `fea-fire-odds` count): every cluster that broke free on the inside of the plate (its
+/// mass, centre, velocity and spin as solved), and, for a filled round that burst, its body's
+/// steel (mass minus filler) partitioned into the existing authored size shape and speeds (named:
+/// no fragmentation law). `parent` is the penetration frame's model.
+pub(super) fn lattice_fragments(line: &chain::ShotLine, burst: bool, lat: &LatticeOutcome, hull: Mat4, parent: Mat4,
+    frame: BloodFrame, penetration_id: u64, event: &crate::ballistics::ImpactEvent, seed: u32) -> Vec<HotFragment> {
+    let parent_inv = parent.inverse();
+    let to_frame = |p_plate: Vec3| parent_inv.transform_point3(hull.transform_point3(lat.plate_to_hull(p_plate)));
+    let dir_to_frame = |v: Vec3| parent_inv.transform_vector3(hull.transform_vector3(lat.plate_dir_to_hull(v)));
+    let profile = fragment_shower_profile(true, event.behind_armor, event.shell.caliber_mm, event.residual_v,
+        if event.shell.kind == crate::ballistics::ShellKind::Heat { 0.0 } else { event.shell.filler_g });
+    let penetration_seed = seed ^ penetration_id as u32 ^ (penetration_id >> 32) as u32 ^ 0x5A11_5A11;
+    let mut out: Vec<HotFragment> = Vec::new();
+    let make = |index: usize, pos: Vec3, vel: Vec3, size: f32, spin: Vec3, temp_k: f32, solved: bool| {
+        let s = penetration_seed.wrapping_add((index as u32).wrapping_mul(2_246_822_519));
+        HotFragment {
+            id: (penetration_id << 10) | index as u64,
+            penetration_id,
+            active: true,
+            settled: false,
+            origin: pos,
+            prev_pos: pos,
+            entered_compartment: fragment_inside_compartment(frame, pos, size * 0.52),
+            audio_whizzed: false,
+            frame,
+            pos,
+            vel,
+            size,
+            ang: Vec3::new(hash01(s ^ 0x11), hash01(s ^ 0x22), hash01(s ^ 0x33)) * std::f32::consts::TAU,
+            spin,
+            age: 0.0,
+            // A body the lattice solved is steel that stays (it cools to the cold page); the
+            // burst body keeps the authored life of its heat pages.
+            life: if solved { f32::MAX } else { (profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19))).max(AUTHORED_FRAGMENT_LIFE_MIN_S) },
+            bounces: 0,
+            seed: s,
+            temp_k,
+            lodged: false,
+            embed_m: 0.0,
+        }
+    };
+    {
+        let temps: Vec<f32> = lat.clusters.iter().map(|c| c.temperature_k).collect();
+        if let (Some(lo), Some(hi)) = (temps.iter().cloned().reduce(f32::min), temps.iter().cloned().reduce(f32::max)) {
+            println!("[fea] {} solved clusters at {lo:.0}-{hi:.0} K", temps.len());
+        }
+    }
+    // Plate clusters on the inside, moving inward. Exterior ejecta leave as the cosmetic impact
+    // sparks only (named): this pool is the interior's.
+    for cluster in &lat.clusters {
+        if out.len() >= N_HOT_FRAGMENTS {
+            break;
+        }
+        if !cluster.leaves_inside(lat.thickness_m, lat.cell_mm * 0.001, lat.measured.perforated) {
+            continue;
+        }
+        let index = out.len();
+        out.push(make(index, to_frame(cluster.centre), dir_to_frame(cluster.velocity), cluster.size_m,
+            dir_to_frame(cluster.angular_velocity), cluster.temperature_k.max(crate::armor_damage::AMBIENT_K + 1.0), true));
+    }
+    if burst {
+        const STEEL: f32 = 7850.0;
+        let body_mass = (event.shell.mass_kg - event.shell.filler_g * 0.001).max(0.0);
+        let count = (N_HOT_FRAGMENTS - out.len()).min(512);
+        if body_mass > 0.0 && count > 0 {
+            let exit = lat.plate_to_hull(Vec3::ZERO) + line.dir * line.plate_path_m;
+            let burst = parent_inv.transform_point3(hull.transform_point3(exit));
+            let axis = parent_inv.transform_vector3(hull.transform_vector3(line.dir)).normalize_or_zero();
+            let mut side = axis.cross(Vec3::Y).normalize_or_zero();
+            if side.length_squared() < 0.5 {
+                side = axis.cross(Vec3::X).normalize_or_zero();
+            }
+            let up = side.cross(axis).normalize_or_zero();
+            let shape: Vec<f32> = (0..count).map(|i| {
+                let s = penetration_seed ^ 0xB0D7_0000 ^ (i as u32).wrapping_mul(2_654_435_761);
+                profile.min_size_m + (profile.max_size_m - profile.min_size_m) * hash01(s ^ 0xE1).powf(2.4)
+            }).collect();
+            let raw_mass: f32 = shape.iter().map(|s| STEEL * s * s * s).sum();
+            let k = (body_mass / raw_mass.max(1e-12)).cbrt();
+            for (i, base) in shape.iter().enumerate() {
+                let s = penetration_seed ^ 0xB0D7_0000 ^ (i as u32).wrapping_mul(2_654_435_761);
+                let radial = hash01(s ^ 0x51).sqrt();
+                let angle = hash01(s ^ 0xA7) * std::f32::consts::TAU;
+                let fan = (side * angle.cos() + up * angle.sin()) * radial * profile.cone_half_tan;
+                let dir = (axis + fan).normalize_or_zero();
+                let speed = profile.speed_min + (profile.speed_max - profile.speed_min) * hash01(s ^ 0xD3).sqrt();
+                let spin = Vec3::new(hash01(s ^ 0x44) - 0.5, hash01(s ^ 0x55) - 0.5, hash01(s ^ 0x66) - 0.5) * 40.0;
+                let index = out.len();
+                // The burst body's temperature is not solved: it leaves at the authored
+                // chip temperature and cools as a lumped body like the rest.
+                out.push(make(index, burst, dir * speed, base * k, spin, AUTHORED_FRAGMENT_KELVIN, false));
+            }
+        }
+    }
+    out
+}
+
 /// Measure a solved lattice into the outcome the game consumes.
 pub(super) fn lattice_outcome(solver: &mut lattice::Lattice, origin_hull: Vec3, axes_hull: [Vec3; 3], wall_ms: f32) -> LatticeOutcome {
     let geometry = solver.measure();
@@ -542,10 +640,17 @@ impl Game {
                 struck_not_breached.push(spec.id.to_string());
                 continue;
             }
-            let Some(kind) = module_for_system(spec.system) else { continue };
-            let Some(module) = self.modules.iter_mut().find(|m| m.kind == kind) else { continue };
             // Where it entered this component, at the speed it had there.
             let Some(first) = chain_result.crossings.iter().find(|c| c.layer.kind.component() == Some(hit.component)) else { continue };
+            // What burns in it (`fea_damage::ignition`): the round's entry. Its own heat is not
+            // solved, so it lights by its sparks alone (named); the strike's trials follow
+            // (`SpallResult::ignite`).
+            if let Some(what) = crate::fea_damage::ignition::flammable(spec) {
+                result.enter_flammable(StrikeIgnition { local_point: to_frame(line.entry + line.dir * first.layer.s0),
+                    local_velocity: dir_frame * first.v_in, component: hit.component, what, by_round: true, body_k: 0.0 });
+            }
+            let Some(kind) = module_for_system(spec.system) else { continue };
+            let Some(module) = self.modules.iter_mut().find(|m| m.kind == kind) else { continue };
             if module.functional {
                 module.functional = false;
                 module.fault = tiger_damage::Fault::Spall;
@@ -553,8 +658,6 @@ impl Game {
             if !result.hit_modules.contains(&kind) {
                 result.hit_modules.push(kind);
             }
-            // Same existing rule as a fragment reaching these modules.
-            result.fire |= matches!(kind, ModuleKind::Fuel | ModuleKind::Engine);
             knocked_out.push(kind);
             let p = to_frame(line.entry + line.dir * first.layer.s0);
             contacts.push(FragmentDamageContact { fragment_id: contact_id, target: FragmentDamageTarget::Module(kind),
@@ -648,21 +751,20 @@ impl Game {
         crew_openings(self.roof_hatches.phase, self.hatch_t, hole_area_m2)
     }
 
-    /// Light the surface fire where a penetration opened the fuel or the engine: the first such
-    /// contact (the round's own crossing or a fragment's, in the frame `parent` maps to world),
-    /// swept on along its own velocity to the first source surface it reaches. Returns that
-    /// point, hull frame. None leaves the fire to `update_fire`'s standing first spot.
-    pub(super) fn fea_seed_fire_at_breach(&mut self, parent: Mat4, contacts: &[FragmentDamageContact],
+    /// Light the surface fire where the strike lit what a component holds (`fea_damage::ignition`):
+    /// the lighting contact (the round's own crossing or a fragment's, at `local_point` moving with
+    /// `local_velocity` in the frame `parent` maps to world), swept on along its velocity to the
+    /// first source surface it reaches. Returns that point, hull frame. None leaves the fire to
+    /// `update_fire`'s standing first spot.
+    pub(super) fn fea_seed_fire_at(&mut self, parent: Mat4, local_point: Vec3, local_velocity: Vec3,
         strength: f32) -> Option<Vec3> {
-        let contact = contacts.iter().find(|c| matches!(c.target,
-            FragmentDamageTarget::Module(ModuleKind::Fuel | ModuleKind::Engine)))?;
-        let dir = contact.local_velocity.normalize_or_zero();
+        let dir = local_velocity.normalize_or_zero();
         if dir == Vec3::ZERO {
             return None;
         }
         let models = self.fire_surface_models();
-        let from = parent.transform_point3(contact.local_point - dir * BREACH_SEED_BACK_M);
-        let to = parent.transform_point3(contact.local_point + dir * BREACH_SEED_REACH_M);
+        let from = parent.transform_point3(local_point - dir * BREACH_SEED_BACK_M);
+        let to = parent.transform_point3(local_point + dir * BREACH_SEED_REACH_M);
         let hit = self.cabin_fire.sweep(from, to, &models)?;
         if !self.cabin_fire.seed_from_segment(from, to, &models, strength) {
             return None;
@@ -751,96 +853,8 @@ impl Game {
         event: &crate::ballistics::ImpactEvent, seed: u32) -> Option<Vec<HotFragment>> {
         let solve = self.fea.current.as_ref().filter(|s| s.projectile_id == penetration_id)?;
         let lat = solve.lattice.as_ref()?;
-        let hull = self.player.hull_model();
-        let parent_inv = blood_parent_model(&self.player, frame).inverse();
-        let to_frame = |p_plate: Vec3| parent_inv.transform_point3(hull.transform_point3(lat.plate_to_hull(p_plate)));
-        let dir_to_frame = |v: Vec3| parent_inv.transform_vector3(hull.transform_vector3(lat.plate_dir_to_hull(v)));
-        let profile = fragment_shower_profile(true, event.behind_armor, event.shell.caliber_mm, event.residual_v,
-            if event.shell.kind == crate::ballistics::ShellKind::Heat { 0.0 } else { event.shell.filler_g });
-        let penetration_seed = seed ^ penetration_id as u32 ^ (penetration_id >> 32) as u32 ^ 0x5A11_5A11;
-        let mut out: Vec<HotFragment> = Vec::new();
-        let make = |index: usize, pos: Vec3, vel: Vec3, size: f32, spin: Vec3, temp_k: f32, solved: bool| {
-            let s = penetration_seed.wrapping_add((index as u32).wrapping_mul(2_246_822_519));
-            HotFragment {
-                id: (penetration_id << 10) | index as u64,
-                penetration_id,
-                active: true,
-                settled: false,
-                origin: pos,
-                prev_pos: pos,
-                entered_compartment: fragment_inside_compartment(frame, pos, size * 0.52),
-                audio_whizzed: false,
-                frame,
-                pos,
-                vel,
-                size,
-                ang: Vec3::new(hash01(s ^ 0x11), hash01(s ^ 0x22), hash01(s ^ 0x33)) * std::f32::consts::TAU,
-                spin,
-                age: 0.0,
-                // A body the lattice solved is steel that stays (it cools to the cold page); the
-                // burst body keeps the authored life of its heat pages.
-                life: if solved { f32::MAX } else { (profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19))).max(AUTHORED_FRAGMENT_LIFE_MIN_S) },
-                bounces: 0,
-                seed: s,
-                temp_k,
-                lodged: false,
-                embed_m: 0.0,
-            }
-        };
-        {
-            let temps: Vec<f32> = lat.clusters.iter().map(|c| c.temperature_k).collect();
-            if let (Some(lo), Some(hi)) = (temps.iter().cloned().reduce(f32::min), temps.iter().cloned().reduce(f32::max)) {
-                println!("[fea] {} solved clusters at {lo:.0}-{hi:.0} K", temps.len());
-            }
-        }
-        // Plate clusters on the inside, moving inward. Exterior ejecta leave as the cosmetic impact
-        // sparks only (named): this pool is the interior's.
-        for cluster in &lat.clusters {
-            if out.len() >= N_HOT_FRAGMENTS {
-                break;
-            }
-            if !cluster.leaves_inside(lat.thickness_m, lat.cell_mm * 0.001, lat.measured.perforated) {
-                continue;
-            }
-            let index = out.len();
-            out.push(make(index, to_frame(cluster.centre), dir_to_frame(cluster.velocity), cluster.size_m,
-                dir_to_frame(cluster.angular_velocity), cluster.temperature_k.max(crate::armor_damage::AMBIENT_K + 1.0), true));
-        }
-        if solve.chain.burst {
-            const STEEL: f32 = 7850.0;
-            let body_mass = (event.shell.mass_kg - event.shell.filler_g * 0.001).max(0.0);
-            let count = (N_HOT_FRAGMENTS - out.len()).min(512);
-            if body_mass > 0.0 && count > 0 {
-                let exit = lat.plate_to_hull(Vec3::ZERO) + solve.line.dir * solve.line.plate_path_m;
-                let burst = parent_inv.transform_point3(hull.transform_point3(exit));
-                let axis = parent_inv.transform_vector3(hull.transform_vector3(solve.line.dir)).normalize_or_zero();
-                let mut side = axis.cross(Vec3::Y).normalize_or_zero();
-                if side.length_squared() < 0.5 {
-                    side = axis.cross(Vec3::X).normalize_or_zero();
-                }
-                let up = side.cross(axis).normalize_or_zero();
-                let shape: Vec<f32> = (0..count).map(|i| {
-                    let s = penetration_seed ^ 0xB0D7_0000 ^ (i as u32).wrapping_mul(2_654_435_761);
-                    profile.min_size_m + (profile.max_size_m - profile.min_size_m) * hash01(s ^ 0xE1).powf(2.4)
-                }).collect();
-                let raw_mass: f32 = shape.iter().map(|s| STEEL * s * s * s).sum();
-                let k = (body_mass / raw_mass.max(1e-12)).cbrt();
-                for (i, base) in shape.iter().enumerate() {
-                    let s = penetration_seed ^ 0xB0D7_0000 ^ (i as u32).wrapping_mul(2_654_435_761);
-                    let radial = hash01(s ^ 0x51).sqrt();
-                    let angle = hash01(s ^ 0xA7) * std::f32::consts::TAU;
-                    let fan = (side * angle.cos() + up * angle.sin()) * radial * profile.cone_half_tan;
-                    let dir = (axis + fan).normalize_or_zero();
-                    let speed = profile.speed_min + (profile.speed_max - profile.speed_min) * hash01(s ^ 0xD3).sqrt();
-                    let spin = Vec3::new(hash01(s ^ 0x44) - 0.5, hash01(s ^ 0x55) - 0.5, hash01(s ^ 0x66) - 0.5) * 40.0;
-                    let index = out.len();
-                    // The burst body's temperature is not solved: it leaves at the authored
-                    // chip temperature and cools as a lumped body like the rest.
-                    out.push(make(index, burst, dir * speed, base * k, spin, AUTHORED_FRAGMENT_KELVIN, false));
-                }
-            }
-        }
-        Some(out)
+        Some(lattice_fragments(&solve.line, solve.chain.burst, lat, self.player.hull_model(),
+            blood_parent_model(&self.player, frame), frame, penetration_id, event, seed))
     }
 
     /// Commit every deferred plate solve whose time has come (called at the start of each update).
@@ -1613,5 +1627,60 @@ mod hand_tests {
         assert!(ray_sphere(Vec3::ZERO, Vec3::Y, centre, 0.02).is_none());
         assert!(ray_sphere(Vec3::ZERO, Vec3::NEG_Z, centre, 0.02).is_none());
         assert_eq!(ray_sphere(centre, Vec3::Z, centre, 0.02), Some(0.0));
+    }
+}
+
+#[cfg(test)]
+mod ignition_tests {
+    use super::*;
+    use crate::fea_damage::ignition::{Flammable, LUBRICATING_OIL_K, OIL, PETROL};
+
+    fn entry(component: usize, what: Flammable, by_round: bool, body_k: f32, x: f32) -> StrikeIgnition {
+        StrikeIgnition { local_point: Vec3::X * x, local_velocity: Vec3::Z, component, what, by_round, body_k }
+    }
+
+    #[test]
+    fn a_strike_tries_each_flammable_component_once_at_its_hottest_body() {
+        let oil = Flammable::Oil { hot_surface_k: LUBRICATING_OIL_K };
+        let mut result = SpallResult::default();
+        // Three fragments into the gearbox, one of them hot; a fragment, then the round, into a tank.
+        result.enter_flammable(entry(9, oil, false, 400.0, 1.0));
+        result.enter_flammable(entry(9, oil, false, 900.0, 2.0));
+        result.enter_flammable(entry(9, oil, false, 300.0, 3.0));
+        result.enter_flammable(entry(7, Flammable::Petrol, false, 0.0, 4.0));
+        result.enter_flammable(entry(7, Flammable::Petrol, true, 0.0, 5.0));
+        result.ignite(42);
+        assert_eq!(result.ignition_trials.len(), 2);
+        let gearbox = result.ignition_trials.iter().find(|t| t.component == 9).unwrap();
+        assert_eq!((gearbox.body_k, gearbox.chance), (900.0, OIL));
+        let tank = result.ignition_trials.iter().find(|t| t.component == 7).unwrap();
+        assert!(tank.by_round && tank.chance == PETROL);
+        // The round's entry is where a fire in the tank starts; the first fragment's in the gearbox.
+        assert_eq!(result.ignition_entries.iter().find(|e| e.component == 7).unwrap().local_point, Vec3::X * 5.0);
+        assert_eq!(result.ignition_entries.iter().find(|e| e.component == 9).unwrap().local_point, Vec3::X * 1.0);
+        assert_eq!(result.fire, result.ignition.is_some());
+        // The same strike always answers the same.
+        let mut again = result.clone();
+        again.ignite(42);
+        assert_eq!(again.ignition.map(|i| i.component), result.ignition.map(|i| i.component));
+    }
+
+    #[test]
+    fn over_many_strikes_a_holed_tank_lights_at_its_chance_and_cold_oil_never() {
+        let strikes = 4000u64;
+        let lit = (0..strikes).filter(|&id| {
+            let mut result = SpallResult::default();
+            result.enter_flammable(entry(6, Flammable::Petrol, true, 0.0, 0.0));
+            result.ignite(id);
+            result.fire
+        }).count() as f32 / strikes as f32;
+        assert!((lit - PETROL).abs() < 0.03, "{lit}");
+        let cold = (0..strikes).filter(|&id| {
+            let mut result = SpallResult::default();
+            result.enter_flammable(entry(8, Flammable::Oil { hot_surface_k: LUBRICATING_OIL_K }, false, 500.0, 0.0));
+            result.ignite(id);
+            result.fire
+        }).count();
+        assert_eq!(cold, 0);
     }
 }

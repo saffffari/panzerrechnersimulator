@@ -1385,6 +1385,53 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     (48 bursts) and the raymarch's event list (96), crowding the fireball out. The fireball is
     kept in the pool like the plume and the vents, and the raymarch takes a scaled detonation
     first, in place of the oldest ordinary event when its list is full.
+- **A fire lit by the strike** (2026-11-02, `fea_damage::ignition`, `SpallResult::ignite`; the
+  owner: a spark or a fragment meeting what burns may start a fire inside the tank, each material
+  at its own chance, some never, as often as fires started in the war). It replaces the rule that
+  any round or fragment reaching the fuel or engine module lit a fire. The round and every
+  fragment the strike throws (the lattice's clusters, a burst body's pieces) are traced through
+  the measured component envelopes (the CAD voxels the chain uses). Each flammable component
+  entered is one trial per strike, at the hottest body that entered it: the wartime rates are per
+  shot, not per fragment, and a first cut that drew per fragment made a holed tank certain to
+  light. The chances:
+  - Petrol tanks: 0.5 a holing. NKV Laboratory 101-1 (1944) lit petrol tanks with 2 of 4 shots and
+    full diesel tanks with 4 of 18; a small sample, named.
+  - The engine: 0.3 (authored).
+  - Mineral oils: 0.1 when a body above their hot-surface ignition entered: 623 K for lubricating
+    and transmission oils, 713 K for hydraulic and recoil oil. The temperatures are from the US
+    Bureau of Mines and NIOSH (Yuan 2006); the chance is authored.
+  - Upholstery 0.02 and insulation 0.01, from a body above 700 K (authored; no wartime figures).
+  - Coolant, steel, glass and the guns: never.
+
+  A fragment must carry the energy to hole the component's casing: its module's resistance, else
+  a thin sheet's 0.45 J. A body whose temperature the lattice did not solve (the round itself,
+  the authored population) counts as cold: it lights petrol and the engine by its sparks only
+  (named). The incandescent spark showers drawn at an impact light nothing (presentation, named).
+  The draw is a counter-seeded hash of the penetration and the component. The fire starts where
+  the lighting body entered, swept along its path to the first source surface. The first flame's
+  strength is set by what lit (petrol and engine 0.16, oil 0.10, upholstery and insulation 0.06;
+  authored). The ammunition is unchanged: a case crossed goes at once (`cabin_heat`), as
+  dry-stowed charges "invariably" did in the 1943 US trials.
+
+  A hot fragment above 850 K striking the player sets his clothing alight at 0.05 a strike,
+  through `player_burn`; wool chars below about 570-600 °C (authored). The AI crewmen's clothing
+  is not modelled (named). Flames behind the firewall heat the crew compartments' air at a quarter
+  of their release (`game_cookoff::FIREWALL_SHARE`; authored; the bulkhead's temperature is not
+  solved).
+
+  Measured with `fea-fire-odds 1500` (CPU, 2026-11-02): 1,500 Soviet anti-tank rounds, 45-122 mm,
+  100-800 m, with azimuths uniform round the circle, gave 498 penetrations. The section rig had
+  every rack cradle full, fuel at 80 %, no crew, and hull and turret surfaces only. Fires started
+  in 32 % of penetrations: ammunition 25.7 %, petrol 3.6 %, engine 1.6 %, oil 1.4 %. So 80 % of
+  the fires came from the ammunition. By facing: hull front 26 %, sides 25 %, rear 24 %; turret
+  front 74 %, side 57 %, rear 21 %. The wartime record:
+  - ORS No. 2 (Normandy, 1944): 4 of 5 penetrated Tigers burnt out, with 3.25 penetrations each,
+    about 0.31 a penetration.
+  - ORS Report 33 (1945): 55 % of British tanks brewed up after one AP penetration.
+  - The US 1943 AMRL trials: over 90 % of tank fires came from propellant.
+  - The MRC survey (1946): of 107 fires seen, fuel 20, ammunition 19, other 3, unknown 65.
+
+  The Tiger's 32 % stands with the Normandy figure, with no tuning.
 - **Blood droplets and film** (2026-11-02, `surface_blood`; the owner: droplets too large, and
   blood should form a continuous film where enough lands). A droplet's edge comes from its seed,
   1.5–6 mm with most under 3 mm (an authored distribution, not a measured spatter one), and the

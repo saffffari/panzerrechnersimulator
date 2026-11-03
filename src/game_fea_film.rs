@@ -752,6 +752,127 @@ fn penetration_death_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix
     Ok(receipt)
 }
 
+/// A fire lit by the strike itself (see the clip list, 20; `fea_damage::ignition`). Disclosed: the
+/// racks emptied (so no cook-off), the player at the commander's post, the cabin lamps on; a 122 mm
+/// BR-471 at 500 m through the lower front plate toward the gearbox, repeated on a fresh Tiger with
+/// a new seed until one strike lights what a component holds: every try's strike is filmed (1/16
+/// speed, from behind the driver's seat) and only the one that lit is kept (every try in the
+/// receipt); then the fire's first fifteen seconds in real time, then from outside. Everything
+/// after each launch is the game's own.
+fn ignition_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, name: &str,
+    idle_input: &dyn Fn(u32) -> TankInput) -> anyhow::Result<serde_json::Value> {
+    let stills = std::env::var("KESSEL_FEA_FILM_STILLS").as_deref() == Ok("1");
+    let day_clock = ctx.clock;
+    ctx.clock = ephemeris::UtcInstant::parse_iso("1942-12-21T09:30:00Z")?;
+    g.enable_singleplayer_crew();
+    let aim_local = Vec3::new(-0.04, 1.0, 2.0);
+    let dir_local = Vec3::new(0.0, -0.03, -1.0);
+    let still = |ctx: &mut Ctx, g: &Game, r: &mut Renderer, view: View, tag: &str| -> anyhow::Result<Vec<u8>> {
+        let rgba = ctx.shoot(g, r, view, None)?;
+        let path = format!("{prefix}_{name}_{tag}.png");
+        save_still(&path, &rgba)?;
+        println!("[fea-film] wrote {path}");
+        Ok(rgba)
+    };
+    ctx.all_crew = true;
+    let mut tries = Vec::new();
+    let mut kept: Option<(u32, View, Vec<u8>, Vec<Vec<u8>>)> = None;
+    for k in 0..40u32 {
+        fresh_tiger(ctx, g, r, 0x1647_0000 ^ k, false)?;
+        g.jump_station(Station::Commander);
+        g.set_cabin_lights(true);
+        let hull = g.player.hull_model();
+        let target = hull.transform_point3(Vec3::new(0.0, 0.85, 1.85));
+        let candidates = [Vec3::new(0.0, 1.5, 0.55), Vec3::new(0.25, 1.45, 0.6), Vec3::new(-0.25, 1.45, 0.6), Vec3::new(0.0, 1.6, 0.2)]
+            .map(|p| hull.transform_point3(p));
+        let eye = candidates.iter().copied().find(|&e| sight_clear(g, e, target)).unwrap_or(candidates[0]);
+        let inside = View::Inside(eye, target, 68.0);
+        ctx.banner = Some(format!("A FIRE LIT BY THE STRIKE: 122 MM BR-471, 500 M, LOWER FRONT PLATE; RACKS EMPTIED; TRY {}", k + 1));
+        ctx.cut(g, r, inside)?;
+        let before = ctx.shoot(g, r, inside, None)?;
+        g.debug_launch_round(&crate::ballistics::BR_471, false, hull.transform_point3(aim_local),
+            hull.transform_vector3(dir_local), 500.0, 0x1647_1000 ^ k.wrapping_mul(0x9E37_79B9));
+        // The strike at 1/16 speed: one fixed fragment step per frame (filmed only in film mode).
+        let mut frames = Vec::new();
+        for _ in 0..96 {
+            ctx.update(g, r, &TankInput::default(), SLOW_DT)?;
+            if !stills {
+                frames.push(ctx.shoot(g, r, inside, Some("1/16 speed"))?);
+            }
+        }
+        tries.push(json!({"try": k + 1, "lit": g.fire_active, "chain": strike_outcome(g)["chain"].clone()}));
+        if g.fire_active {
+            if stills {
+                frames.push(ctx.shoot(g, r, inside, None)?);
+            }
+            kept = Some((k, inside, before, frames));
+            break;
+        }
+    }
+    let (k, inside, before, strike_frames) = kept.ok_or_else(|| anyhow::anyhow!("{name}: no strike lit in {} tries", tries.len()))?;
+    println!("[fea-film] {name}: try {} lit", k + 1);
+    let mut film = if stills { None } else { Some(Clip::start(prefix, name)?) };
+    match film.as_mut() {
+        Some(clip) => {
+            clip.mark("behind the driver's seat", "held");
+            for _ in 0..FPS {
+                clip.push(&before, None)?;
+            }
+            clip.mark("the strike that lit", "1/16 speed");
+            for frame in &strike_frames {
+                clip.push(frame, None)?;
+            }
+        }
+        None => {
+            save_still(&format!("{prefix}_{name}_before.png"), &before)?;
+            save_still(&format!("{prefix}_{name}_strike.png"), strike_frames.last().unwrap_or(&before))?;
+        }
+    }
+    // Once alight: the fire's seat, framed from the same eye.
+    let View::Inside(eye, _, _) = inside else { unreachable!() };
+    let seat = g.cabin_fire.patch_world(0, &g.fire_surface_models()).map(|(p, _)| p);
+    let fire_view = seat.map_or(inside, |p| View::Inside(eye, p, 62.0));
+    ctx.cut(g, r, fire_view)?;
+    match film.as_mut() {
+        Some(clip) => {
+            clip.mark("the fire's first fifteen seconds", "real time");
+            clip.real_time(ctx, g, r, 15.0, idle_input, &|_, _| fire_view)?;
+        }
+        None => {
+            for (seconds, tag) in [(1.0f32, "fire_1s"), (4.0, "fire_5s"), (10.0, "fire_15s")] {
+                ctx.run(g, r, seconds, TICK)?;
+                ctx.cut(g, r, fire_view)?;
+                still(ctx, g, r, fire_view, tag)?;
+            }
+        }
+    }
+    let hull = g.player.hull_model();
+    let outside = View::Outside(hull.transform_point3(Vec3::new(4.5, 2.4, 7.5)), hull.transform_point3(Vec3::new(0.0, 1.2, 1.0)), 50.0);
+    ctx.cut(g, r, outside)?;
+    match film.as_mut() {
+        Some(clip) => {
+            clip.mark("outside", "real time");
+            clip.real_time(ctx, g, r, 4.0, idle_input, &|_, _| outside)?;
+        }
+        None => {
+            ctx.run(g, r, 1.0, TICK)?;
+            still(ctx, g, r, outside, "outside")?;
+        }
+    }
+    ctx.all_crew = false;
+    ctx.banner = None;
+    ctx.clock = day_clock;
+    let mut receipt = match film {
+        Some(clip) => clip.finish()?,
+        None => json!({"clip": name, "stills": true}),
+    };
+    receipt["tries"] = json!(tries);
+    receipt["fire"] = json!({"strength": g.fire, "seat": seat.map(|p| p.to_array())});
+    receipt["outcome"] = strike_outcome(g);
+    receipt["cookoff"] = g.cookoff_receipt();
+    Ok(receipt)
+}
+
 /// The fallen man's head (world), from his body's head segment.
 fn head_point(g: &Game, role: CrewRole) -> Option<Vec3> {
     let actor = g.singleplayer_casualty_identity(role).peer_id;
@@ -1837,6 +1958,12 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     // 122 mm round through the turret side, then the death's shots as the app plays them.
     if wanted("penetration_death") {
         clips.push(penetration_death_study(&mut ctx, &mut g, &mut r, prefix, "penetration_death", &idle_input)?);
+    }
+
+    // ── 20. A fire lit by the strike (`fea_damage::ignition`): a 122 mm round through the lower front
+    // plate whose round or fragments light what a component holds, from behind the driver's seat.
+    if wanted("ignition") {
+        clips.push(ignition_study(&mut ctx, &mut g, &mut r, prefix, "ignition", &idle_input)?);
     }
 
     let receipt = json!({

@@ -16,6 +16,9 @@ const TURRET_RING_M: f32 = 1.85;
 /// Heat release of one burning surface patch at full intensity (W): a patch of about 0.12 m of
 /// burning oil, paint and stowage at about 1 MW/m² (authored).
 const PATCH_HEAT_W: f32 = 45_000.0;
+/// The share of an engine-bay fire's heat that reaches the crew compartments' air through the
+/// firewall (authored).
+const FIREWALL_SHARE: f32 = 0.25;
 /// A flame's flux on a case it touches at full intensity (W/m²), falling as (r/(r + d))² with
 /// its distance d (authored: flames impinging on a surface, about 50-100 kW/m²); flames farther
 /// than `FLAME_SIGHT_M` or hidden from the case by the tank's own surfaces give none.
@@ -270,7 +273,13 @@ impl Game {
         let hull_inverse = models[0].inverse();
         let patches: Vec<(Vec3, f32)> = (0..surface_fire::MAX_PATCHES)
             .filter_map(|i| self.cabin_fire.patch_world(i, &models)).filter(|(_, power)| *power > 0.02).collect();
-        let fire_w: f32 = patches.iter().map(|(_, power)| power * PATCH_HEAT_W).sum();
+        // Flames in the crew compartments' air heat it fully; a fire behind the firewall (the engine
+        // bay's petrol and oil) at `FIREWALL_SHARE` of its release, the steel bulkhead conducting
+        // and radiating it (authored; the bulkhead's temperature is not solved).
+        let fire_w: f32 = patches.iter().map(|(p, power)| {
+            let share = if game_fea::in_crew_air(ArmorPart::Hull, hull_inverse.transform_point3(*p)) { 1.0 } else { FIREWALL_SHARE };
+            share * power * PATCH_HEAT_W
+        }).sum();
         // Each round's flux from the flames in sight of it, re-measured every FLUX_INTERVAL_S.
         self.cookoff.flux_clock_s -= dt;
         let ids_changed = self.cookoff.flux.len() != rounds.len()

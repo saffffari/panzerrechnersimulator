@@ -77,6 +77,15 @@ impl PlayerBurn {
 
     pub fn extinguish(&mut self) { *self = Self::default(); }
 
+    /// The clothing set alight at once (a hot fragment's strike, `fea_damage::ignition`), at
+    /// `heat`; a body already alight keeps its flames.
+    pub fn ignite(&mut self, heat: f32) {
+        if self.burning() { return; }
+        self.heat = heat.clamp(0.0, 1.0);
+        self.catching_s = 0.0;
+        self.pats = 0;
+    }
+
     /// The small centre-bottom prompt, or nothing when the body is not alight.
     pub fn prompt(&self, outside: bool) -> Option<&'static str> {
         self.burning().then_some(if outside { "ON FIRE - HIT SPACE TO DROP AND ROLL" }

@@ -17429,6 +17429,11 @@ fn main() -> anyhow::Result<()> {
         let seeds = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
         return game::game_fea_section::bench(seeds, &capture_arg(&args, 3, "artifacts/perf/fea_bench.json"));
     }
+    if args.len() >= 2 && args[1] == "fea-fire-odds" {
+        // CPU only: how often a penetration of the Tiger starts a fire, and what lit it.
+        let shots = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(400);
+        return game::game_fea_section::fire_odds(shots, &capture_arg(&args, 3, "artifacts/fea/fire_odds.json"));
+    }
     if args.len() >= 2 && args[1] == "meadow-film" {
         // GPU: review clips of the spring meadow by day and at dusk (KESSEL_RENDERER=raymarch).
         return meadow_film::run(&capture_arg(&args, 2, "meadow_film"));
