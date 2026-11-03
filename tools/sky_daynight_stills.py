@@ -8,7 +8,7 @@ altitude (a low-precision solar position, ample for choosing a minute); the came
     KESSEL_ASSET_ROOT=/windows/shop/panzerrechnersystem python3 tools/sky_daynight_stills.py TAG [--only day,sunset,...] [--map canyon|bridge|both] [--checkout DIR]
 Sets: day (a fixed view through the afternoon and the night), sunset, sunrise, shadow (the Earth's
 shadow, the antisolar sky after sunset), night (stars overhead), moon (the Moon's phases).
-Outputs: /home/alex/panzer/captures/sky-daynight-<TAG>_<map>_<set>_<label>.jpg (+ .json photometry)
+Outputs: /home/alex/panzer/captures/<checkout>-<TAG>_<map>_<set>_<label>.jpg; a receipt sky-daynight-<TAG>_receipt.json
 """
 import argparse
 import datetime as dt
@@ -16,6 +16,7 @@ import json
 import math
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -138,8 +139,25 @@ def views(mp):
     return (x, mp.ground(x, z) + 2.7, z), bearing
 
 
+def gpu_busy():
+    """Another game binary on the GPU (the owner's game, another session's render): one GPU job at a time."""
+    out = subprocess.run(['pgrep', '-af', 'panzerrechnersystem'], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        cmd = line.split(None, 1)[1] if ' ' in line else ''
+        exe = cmd.split()[0] if cmd else ''
+        if exe.endswith('/panzerrechnersystem') or exe == './target/release/panzerrechnersystem' or 'pz_range_bin' in exe:
+            return True
+    return False
+
+
+def wait_for_gpu():
+    while gpu_busy():
+        time.sleep(5)
+
+
 def shoot(mp, tag, set_name, label, utc, eye, yaw, pitch, aim=None, fov=None, extra=None):
-    out = f'sky-daynight-{tag}_{mp.name}_{set_name}_{label}.png'
+    # The capture router puts the checkout's name in front (sky-daynight-..., sky-daynight-base-...).
+    out = f'{tag}_{mp.name}_{set_name}_{label}.png'
     env = dict(os.environ, KESSEL_RENDERER='raymarch', KESSEL_INTERNAL_RES='1024x576', KESSEL_LOOK='deltap-real',
                KESSEL_REAL_STEPS='15,15,7', KESSEL_GRAPHICS_PRESET='high', KESSEL_RECON_MANIFEST=str(mp.ws / 'manifest.v1.json'),
                KESSEL_SHOT_CANYON='1', KESSEL_CANYON_SEED='29', KESSEL_CAPTURES_DIR=str(CAPTURES), KESSEL_CAPTURE_4K_JPG='1',
@@ -153,6 +171,7 @@ def shoot(mp, tag, set_name, label, utc, eye, yaw, pitch, aim=None, fov=None, ex
     ex, ey, ez = eye
     cmd = [str(ROOT / 'target/release/panzerrechnersystem'), 'screenshot', out,
            f'{ex:.2f}', f'{ey:.2f}', f'{ez:.2f}', f'{yaw:.2f}', f'{pitch:.2f}', '0.0']
+    wait_for_gpu()
     r = subprocess.run(cmd, env=env, cwd=ROOT, capture_output=True, text=True, timeout=1200)
     lines = [l for l in r.stdout.splitlines() if l.startswith(('[sky]', '[light] photometry'))]
     record = {'map': mp.name, 'set': set_name, 'label': label, 'utc': utc, 'eye': eye, 'yaw': yaw, 'pitch': pitch,
