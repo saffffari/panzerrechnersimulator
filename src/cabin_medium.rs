@@ -548,6 +548,14 @@ impl Medium {
         let cell = f64::from(PITCH_M * PITCH_M);
         ((above * cell) as f32, (total * cell) as f32)
     }
+    /// Whether a world point lies in the compartments' air at this pose (`uniform`).
+    pub fn contains_world(&self, uniform: &Uniform, p: Vec3) -> bool {
+        self.source.domains.iter().enumerate().any(|(i, domain)| {
+            uniform.grid_min_step[i][3] > 0.5
+                && domain.contains(Mat4::from_cols_array_2d(&uniform.world_to_local[i]).transform_point3(p))
+        })
+    }
+
     pub fn diagnostics(&self) -> serde_json::Value {
         serde_json::json!({"representation":"source floor/roof vertical interval grids with source ring-interface membranes",
             "pitch_m":PITCH_M,"texture_size":self.texture_size(),"uniform_bytes":std::mem::size_of::<Uniform>(),
@@ -570,6 +578,18 @@ mod tests {
                 )
         })
     }
+    #[test]
+    fn a_cabin_lamp_is_in_the_air_and_a_blast_outside_the_hull_is_not() {
+        let medium = Medium::load().unwrap();
+        let hull = Mat4::from_translation(Vec3::new(40.0, 3.0, -12.0)) * Mat4::from_rotation_y(0.4);
+        let turret = hull * Mat4::from_translation(TURRET_PIVOT);
+        let u = medium.uniform(hull, turret);
+        assert!(medium.contains_world(&u, turret.transform_point3(crate::interior_rig::TURRET_DOME_LAMP_POS)));
+        // 30 cm off the glacis and 1.2 m over the deck: the air outside.
+        assert!(!medium.contains_world(&u, hull.transform_point3(Vec3::new(0.0, 1.4, 3.8))));
+        assert!(!medium.contains_world(&u, hull.transform_point3(Vec3::new(0.0, 4.2, -1.0))));
+    }
+
     #[test]
     fn gameplay_weather_uses_actual_source_cabin_spans_after_articulation() {
         let medium=Medium::load().unwrap();

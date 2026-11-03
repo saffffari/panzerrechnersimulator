@@ -4913,3 +4913,27 @@ out, kept until within 5 K of the surroundings).
 | --- | --- | --- |
 | Fires | A cabin patch: its surface point and normal, 0.12 m radius, area pi r² times its intensity; a wreck: its deck anchor or fire entry, 0.72 m (the drawn crown), area times its strength; both at 1,150 K. | The flame temperature is McCaffrey's continuous-flame region of a buoyant diffusion flame (about 1,100-1,200 K), not solved; the area scaling by intensity is named; no heat release rate is reported. The FEA breaches' fires (`fea_fire_sources`) are fea-damage's own. |
 | Spent cases | The wall at 423 K as it leaves the breech, cooling toward 293 K with a 360 s time constant: rho c t / (h_conv + h_rad), steel 7,850 kg/m³ and 490 J/kg K, a 1.5 mm wall, 8 W/m²K of natural convection and 8 of radiation (emissivity 0.8 near 360 K); 0.22 m² of wall; reported for about 18 minutes. | Estimates: the initial 423 K (a fired large-calibre case is far too hot to hold; no 8.8 cm measurement found), the wall, the film coefficients; one lumped temperature for the whole case. |
+
+## Explosion and fire light through the armour, 2026-11-03 (`rm_visibility.wgsl` `rm_light_housing_m`, `renderer_raymarch.rs` `draw_scene`)
+
+The owner: "some explosions are shining light straight through armor on tiger". Two exemptions meant
+for a lamp's own fixture applied to every light:
+
+1. A light's shadow cube left out every mesh whose bounding box held the light (its "housing").
+   The Tiger's hull box holds any blast, cook-off or burning vent against its plates, so for such
+   a light the whole hull cast no shadow. Now a vehicle's armour (the player's surface-model and
+   painted parts, other vehicles' finished meshes) is never a housing to a light outside the crew
+   compartment's air (`cabin_medium::Medium::contains_world`); a light in the compartment (the
+   cabin lamps, an interior fire or blast) keeps the exemption, its light held inside by the cabin
+   gate of the shade and volume passes.
+2. A light without a cube took one ray-query shadow ray that stopped 4 source radii short
+   (0.15-0.3 m) of the source, past its fixture. A blast's light 5 cm to 1.2 m off a plate
+   stopped before the plate. Now only a lamp (a scene light under 5 cm across) stops short of its
+   fixture; a weapon burst's light (blast, cook-off, vent, rim), a tracer's head and the game's
+   explosion, flash and fire lights (6-35 cm sources) stop at their own radius, in both the
+   surfaces' and the medium's shadow rays (test `no_light_but_a_lamp_skips_the_steel_before_it`).
+
+Named remaining gaps: a light is classed as a lamp by its kind and size (the light carries no
+fixture flag); a lamp's shadow ray still skips 0.15-0.3 m before it, so armour within that of a
+lamp outside the compartment is skipped; without ray queries (the portable preset) a light without
+a cube is shadowed only by the screen's contact shadow, at surfaces and in the medium (as before).

@@ -278,7 +278,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
                 // its hull through the plates (2026-11-02). Without ray queries the air stays
                 // unshadowed for these lamps; the named gap of the portable preset.
                 if (RM_RAY_QUERIES && fr.debug.w < 0.5) {
-                    let reach = s.dist - clamp(4.0 * lights[index].a.w, 0.15, 0.3);
+                    let reach = s.dist - rm_light_housing_m(index);
                     if (reach > 0.02 && rm_ray_blocked(p, s.dir, 0.0, reach) >= 0.0) { continue; }
                 }
                 tau = m.sigma_t * min(s.dist, 12.0);
