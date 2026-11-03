@@ -139,8 +139,20 @@ def views(mp):
     return (x, mp.ground(x, z) + 2.7, z), bearing
 
 
+# The owner's live game or editor (2026-11-03: "before any compute use verify the panzer editor or
+# game isn't live before starting. if its live that means im using it and don't render").
+OWNER_LIVE = r'panzerrechnersystem( fea-range| edit)?$|launch_demo'
+
+
+def owner_live():
+    return subprocess.run(['pgrep', '-f', OWNER_LIVE], capture_output=True).returncode == 0
+
+
 def gpu_busy():
-    """Another game binary on the GPU (the owner's game, another session's render): one GPU job at a time."""
+    """The owner's game or editor is live, or another game binary is on the GPU (another session's
+    render): one GPU job at a time, and none while he uses the game."""
+    if owner_live():
+        return True
     out = subprocess.run(['pgrep', '-af', 'panzerrechnersystem'], capture_output=True, text=True).stdout
     for line in out.splitlines():
         cmd = line.split(None, 1)[1] if ' ' in line else ''
