@@ -448,3 +448,14 @@ fn portable_tiger_support(cabin:&surface_fire::CabinFire,models:&[Mat4;surface_f
         assert!(!fitted_contact_clear(a,a.map(|v|v-Vec3::Z*0.001),surface,1e-7));
     }
 }
+
+#[cfg(test)]
+mod paint_tests {
+    /// The deck plate, caps and tank neck were cut out of the painted hull: they are marked painted
+    /// steel, or the source's bare default metal (0.09 grey, metallic 1) draws as a mirror plate.
+    #[test]
+    fn the_cut_out_hull_parts_keep_the_hull_paint() {
+        let source = include_str!("tiger_refuel.rs");
+        assert!(source.contains("for &s in self.slots.iter().chain([&self.tank_slot,&self.deck_slot]){r.mark_painted_steel(s);}"));
+    }
+}
