@@ -4954,3 +4954,24 @@ Not yet: the hit residue (`interior_haze`) and a fire's soot (`interior_soot`) s
 at the old fan and hatch rates, not through this zone model; machine-gun fumes are not modelled.
 No render has checked the look yet (the owner's editor holds the GPU); `cargo run -- haze` and
 `fx-review` stills will.
+
+## Point footprints: one centred square, never a star, 2026-11-03 (`crush.wgsl` `defocus_disc`, `src/point_footprint.rs`)
+
+The owner, with a crop of a hot fragment drawn as a bright pixel with dimmer pixels above, below,
+left and right: "never use a star particle shape". The particle passes (rm_points, rm_sparks,
+weapon_particles, pixel_particles, stylized_particles) already draw each point as one pixel of the
+internal grid (test `every_point_particle_is_one_pixel_square`); a hot chip is its own cube at true
+size through the G-buffer. The cross came after them: a close hit's concussion defocus in the
+crush was five nearest-sampled taps, the centre (0.40) and the four axial pixels (0.15 each) at 1
+to 5.5 pixels, so every bright pixel threw dimmer copies along the axes and none on the diagonals:
+a solid plus at a weak concussion, a four-armed star at a strong one. It was on for seconds after
+every penetration of the player's own tank, when the chips are in view.
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| Concussion defocus | A blur circle: every internal pixel within 2 to 5.5 pixels (2 + 3.5 times the concussion), weighted by its share inside the circle (its centre's distance from the rim, a pixel wide), normalised; the frame mixes toward it by the concussion as before. From 2 pixels up the diagonal neighbours are as fully covered as the axial ones (test `the_concussed_eye_spreads_a_point_into_a_disc_not_a_cross`, which also fails the old five taps). | The defocus itself stays an authored effect of a concussion (its strength and timing from `concussion_visual_strength`); the disc is geometric optics' uniform blur circle without diffraction or aberration; the radius starts at 2 pixels (was 1) because a smaller disc on the pixel grid covers the axial neighbours more than the diagonal. Up to 109 nearest fetches a pixel, only while a concussion lasts. |
+| Chip cubes | Each glowing chip is its unit cube at true size in the G-buffer (no pixel-size inflation). | Rasterisation at true size: a chip projecting to 2-3 pixels can cover the four axial pixel centres and not the diagonals, evenly bright (a true-size silhouette, not a kernel). |
+
+Open: the shade pass's screen gather truncates its sample offsets toward zero (`rm_shade.wgsl`, the
+gather's `vec2<i32>(step * radius_px * t)`), so a surface pixel beside a bright resting chip gathers
+it a little more along the axes than the diagonals (weak: blended at 0.2 with a 2x history cap).
