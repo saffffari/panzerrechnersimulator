@@ -3651,6 +3651,16 @@ impl App {
         let k = 0.1;
         rg.perf = [rg.perf[0] + (dt.max(1.0e-4) - rg.perf[0]) * k, rg.perf[1] + (sim_ms - rg.perf[1]) * k,
             rg.perf[2] + (render_ms - rg.perf[2]) * k];
+        // KESSEL_FEA_RANGE_FRAMELOG=FILE: one JSON line a frame (wall dt, sim and render ms, the
+        // game's own phase timings) to find what a strike's frames spend.
+        static FRAME_LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>> = std::sync::OnceLock::new();
+        if let Some(log) = FRAME_LOG.get_or_init(|| std::env::var_os("KESSEL_FEA_RANGE_FRAMELOG")
+            .and_then(|p| std::fs::File::create(p).ok()).map(|f| std::sync::Mutex::new(std::io::BufWriter::new(f)))) {
+            use std::io::Write;
+            let line = serde_json::json!({"dt_ms": dt * 1000.0, "sim_ms": sim_ms, "render_ms": render_ms,
+                "shot_t": rg.shot_t, "phases": rg.g.sim_phase.take()});
+            if let Ok(mut f) = log.lock() { let _ = writeln!(f, "{line}"); let _ = f.flush(); }
+        }
         frame.present();
     }
 }
