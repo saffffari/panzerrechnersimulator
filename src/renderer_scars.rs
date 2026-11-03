@@ -167,7 +167,10 @@ fn pack_one(r: &Renderer, model: Mat4, draw: &ScarDraw, eye: Vec3, px_per_rad: f
     if near { frame.near.push(frame.gpu.len() as u32); }
     let solved = match draw.rim_curve {
         Some(curve) => curve.at(age),
-        None => renderer_weapon_particles::math::rim_temperature(draw.rim_kelvin, age),
+        // The thin-ring estimate cools on the worked zone's conduction time for the wound's
+        // calibre (the wound radius is 0.525 calibres for a full-calibre hole).
+        None => renderer_weapon_particles::math::rim_temperature(draw.rim_kelvin, age,
+            renderer_weapon_particles::math::rim_tau_s(scar.radius_m() * 2000.0 / 1.05)),
     };
     // Owner-directed (2026-11-02, "linear decay 20 sec long"): the drawn glow falls linearly from
     // the rim's peak to ambient over WOUND_GLOW_S, longer than the solved cooling (conduction into

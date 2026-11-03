@@ -742,7 +742,7 @@ fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
         },
         BurstKind::HotRim{normal,heat}=>{
             let r=GpuWeaponRecord {origin_age:b.pos.extend(b.age).to_array(),direction_life:b.dir.extend(b.life).to_array(),
-                normal_offset:normal.extend(0.002).to_array(),parameters:[heat.radius,heat.width,heat.initial_kelvin,2.5],
+                normal_offset:normal.extend(0.002).to_array(),parameters:[heat.radius,heat.width,heat.initial_kelvin,heat.tau_s],
                 meta:[b.seed,gpu_weapon::RIM_SAMPLES,gpu_weapon::RIM_SAMPLES,gpu_weapon::HOT_RIM]};
             return r.active().then_some(r);
         },

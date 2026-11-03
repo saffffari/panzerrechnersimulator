@@ -27,6 +27,8 @@ mod renderer_fine_vfx;
 pub(crate) mod renderer_weapon_particles;
 #[path = "renderer_scatter.rs"]
 mod renderer_scatter;
+#[path = "renderer_meadow.rs"]
+mod renderer_meadow;
 #[path = "renderer_raymarch.rs"]
 pub(crate) mod raymarch;
 #[path = "renderer_scars.rs"]
@@ -104,6 +106,30 @@ fn configured_cabin_pastel() -> bool {
 }
 /// `KESSEL_PALETTE_PULL=0..1`: in the tinted look (mode 5) how far each pixel's hue and chroma
 /// are pulled toward the nearest pastel entry's (`crush.wgsl` `dp_tinted`); 0.7 unless set.
+/// The realism look (`KESSEL_LOOK=deltap-real`, mode 6): the physical frame's own colour, no
+/// palette pull, through AgX with a steeper log slope and less saturation, then deltaP's
+/// dithered colour, so the gradation is the dither's. `KESSEL_REAL_CONTRAST` (the slope, 1.35
+/// unless set), `KESSEL_REAL_SATURATION` (0.85), `KESSEL_REAL_STEPS` (steps per channel, 8).
+fn configured_real() -> [f32; 4] {
+    let get = |name: &str, default: f32, lo: f32, hi: f32| std::env::var(name).ok()
+        .and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(default, |v| v.clamp(lo, hi));
+    // `KESSEL_REAL_STEPS` is one count for every channel, or `R,G,B` where red and green share
+    // theirs (blue may differ: `7,7,3` is the 8-bit 3-3-2 split, 256 colours).
+    let steps: Vec<f32> = std::env::var("KESSEL_REAL_STEPS").ok().map(|v| v.split(',')
+        .filter_map(|p| p.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(1.0, 64.0)).collect())
+        .unwrap_or_default();
+    // `KESSEL_REAL_STEPS=yc:Y:C` is the luma/chroma form: Y luma steps, C chroma steps per axis
+    // (crush.wgsl `dp_luma_chroma`), carried as w = -C.
+    if let Some(rest) = std::env::var("KESSEL_REAL_STEPS").ok().as_deref().and_then(|v| v.trim().strip_prefix("yc:")) {
+        let p: Vec<f32> = rest.split(':').filter_map(|x| x.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).collect();
+        if let [y, c] = p.as_slice() {
+            return [get("KESSEL_REAL_CONTRAST", 1.35, 0.5, 3.0), get("KESSEL_REAL_SATURATION", 0.85, 0.0, 2.0),
+                y.clamp(2.0, 64.0), -c.clamp(2.0, 64.0)];
+        }
+    }
+    let (rg, blue) = match steps.as_slice() { [n] => (n.max(2.0), 0.0), [r, _, b] => (r.max(2.0), *b), _ => (8.0, 0.0) };
+    [get("KESSEL_REAL_CONTRAST", 1.35, 0.5, 3.0), get("KESSEL_REAL_SATURATION", 0.85, 0.0, 2.0), rg, blue]
+}
 fn configured_palette_pull() -> f32 {
     std::env::var("KESSEL_PALETTE_PULL").ok().and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.7)
@@ -482,7 +508,8 @@ fn parse_look(raw: &str) -> Result<f32, &'static str> {
         "deltap-raw" => Ok(3.0),
         "deltap-pastel" | "pastel" => Ok(4.0),
         "deltap-tinted" | "tinted" => Ok(5.0),
-        _ => Err("allowed looks are standard, deltap, deltap-pico8, deltap-raw, deltap-pastel and deltap-tinted"),
+        "deltap-real" | "real" | "realism" => Ok(6.0),
+        _ => Err("allowed looks are standard, deltap, deltap-pico8, deltap-raw, deltap-pastel, deltap-tinted and deltap-real"),
     }
 }
 
@@ -1138,6 +1165,8 @@ struct CrushUniform {
     /// The reader's loupe (mask mode 5, `crush.wgsl`): xy the lens centre in screen uv, z its
     /// radius in height units, w 1 while a lens pass sits in `optic_tex`. Appended lane.
     loupe: [f32; 4],
+    /// The realism look (mode 6): contrast, saturation, dithered steps per channel. Appended lane.
+    real: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -2709,6 +2738,10 @@ pub struct Renderer {
     raymarch: Option<raymarch::Backend>,
     /// The strewn field's GPU side (`renderer_scatter.rs`), installed once per act.
     scatter_field: Option<renderer_scatter::ScatterGpu>,
+    /// The spring meadow's GPU side (`renderer_meadow.rs`): raymarch backend only.
+    meadow: Option<renderer_meadow::MeadowGpu>,
+    /// Firefly lanterns lit this frame: world position and lane intensity (`meadow_fauna.rs`).
+    pub fireflies: Vec<[f32; 4]>,
     /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
     /// backend cuts, displaces and shades them (renderer_scars.rs).
     mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
@@ -2793,6 +2826,9 @@ pub struct Renderer {
     /// Fog banks in the world medium (raymarch backend): extinction inside a bank /m, coverage
     /// 0..1, depth m above the floor, the floor's altitude y. All zero: none.
     pub fog_bank: [f32; 4],
+    /// Authored low cloud and mist banks of the map (`low_clouds.rs`, raymarch backend); `None`:
+    /// none. Set by the game and the editor from the revision's `manifest_edits.json`.
+    pub low_clouds: Option<std::sync::Arc<crate::low_clouds::LowCloudField>>,
     /// Source-qualified admission for the observer's flash detector, never added light energy.
     pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
@@ -2856,6 +2892,8 @@ pub struct Renderer {
     pub optic_mask: f32,
     /// The loupe's circle for mask mode 5: centre uv, radius (height units), 1 when armed.
     pub loupe: [f32; 4],
+    /// The realism look's grade (`configured_real`).
+    pub real: [f32; 4],
     /// Positioned point lights this frame (game.rs sets them; capped at N_LIGHTS in the shader).
     lights: Vec<PointLight>,
     /// Point lights offered for the latest frame (all of them, before the `N_LIGHTS` budget).
@@ -2866,6 +2904,9 @@ pub struct Renderer {
     frame: u32,
 
     hdr_view: wgpu::TextureView,
+    /// Sub-pixel emitters' radiance at their pixel (crush.wgsl rod pooling).
+    point_view: wgpu::TextureView,
+    _point_layer_tex: wgpu::Texture,
     hdr_tex: wgpu::Texture,
     depth_view: wgpu::TextureView,
     ldr_view: wgpu::TextureView,
@@ -3872,6 +3913,17 @@ impl Renderer {
             view_formats: &[],
         });
         let hdr_view = hdr_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // The sub-pixel emitters' own radiance (`point_view`, the raymarch backend's firefly
+        // lanterns), for the eye's rod pooling in crush.wgsl; zero on the other backends.
+        let point_layer_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("point-layer"),
+            size: wgpu::Extent3d { width: iw, height: ih, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let point_view = point_layer_tex.create_view(&wgpu::TextureViewDescriptor::default());
         // TEXTURE_BINDING so the volumetric smoke pass can sample scene depth back for occlusion.
         // Kept as a texture (not just its view): the S1 bvhview PASS metric reads scene depth
         // back and correlates it against traced primary-ray depth.
@@ -5941,6 +5993,7 @@ impl Renderer {
                 wgpu::BindGroupLayoutEntry {binding:7,visibility:wgpu::ShaderStages::FRAGMENT,
                     ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Uint,
                         view_dimension:wgpu::TextureViewDimension::D2,multisampled:false},count:None},
+                tex_entry(8), // the sub-pixel emitters' radiance (rod pooling)
             ],
         });
         let crush_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -5972,6 +6025,7 @@ impl Renderer {
                     resource: environment_probe.uniform.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {binding:7,resource:wgpu::BindingResource::TextureView(&blue_noise_view)},
+                wgpu::BindGroupEntry {binding:8,resource:wgpu::BindingResource::TextureView(&point_view)},
             ],
         });
         let crush_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -6115,6 +6169,8 @@ impl Renderer {
             shader_backend,
             raymarch,
             scatter_field: None,
+            meadow: None,
+            fireflies: Vec::new(),
             mesh_scars: std::collections::HashMap::new(),
             actor_mesh_clones: Vec::new(),
             raster_optics: shader_backend.then(|| {
@@ -6183,6 +6239,7 @@ impl Renderer {
             interior_haze: 0.0,
             optic_mask: 0.0,
             loupe: [0.0; 4],
+            real: configured_real(),
             lights: Vec::new(),
             lights_offered: 0,
             lights_full: Vec::new(),
@@ -6195,7 +6252,10 @@ impl Renderer {
             worn_vehicles: Vec::new(),
             exhaust_puffs: Vec::new(),
             fog_bank: [0.0; 4],
+            low_clouds: None,
             frame: 0,
+            point_view,
+            _point_layer_tex: point_layer_tex,
             hdr_view,
             hdr_tex,
             depth_view,
@@ -6485,7 +6545,16 @@ impl Renderer {
         let profile = campaign_atmosphere_profile(act_id);
         self.weather_act_id = act_id;
         self.weather_progress = 0.0;
-        self.overcast = profile.overcast;
+        // KESSEL_OVERCAST=0..1 overrides the authored cloud deck for lighting diagnosis only.
+        // The campaign sits at 0.86-0.99, i.e. effectively sealed, so there is no direct solar
+        // beam anywhere in it and every surface is lit purely by diffuse sky. That makes it
+        // impossible to tell a missing environment term from a correctly dim one without being
+        // able to open the sky up. Debug-only: nothing in a shipping path reads this.
+        self.overcast = std::env::var("KESSEL_OVERCAST")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or(profile.overcast);
         self.storm = profile.storm;
         self.atmosphere_mood = campaign_ground_mood(winter, profile.mood);
         self.twilight = 0.0;
@@ -7114,6 +7183,20 @@ impl Renderer {
     }
     /// Set an instanced batch's shader flag (`params.w`). -1.0 = physical cubic smoke particles;
     /// 4.0 = grass wind/alpha material; 0.0 = plain lit module (default).
+    /// The spring meadow is drawn by the raymarch backend only.
+    pub fn meadow_supported(&self) -> bool { self.raymarch.is_some() }
+    /// Install the map's spring meadow on the GPU (`meadow.rs`).
+    pub fn install_meadow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, build: crate::meadow::Build) {
+        if self.raymarch.is_some() { self.meadow = Some(renderer_meadow::MeadowGpu::new(device, queue, build)); }
+    }
+    /// This frame's wind grid and new tread pages for the meadow.
+    pub fn set_meadow_frame(&mut self, frame: crate::meadow::Frame) {
+        if let Some(m) = &mut self.meadow { m.set_frame(frame); }
+    }
+    pub fn meadow_stats(&self) -> Option<renderer_meadow::MeadowStats> { self.meadow.as_ref().map(|m| m.stats) }
+    /// The Sun's altitude above the horizon, degrees (the act's ephemeris).
+    pub fn sun_altitude_deg(&self) -> f32 { self.celestial.sun_altitude_deg() as f32 }
+
     pub fn set_batch_flags(&mut self, batch: usize, flags: f32) {
         if let Some(b) = self.inst_batches.get_mut(batch) {
             let rt_membership_changed = (b.flags <= 3.5) != (flags <= 3.5);
@@ -8589,6 +8672,10 @@ impl Renderer {
                 sf.prepare(self, rm.shadow_views(), device, queue);
                 self.scatter_field = Some(sf);
             }
+            if let Some(mut meadow) = self.meadow.take() {
+                meadow.prepare(self, rm.shadow_views(), rm.shadow_texels(), queue);
+                self.meadow = Some(meadow);
+            }
             // The tracers' veil for the eye's meter (the clock's lanes 5 and 6).
             queue.write_buffer(&self.exp_clock_buf, 20, bytemuck::cast_slice(&rm.point_veil));
             self.raymarch = Some(rm);
@@ -8619,7 +8706,8 @@ impl Renderer {
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
             ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,
-            cabin_look: if configured_cabin_pastel() { 1.0 } else { 0.0 },
+            // The pastel cabin's own smoothing rides here: under the tinted look, look.w is the pull.
+            cabin_look: if configured_cabin_pastel() { 1.0 + configured_palette_smooth() } else { 0.0 },
             exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
@@ -8634,6 +8722,7 @@ impl Renderer {
             dither_forward: self.camera.forward().extend(0.0).to_array(),
             look: [self.look, DELTAP_PAIR_PENALTY, self.tonemap, self.palette_smooth],
             loupe: self.loupe,
+            real: self.real,
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {
@@ -13954,10 +14043,13 @@ mod atmosphere_tests {
 
     #[test]
     fn tracked_manifests_collapse_page_scans_to_occupied_cells() {
+        // Counts rose with the warscape layer (authored war material added prototypes and
+        // placements to every act). What this test protects is unchanged: the spatial index must
+        // collapse a page scan onto the occupied cells rather than walking every page.
         for (act, expected_pages, expected_cells, expected_refs) in [
-            (1u8, 580usize, 1_072usize, 7_315usize),
-            (2, 1_938, 2_208, 28_098),
-            (3, 1_336, 1_024, 19_066),
+            (1u8, 1_656usize, 1_312usize, 21_021usize),
+            (2, 3_208, 2_208, 45_463),
+            (3, 2_362, 1_024, 32_512),
         ] {
             let manifest =
                 crate::act_manifest::ActManifest::load(&crate::act_manifest::path_for_act(act))

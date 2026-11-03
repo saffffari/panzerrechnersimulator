@@ -61,7 +61,9 @@ pub const MAX_SCENE_LIGHTS: usize = 448;
 const TRACER_INTENSITY: f32 = 0.0035;
 /// Lights the backend synthesizes from ballistic bursts and tracer heads.
 const MAX_EFFECT_LIGHTS: usize = 64;
-const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS;
+/// Firefly lanterns lit as point lights per frame, nearest first (a cost bound, named).
+const FIREFLY_LIGHTS: usize = 32;
+const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS + FIREFLY_LIGHTS;
 const MAX_LIGHT_CELL_ITEMS: usize = 1 << 17;
 const MAX_EMBERS: usize = 1 << 18;
 const EMBER_REACH_M: f32 = 90.0;
@@ -230,7 +232,21 @@ struct FrameUniform {
     /// The film/review section plane (`Renderer::set_film_section`): world normal xyz into the
     /// removed half, offset w; zeros when none. Only the G-buffer, glass and patch passes read it.
     section: [f32; 4],
+    /// The map's low cloud and mist banks (`low_clouds.rs`; rm_common.wgsl `rm_low_*`): x the bank
+    /// count, y the drops' asymmetry g, z their single-scattering albedo.
+    low_cloud: [f32; 4],
+    /// Per bank: centre xyz + core extinction /m, semi-axes xyz + yaw, seed + bounding reach m.
+    low_banks: [[f32; 4]; crate::low_clouds::MAX_BANKS * 3],
+    /// The banks' optical-depth grid (rm_low_clouds.wgsl): min corner + filled, texel size.
+    low_vol_min: [f32; 4],
+    low_vol_cell: [f32; 4],
 }
+
+/// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
+/// up (y), along z; it reaches `LOW_TAU_HALF_M` each way from the eye (the froxel grid's 320 m and a
+/// margin), from the lowest ground there to the highest bank's top.
+const LOW_TAU_DIMS: [u32; 3] = [176, 64, 176];
+const LOW_TAU_HALF_M: f32 = 352.0;
 
 /// Where the section bit sits in the push's `scars.w` (bytes 0-2 carry the running gear's snow).
 const SECTION_BIT_SHIFT: u32 = 24;
@@ -246,6 +262,8 @@ pub(super) const MAX_APERTURES: usize = 24;
 /// `KESSEL_RM_SKIP` bit: no daylight through the panes (the apertures' term in rm_shade.wgsl and
 /// rm_volume.wgsl), for the A/B.
 const SKIP_APERTURES: u32 = 2097152;
+/// `KESSEL_RM_SKIP` bit: no low cloud or mist banks (`low_clouds.rs`), for the A/B.
+const SKIP_LOW_CLOUDS: u32 = 4194304;
 /// Frames between measures of the apertures (rm_aperture.wgsl): about 200 ray queries per pane
 /// on one thread each cost 1.07 ms a frame measured every frame (gfxbench, 2 November 2026); the
 /// panes' openness changes only as the turret traverses against the hull.
@@ -445,6 +463,8 @@ pub struct Stats {
     pub scar_patches: usize,
     pub scar_holes: usize,
     pub scar_leaks: usize,
+    /// Low cloud banks the frame carries (`low_clouds.rs`).
+    pub low_banks: usize,
 }
 
 struct Target { _tex: wgpu::Texture, view: wgpu::TextureView }
@@ -596,6 +616,18 @@ pub(super) struct Backend {
     /// (`collect_lights`), for the eye's meter (`exposure.wgsl` veil lanes).
     pub(super) point_veil: [f32; 2],
     heat_integrated: Target,
+    /// The low cloud banks' optical depths round the eye (rm_low_clouds.wgsl) and its pass.
+    low_tau: Target,
+    low_tau_bind: wgpu::BindGroup,
+    low_tau_pipe: wgpu::ComputePipeline,
+    /// Whether this frame carries banks (the grid is filled only then).
+    low_tau_on: bool,
+    /// The grid's min corner when it was last filled (`None`: not filled); while it holds still,
+    /// each frame refreshes alternate z-slabs (an update cadence; a moved grid is filled whole).
+    low_tau_origin: Option<[f32; 3]>,
+    low_tau_cell_y: f32,
+    /// This frame's refresh: true for the whole grid, false for half its z-slabs.
+    low_tau_full: bool,
     linear_sampler: wgpu::Sampler,
     sky_sampler: wgpu::Sampler,
     cmp_sampler: wgpu::Sampler,
@@ -630,6 +662,8 @@ pub(super) struct Backend {
     reflect_pipe: wgpu::RenderPipeline,
     lens_pipe: wgpu::RenderPipeline,
     points_pipe: wgpu::RenderPipeline,
+    /// Firefly lanterns into the point layer (crush.wgsl rod pooling).
+    point_layer_pipe: wgpu::RenderPipeline,
     sparks_pipe: wgpu::RenderPipeline,
     tracers_pipe: wgpu::RenderPipeline,
     binds: Option<Binds>,
@@ -767,6 +801,43 @@ const MEDIUM: &str = include_str!("../shaders/rm_medium.wgsl");
 /// Shader sources are compiled in; `KESSEL_RM_LIVE_SHADERS=1` reads `shaders/rm_*.wgsl` from the
 /// asset root at pipeline creation instead, so a look change needs no rebuild.
 fn rm_source(name: &str) -> String {
+    let text = rm_source_text(name);
+    if name == "rm_points.wgsl" {
+        // The firefly lantern's display-equivalent lanes (meadow_fauna::firefly_lanes).
+        let c = crate::meadow_fauna::firefly_lanes().0;
+        return format!("const RM_FIREFLY_LANES: vec3<f32> = vec3({:?}, {:?}, {:?});\n{text}", c[0], c[1], c[2]);
+    }
+    if name == "rm_shade.wgsl" {
+        // The meadow's leaves (leaf_optics.rs, meadow.rs): cuticle f0, the canopy's leaf angle
+        // projection G (spherical distribution), the radius within which blades cast into the
+        // near cascade.
+        let (gr, gt) = crate::leaf_optics::gamma_tables();
+        let list = |g: [f32; crate::leaf_optics::GAMMA_STEPS]| g.iter().map(|v| format!("{v:?}")).collect::<Vec<_>>().join(", ");
+        let n = crate::leaf_optics::GAMMA_STEPS;
+        return format!("const RM_LEAF_F0: f32 = {:?};\nconst RM_LEAF_G: f32 = 0.5;\nconst RM_MEADOW_SHADOW_RADIUS: f32 = {:?};\n\
+            const RM_HOTSPOT: f32 = {:?};\nconst RM_SOIL_ALBEDO: f32 = {:?};\n\
+            var<private> RM_GAMMA_R: array<f32, {n}> = array<f32, {n}>({});\n\
+            var<private> RM_GAMMA_T: array<f32, {n}> = array<f32, {n}>({});\n\
+            fn rm_slab_gamma(beta: f32, which: u32) -> f32 {{\n\
+                let x = clamp(beta / 3.14159265, 0.0, 1.0) * f32({n} - 1);\n\
+                let i = min(u32(x), {n}u - 2u);\n\
+                let t = x - f32(i);\n\
+                if (which == 0u) {{ return mix(RM_GAMMA_R[i], RM_GAMMA_R[i + 1u], t); }}\n\
+                return mix(RM_GAMMA_T[i], RM_GAMMA_T[i + 1u], t);\n\
+            }}\n\
+            fn rm_km_reflectance(rho: vec3<f32>, tau: vec3<f32>) -> vec3<f32> {{\n\
+                let omega = max(rho + tau, vec3(1e-6));\n\
+                let s = (vec3(0.5) + (rho - tau) / (6.0 * omega)) * omega;\n\
+                let q = (vec3(1.0) - omega) / max(s, vec3(1e-9));\n\
+                return vec3(1.0) + q - sqrt(q * q + 2.0 * q);\n\
+            }}\n{text}",
+            crate::leaf_optics::cuticle_f0(1.47) as f32, crate::meadow::SHADOW_RADIUS_M,
+            crate::leaf_optics::HOTSPOT, crate::leaf_optics::SOIL_ALBEDO, list(gr), list(gt));
+    }
+    text
+}
+
+fn rm_source_text(name: &str) -> String {
     let compiled = match name {
         "rm_common.wgsl" => COMMON,
         "rm_visibility.wgsl" => VISIBILITY,
@@ -786,6 +857,7 @@ fn rm_source(name: &str) -> String {
         "rm_glass.wgsl" => include_str!("../shaders/rm_glass.wgsl"),
         "rm_rt.wgsl" => include_str!("../shaders/rm_rt.wgsl"),
         "rm_cloud_shadow.wgsl" => include_str!("../shaders/rm_cloud_shadow.wgsl"),
+        "rm_low_clouds.wgsl" => include_str!("../shaders/rm_low_clouds.wgsl"),
         "rm_rt_stub.wgsl" => include_str!("../shaders/rm_rt_stub.wgsl"),
         "rm_aperture.wgsl" => include_str!("../shaders/rm_aperture.wgsl"),
         "rm_sky_cache.wgsl" => include_str!("../shaders/rm_sky_cache.wgsl"),
@@ -900,6 +972,9 @@ fn pack_ember(color: [f32; 3], intensity: f32) -> u32 {
     let q = |v: f32, bits: u32| ((v.clamp(0.0, 1.0) * ((1 << bits) - 1) as f32).round() as u32).min((1 << bits) - 1);
     2 | ((intensity.clamp(0.0, 2.0) * 128.0).round() as u32).min(255) << 8 | q(color[0], 5) << 16 | q(color[1], 6) << 21 | q(color[2], 5) << 27
 }
+/// A firefly lantern: kind 3, its lane intensity as an f32 whose four lowest mantissa bits hold
+/// the kind (a relative error under 2e-6).
+fn pack_firefly(intensity: f32) -> u32 { (intensity.max(0.0).to_bits() & !0xF) | 3 }
 /// A fixed point inside the unit cube for ember `k` of the grain with identity `seed`.
 fn ember_offset(seed: u32, k: u32) -> Vec3 {
     let h = |salt: u32| {
@@ -1129,6 +1204,7 @@ impl Backend {
                 tex2d_entry(12, vis_stages, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array),
                 readonly_storage(13, vis_stages),
                 readonly_storage(14, vis_stages),
+                tex3d(15, vis_stages),
             ],
         });
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1264,6 +1340,21 @@ impl Backend {
         });
         let volume_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("rm-volume"), layout: Some(&volume_pl), module: &volume_shader, entry_point: Some("cs"), compilation_options: Default::default(), cache: None,
+        });
+        let low_tau = volume_target(device, "rm-low-cloud-tau", LOW_TAU_DIMS, wgpu::TextureFormat::Rgba16Float);
+        let low_tau_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-low-cloud-tau-bgl"), entries: &[uniform_entry(0, S::COMPUTE), storage3d(1, wgpu::TextureFormat::Rgba16Float)],
+        });
+        let low_tau_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-low-cloud-tau"), layout: &low_tau_bgl, entries: &[entry(0, frame_buf.as_entire_binding()),
+                entry(1, wgpu::BindingResource::TextureView(&low_tau.view))],
+        });
+        let low_tau_shader = rm_shader(device, "rm-low-cloud-tau", &["rm_common.wgsl", "rm_low_clouds.wgsl"]);
+        let low_tau_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-low-cloud-tau-pl"), bind_group_layouts: &[&low_tau_bgl], push_constant_ranges: &[],
+        });
+        let low_tau_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("rm-low-cloud-tau"), layout: Some(&low_tau_pl), module: &low_tau_shader, entry_point: Some("cs"), compilation_options: Default::default(), cache: None,
         });
         let integrate_shader = rm_shader(device, "rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]);
         let integrate_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1449,6 +1540,17 @@ impl Backend {
             fragment: Some(wgpu::FragmentState { module: &points_shader, entry_point: Some("fs"), targets: std::slice::from_ref(&premultiplied), compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
+        let point_layer_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-point-layer"), layout: Some(&points_pl),
+            vertex: wgpu::VertexState { module: &points_shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout {
+                array_stride: 16, step_mode: wgpu::VertexStepMode::Instance, attributes: &POINT_ATTRS }] },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() }, depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &points_shader, entry_point: Some("fs_layer"), targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba16Float, blend: Some(wgpu::BlendState { color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add }, alpha: wgpu::BlendComponent::OVER }),
+                write_mask: wgpu::ColorWrites::ALL })], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
         let sparks_shader = rm_shader(device, "rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]);
         const WEAPON_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4, 4 => Uint32x4];
         let weapon_pipeline = |label: &str, entry: &str| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1472,11 +1574,11 @@ impl Backend {
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             aperture_measure_buf, aperture_bind, aperture_pipe, aperture_count: 0, aperture_measured: Cell::new(None),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
-            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, linear_sampler, cmp_sampler,
+            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, low_tau, low_tau_bind, low_tau_pipe, low_tau_on: false, low_tau_origin: None, low_tau_cell_y: 0.0, low_tau_full: true, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
-            points_pipe, sparks_pipe, tracers_pipe,
+            points_pipe, point_layer_pipe, sparks_pipe, tracers_pipe,
             binds: None, history_valid: false,
             glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             whitewash: std::env::var("KESSEL_WHITEWASH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
@@ -1577,6 +1679,7 @@ impl Backend {
                 entry(13, self.aperture_measure_buf.as_entire_binding()),
                 // The main view's eye: the pixel stars' ceiling (rm_shade.wgsl rm_display_white).
                 entry(14, r.exp_bufs[0].as_entire_binding()),
+                entry(15, wgpu::BindingResource::TextureView(&self.low_tau.view)),
             ],
         });
         let volume = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1653,6 +1756,15 @@ impl Backend {
     /// Per-frame CPU side: camera/history state, source radiance, shadow views, lights, medium
     /// parcels, embers, ballistic records. Runs from `Renderer::upload_uniforms`.
     pub(super) fn shadow_views(&self) -> &[Mat4] { &self.shadow_views[..3] }
+    /// Metres per texel of the far cascade, the near cascade and the sky-cover map (their
+    /// orthographic half extent read off the view matrix's first row, over their resolution).
+    pub(super) fn shadow_texels(&self) -> [f32; 3] {
+        let res = [self.quality.shadow_far_res as f32, self.quality.shadow_near_res as f32, SKY_COVER_RES as f32];
+        std::array::from_fn(|i| {
+            let row = self.shadow_views[i].row(0).truncate().length();
+            if row > 0.0 { 2.0 / (row * res[i]) } else { 0.0 }
+        })
+    }
 
     /// Renderer::rt_update calls this only after current TLAS allocation/build recording.
     /// An empty binding is valid for an actually empty scene, never for a populated scene
@@ -2009,6 +2121,38 @@ impl Backend {
         });
         let (apertures, aperture_count) = self.aperture_records(r, vehicle);
         self.aperture_count = aperture_count;
+        // The map's low cloud banks drift with the same wind the frame's medium moves with.
+        let (low_banks, low_count) = match &r.low_clouds {
+            Some(field) if self.debug_skip & SKIP_LOW_CLOUDS == 0 => {
+                field.advance(r.time, wind);
+                field.pack()
+            }
+            _ => ([[0.0; 4]; crate::low_clouds::MAX_BANKS * 3], 0),
+        };
+        self.stats.low_banks = low_count as usize;
+        // The banks' optical-depth grid: centred on the eye (snapped to its texels), from the
+        // lowest ground under it to the highest bank's top.
+        self.low_tau_on = low_count > 0;
+        let (low_vol_min, low_vol_cell) = match (&r.low_clouds, self.low_tau_on) {
+            (Some(field), true) => {
+                let (bottom, top) = field.vertical_span(glam::Vec2::new(eye.x, eye.z), LOW_TAU_HALF_M);
+                let cell_xz = 2.0 * LOW_TAU_HALF_M / LOW_TAU_DIMS[0] as f32;
+                let cell_y = ((top - bottom) / LOW_TAU_DIMS[1] as f32).max(0.5);
+                let snap = |v: f32| (v / cell_xz).floor() * cell_xz;
+                if std::env::var("KESSEL_LOW_CLOUDS_LIST").as_deref() == Ok("1") && r.frame % 60 == 1 {
+                    println!("[low-clouds] grid eye {:.0?} y {:.1}..{:.1} m, texel {:.2} x {:.2} m", eye, bottom, top, cell_xz, cell_y);
+                }
+                let origin = [snap(eye.x) - LOW_TAU_HALF_M, (bottom / cell_y).floor() * cell_y, snap(eye.z) - LOW_TAU_HALF_M];
+                // Cadence (KESSEL_RM_SKIP-free; the banks drift a few cm a frame): a grid that has
+                // not moved refreshes half its z-slabs a frame, alternating; a moved one all (w 2).
+                let refresh = if self.low_tau_origin == Some(origin) && (cell_y - self.low_tau_cell_y).abs() < 1e-3 { (r.frame & 1) as f32 } else { 2.0 };
+                self.low_tau_origin = Some(origin);
+                self.low_tau_cell_y = cell_y;
+                self.low_tau_full = refresh > 1.5;
+                ([origin[0], origin[1], origin[2], 1.0], [cell_xz, cell_y, cell_xz, refresh])
+            }
+            _ => { self.low_tau_origin = None; ([0.0; 4], [1.0, 1.0, 1.0, 2.0]) }
+        };
         let frame = FrameUniform {
             view_proj: rel_vp.to_cols_array_2d(),
             inv_view_proj: rel_vp.inverse().to_cols_array_2d(),
@@ -2064,6 +2208,10 @@ impl Backend {
             worn: std::array::from_fn(|i| r.worn_vehicles.get(i).copied().unwrap_or([[0.0; 4]; 2])),
             apertures,
             section: r.film_section().unwrap_or([0.0; 4]),
+            low_cloud: [low_count as f32, crate::low_clouds::DROP_ASYMMETRY, crate::low_clouds::DROP_ALBEDO, 0.0],
+            low_banks,
+            low_vol_min,
+            low_vol_cell,
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -2219,6 +2367,17 @@ impl Backend {
             let color = Vec3::new(1.0, 0.705, 0.348);
             self.lights.push(GpuLight { a: [head.x, head.y, head.z, 0.003], b: [color.x, color.y, color.z, TRACER_INTENSITY], c: [range_of(color, TRACER_INTENSITY), -1.0, 2.0, 0.0] });
         }
+        // Firefly lanterns light the grass as point sources (kind 3): the nearest
+        // FIREFLY_LIGHTS lit this frame, a 4 mm source, through the shared range cut-off.
+        if self.debug_skip & 8 == 0 && !r.fireflies.is_empty() {
+            let (lanes, _, _) = crate::meadow_fauna::firefly_lanes();
+            let color = Vec3::from_array(lanes);
+            let mut near: Vec<&[f32; 4]> = r.fireflies.iter().filter(|f| f[3] > 0.0).collect();
+            near.sort_by(|a, b| (Vec3::new(a[0], a[1], a[2]) - eye).length_squared().total_cmp(&(Vec3::new(b[0], b[1], b[2]) - eye).length_squared()));
+            for f in near.into_iter().take(FIREFLY_LIGHTS) {
+                self.lights.push(GpuLight { a: [f[0], f[1], f[2], 0.004], b: [color.x, color.y, color.z, f[3]], c: [range_of(color, f[3]), -1.0, 3.0, 0.0] });
+            }
+        }
         // KESSEL_RM_LIGHTS_DEBUG=1 prints the frame's lights relative to the eye (how the cabin
         // lamp's leak onto the barrel was found, 2026-10-28).
         if std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok() {
@@ -2231,7 +2390,9 @@ impl Backend {
         let mut ranked: Vec<(f32, usize)> = self.lights.iter().enumerate().filter_map(|(i, l)| {
             let d2 = (Vec3::from_array([l.a[0], l.a[1], l.a[2]]) - eye).length_squared();
             let power = l.b[3] * l.b[..3].iter().cloned().fold(0.0, f32::max);
-            (d2 < 45.0 * 45.0 && power > 0.0).then(|| (power / (d2 + 0.25), i))
+            // Firefly lanterns (kind 3) take no shadow cube: six scene depth faces for a source of
+            // micro-candela (named in the ledger).
+            (d2 < 45.0 * 45.0 && power > 0.0 && l.c[2] != 3.0).then(|| (power / (d2 + 0.25), i))
         }).collect();
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
         self.shadowed = [None; POINT_SHADOWS];
@@ -2484,6 +2645,16 @@ impl Backend {
             }
         }
         build_csr(&self.pairs, &mut self.cell_start, &mut self.cell_items);
+        // Firefly lanterns (meadow_fauna.rs): one-pixel emitters through the froxel medium like
+        // the embers, each carrying its own radiant intensity (kind 3, rm_points.wgsl).
+        if self.debug_skip & 2 == 0 {
+            for f in &r.fireflies {
+                if self.embers.len() >= MAX_EMBERS { break; }
+                let p = Vec3::new(f[0], f[1], f[2]);
+                if !p.is_finite() || !(f[3] > 0.0) || (p - eye).length() > VOL_FAR_M { continue; }
+                self.embers.push(Ember { pos: p.to_array(), packed: pack_firefly(f[3]) });
+            }
+        }
         self.stats.parcels = self.parcels.len();
         self.stats.cell_items = self.cell_items.len();
         self.stats.embers = self.embers.len();
@@ -2732,19 +2903,23 @@ impl Backend {
                     // Inside the hull the same hole fills the compartment: the round's own smoke,
                     // the spall's dust and the burning paint and stowage behind the plate, left
                     // trapped (no buoyant rise through a roof), spreading slowly from the hole and
-                    // thinning over ten seconds. Six puffs born over the first second, inward
+                    // thinning over six seconds. Six puffs born over the first second, inward
                     // along the normal. On a vehicle without a modelled interior they sit inside
                     // its shell unseen (the owner, 2026-11-02: the inside of a hit needs its smoke).
+                    // At the exterior vent's density (1.6) the puffs were opaque across the
+                    // turret and an interior camera saw only sky-lit fog for ten seconds; a third
+                    // of it keeps the compartment legible through the smoke (named presentation
+                    // density, not a vented-gas model).
                     for k in 0..6u32 {
                         let born = 0.02 + 0.2 * k as f32;
                         let age = t - born;
-                        if age <= 0.0 || age > 10.0 { continue; }
+                        if age <= 0.0 || age > 6.0 { continue; }
                         let a = h(170 + k) * std::f32::consts::TAU;
                         let inward = (0.9 * (1.0 - (-age / 0.5).exp())) * (0.5 + 0.9 * h(180 + k));
                         let spread = (0.05 + 0.18 * age.min(4.0)) * (0.5 + h(190 + k));
                         let center = o - n * inward + (t1 * a.cos() + t2 * a.sin()) * spread + Vec3::Y * (0.15 * age.min(2.0) * h(200 + k));
                         let radius = (0.3 + 0.25 * age.min(4.0)) * (0.8 + 0.4 * h(210 + k));
-                        let density = (1.0 - age / 10.0).powi(2) * 1.6 * (1.0 - 0.08 * k as f32);
+                        let density = (1.0 - age / 6.0).powi(2) * 0.55 * (1.0 - 0.08 * k as f32);
                         push(center, radius, [0.26, 0.25, 0.24], PARCEL_SMOKE, 0.0, density / radius, h(220 + k) * 100.0, 0.0);
                     }
                 }
@@ -3035,6 +3210,8 @@ impl Backend {
         self.draw_scene(r, &mut pass, self.shadow_views[index], index as f32, true, &self.depth_pipe, &self.depth_inst_pipe, work);
         // The strewn field's large tier casts into the cascades and the sky cover (views 0..3).
         if index < 3 { if let Some(sf) = &r.scatter_field { sf.draw(&mut pass, index, work); } }
+        // The spring meadow's blades cast into the near cascade and the sky cover.
+        if index == 1 || index == 2 { if let Some(m) = &r.meadow { m.draw(&mut pass, index, work); } }
     }
 
     /// A post pass over the lit HDR frame: copy it into `scratch`, then write the result back.
@@ -3109,6 +3286,7 @@ impl Backend {
             pass.set_bind_group(2, &r.track_bind, &[]);
             self.draw_scene(r, &mut pass, r.camera.view_proj(), 0.0, false, &self.gbuffer_pipe, &self.gbuffer_inst_pipe, &mut work);
             if let Some(sf) = &r.scatter_field { sf.draw(&mut pass, 3, &mut work); }
+            if let Some(m) = &r.meadow { m.draw(&mut pass, 3, &mut work); }
             // Near armor wounds: dense displaced patches where the vehicle mesh was cut for them.
             if self.scar_near_count > 0 {
                 pass.set_pipeline(&self.scar_patch_pipe);
@@ -3167,6 +3345,17 @@ impl Backend {
                 cpass.dispatch_workgroups(self.aperture_count, 1, 1);
                 work.compute_passes += 1;
             }
+        }
+        // 3b. The low cloud banks' optical depths round the eye (only when the map has banks).
+        if self.low_tau_on {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rm-low-cloud-tau"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("rm-low-cloud-tau")),
+            });
+            cpass.set_pipeline(&self.low_tau_pipe);
+            cpass.set_bind_group(0, &self.low_tau_bind, &[]);
+            let slabs = if self.low_tau_full { LOW_TAU_DIMS[2] } else { LOW_TAU_DIMS[2].div_ceil(2) };
+            cpass.dispatch_workgroups(LOW_TAU_DIMS[0].div_ceil(4), LOW_TAU_DIMS[1].div_ceil(4), slabs.div_ceil(4));
+            work.compute_passes += 1;
         }
         // 4. Froxel media: light every cell, then integrate each column front to back.
         {
@@ -3319,6 +3508,22 @@ impl Backend {
                     pass.draw(0..count * 6, first..first + 1);
                     work.scene_instanced_draws += 1;
                 }
+            }
+        }
+        // 7b. The point layer: the firefly lanterns' radiance alone, for the eye's rod pooling
+        // (crush.wgsl). Cleared every frame so a frame without lanterns leaves none behind.
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-point-layer"),
+                color_attachments: &[Some(attachment(&r.point_view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)))],
+                depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None,
+            });
+            if embers > 0 && !r.fireflies.is_empty() {
+                pass.set_bind_group(0, &binds.points, &[]);
+                pass.set_bind_group(1, &binds.visibility, &[]);
+                pass.set_pipeline(&self.point_layer_pipe);
+                pass.set_vertex_buffer(0, self.ember_buf.slice(..));
+                pass.draw(0..6, 0..embers);
             }
         }
         // 8. The eyepiece glass: refraction, dispersion and the lens edge of the TZF/binoculars.
@@ -3549,6 +3754,7 @@ mod shader_tests {
             ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_gbuffer.wgsl"]),
             ("rm-scar-patch", &["rm_common.wgsl", "rm_scars.wgsl", "rm_scar_patch.wgsl"]),
             ("rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]),
+            ("rm-low-cloud-tau", &["rm_common.wgsl", "rm_low_clouds.wgsl"]),
             ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),
             ("rm-points", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_points.wgsl"]),
             ("rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]),

@@ -127,6 +127,7 @@ mod editor_navigation;
 mod tank_editor_scene;
 mod tank_editor_acceptance;
 mod environment_authoring;
+mod low_clouds;
 mod ephemeris;
 mod celestial_sky;
 mod observer;
@@ -148,6 +149,9 @@ mod winter_bench;
 mod native_input_audit;
 mod graphics;
 mod grass;
+mod meadow;
+mod meadow_fauna;
+mod leaf_optics;
 mod infantry;
 mod infantry_combat;
 mod interior_rig;
@@ -222,6 +226,7 @@ mod urban_tableau_meshes;
 mod urban_tableaux;
 mod world;
 mod worldgen;
+mod authored_colliders;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -675,10 +680,16 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     if let Some(sim_s) = std::env::var("KESSEL_SHOT_SIM_S").ok().and_then(|v| v.parse::<f32>().ok()).filter(|s| *s > 0.0) {
         let steps = (sim_s * 60.0).round() as u32;
         println!("[sim] stepping {steps} frames ({sim_s:.2} s) before the capture");
+        // KESSEL_SHOT_DRIVE=1: the Tiger drives ahead at full throttle through those steps (its
+        // treads lay the grass flat; the meadow review).
+        let input = if std::env::var("KESSEL_SHOT_DRIVE").as_deref() == Ok("1") {
+            TankInput { drive: 1.0, ..Default::default() }
+        } else { TankInput::default() };
         for i in 0..steps {
-            g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+            g.update(&input, 1.0 / 60.0, &mut r);
             if i % 15 == 14 { r.render_offscreen(&device, &queue); }
         }
+        println!("[sim] player at {:?}, speed {:.1} m/s", g.player.pos, g.player.speed);
     }
     if let Some(c) = cam {
         r.camera.pos = Vec3::new(c[0], c[1], c[2]);
@@ -959,6 +970,10 @@ fn run_gfxbench(
     let act_n = if playtest {
         let path = act_manifest::playtest_manifest_path();
         act_manifest::select_runtime_manifest(Some(path))?.expect("selected Playtest manifest")
+    } else if let Some(path) = std::env::var_os("KESSEL_BENCH_MANIFEST").or_else(|| std::env::var_os("KESSEL_RECON_MANIFEST")) {
+        // Bench a workshop map (its edits included): `KESSEL_BENCH_MANIFEST`, or `KESSEL_RECON_MANIFEST`
+        // as `screenshot` takes it.
+        act_manifest::select_runtime_manifest(Some(std::path::PathBuf::from(path)))?.unwrap_or(act_n)
     } else { act_n };
     let (mut r, mut g) = if playtest {
         Game::build_playtest_act(&device, &queue, night, &world::act(act_n))?
@@ -984,7 +999,10 @@ fn run_gfxbench(
         Ok((v[0], v[1], v[2] as u32))
     }).transpose()?;
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
-    let center = r.camera.pos;
+    // `KESSEL_BENCH_ORBIT=x,y,z`: orbit that point instead of the player's eye.
+    let center = std::env::var("KESSEL_BENCH_ORBIT").ok()
+        .and_then(|v| { let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect(); (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2])) })
+        .unwrap_or(r.camera.pos);
     r.reticle = false;
     r.camera.fov_y = 55f32.to_radians();
 
@@ -1000,7 +1018,31 @@ fn run_gfxbench(
     let mut pending: std::collections::VecDeque<(wgpu::SubmissionIndex,bool)> = Default::default();
     let mut completed_frames = 0u32;
     let mut throughput_started = None;
+    // `KESSEL_BENCH_KILL=FRAME`: at timed frame FRAME the nearest living enemy takes a
+    // catastrophic kill (the ammunition detonation, the turret thrown, the wreck burning), as
+    // the owner's playtest did ("fps tanks when i hit first t34 and never recovers", 2 November
+    // 2026); the summary then splits the frames before and after it and prints the simulation's
+    // phase costs after it.
+    let bench_kill: Option<u32> = std::env::var("KESSEL_BENCH_KILL").ok().and_then(|v| v.trim().parse().ok());
+    let mut kill_split: Option<usize> = None;
     for i in 0..(frames + WARMUP) {
+        // Five seconds after the kill the phase counters restart, so the end-of-run phases are
+        // the settled state's, not the detonation's and the thrown turret's.
+        if bench_kill.is_some_and(|at| i == WARMUP + at + 300) { let _ = g.sim_phase.take(); }
+        if bench_kill.is_some_and(|at| i == WARMUP + at) {
+            let eye = g.player.pos;
+            let target = g.enemies.iter().enumerate().filter(|(_, e)| e.alive)
+                .min_by(|a, b| a.1.pos.distance(eye).total_cmp(&b.1.pos.distance(eye))).map(|(idx, e)| (idx, e.pos));
+            if let Some((idx, pos)) = target {
+                let side = Vec3::new(-g.player.forward().z, 0.0, g.player.forward().x).normalize_or_zero();
+                let killed = g.debug_catastrophic_kill(idx, pos + Vec3::Y * 1.2 + side * 1.4, side);
+                println!("[gfxbench] kill at timed frame {}: enemy {idx} at {:.0} m, {}", i - WARMUP, pos.distance(eye), if killed { "catastrophic" } else { "not alive" });
+                let _ = g.sim_phase.take();
+                kill_split = Some(times.len());
+            } else {
+                println!("[gfxbench] kill at timed frame {}: no living enemy", i - WARMUP);
+            }
+        }
         if pipelined && i == WARMUP {
             // Drain every warmup submission before starting the completed-throughput interval.
             while let Some((submission, measured)) = pending.pop_front() {
@@ -1121,6 +1163,26 @@ fn run_gfxbench(
             cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);
         if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
         if let Some(stats) = r.scatter_stats() { println!("[gfxbench] scatter {stats:?}"); }
+        if let Some(split) = kill_split {
+            let mean = |v: &[f32]| if v.is_empty() { 0.0 } else { v.iter().sum::<f32>() / v.len() as f32 };
+            let meanf = |v: &[f64]| if v.is_empty() { 0.0 } else { v.iter().sum::<f64>() / v.len() as f64 };
+            println!("[gfxbench] before the kill: {} frames, gpu frame {:.2} ms, live frame {:.2} ms, simulation {:.2} ms (mean)",
+                split, mean(&times[..split]), meanf(&live_times[..split]), meanf(&simulation_times[..split]));
+            println!("[gfxbench] after the kill: {} frames, gpu frame {:.2} ms, live frame {:.2} ms, simulation {:.2} ms (mean); worst simulation {:.2} ms",
+                times.len() - split, mean(&times[split..]), meanf(&live_times[split..]), meanf(&simulation_times[split..]),
+                simulation_times[split..].iter().cloned().fold(0.0f64, f64::max));
+            let series: Vec<String> = simulation_times[split..].chunks(60)
+                .map(|w| format!("{:.1}", w.iter().sum::<f64>() / w.len() as f64)).collect();
+            println!("[gfxbench] simulation after the kill, per second (ms mean): {}", series.join(" "));
+            println!("[gfxbench] simulation phases from five seconds after the kill (ms): {}", g.sim_phase.take());
+            for (i, e) in g.enemies.iter().enumerate() {
+                println!("[gfxbench] enemy {i}: alive {}, overturned {}, speed {:.2} m/s, {:.0} m off, height {:.2} over ground, roll {:.2} pitch {:.2}",
+                    e.alive, e.overturned(), e.speed, e.pos.distance(g.player.pos), e.pos.y - g.hf.height_at(e.pos.x, e.pos.z), e.roll, e.pitch);
+            }
+            for (i, settled, speed, quiet) in g.debug_thrown_turrets() {
+                println!("[gfxbench] thrown turret of wreck {i}: settled {settled}, speed {speed:.3} m/s, quiet {quiet:.2} s");
+            }
+        }
         times.sort_by(f32::total_cmp);
         let n = times.len();
         let avg: f32 = times.iter().sum::<f32>() / n as f32;
@@ -11922,6 +11984,16 @@ struct WindowState {
 impl WindowState {
     fn new(window: Arc<Window>, lan_config: Option<lan::LanConfig>) -> anyhow::Result<Self> {
         let size = window.inner_size();
+        // Pixel exactness: the frame reaches the panel through a nearest blit over the whole
+        // surface, so it is sharp exactly when the surface is a whole multiple of the grid (the
+        // Studio Display's 5120x2880 is 5x of 1024x576). Say so at start, so a compositor scale
+        // that hands a logical size cannot soften it unnoticed.
+        if let Some((iw, ih)) = std::env::var("KESSEL_INTERNAL_RES").ok().and_then(|v| {
+            let (w, h) = v.split_once('x')?; Some((w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?)) }) {
+            let exact = iw > 0 && ih > 0 && size.width % iw == 0 && size.height % ih == 0 && size.width / iw == size.height / ih;
+            println!("[panzerrechnersystem] surface {}x{} for the {iw}x{ih} grid: {}", size.width, size.height,
+                if exact { format!("pixel exact, {}x", size.width / iw) } else { "NOT a whole multiple: the nearest blit will be uneven".to_owned() });
+        }
         let instance = create_instance();
         let surface = instance.create_surface(window.clone())?;
         let adapter = request_adapter(&instance, Some(&surface));
@@ -13099,19 +13171,32 @@ impl WindowState {
 
     /// Acquire the swapchain frame + view, handling lost/outdated surfaces.
     fn acquire(&self) -> Option<(wgpu::SurfaceTexture, wgpu::TextureView)> {
+        // Consecutive failed acquires: the first is logged, then one line a second (at 60 Hz),
+        // never one per frame (a stuck swapchain once wrote 39 million lines, 1.6 GB, before the
+        // device failed under a full GPU).
+        static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        use std::sync::atomic::Ordering::Relaxed;
         match self.surface.get_current_texture() {
             Ok(f) => {
+                let failed = FAILED.swap(0, Relaxed);
+                if failed > 1 {
+                    eprintln!("[panzerrechnersystem] surface recovered after {failed} failed frames");
+                }
                 let view = f
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 Some((f, view))
             }
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.config);
-                None
-            }
             Err(e) => {
-                eprintln!("[panzerrechnersystem] surface error: {e:?}");
+                let n = FAILED.fetch_add(1, Relaxed) + 1;
+                if n == 1 || n % 60 == 0 {
+                    eprintln!("[panzerrechnersystem] surface error: {e:?} ({n} frames in a row)");
+                }
+                // Lost, outdated or an unspecified failure (often memory pressure): configure the
+                // surface again; a swapchain that cannot come back keeps failing quietly.
+                self.surface.configure(&self.device, &self.config);
+                // No vsync wait happens on a failed acquire: wait a frame here, or the loop spins.
+                std::thread::sleep(std::time::Duration::from_millis(16));
                 None
             }
         }
@@ -13346,6 +13431,8 @@ impl WindowState {
         let winter_combat = self.campaign.is_none()
             && self.play_mode.is_some_and(winter_combat_playtest);
         let canyon_course = self.campaign.is_none() && self.play_mode == Some(PlayMode::Canyon);
+        // A course with the expedition camp and half-track (`canyon_course.camp`).
+        let course_camp = canyon_course && canyon::selected_course_wants_camp();
         let campaign_start = if !winter_combat
             && self.play_mode.is_some_and(playtest_mode::uses_campaign) {
             match self
@@ -13365,7 +13452,7 @@ impl WindowState {
         };
         let build = if let Some(start) = campaign_start.as_ref() {
             Game::build_campaign_act(&self.device, &self.queue, night, &map, start)
-        } else if self.play_mode == Some(PlayMode::Expedition) {
+        } else if self.play_mode == Some(PlayMode::Expedition) || course_camp {
             Game::build_expedition_act(&self.device, &self.queue, night, &map)
         } else if winter_combat || canyon_course || self.play_mode == Some(PlayMode::Expedition) {
             Game::build_playtest_act(&self.device, &self.queue, night, &map)
@@ -13382,6 +13469,18 @@ impl WindowState {
                         eprintln!("[canyon] cannot field the course: {error:#}");
                         return false;
                     }
+                }
+                if course_camp {
+                    let seed = std::env::var("KESSEL_SEED").ok()
+                        .and_then(|value| value.parse::<u64>().ok()).unwrap_or(1944);
+                    let enabled = g.expedition_initial_camp_position()
+                        .and_then(|position| g.enable_expedition(seed, position))
+                        .and_then(|()| g.begin_expedition_at_camp(&mut r));
+                    if let Err(error) = enabled {
+                        eprintln!("[canyon] cannot set up the course's camp: {error:#}");
+                        return false;
+                    }
+                    println!("[canyon] the course's camp and half-track are installed; the commander starts at the camp");
                 }
                 if let Some(start) = campaign_start.as_ref() {
                     if let Err(error) = g.configure_campaign(&start, &mut r) {
@@ -17237,6 +17336,12 @@ fn main() -> anyhow::Result<()> {
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(220.0),
             args.get(5).and_then(|s| s.parse().ok()).unwrap_or(240.0),
+        );
+    }
+    if args.len() >= 2 && args[1] == "bridge-check" {
+        return canyon_attempt::bridge_check(
+            &capture_arg(&args, 2, "bridge_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
         );
     }
     if args.len() >= 2 && args[1] == "canyon-foot-check" {

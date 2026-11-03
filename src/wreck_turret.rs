@@ -132,7 +132,17 @@ pub(super) struct Body {
     pub launched_energy_j: f32,
     pub settled: bool,
     quiet_s: f32,
+    /// The hull pose the settled body was last certified at rest against, and the time since.
+    /// The rest test (`supported_at_rest`) is a function of the body's pose, the hull's pose
+    /// and the terrain alone; a settled body's pose and the terrain do not change, so while the
+    /// hull pose is the same the answer is the same and the test is not repeated (it swept
+    /// every surface sample of the turret against the hull every frame: 7 ms an update after
+    /// a catastrophic kill, 2 November 2026). Re-certified anyway every `REST_RECHECK_S`.
+    /// Transient: not in the saved state (a restored body re-tests on its first step).
+    rest_hull: Option<Mat4>,
+    rest_age_s: f32,
 }
+const REST_RECHECK_S: f32 = 2.0;
 
 impl Body {
     pub fn launch(source: Arc<Source>, gun_local: Mat4, ring_world: Mat4,
@@ -174,7 +184,7 @@ impl Body {
         Some(Self { source, points:Arc::new(points), local_com, mass_kg:mass, inverse_inertia,
             center, initial_center:center, highest_center_y:center.y, max_contact_correction_m:0.0,
             rotation, velocity:impulse/mass, momentum:lever.cross(impulse),
-            launched_energy_j:energy, settled:false, quiet_s:0.0 })
+            launched_energy_j:energy, settled:false, quiet_s:0.0, rest_hull:None, rest_age_s:0.0 })
     }
 
     pub fn model(&self) -> Mat4 {
@@ -276,6 +286,8 @@ impl Body {
         }}
     }
 
+    pub fn quiet_seconds(&self) -> f32 { self.quiet_s }
+
     pub fn advance(&mut self, dt:f32, terrain:&Heightfield, hull_world:Mat4) {
         if !dt.is_finite() || dt<=0.0 {return;}
         let steps=(dt.min(0.1)/SUBSTEP_S).ceil().max(1.0) as usize;
@@ -285,8 +297,13 @@ impl Body {
         let hull=source.hull.source_contacts(&models);
         let bounds=world_bounds(source.hull_bounds,hull_world);
         if self.settled {
-            if self.supported_at_rest(terrain,&hull,hull_world) {return;}
-            self.settled=false;self.quiet_s=0.0;
+            self.rest_age_s+=dt;
+            // The same pose within a millimetre and a milliradian (a dead hull's model is
+            // rebuilt each frame from its springs; bit-equality would miss the cache).
+            let same_pose=self.rest_hull.is_some_and(|h| (0..4).all(|c| (h.col(c)-hull_world.col(c)).abs().max_element()<1.0e-3));
+            if same_pose && self.rest_age_s<REST_RECHECK_S {return;}
+            if self.supported_at_rest(terrain,&hull,hull_world) {self.rest_hull=Some(hull_world);self.rest_age_s=0.0;return;}
+            self.settled=false;self.quiet_s=0.0;self.rest_hull=None;
         }
         for _ in 0..steps {
             let previous=self.model();
@@ -412,6 +429,28 @@ mod tests {
         Heightfield {res:2,spacing:100.0,heights:vec![height;4],min_h:height,max_h:height,
             openings:Default::default(),detail:None}
     }
+    /// A settled body keeps the hull pose it was certified at rest against and does not repeat
+    /// the test while that pose holds (the test swept every surface sample against the hull
+    /// every frame, 7 ms an update after a kill); a moved hull, or two seconds, re-certify it.
+    #[test]
+    fn a_settled_body_repeats_its_rest_test_only_when_the_hull_moves_or_two_seconds_pass() {
+        let buried_hull=Mat4::from_translation(Vec3::Y*-10.0);
+        let mut face=sleeping_fixture(Quat::IDENTITY,false);
+        assert!(face.rest_hull.is_none());
+        face.advance(1.0/60.0,&ground(0.0),buried_hull);
+        assert!(face.settled&&face.rest_hull==Some(buried_hull),"certified at rest against the hull's pose");
+        let position=face.center;
+        for _ in 0..30 {face.advance(1.0/60.0,&ground(0.0),buried_hull);}
+        assert!(face.settled&&face.center==position&&face.rest_age_s>0.4,"held without a re-test: age {}",face.rest_age_s);
+        // The hull moves: the test runs again against the new pose.
+        let moved=Mat4::from_translation(Vec3::Y*-11.0);
+        face.advance(1.0/60.0,&ground(0.0),moved);
+        assert!(face.settled&&face.rest_hull==Some(moved)&&face.rest_age_s==0.0);
+        // Two seconds on, it re-certifies even with the pose unchanged.
+        for _ in 0..130 {face.advance(1.0/60.0,&ground(0.0),moved);}
+        assert!(face.settled&&face.rest_age_s<0.3,"re-certified after REST_RECHECK_S: age {}",face.rest_age_s);
+    }
+
     #[test]
     fn a_source_corner_cannot_stay_asleep_but_a_supported_face_can() {
         let buried_hull=Mat4::from_translation(Vec3::Y*-10.0);
@@ -605,6 +644,7 @@ impl Body {
             launched_energy_j:state.take("launched_energy_j")?,
             settled:state.take("settled")?,
             quiet_s:state.take("quiet_s")?,
+            rest_hull:None, rest_age_s:0.0,
         };
         state.finish()?;
         anyhow::ensure!(body.center.is_finite()&&body.velocity.is_finite()&&body.rotation.is_finite()&&body.mass_kg>0.0,"invalid detached turret state");

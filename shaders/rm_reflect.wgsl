@@ -130,7 +130,8 @@ fn fs(in: VsOut) -> ReflectOut {
     let g1 = textureLoad(g1_tex, pixel, 0);
     let g2 = textureLoad(g2_tex, pixel, 0);
     let roughness = g1.w;
-    let metallic = g2.w;
+    // A leaf (kind 5) carries its leaf area above in g2.w, not a metallic factor.
+    let metallic = select(g2.w, 0.0, g0.a > 4.5 && g0.a < 6.5);
     // Only glossy surfaces take a marched reflection: a rough lobe is a blur the few marched rays
     // drew as noise (the gun's oiled steel round the gunner's eyepiece, 2026-10-28); the shade
     // pass's split-sum environment term carries it instead. Faded out over roughness 0.2..0.5.

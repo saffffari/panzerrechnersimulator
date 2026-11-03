@@ -453,6 +453,9 @@ struct EditorWorld {
     /// Initial orbit point. Campaign acts focus their Spawn; the generated yard focuses its
     /// geometric center so the first frame actually contains asset rows.
     editor_focus: Vec3,
+    /// The map's own home view (`manifest_edits.json` `"editor_home": {"eye": [x,y,z], "target":
+    /// [x,y,z]}`), the Home view button's and the first frame's camera when present.
+    home_view: Option<(Vec3, Vec3)>,
     /// The asset yard is generated from the live library index instead of a campaign manifest.
     /// It is intentionally read-only: placements describe the catalog itself, not authored map
     /// changes that should be diffed back into `manifest_edits.json`.
@@ -511,7 +514,13 @@ struct EditorAtmosphere {
 
 impl EditorAtmosphere {
     fn from_manifest(manifest: &crate::act_manifest::ActManifest) -> Self {
-        Self::from_identity(manifest.act_id, manifest.seed)
+        let mut atmosphere = Self::from_identity(manifest.act_id, manifest.seed);
+        // A map states its own season, as the game reads it (`Game::build`): a spring course in
+        // the winter act's slot has no snowfall.
+        if manifest.value()["terrain"]["grass_season"].as_str() == Some("spring") {
+            atmosphere.season = crate::world::Season::Spring;
+        }
+        atmosphere
     }
 
     fn from_identity(act_id: u8, seed: u32) -> Self {
@@ -820,6 +829,7 @@ impl EditorWorld {
             texture: Some(terrain.texture.to_string_lossy().into_owned()),
             spawn,
             editor_focus: spawn + Vec3::Y * 2.0,
+            home_view: None,
             is_asset_yard: false,
         };
         w.apply_edits(manifest.edits())?;
@@ -830,6 +840,13 @@ impl EditorWorld {
             .map(|marker| marker.pos)
             .ok_or_else(|| anyhow::anyhow!("effective manifest has no Spawn marker"))?;
         w.editor_focus = w.spawn + Vec3::Y * 2.0;
+        w.home_view = manifest.edits().and_then(|e| e.get("editor_home")).and_then(|h| {
+            let v = |k: &str| h[k].as_array().filter(|a| a.len() == 3).and_then(|a| {
+                let p: Vec<f32> = a.iter().filter_map(|x| x.as_f64().map(|x| x as f32)).collect();
+                (p.len() == 3 && p.iter().all(|x| x.is_finite())).then(|| Vec3::new(p[0], p[1], p[2]))
+            });
+            Some((v("eye")?, v("target")?)).filter(|(eye, target)| eye.distance(*target) > 0.1)
+        });
         Ok(w)
     }
 
@@ -914,6 +931,7 @@ impl EditorWorld {
             texture: Some("assets/terrain/act2/act2_window_tci.png".to_owned()),
             spawn: yard.spawn_position,
             editor_focus: yard.camera_target,
+            home_view: None,
             is_asset_yard: true,
         })
     }
@@ -949,7 +967,7 @@ impl EditorWorld {
             procedural_layers: Vec::new(), surface_zones: Vec::new(), scene_recipes: Vec::new(),
             infrastructure_runs: Vec::new(), heights: vec![0.0; 17 * 17], res: 17, spacing: 4.0,
             terrain_hash: 0, terrain_source: PathBuf::from("generated:isolated-tank-floor"),
-            texture: None, spawn: Vec3::ZERO, editor_focus: Vec3::new(0.0, 1.5, 0.0),
+            texture: None, spawn: Vec3::ZERO, editor_focus: Vec3::new(0.0, 1.5, 0.0), home_view: None,
             is_asset_yard: false,
         })
     }
@@ -2661,6 +2679,10 @@ struct EditorState {
     /// Camera embodiment is separate from transform-tool state: F toggles Orbit/Walk while F8
     /// enters or leaves the live Tiger without disabling selection and placement tools.
     view_mode: crate::editor_navigation::EditorViewMode,
+    /// The Haze button: the preview drawn without fog until pressed again (never saved).
+    haze_off: bool,
+    /// The Render panel is open (`RENDER_ROWS`).
+    render_panel: bool,
     orbit_camera: crate::editor_navigation::OrbitCameraState,
     walk_camera: crate::editor_navigation::GroundedWalkState,
     tiger_seat: crate::editor_navigation::EditorSeat,
@@ -2835,20 +2857,38 @@ const SCENE_CORE_SLOT: usize = 3; // cyan square = samples carried by the captur
 const SCENE_APRON_SLOT: usize = 4; // amber square = outer edge of the procedural stitch band
 const TIGER_SLOTS: [usize; 3] = [5, 6, 7]; // articulated editor-preview hull / turret / gun
 
-const EDITOR_TOOLBAR_LABELS: [&str; 8] = ["Orbit", "Walk", "Inside", "Assets", "Lighting", "Save", "Play", "Home view"];
+const EDITOR_TOOLBAR_LABELS: [&str; 10] = ["Orbit", "Walk", "Inside", "Assets", "Lighting", "Save", "Play", "Home view", "Haze", "Render"];
+const EDITOR_TOOLBAR_STEP: f32 = 0.098;
+const EDITOR_TOOLBAR_WIDTH: f32 = 0.092;
+
+/// The Render panel: the display's reproduction settings, adjustable live in the editor. The
+/// look, grade, dither and retro are the preview's own (not saved); fog, cloud and the sun's
+/// time are the map's authored lighting and are saved with F5.
+const RENDER_ROWS: [&str; 10] = ["Look", "Exposure", "Saturation", "Warmth", "Gamma", "Dither pattern",
+    "Retro strength", "Fog (map)", "Cloud cover (map)", "Sun time (map)"];
+const RENDER_LOOKS: [(f32, &str); 7] = [(0.0, "standard"), (6.0, "deltaP real"), (1.0, "deltaP"), (5.0, "deltaP tinted"),
+    (4.0, "pastel"), (2.0, "PICO-8"), (3.0, "deltaP raw")];
+const RENDER_PANEL: [f32; 4] = [0.70, 0.30, 0.29, 0.042];   // x, y top, width, row height
+fn render_panel_hit(cursor: [f32; 2]) -> Option<(usize, f32)> {
+    let [x, y, w, h] = RENDER_PANEL;
+    if cursor[0] < x || cursor[0] > x + w || cursor[1] < y { return None; }
+    let row = ((cursor[1] - y) / h) as usize;
+    (row < RENDER_ROWS.len()).then(|| (row, if cursor[0] < x + w * 0.5 { -1.0 } else { 1.0 }))
+}
 fn editor_toolbar_hit(cursor: [f32; 2]) -> Option<usize> {
     if !(0.88..=0.93).contains(&cursor[1]) { return None; }
-    (0..8).find(|i| {
-        let x = 0.01 + *i as f32 * 0.123;
-        (x..=x + 0.115).contains(&cursor[0])
+    (0..EDITOR_TOOLBAR_LABELS.len()).find(|i| {
+        let x = 0.01 + *i as f32 * EDITOR_TOOLBAR_STEP;
+        (x..=x + EDITOR_TOOLBAR_WIDTH).contains(&cursor[0])
     })
 }
-fn draw_editor_toolbar(renderer: &mut Renderer, walkthrough: bool) {
+fn draw_editor_toolbar(renderer: &mut Renderer, walkthrough: bool, haze_off: bool) {
     for (i, label) in EDITOR_TOOLBAR_LABELS.iter().enumerate() {
-        let x = 0.01 + i as f32 * 0.123;
-        renderer.fill_rect(x, 0.88, 0.115, 0.05, if i == 6 { [0.14, 0.28, 0.19, 0.94] } else { [0.055, 0.065, 0.075, 0.94] });
-        renderer.draw_text(if i == 6 && walkthrough { "Stop" } else { label },
-            x + 0.0575, 0.892, 0.025, [0.94, 0.93, 0.85, 1.0], Align::Center);
+        let x = 0.01 + i as f32 * EDITOR_TOOLBAR_STEP;
+        let fill = if i == 6 || (i == 8 && haze_off) { [0.14, 0.28, 0.19, 0.94] } else { [0.055, 0.065, 0.075, 0.94] };
+        renderer.fill_rect(x, 0.88, EDITOR_TOOLBAR_WIDTH, 0.05, fill);
+        let text = match i { 6 if walkthrough => "Stop", 8 if haze_off => "Haze off", _ => label };
+        renderer.draw_text(text, x + EDITOR_TOOLBAR_WIDTH * 0.5, 0.892, 0.025, [0.94, 0.93, 0.85, 1.0], Align::Center);
     }
 }
 
@@ -2884,6 +2924,27 @@ fn load_editor_asset(path: &str) -> anyhow::Result<CpuMesh> {
 /// Build a renderer for the world: terrain + selection marker as scene meshes, every manifest GLB
 /// as one immutable prototype, and its placements as bounded pages. Empty assets retain a prototype
 /// but need no dummy renderer batch; the first editor placement appends a live page slot.
+fn editor_buildings(device: &wgpu::Device, queue: &wgpu::Queue, r: &mut Renderer, world: &EditorWorld)
+    -> anyhow::Result<usize> {
+    let manifest = crate::act_manifest::ActManifest::load(&world.manifest_path)?;
+    let placements = manifest.building_placements();
+    if placements.is_empty() { return Ok(0); }
+    let hf = world.heightfield();
+    let mut runtimes = Vec::with_capacity(placements.len());
+    for placement in placements {
+        let blueprint = crate::building_runtime::blueprint_for_placement(
+            placement, crate::building_runtime::BlueprintSource::Grammar)?;
+        runtimes.push(crate::building_runtime::BuildingRuntime::from_placement(
+            blueprint, placement, hf.height_at(placement.x, placement.z))?);
+    }
+    let mut set = crate::building_set::BuildingSet::new(runtimes)?;
+    set.init_rubble(&|xz: Vec2| hf.height_at(xz.x, xz.y));
+    let mut cache = crate::building_runtime::KitMeshCache::default();
+    let plan = crate::building_render::plan(&set, &mut cache)?;
+    crate::building_render::register(r, device, queue, &plan)?;
+    Ok(placements.len())
+}
+
 fn build_world_renderer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -2927,6 +2988,11 @@ fn build_world_renderer(
     // Use the exact campaign atmosphere path: Act 1 edits under active winter weather, while the
     // homeland acts keep their authored overcast profiles and remain precipitation-free.
     world.atmosphere.apply(&mut r);
+    // The map's low cloud and mist banks (`low_clouds.rs`): media of the raymarch backend, so the
+    // editor shows them when launched with KESSEL_RENDERER=raymarch (the game's backend).
+    if world.garage.is_none() && !world.is_asset_yard {
+        r.low_clouds = crate::low_clouds::for_manifest(&world.manifest_path, world.res, world.spacing, &world.heights);
+    }
     if world.garage.is_some() {
         r.fog_density = 0.0;
         r.storm = 0.0;
@@ -3036,6 +3102,24 @@ fn build_world_renderer(
         }
         *mb = idx;
     }
+    // A declared river and its bridges (`river_crossings`), as the game installs them.
+    if world.garage.is_none() && !world.is_asset_yard {
+        match crate::act_manifest::ActManifest::load(&world.manifest_path)
+            .and_then(|m| crate::game::declared_river_meshes(&m)) {
+            Ok(meshes) => for mesh in meshes { r.add_instanced(device, queue, &mesh, &[Mat4::IDENTITY]); },
+            Err(error) => eprintln!("[edit] river not drawn: {error:#}"),
+        }
+    }
+    // The revision's building records, drawn as the game draws them (grammar blueprints on the
+    // terrain, their conditions' rubble), so a town can be judged while it is edited. Cellars are
+    // not cut in the editor's terrain.
+    if world.garage.is_none() && !world.is_asset_yard {
+        match editor_buildings(device, queue, &mut r, world) {
+            Ok(0) => {}
+            Ok(n) => println!("[edit] {n} building records drawn from the grammar"),
+            Err(error) => eprintln!("[edit] building records not drawn: {error:#}"),
+        }
+    }
     let (prototypes, buffers, batches, insts) = r.instanced_paging_stats();
     let (spatial_cells, spatial_refs, spatial_fallbacks) = r.instanced_spatial_stats();
     println!(
@@ -3141,6 +3225,8 @@ impl EditorState {
             tiger,
             drive_hf,
             view_mode: crate::editor_navigation::EditorViewMode::Orbit,
+            haze_off: false,
+            render_panel: false,
             orbit_camera,
             walk_camera,
             tiger_seat: initial_seat,
@@ -3636,6 +3722,15 @@ impl EditorState {
             5 if !self.walkthrough => { if let Err(error) = self.save_document() { self.status = format!("Save failed: {error:#}"); } },
             6 => { if let Err(error) = self.play_document() { self.status = format!("Play failed: {error:#}"); } },
             7 => { self.orbit_camera = initial_editor_orbit(&self.world); self.view_mode = EditorViewMode::Orbit; self.walkthrough = false; },
+            8 => {
+                // A look without the haze for a moment: the preview only, never the document.
+                self.haze_off = !self.haze_off;
+                if !self.haze_off {
+                    if self.world.lighting.enabled { self.apply_lighting_preview(); } else { self.restore_campaign_lighting_preview(); }
+                }
+                self.status = if self.haze_off { "Haze off (preview only; the map keeps its fog)".into() } else { "Haze back on".into() };
+            },
+            9 => { self.render_panel = !self.render_panel; },
             _ => {}
         }
         self.sync_editor_pointer(keys);
@@ -5601,6 +5696,87 @@ impl EditorState {
     /// Looking through a port/hatch still targets the world, as do story silhouettes and every
     /// editor-native tool. The same embodied seat camera can therefore author both spaces without
     /// an easy-to-forget global target toggle.
+    fn render_row_value(&self, row: usize) -> String {
+        let r = &self.renderer;
+        let l = &self.world.lighting;
+        match row {
+            0 => RENDER_LOOKS.iter().find(|(v, _)| (*v - r.look).abs() < 0.1).map_or("?".into(), |(_, n)| (*n).into()),
+            1 => format!("{:+.2} EV", r.display_grade[0].max(1e-4).log2()),
+            2 => format!("{:.2}", r.display_grade[1]),
+            3 => format!("{:+.2}", r.display_grade[2]),
+            4 => format!("{:.2}", r.display_grade[3]),
+            5 => ["screen Bayer4", "blue noise", "sphere Bayer8", "screen Bayer8"][(r.display_dither_pattern.round() as usize).min(3)].into(),
+            6 => format!("{:.1}", r.master_retro),
+            7 => format!("{:.4}", l.fog_density),
+            8 => format!("{:.2}", l.overcast),
+            _ => l.utc.unwrap_or(r.sky_clock.now()).to_iso(),
+        }
+    }
+
+    /// One step of a Render panel row, down (-1) or up (+1).
+    fn adjust_render(&mut self, row: usize, dir: f32) {
+        let r = &mut self.renderer;
+        match row {
+            0 => {
+                let i = RENDER_LOOKS.iter().position(|(v, _)| (*v - r.look).abs() < 0.1).unwrap_or(0) as i32;
+                r.look = RENDER_LOOKS[(i + dir as i32).rem_euclid(RENDER_LOOKS.len() as i32) as usize].0;
+            }
+            1 => r.display_grade[0] = (r.display_grade[0] * 2f32.powf(0.25 * dir)).clamp(1.0 / 16.0, 16.0),
+            2 => r.display_grade[1] = (r.display_grade[1] + 0.05 * dir).clamp(0.0, 2.0),
+            3 => r.display_grade[2] = (r.display_grade[2] + 0.05 * dir).clamp(-1.0, 1.0),
+            4 => r.display_grade[3] = (r.display_grade[3] + 0.05 * dir).clamp(0.5, 2.0),
+            5 => r.display_dither_pattern = (r.display_dither_pattern + dir).rem_euclid(4.0),
+            6 => r.master_retro = (r.master_retro + 0.1 * dir).clamp(0.0, 1.0),
+            7 | 8 => {
+                if !self.world.lighting.enabled { self.select_environment_lighting(); }
+                let l = &mut self.world.lighting;
+                if row == 7 { l.fog_density = (l.fog_density * 1.25f32.powf(dir) + if dir > 0.0 { 0.0001 } else { 0.0 }).clamp(0.0, 0.25); }
+                else { l.overcast = (l.overcast + 0.05 * dir).clamp(0.0, 1.0); }
+                self.apply_lighting_preview();
+                self.dirty = true;
+            }
+            _ => { self.shift_environment_clock(1800.0 * dir as f64); }
+        }
+        self.status = format!("{}: {}", RENDER_ROWS[row], self.render_row_value(row));
+    }
+
+    fn draw_render_panel(&mut self) {
+        let [x, y, w, h] = RENDER_PANEL;
+        self.renderer.fill_rect(x - 0.005, y - 0.05, w + 0.01, h * RENDER_ROWS.len() as f32 + 0.058, [0.04, 0.05, 0.06, 0.92]);
+        self.renderer.draw_text("RENDER   left half  -    right half  +", x + w * 0.5, y - 0.04, 0.02, [0.8, 0.8, 0.72, 1.0], Align::Center);
+        for (row, label) in RENDER_ROWS.iter().enumerate() {
+            let value = self.render_row_value(row);
+            let ry = y + row as f32 * h;
+            self.renderer.fill_rect(x, ry + 0.003, w, h - 0.006, [0.08, 0.10, 0.12, 0.95]);
+            self.renderer.draw_text(label, x + 0.01, ry + 0.01, 0.021, [0.94, 0.93, 0.85, 1.0], Align::Left);
+            self.renderer.draw_text(&value, x + w - 0.01, ry + 0.01, 0.021, [0.98, 0.84, 0.52, 1.0], Align::Right);
+        }
+    }
+
+    /// Space: orbit about the selection (placements, else a marker, light or sound), or, with
+    /// nothing selected, about the most recently dropped placement.
+    fn focus_selection(&mut self) {
+        let live = |i: &usize| self.world.placements.get(*i).filter(|p| !p.deleted).map(|p| p.pos);
+        let picked: Vec<Vec3> = self.sel.iter().filter_map(live).collect();
+        let target = if !picked.is_empty() {
+            Some(picked.iter().copied().sum::<Vec3>() / picked.len() as f32)
+        } else if let Some(m) = self.sel_marker.and_then(|i| self.world.markers.get(i)) {
+            Some(m.pos)
+        } else if let Some(l) = self.sel_light.and_then(|i| self.world.authored_lights.get(i)) {
+            Some(l.position)
+        } else {
+            (self.world.base_count..self.world.placements.len()).rev().find_map(|i| live(&i))
+        };
+        let Some(target) = target else {
+            self.status = "Nothing selected or dropped to focus on".into();
+            return;
+        };
+        let spread = picked.iter().map(|p| p.distance(target)).fold(0.0f32, f32::max);
+        self.orbit_camera.pivot = target + Vec3::Y * 1.0;
+        self.orbit_camera.set_distance((spread * 2.5 + 14.0).clamp(6.0, 400.0));
+        self.status = format!("Focus ({:.0}, {:.0}, {:.0})", target.x, target.y, target.z);
+    }
+
     fn place_library_asset_for_view(&mut self, lib_idx: usize) {
         if self.walkthrough { return; }
         if self.world.garage.is_some() && self.browser.lib.get(lib_idx).is_some_and(|entry|
@@ -6167,7 +6343,9 @@ impl EditorState {
         match self.view_mode {
             EditorViewMode::Orbit => {
                 if camera_mouse {
-                    if keys.shift {
+                    // Middle drag pans, right drag orbits (and Shift with any drag pans).
+                    let middle = keys.look_buttons & 1 != 0;
+                    if keys.shift || middle {
                         let scale = self.orbit_camera.distance * 0.0025;
                         self.orbit_camera
                             .pan(Vec2::new(-keys.dx * scale, keys.dy * scale));
@@ -6193,7 +6371,7 @@ impl EditorState {
                 if keys.a {
                     pan -= right;
                 }
-                if keys.e || keys.space {
+                if keys.e {
                     pan += Vec3::Y;
                 }
                 if keys.q || keys.ctrl {
@@ -6746,6 +6924,7 @@ impl EditorState {
         }));
         let target = frame.as_ref().map(|frame| &frame.texture).or(review_target.as_ref()).unwrap();
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        if self.haze_off { self.renderer.fog_density = 0.0; }
         self.renderer
             .render_to_surface(&self.device, &self.queue, &view, self.config.format);
 
@@ -6925,7 +7104,8 @@ impl EditorState {
             Align::Left,
         );
         if !self.browser.open {
-            draw_editor_toolbar(&mut self.renderer, self.walkthrough);
+            draw_editor_toolbar(&mut self.renderer, self.walkthrough, self.haze_off);
+            if self.render_panel { self.draw_render_panel(); }
         }
         if !self.status.is_empty() {
             self.renderer
@@ -7228,6 +7408,12 @@ impl ApplicationHandler for EditorApp {
                                 st.toolbar_action(index, &mut self.keys);
                                 return;
                             }
+                            if st.render_panel {
+                                if let Some((row, dir)) = render_panel_hit(st.cursor) {
+                                    st.adjust_render(row, dir);
+                                    return;
+                                }
+                            }
                         }
                         if st.walkthrough { return; }
                         let over_panel = st.browser.contains(st.cursor);
@@ -7511,7 +7697,12 @@ impl ApplicationHandler for EditorApp {
                     KeyCode::ArrowRight => self.keys.arrow_right = down,
                     KeyCode::ArrowUp => self.keys.arrow_up = down,
                     KeyCode::ArrowDown => self.keys.arrow_down = down,
-                    KeyCode::Space => self.keys.space = down,
+                    KeyCode::Space => {
+                        self.keys.space = down;
+                        if pressed && st.view_mode == crate::editor_navigation::EditorViewMode::Orbit {
+                            st.focus_selection();
+                        }
+                    }
                     KeyCode::ControlLeft | KeyCode::ControlRight => self.keys.ctrl = down,
                     KeyCode::ShiftLeft | KeyCode::ShiftRight => self.keys.shift = down,
                     _ => {}
@@ -8065,6 +8256,7 @@ impl ApplicationHandler for EditorApp {
                         }
                     }
                     KeyCode::KeyV => {
+                        let placed_before = st.world.placements.len();
                         if let Some(lib_idx) = st.browser.selected {
                             st.place_library_asset_for_view(lib_idx);
                         } else if st
@@ -8098,6 +8290,16 @@ impl ApplicationHandler for EditorApp {
                             }
                         } else {
                             st.status = "palette asset has no mesh".into();
+                        }
+                        // Shift+V: the new object gets a random turn about the vertical axis
+                        // (the project's counter-seeded hash, not an RNG).
+                        if self.keys.shift && st.world.placements.len() > placed_before {
+                            let n = st.world.placements.len() as u32;
+                            let h = n.wrapping_mul(2654435761) ^ (st.renderer.time.to_bits()).wrapping_mul(40503);
+                            let h = (h ^ (h >> 15)).wrapping_mul(2246822519);
+                            let last = st.world.placements.len() - 1;
+                            st.world.placements[last].rot_deg = (h >> 8) as f32 / (1u32 << 24) as f32 * 360.0;
+                            st.refresh_asset(st.world.placements[last].asset);
                         }
                     }
                     KeyCode::F5 | KeyCode::F6 | KeyCode::F7 | KeyCode::F10
@@ -8302,19 +8504,20 @@ fn initial_editor_orbit(world: &EditorWorld) -> crate::editor_navigation::OrbitC
         world.editor_focus,
         if world.is_asset_yard { 135.0 } else if world.garage.is_some() { 10.0 } else { 22.0 },
     );
-    // A project launcher can open an authored composition without changing the game's spawn.
+    // A project launcher can open an authored composition without changing the game's spawn;
+    // else the map's own home view.
     if world.garage.is_none() && !world.is_asset_yard {
-        if let Ok(value) = std::env::var("KESSEL_EDITOR_START_VIEW") {
+        let launcher = std::env::var("KESSEL_EDITOR_START_VIEW").ok().and_then(|value| {
             let values: Vec<f32> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
-            if values.len() == 6 && values.iter().all(|v| v.is_finite()) {
-                let eye=Vec3::new(values[0],values[1],values[2]);
-                let target=Vec3::new(values[3],values[4],values[5]);
-                if eye.distance(target)>0.1 {
-                    let mut camera=crate::camera::Camera::new(16.0/9.0);
-                    camera.set_forward(target-eye);
-                    orbit.pivot=target;orbit.set_distance(eye.distance(target));
-                    orbit.yaw=camera.yaw;orbit.pitch=camera.pitch;
-                }
+            (values.len() == 6 && values.iter().all(|v| v.is_finite()))
+                .then(|| (Vec3::new(values[0],values[1],values[2]), Vec3::new(values[3],values[4],values[5])))
+        });
+        if let Some((eye, target)) = launcher.or(world.home_view) {
+            if eye.distance(target)>0.1 {
+                let mut camera=crate::camera::Camera::new(16.0/9.0);
+                camera.set_forward(target-eye);
+                orbit.pivot=target;orbit.set_distance(eye.distance(target));
+                orbit.yaw=camera.yaw;orbit.pitch=camera.pitch;
             }
         }
     }
@@ -8322,6 +8525,12 @@ fn initial_editor_orbit(world: &EditorWorld) -> crate::editor_navigation::OrbitC
 }
 
 pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
+    // The editor previews with the game's renderer: the raymarch backend integrates the media
+    // through its froxel grid, where the old physical backend's sampled fog shows as blocky noise
+    // at a low internal grid. KESSEL_RENDERER still chooses another backend explicitly.
+    if std::env::var_os("KESSEL_RENDERER").is_none() {
+        std::env::set_var("KESSEL_RENDERER", "raymarch");
+    }
     let garage_id = crate::tank_editor_scene::TankAssetId::parse_arg(arg).ok();
     let asset_yard = matches!(
         arg.to_ascii_lowercase().as_str(),
@@ -8400,8 +8609,15 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
             b.draw(&device, &queue, &mut r, w as f32 / h as f32, usize::MAX);
             return r.render_to_png_hud(&device, &queue, out, w, h);
         }
+        // KESSEL_EDITOR_SHOT_FRAMES=n: render n frames first (the raymarch backend's sky cache
+        // and froxel histories converge over frames; one frame shows a sixteenth of the sky).
+        let settle: u32 = std::env::var("KESSEL_EDITOR_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        for _ in 0..settle.min(600) {
+            r.time += 1.0 / 60.0;
+            r.render_offscreen_frame(&device, &queue)?;
+        }
         r.ui_reset();
-        draw_editor_toolbar(&mut r, false);
+        draw_editor_toolbar(&mut r, false, false);
         r.draw_text_bold(world.garage.as_ref().map(|g| g.tank.descriptor().label).unwrap_or("ACT WORLD EDITOR"),
             0.02, 0.025, 0.035, [0.94, 0.93, 0.85, 1.0], Align::Left);
         return r.render_to_png_hud(&device, &queue, out, w, h);
@@ -8829,9 +9045,13 @@ mod tests {
     #[test]
     fn tracked_campaign_manifests_compile_losslessly_into_bounded_pages() {
         for (act_id, expected_prototypes, expected_pages, expected_instances) in [
-            (1, 50, 580, 13_014),
-            (2, 54, 1_938, 21_867),
-            (3, 51, 1_336, 37_685),
+            // Updated when the warscape layer landed: the acts gained authored war material
+            // (corpse poses, wrecks, obstacles, burned-village and supply-column props), so both
+            // the prototype count and the placement count rose. The invariants that matter are
+            // asserted separately below: no placement is lost, and the acts stay spatially paged.
+            (1, 83, 1_656, 18_076),
+            (2, 84, 3_208, 27_181),
+            (3, 81, 2_362, 42_684),
         ] {
             let path = crate::act_manifest::path_for_act(act_id);
             let raw = std::fs::read_to_string(&path).expect("tracked manifest is readable");

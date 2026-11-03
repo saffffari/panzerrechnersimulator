@@ -1748,6 +1748,109 @@ through the medium's phase. The stochastic rays of a compartment surface stop at
 Named approximations and the measurement are in the ledger (docs/PHYSICAL_TRUTH_AUDIT.md,
 "Daylight through the ports").
 
+## Low cloud and mist banks inside the map (2026-11-02)
+
+The owner in the world editor: "the volumetric clouds don't appear on the world plane we need them
+to be much smaller and lower like WITHIN the map player moves in". The cloud deck
+(`physical_environment.rs`, the sky cache, `rm_cloud_shadow.wgsl`) is an atmospheric layer
+kilometres up; nothing cloud-like drifted through the space the player drives in.
+
+**Data.** A map authors a `low_clouds` block in its `manifest_edits.json` (`src/low_clouds.rs`;
+absent, `"enabled": false` or a count of 0: no banks, so existing maps are unchanged; the
+editor's F5 save keeps unknown top-level keys, so the block survives a save):
+
+```json
+"low_clouds": {"seed": 11, "count": 24, "area": [-1300, -800, 1300, 800],
+  "base_m": [0, 60], "size_m": [50, 260], "depth_m": [15, 70],
+  "lwc_g_m3": [0.08, 0.3], "droplet_radius_um": 8, "drift": 1.0}
+```
+
+`count` banks (at most 32), each drawing from the ranges with a counter-seeded hash: its base
+`base_m` above the mean ground under its footprint, its horizontal extent `size_m` (the other
+axis 0.45-1 of it), its vertical extent `depth_m`, its core liquid water content `lwc_g_m3`;
+`droplet_radius_um` is the drops' effective radius; `area` (default: the terrain less 5 %) is
+the rectangle the banks drift through and wrap round, fading over one bank radius at its edge;
+`drift` scales the world wind they move with (1: with the air).
+
+**What is computed.**
+
+- Extinction from the water: sigma = 3 W / (2 rho_w r_e), extinction efficiency 2 for drops much
+  larger than the wavelength (Hansen and Travis 1974; Stephens 1978). 0.2 g/m^3 of 8 um drops is
+  0.0375 /m, a visibility of about 100 m. Typical values: radiation fog 0.05-0.2 g/m^3 at 4-10 um,
+  stratus 0.1-0.5 g/m^3 at 6-12 um (Gultepe et al. 2007).
+- Mie scattering of the drops: albedo 0.9999, asymmetry g 0.85 (Hansen and Travis 1974), through
+  the backend's dense-medium phase (`rm_phase_dense`), neutral in colour.
+- A bank's shape: an ellipsoid flattened 1.6x below its centre (a base), its edge broken by a
+  two-scale value noise (lobes at the bank's own scale, turrets and clefts of about 20 m whatever
+  its size) that churns slowly in the bank's frame; the interior is clumped by the same noise.
+- One transport. The banks are a term of the world medium (`rm_medium.wgsl` `rm_medium_at`,
+  `rm_extinction_at`), lit in the froxel grid like the weather, the smoke and the fire. Every
+  query of the key beam (`rm_visibility.wgsl` `rm_sun_visibility`: surfaces, vehicles, the
+  medium, glass, points, sparks) multiplies in the banks' transmittance toward the key body, so a
+  bank shadows the ground under it, a tank in it, the haze below it and itself. The froxel pass's
+  own six-step march toward the key body leaves the banks out (`rm_march_tau_local`): they are in
+  the visibility already, marched to their far side.
+- The optical-depth grid (`shaders/rm_low_clouds.wgsl`, `KESSEL_GPU_PROFILE` pass
+  `rm-low-cloud-tau`): each frame a 176 x 64 x 176 grid round the eye (704 m across, 4 m texels,
+  from the lowest ground there to the highest bank's top in whole 8 m) holds the banks' optical
+  depth toward the key body (16 samples per crossing), straight up (8) and their extinction; the
+  froxel pass and the shade sample it, outside it they evaluate and march the field themselves.
+  While the grid holds still (the eye within one 4 m texel) it refreshes half its z-slabs a frame,
+  alternating (an update cadence; the banks drift a few centimetres a frame).
+- Multiple scattering, named approximation: the light a bank diffuses is the two-stream
+  transmission of a conservative layer, T = 1 / (1 + 3/4 (1 - g) tau) (Bohren 1987). Under and
+  inside a bank the sky is the sky times T of the optical depth straight up, and the key beam's
+  diffused share (T - exp(-tau)) along the beam, taken through the cloud deck's shadow, is added
+  as isotropic radiance (`rm_low_cloud_diffuse`), for surfaces (`rm_shade.wgsl`) and the medium
+  (`rm_volume.wgsl`). Without it the shadow under a thick bank and its underside would be lit by
+  single scattering alone, far too dark.
+- Beyond the froxel grid's 320 m, `fog_to`'s far segment marches each bank the view ray crosses
+  in six samples (up to eight crossings, taken in entry order), lit the same way, before the
+  weather layer's six-step march.
+- Drift: the banks move with the renderer's world wind times the weather's gust, integrated
+  frame by frame (a step over half a second, a pause or a time cut, carries none).
+
+**The editor.** `panzerrechnersystem edit <manifest>` honours `KESSEL_RENDERER` like the game
+(`Renderer::new` picks the backend): with `KESSEL_RENDERER=raymarch` the editor draws on this
+backend and shows the map's banks (`editor.rs` `build_world_renderer` sets them from the
+manifest's edits; an editor opened from the game's pause menu inherits the game's environment,
+so the demo launcher's raymarch backend carries over). The physical backend (the editor's
+default without the variable) has no low-cloud path: its volume pass is a different integrator,
+and a second implementation would have been a second, unmatched model of the same medium. The
+editor's headless still takes `KESSEL_EDITOR_SHOT_FRAMES=n` (render n frames first, so the
+sky cache and the froxel history converge) and `KESSEL_EDITOR_REVIEW_EYE`.
+
+**Review.** `KESSEL_LOW_CLOUDS_LIST=1` prints every bank (centre, semi-axes, extinction,
+visibility) and the grid's span; `KESSEL_RM_SKIP=4194304` leaves the banks out for the A/B.
+`gfxbench` takes `KESSEL_BENCH_MANIFEST=<manifest.v1.json>` (bench a workshop map) and
+`KESSEL_BENCH_ORBIT=x,y,z` (orbit that point). Test map: a copy of the spring bridge workshop,
+`assets/worldgen/workshops/spring-bridge-clouds-test` (24 banks, overcast 0.12 so the shadows
+read; the owner's workshop is untouched).
+
+**Cost** (4090, 1280x720, `gfxbench day 240` with `KESSEL_GPU_PROFILE=1`, the GPU shared with
+another session's training runs between samples, so read the pass timings, not the frame totals):
+
+| scene | rm-volume | rm-shade | rm-low-cloud-tau |
+| --- | --- | --- | --- |
+| spring bridge, no block (before: base build dcf5cad / after) | 0.344 / 0.345-0.386 | 0.463 / 0.578-0.586 | - |
+| test map, orbit at the spawn, banks off / on | 0.657 / 0.716 | 0.573 / 0.799 | 0.398 |
+| test map, orbit among the banks, banks off / on | 0.722 / 0.814 | 0.490 / 0.771 | 0.411 |
+
+On a map without the block nothing low-cloud runs (every loop takes the count, 0), yet the shade
+pass read about 0.1 ms more than the base build: one clean base sample against three after,
+likely the larger program's register use, not re-measured (the GPU was handed to the owner's
+playtest). About 0.75 ms a frame with banks in view (the grid 0.4 while the orbit keeps moving it, about
+0.3 held still); the first version, which evaluated the banks' noise in every froxel and marched
+them per froxel and per pixel, cost 4.6 ms in the froxel pass alone among the banks.
+
+**Not done, and why.** The game's simulation does not read the banks: AI sight and the
+player's optics agree only through what is rendered (the weather layer has the same gap). The
+banks do not condense, grow or dissipate (no cloud physics); their life is the drift and the
+churn. They do not enter the sky cache: a bank in front of the sky beyond 320 m is the far
+march's six samples a crossing, not a cached texel. Lamps, fires and flashes light the
+banks through the froxel grid like any medium, but without the two-stream diffusion (their light
+scatters once). The shader and physical backends draw no banks.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -1795,6 +1898,12 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   4 km around the eye (clamped beyond); the cloud does not shadow the skylight.
 - Fog banks: a drifting two-scale footprint field times a height profile below a floor altitude
   the weather sets, not a boundary-layer simulation.
+- Low cloud and mist banks (`low_clouds.rs`): authored ellipsoids with an authored noise edge,
+  not cloud physics; extinction from the liquid water and drop radius, Mie albedo and asymmetry
+  of water drops; multiple scattering as the two-stream transmission of a conservative layer
+  (isotropic, no angular structure, none between banks, none for lamps); optical depths and
+  extinction from a 4 m grid round the eye refreshed half a frame at a time while it holds
+  still, interpolated trilinearly; beyond 320 m six samples per bank crossing.
 - Fire parcels are merged grains, not the grains themselves; the froxel grid (4 native pixels) is
   the flame's spatial resolution; embers add the grain detail.
 - Spark and tracer glow in the medium is an aggregate per burst, not per sample.

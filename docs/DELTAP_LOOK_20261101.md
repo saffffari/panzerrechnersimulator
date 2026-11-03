@@ -113,3 +113,35 @@ KESSEL_LOOK=deltap KESSEL_RENDERER=raymarch KESSEL_INTERNAL_RES=1024x576 \
 
 Stills of the first pass are `captures/deltap_look_20261101_*.png` (standard / deltap /
 deltap-pico8 / deltap-raw at the same frame), with the receipt in this document's history.
+
+## Added 2 November 2026 (branch `realism_render_test`): the realism look
+
+- `KESSEL_LOOK=deltap-real` (mode 6): the owner asked for "more contrast, less stylized colour,
+  realism, and rely on the dithering", and preferred the standard display's colour to the deltaP
+  and tinted looks on the same clip. The physical frame's own colour (no palette pull), through
+  AgX with a steeper slope through the log-encoded mid grey (`KESSEL_REAL_CONTRAST`, 1.35 unless
+  set; 1 is AgX as shipped) and a little less saturation after the outset
+  (`KESSEL_REAL_SATURATION`, 0.85), then deltaP's dithered colour with
+  `KESSEL_REAL_STEPS` steps per channel (8 unless set): 3 gives 4 levels per channel, 64 colours;
+  8 gives 9 levels, 729 colours (deltaP's); 31 gives 32 levels, 32,768 (the standard posterize's
+  count, on deltaP's square-root curve and full Bayer amplitude). The crush uniform's appended
+  `real` lane (offset 160; span 176). The demo launcher defaults to it on this branch only.
+- Colour counts of the other looks, for reference: standard 32 levels per channel in display
+  gamma (32,768, the far field fading back toward continuous), deltaP and tinted 9 levels on a
+  square-root curve (729), pastel and PICO-8 a fixed 32.
+- Comparison at 1280x720 on the fea-film turret_ring clip: `ring_realism_compare_1280_20261102.png`
+  and its 3x crop in the owner's captures folder.
+- Blue may take its own step count (`KESSEL_REAL_STEPS=R,G,B`, red and green shared): `7,7,3` is
+  the 8-bit 3-3-2 split (256 colours), `7` the 512 cube, `11,11,4` 720, `15,15,3` 1,024,
+  `15,15,7` 2,048. And a luma/chroma form (`KESSEL_REAL_STEPS=yc:Y:C`, `dp_luma_chroma`): YCoCg
+  of the display value, luma in Y steps on the square-root curve, each chroma axis in C (even)
+  steps so a grey is exactly a level.
+- What the bridge map's matrix showed (`fx-review` part `look_matrix`, 2 November 2026, 66 stills
+  at 5120x2880 in the owner's captures as `fx-fire-sparks-look_matrix2_<grid>_20261102_<view>_<look>_5120.png`):
+  with fewer blue levels than red and green (256, 720, 1,024, 2,048) a grey road breaks into
+  blue and violet dots, and even the equal 512 cube speckles a warm grey because each channel
+  rounds at a different point. The luma/chroma form keeps a true grey grey but not a warm one:
+  at five or nine chroma levels the chroma step is a quarter or an eighth of the range, far
+  coarser than the faint chroma of snow, road and stone, so it dithers into orange and green
+  dots. Low-chroma scenes need either many chroma levels or a continuous chroma; the clean
+  frames are the standard look's 32 levels and the 32,768 real form.

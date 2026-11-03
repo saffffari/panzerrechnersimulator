@@ -604,7 +604,7 @@ impl Game {
                 (at.y, at.y + tank_support::TIGER_STEP_M, true), 3.0, &solids, &rubble).0
         }, |lo,hi| {
             let mut bound=bridge_support_upper_bound(&self.hf,self.campaign_channel,
-                self.theatre.as_ref().map(|t|t.crossings.as_slice()),lo,hi,self.hf.height_upper_bound(lo,hi));
+                self.theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||self.river.as_ref().map(|r|r.crossings.as_slice())),lo,hi,self.hf.height_upper_bound(lo,hi));
             for solid in &solids {
                 if solid.max.y<=at.y+tank_support::TIGER_STEP_M && solid.min.y<at.y+3.0
                     && lo.x<=solid.max.x && hi.x>=solid.min.x && lo.y<=solid.max.z && hi.y>=solid.min.z {

@@ -60,6 +60,16 @@ pub fn varied_beat(points: &[Vec2], seed: u64) -> Vec<Vec2> {
     out
 }
 
+/// The selected course asks for the expedition camp and half-track (`"camp": true` in its
+/// `canyon_course` block): the world is built as the expedition builds it, the camp is sited from
+/// the course's start, and the commander begins on foot at the camp.
+pub fn selected_course_wants_camp() -> bool {
+    let Some((_, path)) = crate::act_manifest::selected_runtime_manifest() else { return false };
+    std::fs::read_to_string(path.with_file_name("manifest_edits.json")).ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|edits| edits[KEY]["camp"].as_bool() == Some(true))
+}
+
 pub fn is_course_manifest(mode: Option<&str>) -> bool {
     mode == Some(AUTHORING_MODE)
 }
@@ -97,6 +107,16 @@ pub struct CourseSpec {
     pub route: Vec<Vec2>,
     pub gun_zones: Vec<GunZone>,
     pub garrison: Vec<Post>,
+    /// `"finish": "mission"`: the run ends when the map's mission sheet is finished, not in the
+    /// goal disc (a take-and-hold map whose goal is a place to defend, not to reach).
+    pub finish_by_mission: bool,
+    /// `"director": false`: no adaptive reinforcements; the only enemies are the course's own
+    /// platoons and the mission's releases.
+    pub director: bool,
+    /// `"opening_platoons": false`: the three opening platoons along the route are not fielded.
+    pub opening_platoons: bool,
+    /// The after-action card's headline on success (`"headline"`).
+    pub headline: &'static str,
 }
 
 fn num(value: &serde_json::Value, what: &str) -> anyhow::Result<f32> {
@@ -167,6 +187,15 @@ pub fn parse(block: &serde_json::Value) -> anyhow::Result<CourseSpec> {
             num(&p[0], "route.x")?, num(&p[1], "route.z")?))).collect::<anyhow::Result<Vec<_>>>())
             .transpose()?.unwrap_or_else(|| vec![start,goal]),
         gun_zones, garrison,
+        finish_by_mission: match block["finish"].as_str() {
+            None | Some("goal") => false,
+            Some("mission") => true,
+            Some(other) => return Err(anyhow!("finish must be \"goal\" or \"mission\", not {other:?}")),
+        },
+        director: block["director"].as_bool().unwrap_or(true),
+        opening_platoons: block["opening_platoons"].as_bool().unwrap_or(true),
+        // A card headline is a few words read once per run; it lives for the program.
+        headline: block["headline"].as_str().map_or("THE RAVINE IS BEHIND YOU", |h| Box::leak(h.to_uppercase().into_boxed_str())),
     })
 }
 
@@ -194,7 +223,7 @@ impl CanyonRun {
     pub fn step(&mut self, dt: f32, tiger: Option<Vec2>) -> bool {
         if self.finished_s.is_some() || self.failed { return false; }
         self.elapsed_s += dt.max(0.0);
-        if tiger.is_some_and(|p| p.distance(self.spec.goal) <= self.spec.goal_radius_m) {
+        if !self.spec.finish_by_mission && tiger.is_some_and(|p| p.distance(self.spec.goal) <= self.spec.goal_radius_m) {
             self.finished_s = Some(self.elapsed_s);
             return true;
         }
@@ -252,6 +281,8 @@ pub enum RunOutcome {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunReport {
     pub outcome: RunOutcome,
+    /// The course's success headline (`CourseSpec::headline`).
+    pub completed_headline: &'static str,
     pub elapsed_s: f32,
     /// Fraction of the route reached (0..1) and the metres that is.
     pub progress: f32,
@@ -275,7 +306,7 @@ pub struct RunReport {
 
 impl RunReport {
     pub fn headline(&self) -> &'static str {
-        match self.outcome { RunOutcome::Completed => "THE RAVINE IS BEHIND YOU", RunOutcome::Lost(_) => "THE RUN IS OVER" }
+        match self.outcome { RunOutcome::Completed => self.completed_headline, RunOutcome::Lost(_) => "THE RUN IS OVER" }
     }
 
     /// The cause line: what ended it, or the time it took.
@@ -318,6 +349,7 @@ impl RunReport {
     pub fn example(won: bool) -> Self {
         Self {
             outcome: if won { RunOutcome::Completed } else { RunOutcome::Lost("Penetration — flank") },
+            completed_headline: "THE RAVINE IS BEHIND YOU",
             elapsed_s: if won { 743.6 } else { 311.2 },
             progress: if won { 1.0 } else { 0.47 },
             distance_m: if won { 4930.0 } else { 2317.0 },
@@ -539,7 +571,7 @@ mod tests {
         let authored = crate::ephemeris::UtcInstant::parse_iso("1943-01-20T12:50:00Z").unwrap();
         assert_eq!(local_clock(authored, 44.5), "15:48");
         let lost = RunReport {
-            outcome: RunOutcome::Lost("Ammunition detonation — turret blown off"),
+            outcome: RunOutcome::Lost("Ammunition detonation — turret blown off"), completed_headline: "THE RAVINE IS BEHIND YOU",
             elapsed_s: 58.3, progress: 0.068, distance_m: 335.0, length_m: 4930.0,
             shots: 1, kills: 1, hits_taken: 2, penetrations_taken: 1, enemies_fielded: 11,
             broken_modules: vec!["main gun", "radio"], wounds: vec![], seed: 7,
@@ -560,7 +592,7 @@ mod tests {
         assert!(lost_rows.len() >= 2 && lost_rows.iter().all(|(_, v)| v.len() <= CARD_VALUE_WIDTH));
         assert!(RunBrief::example().lines()[0].contains("4.9 km"));
         assert!(rows.iter().any(|(k, v)| k == "ATTEMPT" && v.contains("seed 7") && v.contains("15:48")));
-        let won = RunReport { outcome: RunOutcome::Completed, elapsed_s: 612.4, best_s: Some(612.4),
+        let won = RunReport { outcome: RunOutcome::Completed, completed_headline: "THE RAVINE IS BEHIND YOU", elapsed_s: 612.4, best_s: Some(612.4),
             new_best: true, completed_runs: 1, broken_modules: vec![], ..lost.clone() };
         assert_eq!(won.headline(), "THE RAVINE IS BEHIND YOU");
         assert_eq!(won.cause_line(), "10:12.4    NEW BEST");

@@ -37,8 +37,8 @@ fn spark_glow(glow:vec2<f32>)->vec3<f32> {
     let chroma=pow(vec3(650.0)/wavelengths,vec3(5.0))*reference/(exp(vec3(14387769.0)/(wavelengths*kelvin))-vec3(1.0));
     return chroma*mix(5.3,9.9,clamp((kelvin-1500.0)/1300.0,0.0,1.0));
 }
-fn rim_color(initial_kelvin:f32,age:f32)->vec3<f32> {
-    let kelvin=293.0+max(initial_kelvin-293.0,0.0)*exp(-max(age,0.0)/2.5);
+fn rim_color(initial_kelvin:f32,age:f32,tau:f32)->vec3<f32> {
+    let kelvin=293.0+max(initial_kelvin-293.0,0.0)*exp(-max(age,0.0)/max(tau,0.05));
     if(kelvin<700.0){return vec3(0.0);}
     // Three Planck-band ratios give the cooling color; the shared display radiance scale is
     // authored, not a claim of calibrated steel spectral emissivity or full thermal transport.
@@ -216,7 +216,7 @@ const GROUND_QUADRATURE:u32=1000u;
         let area=width*width*0.78539816339*pow(weapon_cam.extent.z/clip.w,2.0)*f32(identity.z*GROUND_QUADRATURE)/f32(identity.y);
         return WeaponOut(position,center,mix(vec3(0.16,0.115,0.075),vec3(0.65,0.72,0.80),parameters.z),area);
     }
-    if(kind==8u){return WeaponOut(position,center,rim_color(parameters.z,t)*weight,0.0);}
+    if(kind==8u){return WeaponOut(position,center,rim_color(parameters.z,t,parameters.w)*weight,0.0);}
     return WeaponOut(position,center,select(weapon_palette(page),spark_glow(glow),streaked)*weight*gain,0.0);
 }
 @vertex fn vs_tracer(@builtin(vertex_index) vertex:u32,

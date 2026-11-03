@@ -31,8 +31,18 @@ fn vs(@builtin(vertex_index) vertex: u32, @location(0) world: vec3<f32>, @locati
     return out;
 }
 
+// The point layer (crush.wgsl rod pooling): a firefly lantern's own radiance at its pixel, the
+// same value fs adds to the frame; every other kind writes nothing here.
 @fragment
-fn fs(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_layer(in: VsOut) -> @location(0) vec4<f32> {
+    if ((in.packed & 0xFu) != 3u) { discard; return vec4(0.0); }
+    return rm_point_shade(in);
+}
+
+@fragment
+fn fs(in: VsOut) -> @location(0) vec4<f32> { return rm_point_shade(in); }
+
+fn rm_point_shade(in: VsOut) -> vec4<f32> {
     let dims = vec2<i32>(textureDimensions(depth_tex));
     let pixel = vec2<i32>(in.position.xy);
     if (any(pixel < vec2(0)) || any(pixel >= dims) || in.position.z >= textureLoad(depth_tex, pixel, 0)) { discard; }
@@ -44,6 +54,13 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let slice = clamp((rm_slice(dist) - 0.5) / fr.vol.z, 0.0, (fr.vol.z - 0.5) / fr.vol.z);
     let transmittance = textureSampleLevel(integrated, linear_samp, vec3(uv, slice), 0.0).a;
     let focal = fr.view_proj[1][1] * fr.res.y * 0.5;
+    if (kind == 3u) {
+        // Firefly lantern (meadow_fauna.rs): a point source of intensity I (lane units, the
+        // packed f32) a few millimetres across, far below a pixel: the pixel's mean radiance is
+        // its irradiance at the eye over the pixel's solid angle, I / d^2 * focal^2.
+        let intensity = bitcast<f32>(in.packed & 0xFFFFFFF0u);
+        return vec4(RM_FIREFLY_LANES * intensity * focal * focal / max(dist * dist, 1e-4) * transmittance, 0.0);
+    }
     if (kind == 2u) {
         // Ember: a 1 cm incandescent grain (one of a flame grain's EMBERS_PER_GRAIN, carrying its
         // share); projected coverage inside the pixel scales its energy. Intensity in 1/128 steps.

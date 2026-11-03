@@ -124,6 +124,9 @@ pub(super) struct SceneEnvironment {
     lights: Vec<AuthoredLight>,
     pub(super) lighting: crate::environment_authoring::LightingTuning,
     clips: HashMap<String, Arc<Clip>>,
+    /// The revision's `low_clouds` block (`low_clouds.rs`) and, once the ground is known, its banks.
+    low_cloud_spec: Option<crate::low_clouds::LowCloudSpec>,
+    low_clouds: Option<Arc<crate::low_clouds::LowCloudField>>,
 }
 
 fn receiver_gains(source: Vec3, listener: Vec3, right: Vec3, gain: f32) -> [f32; 2] {
@@ -181,7 +184,23 @@ impl SceneEnvironment {
             lights,
             lighting: crate::environment_authoring::LightingTuning::from_edits(manifest.edits())?,
             clips: HashMap::new(),
+            low_cloud_spec: crate::low_clouds::LowCloudSpec::from_edits(manifest.edits())?,
+            low_clouds: None,
         })
+    }
+
+    /// The map's low cloud banks over `hf` (built on first use; `None` when the map authors none).
+    pub(super) fn low_clouds(&mut self, hf: &crate::terrain::Heightfield) -> Option<Arc<crate::low_clouds::LowCloudField>> {
+        if self.low_clouds.is_none() {
+            let spec = self.low_cloud_spec.clone()?;
+            let half = (hf.res as f32 - 1.0) * 0.5 * hf.spacing;
+            let field = crate::low_clouds::LowCloudField::new(spec, [-half, -half, half, half], |x, z| hf.grade_at(x, z));
+            println!("[low-clouds] {} banks over [{:.0}, {:.0}]..[{:.0}, {:.0}] m", field.banks.len(),
+                field.area[0], field.area[1], field.area[2], field.area[3]);
+            field.log_banks();
+            self.low_clouds = Some(Arc::new(field));
+        }
+        self.low_clouds.clone()
     }
 
     fn clip(&mut self, asset: &str) -> anyhow::Result<Arc<Clip>> {

@@ -538,8 +538,8 @@ and the skeleton to voxels on one grid and run the simulation on those voxels.
 - **Drawn** (`crew_corpse_tissue.rs`): a dead man with a solved body is drawn only as his cells
   (merged into boxes by colour), including the helmet; the pieces the same way where they are.
   Every page is allocated at start, so a save's retained draw layout keeps its shape.
-- **The pink cabin** (same evening): the hot chips' authored glow was hundreds to tens of
-  thousands of times steel's Planck radiance at their temperatures; their aggregated light washed
-  the closed turret red. Chips now glow and light by Planck at their own temperature.
+- **The pink cabin** (same evening): the hot chips' light outshone the cabin lamps twelvefold
+  after a strike and the eye adapted to it. The main line's fix (the chips' light on their band's
+  Planck visible share, the drawn pages lifted at the owner's call) is the one kept.
 - **Not yet**: the living and the couch renderer keep the old rule; the solved state is not saved;
   parts are rigid segments, so cells of two parts cut into each other at a bent joint.

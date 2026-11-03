@@ -10,11 +10,14 @@
 #   tools/launch_demo_20261101.sh --expedition --order 10 --forward  and the crewed Tiger staged on the approach road,
 #                                                 700 m short of the site, engine running (a disclosed playtest fixture)
 #   tools/launch_demo_20261101.sh --canyon        straight into a fresh Canyon v2 winter run (missions + living crew)
+#   tools/launch_demo_20261101.sh --bridge        the spring bridge test map (v2): take the town's bridge, hold it through two
+#                                                 counterattacks, destroy every tank; camp and half-track west of the town;
+#                                                 16:00 on the crew's clock. --bridge-lite: the render-test density
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
-#   tools/launch_demo_20261101.sh --res 640x360   render grid (default 480x270; 640x360 is an exact 8x on the 5K panel)
-#   tools/launch_demo_20261101.sh --look standard the old display look at 480x270; the default is the deltaP look
-#                                                 (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered colour, pyramid bloom;
-#                                                 the owner's pick, 2026-11-01); --look deltap-pico8 for the 32-colour frame
+#   tools/launch_demo_20261101.sh --res 640x360   render grid (default 1280x720, an exact 4x on the 5K panel)
+#   tools/launch_demo_20261101.sh --look deltap-tinted  the deltaP look (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered
+#                                                 colour, pyramid bloom); the default is the standard display at 1280x720,
+#                                                 the owner's pick of 2026-11-02 over deltaP's colour
 #   tools/launch_demo_20261101.sh --cabin-look pastel  the pastel palette itself inside the hull under the tinted look
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
 #   tools/launch_demo_20261101.sh --canyon --t34s 5 --no-guns
@@ -36,16 +39,22 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-tinted CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+# LOCKED (the owner, 2 November 2026): the realism look at 2,048 colours (16 red, 16 green, 8 blue
+# levels) on the 1024x576 grid, exactly 5x on the 5120x2880 panel. Agents: do not change these
+# defaults without asking the owner to confirm first; --look/--res still choose others per run.
+REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
+BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
+        --bridge) MODE=canyon; COURSE=spring-bridge-v2; BRIDGE=1 ;;
+        --bridge-lite) MODE=canyon; COURSE=spring-bridge-lite-v2; BRIDGE=1 ;;
         --expedition) MODE=expedition ;;
         --menu) MODE=menu ;;
         --windowed) WINDOWED=1 ;;
         --platoon) PLATOON=1 ;;
         --res) RES=$2; RES_SET=1; shift ;;
-        --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;
+        --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;   # standard (default) | deltap-tinted | deltap | pastel ...
         --cabin-look) CABIN_LOOK=$2; shift ;;   # pastel: the palette itself inside the hull (tinted look)
         --seed) SEED=$2; shift ;;
         --t34s) T34S=$2; MODE=canyon; shift ;;
@@ -54,15 +63,18 @@ while (( $# )); do
         --order) ORDER=$2; MODE=expedition; shift ;;
         --forward) FORWARD=1; MODE=expedition ;;
         --day-cycle) DAY_CYCLE=$2; shift ;;
-        --sky-start) SKY_START=$2; shift ;;   # HH:MM on the crew's clock (07:00 default) | dawn | day | dusk | night
+        --sky-start) SKY_START=$2; SKY_SET=1; shift ;;   # HH:MM on the crew's clock (07:00 default) | dawn | day | dusk | night
         --audio-range) AUDIO_RANGE=$2; shift ;;
         --check) CHECK=1 ;;
-        -h|--help) sed -n 2,22p "$0"; exit 0 ;;
+        -h|--help) sed -n 2,40p "$0" | grep "^#"; exit 0 ;;
         *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
     shift
 done
+# The bridge map is a bright May afternoon unless --sky-start says otherwise.
+if (( BRIDGE )) && (( ! SKY_SET )); then SKY_START=16:00; fi
 if [[ -n "$LOOK" && $RES_SET == 0 ]]; then RES=1024x576; fi   # deltaP's grid: 5x on the 5120x2880 panel
+# (The standard look, when chosen with --look standard, uses the Canyon v2 document's dither profile.)
 cd "$ROOT"
 [[ -x "$BINARY" ]] || { printf 'release binary missing: %s (cargo build --release --locked)\n' "$BINARY" >&2; exit 1; }
 for f in assets/tanks/tiger/baked/tiger_hull.glb assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json \
@@ -75,10 +87,10 @@ if (( CHECK )); then exit 0; fi
 
 mkdir -p "$RUNTIME"/{state,cache,config,demo-state} captures
 CONFIG="$RUNTIME/demo-state/graphics${LOOK:+.$LOOK}.v1.json"
-python3 - "$CONFIG" "$RES" "$WINDOWED" <<'PY'
+python3 - "$CONFIG" "$RES" "$WINDOWED" "${LOOK:-standard}" <<'PY'
 import json, sys
 from pathlib import Path
-path, res, windowed = Path(sys.argv[1]), sys.argv[2], sys.argv[3] == '1'
+path, res, windowed, look = Path(sys.argv[1]), sys.argv[2], sys.argv[3] == '1', sys.argv[4]
 w, h = (int(v) for v in res.split('x'))
 if path.exists():
     doc = json.loads(path.read_text())
@@ -92,6 +104,8 @@ else:
            'display': {'width': w, 'height': h, 'palette_levels': 31.0, 'ordered_dither': 1.0,
                        'retro_strength': 1.0, 'ldr_dither': 1.0,
                        'ambient_white_balance': False, 'ambient_white_balance_strength': 1.0}}
+if look == 'standard':
+    doc['display'].update(palette_levels=31.0, ordered_dither=0.55, ldr_dither=0.65, retro_strength=1.0)
 path.write_text(json.dumps(doc, indent=2) + '\n')
 PY
 
@@ -99,8 +113,9 @@ PY
 for v in $(env | grep -o '^KESSEL_[A-Z0-9_]*'); do unset "$v"; done
 export XDG_STATE_HOME="$RUNTIME/state" XDG_CACHE_HOME="$RUNTIME/cache" XDG_CONFIG_HOME="$RUNTIME/config"
 export KESSEL_ASSET_ROOT="$ASSET_ROOT"
-export KESSEL_CANYON_MANIFEST="$ASSET_ROOT/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json"
+export KESSEL_CANYON_MANIFEST="$ASSET_ROOT/assets/worldgen/workshops/${COURSE:-gaea-canyon-run-v2}/manifest.v1.json"
 export KESSEL_RENDERER=raymarch KESSEL_GRAPHICS_PRESET=high KESSEL_INTERNAL_RES="$RES"
+export KESSEL_REAL_STEPS="$REAL_STEPS"   # the locked colour count (top of file)
 export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4 KESSEL_SOURCE_VISIBILITY=maps
 export KESSEL_GRAPHICS_CONFIG="$CONFIG" KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_TRANSPORT_QUALITY=full
 export KESSEL_CANYON_V2=1

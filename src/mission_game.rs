@@ -163,6 +163,8 @@ impl Game {
             route_fraction,
             dead_tanks: self.enemies.iter().zip(&self.enemy_active)
                 .filter(|(e, active)| **active && !e.alive).map(|(e, _)| Vec2::new(e.pos.x, e.pos.z)).collect(),
+            live_tanks: self.enemies.iter().zip(&self.enemy_active)
+                .filter(|(e, active)| **active && e.alive).map(|(e, _)| Vec2::new(e.pos.x, e.pos.z)).collect(),
             silenced_guns: self.at_guns.iter().flatten().filter(|g| !g.working())
                 .map(|g| Vec2::new(g.pos.x, g.pos.z)).collect(),
             live_allies: self.allies.iter().filter(|a| a.tank.alive).map(|a| Vec2::new(a.tank.pos.x, a.tank.pos.z)).collect(),

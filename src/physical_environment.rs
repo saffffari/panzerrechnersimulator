@@ -167,7 +167,11 @@ impl Default for AtmosphereParameters {
                 // the horizon and move against the ground as the tank does.
                 bottom_altitude_m: 450.0,
                 top_altitude_m: 1_300.0,
-                liquid_water_content_kg_m3: 0.25e-3,
+                // 0.38 g/m^3 (0.25 before 2 November 2026): the deck went from 1,300 m thick to
+                // 850 m that day, and this keeps its liquid water path, 0.32 kg/m^2, so the
+                // overcast moonless night stays at the measured 3e-5..2e-4 lx; winter stratus
+                // holds 0.2-0.5 g/m^3.
+                liquid_water_content_kg_m3: 0.38e-3,
                 droplet_effective_radius_m: 10.0e-6,
                 extinction_efficiency: 2.0,
                 water_density_kg_m3: 1_000.0,
@@ -1909,7 +1913,8 @@ mod tests {
         clear.cloud.coverage = 0.0;
         let mut overcast = clear;
         overcast.cloud.coverage = 1.0;
-        let point = DVec3::new(30.0, 1_400.0, -70.0);
+        // Inside the deck (450 to 1,300 m since 2 November 2026; 1,400 m lay in the old one).
+        let point = DVec3::new(30.0, 900.0, -70.0);
         let clear_medium = medium_coefficients_at(&clear, point);
         let cloud_medium = medium_coefficients_at(&overcast, point);
         assert!(cloud_medium.cloud_scattering_m_inv > 0.0);

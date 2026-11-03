@@ -207,7 +207,26 @@ impl Layer {
         }
     }
 }
+/// The spring meadow's simulation half (`meadow.rs`, `meadow_fauna.rs`): the wind grid, the tread
+/// pages mirrored to the GPU, the butterflies and the fireflies. Present only on a spring map on
+/// the raymarch backend, where it replaces the three legacy layers.
+struct SpringMeadow {
+    wind: crate::meadow::WindGrid,
+    mirror: crate::meadow::TrackMirror,
+    cover: std::sync::Arc<crate::meadow::CoverMap>,
+    butterflies: crate::meadow_fauna::Butterflies,
+    wing_batches: Vec<usize>,
+    fireflies: Vec<[f32; 4]>,
+    mean_wind: Vec2,
+    sun_altitude_deg: f32,
+    rain: f32,
+    eye: Vec3,
+    time: f32,
+    cleared_legacy: bool,
+}
+
 pub struct Grass {
+    meadow: Option<Box<SpringMeadow>>,
     layers: [Layer; LAYERS],
     mask: Option<Mask>,
     mask_requested: bool,
@@ -268,6 +287,7 @@ impl Grass {
             Layer::new(batch, kind, winter)
         });
         Self {
+            meadow: None,
             layers,
             mask,
             mask_requested: mask_path.is_some(),
@@ -279,7 +299,53 @@ impl Grass {
             contact_revision: 0,
         }
     }
+    /// A spring map on the raymarch backend: replace the three legacy layers with the GPU meadow
+    /// over every green ground (`meadow.rs`). `terrain` is the manifest's terrain block. Winter
+    /// maps and the other backends keep the legacy grass unchanged.
+    pub fn enable_meadow(&mut self, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
+        manifest: &serde_json::Value, hf: &crate::terrain::Heightfield, half_extent: f32) {
+        if self.winter || !r.meadow_supported() || std::env::var("KESSEL_MEADOW").as_deref() == Ok("0") { return; }
+        let started = std::time::Instant::now();
+        let load = |key: &str| manifest["terrain"][key].as_str().and_then(|p| {
+            crate::resource::resolve(p).and_then(|path| image::open(path).map_err(anyhow::Error::from))
+                .map_err(|e| println!("[meadow] no {key} at {p}: {e}")).ok()
+        }).map(|img| { let rgba = img.into_rgba8(); let n = rgba.width() as usize; (rgba.into_raw(), n) });
+        let material = load("texture");
+        let mask = load("ground_class");
+        if material.is_none() && mask.is_none() { println!("[meadow] no ground material or class: legacy grass"); return; }
+        let river = crate::meadow::River::from_manifest(&manifest["river"]);
+        let cover = std::sync::Arc::new(crate::meadow::build_cover(
+            material.as_ref().map(|(d, n)| (d.as_slice(), *n)), mask.as_ref().map(|(d, n)| (d.as_slice(), *n)),
+            half_extent, river.as_ref(), &|x, z| hf.height_at(x, z)));
+        let presence = cover.rg.chunks(2).map(|c| c[0] as f64).sum::<f64>() / (cover.res * cover.res) as f64 / 255.0;
+        r.install_meadow(device, queue, crate::meadow::Build {
+            heights: hf.heights.clone(), height_res: hf.res, height_spacing: hf.spacing, cover: cover.clone() });
+        let wing_batches = (0..crate::meadow_fauna::BUTTERFLIES.len()).filter_map(|s|
+            r.add_dynamic_instanced_pool(device, queue, &crate::meadow_fauna::wing_mesh(s), 2 * 96)).collect();
+        self.tracks.mark_all_dirty();
+        println!("[meadow] spring meadow over {:.1} % of the map ({}), river {}, built in {:.2} s",
+            presence * 100.0, if material.is_some() { "ground material green" } else { "ground-class red" },
+            if river.is_some() { "excluded" } else { "none" }, started.elapsed().as_secs_f32());
+        self.meadow = Some(Box::new(SpringMeadow {
+            wind: Default::default(), mirror: Default::default(), cover, butterflies: Default::default(), wing_batches,
+            fireflies: Vec::new(), mean_wind: Vec2::ZERO, sun_altitude_deg: 30.0, rain: 0.0, eye: Vec3::ZERO, time: 0.0, cleared_legacy: false,
+        }));
+    }
+
     pub fn stats(&self) -> serde_json::Value {
+        if let Some(m) = &self.meadow {
+            return serde_json::json!({"spring_meadow": true, "tread_pages": m.mirror.slots.len(),
+                "tread_pages_dropped": m.mirror.dropped, "butterflies": m.butterflies.alive.len(),
+                "fireflies_lit": m.fireflies.len(),
+                "nearest_butterfly_m": m.butterflies.alive.iter().map(|b| b.pos.distance(m.eye)).fold(f32::INFINITY, f32::min),
+                "nearest_butterfly": m.butterflies.alive.iter().min_by(|a, b| a.pos.distance(m.eye).total_cmp(&b.pos.distance(m.eye))).map(|b| b.pos.to_array()),
+                "butterflies_flying": m.butterflies.alive.iter().filter(|b| !b.perched()).count(),
+                "fireflies_lit_within_30_m": m.fireflies.iter().filter(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye) < 30.0).count(),
+                "nearest_lit_firefly_m": m.fireflies.iter().map(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye)).fold(f32::INFINITY, f32::min), "sun_altitude_deg": m.sun_altitude_deg,
+                "near_density_per_m2": crate::meadow::NEAR_DENSITY, "draw_radius_m": crate::meadow::FAR_RADIUS_M,
+                "ground_class_loaded": self.mask.is_some(), "primary_raster_only": false,
+                "casts_near_cascade_and_sky_cover_within_m": crate::meadow::SHADOW_RADIUS_M});
+        }
         let winter = self.winter;
         let blades = if winter {
             filament::WINTER_BLADES
@@ -505,6 +571,20 @@ impl Grass {
     /// is a pressure front's tip-velocity impulse at a cell this step (zero without one).
     pub fn advance(&mut self,cam:Vec3,dt:f32,time:f32,
         ground:impl Fn(f32,f32)->f32,wind_at:impl Fn(Vec3)->Vec2,gust_at:impl Fn(Vec3)->Vec2) {
+        if let Some(m) = self.meadow.as_deref_mut() {
+            let eye = Vec2::new(cam.x, cam.z);
+            m.wind.advance(eye, dt, &wind_at, &gust_at);
+            m.mean_wind = wind_at(cam);
+            m.eye = cam;
+            m.time = time;
+            for (key, cells) in self.tracks.take_dirty() { m.mirror.push(key, &cells); }
+            let cover = m.cover.clone();
+            let grass = move |p: Vec2| cover.presence(p.x, p.y);
+            let day = m.sun_altitude_deg > 3.0 && m.rain < 0.2;
+            m.butterflies.update(cam, dt, day, m.mean_wind, &grass, &ground);
+            m.fireflies = crate::meadow_fauna::fireflies(cam, time, m.sun_altitude_deg, &grass, &ground);
+            return;
+        }
         self.rebuild(Vec2::new(cam.x, cam.z), &ground);
         if self.contact_revision != self.tracks.revision {
             for root in self.layers.iter_mut().flat_map(|l| &mut l.roots) {
@@ -577,6 +657,41 @@ impl Grass {
 
     /// Presentation reads the final state; it never integrates wind or tread compression.
     pub fn present(&mut self,r:&mut Renderer) {
+        if let Some(m) = self.meadow.as_deref_mut() {
+            if !m.cleared_legacy {
+                for layer in &self.layers { r.set_dynamic_instanced_mats(layer.batch, &[]); }
+                m.cleared_legacy = true;
+            }
+            m.sun_altitude_deg = r.sun_altitude_deg();
+            m.rain = r.precipitation;
+            r.set_meadow_frame(crate::meadow::Frame {
+                wind_origin: m.wind.origin_m(), wind: m.wind.upload(), mean_wind: m.mean_wind, time: m.time,
+                track_pages: std::mem::take(&mut m.mirror.pending),
+            });
+            let mut wings: Vec<Vec<Mat4>> = vec![Vec::new(); m.wing_batches.len()];
+            for b in &m.butterflies.alive {
+                if let Some(list) = wings.get_mut(b.species) { list.extend(b.wing_models()); }
+            }
+            // Debug only: a wing pair held 1.5 m before the eye (the draw check).
+            if std::env::var("KESSEL_BUTTERFLY_PROBE").as_deref() == Ok("1") && !wings.is_empty() {
+                let p = r.camera.pos + r.camera.forward() * 1.5;
+                wings[0].push(Mat4::from_scale_rotation_translation(Vec3::splat(3.0), Quat::IDENTITY, p));
+                wings[0].push(Mat4::from_scale_rotation_translation(Vec3::new(-3.0, 3.0, 3.0), Quat::IDENTITY, p));
+            }
+            for (batch, mats) in m.wing_batches.iter().zip(&wings) {
+                let n = mats.len().min(2 * 96);
+                r.set_dynamic_instanced_mats(*batch, &mats[..n]);
+            }
+            r.fireflies.clone_from(&m.fireflies);
+            // Debug only: one lantern held lit at peak 3 m before the eye (the transport check).
+            if std::env::var("KESSEL_FIREFLY_PROBE").as_deref() == Ok("1") {
+                let (_, per_watt, _) = crate::meadow_fauna::firefly_lanes();
+                let p = r.camera.pos + r.camera.forward() * 3.0;
+                let gain: f32 = std::env::var("KESSEL_FIREFLY_PROBE_GAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+                r.fireflies.push([p.x, p.y, p.z, (crate::meadow_fauna::flash_peak_radiant_intensity() * per_watt) as f32 * gain]);
+            }
+            return;
+        }
         self.build_mats();
         for layer in &self.layers {
             let uploaded = r.set_dynamic_instanced_mats(layer.batch, &layer.mats);
@@ -590,6 +705,7 @@ mod population_tests {
     use super::*;
     fn population(mask: Option<Mask>, seed: u32) -> Grass {
         Grass {
+            meadow: None,
             layers: std::array::from_fn(|kind| Layer::new(usize::MAX, kind, mask.is_none())),
             mask_requested: mask.is_some(),
             winter: mask.is_none(),
@@ -1095,7 +1211,7 @@ impl Grass {
         fields.put("tracks",&self.tracks.export_world_state()?)?;Ok(fields)
     }
     pub(crate) fn import_world_state(&mut self,mut fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
-        self.wind=fields.take("wind")?;self.tracks.import_world_state(fields.take("tracks")?)?;
+        self.wind=fields.take("wind")?;self.tracks.import_world_state(fields.take("tracks")?)?;self.tracks.mark_all_dirty();
         crate::restore_world_fields!(self,fields;layers,mask_requested,winter,focus,seed,contact_revision);Ok(())
     }
 }

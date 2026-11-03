@@ -17,7 +17,7 @@ struct Crush {
     menu_mode: f32, // 1 = main-menu turntable pass: keep pure black truly black (kill grain on near-black)
     ldr_dither: f32, // fixed native-LDR quantization coverage; shader backend only
     mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
-    cabin_look: f32, // 1 = inside the hull the tinted look quantizes to the pastel palette (KESSEL_CABIN_LOOK=pastel)
+    cabin_look: f32, // 1 + KESSEL_PALETTE_SMOOTH = inside the hull the tinted look quantizes to the pastel palette (KESSEL_CABIN_LOOK=pastel); 0 = off
     exposure: f32,  // the eye's chromatic cone channel per unit radiance
     retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/ordered-dither treatment
     concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
@@ -34,6 +34,11 @@ struct Crush {
     // height units, w = the read scale (1 = the lens pass is read texel for texel; more when
     // the lens is small on the screen and the pass could not widen enough). Appended lane.
     loupe: vec4<f32>,
+    // The realism look (mode 6, `KESSEL_LOOK=deltap-real`): x = contrast, the slope in AgX's log
+    // exposure about mid grey (1 = AgX as shipped); y = saturation after the outset (1 = as
+    // shipped); z = dithered steps of red and green (8 = deltaP's); w = blue's (0: as z; 3 with
+    // z 7 is the 8-bit 3-3-2 split, 256 colours). Appended lane.
+    real: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 
@@ -50,6 +55,8 @@ fn tzf_field_distance(q: vec2<f32>) -> f32 {
 struct EnvironmentWhite { lanes: array<vec4<f32>, 68>, };
 @group(0) @binding(6) var<uniform> environment_white: EnvironmentWhite;
 @group(0) @binding(7) var blue_noise: texture_2d<u32>;
+// The sub-pixel emitters' radiance at their pixel (the raymarch backend's firefly lanterns).
+@group(0) @binding(8) var point_layer: texture_2d<f32>;
 
 // A camera white point, not a change to scene lighting. Use the diffuse sky irradiance that
 // already lights the scene; a red flash, painted wall or warm cabin lamp cannot drive this meter.
@@ -72,8 +79,15 @@ fn camera_white_gain() -> vec3<f32> {
 // src/observer.rs): the cones keep the pixel's colour, the rods add an achromatic signal that
 // saturates, each scaled by the eye's current adaptation. Looking from snow into a closed turret
 // leaves it black until the eye adapts; a muzzle flash leaves an afterimage that fades.
-fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
-    let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
+fn eye_response(radiance: vec3<f32>, point: vec3<f32>) -> vec3<f32> {
+    // A sub-pixel emitter's rod signal is pooled over the rods' summation disc (observer.rs
+    // ROD_SUMMATION_DIAMETER_DEG): at its pixel the rods see its luminance times the pixel's share
+    // of that disc; the cones take the pixel whole. Extended fields have no point layer.
+    let pixel_deg = degrees(2.0 * cr.dither_up.w / max(f32(textureDimensions(hdr).y), 1.0));
+    let disc = 3.14159265 * 0.25 * OBS_ROD_SUMMATION_DEG * OBS_ROD_SUMMATION_DEG;
+    let share = clamp(pixel_deg * pixel_deg / disc, 0.0, 1.0);
+    let rod_seen = max(radiance - point * (1.0 - share), vec3(0.0));
+    let scotopic = max(dot(rod_seen, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
     let rods = obs_rod_response(scotopic, cr.rod_exposure, cr.rod_inverse_saturation);
     // The outdoor night-visibility boost is unnecessary in a cabin with practical lamps and
     // local range compression. Retain normal rod vision without washing out the lamps' colour.
@@ -136,11 +150,23 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
     var v = inset * max(x * 1.3, vec3(1.0e-10));
     v = clamp(log2(v), vec3(min_ev), vec3(max_ev));
     v = (v - min_ev) / (max_ev - min_ev);
+    if (cr.look.x > 5.5) {
+        // The realism look's contrast: a steeper slope through the log-encoded mid grey (0.18 x
+        // the trim), the film-gamma kind of contrast, before the sigmoid keeps its roll-off at both
+        // ends. A reproduction choice: it changes no light.
+        let pivot = (log2(0.18 * 1.3) - min_ev) / (max_ev - min_ev);
+        v = clamp((v - vec3(pivot)) * cr.real.x + vec3(pivot), vec3(0.0), vec3(1.0));
+    }
     let v2 = v * v;
     let v4 = v2 * v2;
     v = 15.5 * v4 * v2 - 40.14 * v4 * v + 31.96 * v4 - 6.868 * v2 * v + 0.4298 * v2 + 0.1191 * v - 0.00232;
     v = outset * clamp(v, vec3(0.0), vec3(1.0));
-    return pow(max(v, vec3(0.0)), vec3(2.2));
+    var out = pow(max(v, vec3(0.0)), vec3(2.2));
+    if (cr.look.x > 5.5) {
+        let luma = dot(out, vec3(0.2126, 0.7152, 0.0722));
+        out = max(mix(vec3(luma), out, cr.real.y), vec3(0.0));
+    }
+    return out;
 }
 
 // The display tonemap: AgX, or the former ACES fit when asked for (KESSEL_TONEMAP=aces).
@@ -345,8 +371,38 @@ fn dp_oklab(c: vec3<f32>) -> vec3<f32> {
 // dithered as black-and-cyan salt). The threshold is the full 64-step value, not snapped to
 // eighths: 64 fill patterns make each pattern jump smaller than the shading's own noise, so a
 // wall's wandering shade dissolves into grain instead of drawing contours.
+// The realism look's luma/chroma form (cr.real.w < 0): YCoCg of the display-encoded value, the
+// luma in cr.real.z steps on deltaP's square-root curve, each chroma axis in -cr.real.w steps (an
+// even count, so zero chroma is a level and a grey stays exactly grey). Fine steps of brightness,
+// coarse steps of colour: per-channel RGB steps break a grey into coloured speckle wherever its
+// channels round differently. A recording-medium choice; it adds no light.
+fn dp_chroma_compand(c: f32) -> f32 { return sign(c) * sqrt(abs(c) * 2.0); }
+fn dp_chroma_expand(c: f32) -> f32 { return sign(c) * c * c * 0.5; }
+fn dp_luma_chroma(lin: vec3<f32>, th: f32) -> vec3<f32> {
+    let e = clamp(display_encode(lin), vec3(0.0), vec3(1.0));
+    let y = dot(e, vec3(0.25, 0.5, 0.25));
+    let co = 0.5 * (e.r - e.b);
+    let cg = -0.25 * e.r + 0.5 * e.g - 0.25 * e.b;
+    let ys = max(cr.real.z, 2.0);
+    let cs = max(2.0 * round(-cr.real.w * 0.5), 2.0);
+    let yq0 = floor(sqrt(y) * ys + th) / ys;
+    let yq = yq0 * yq0;
+    // The chroma is NOT dithered: dithering the colour axes is what scatters orange, green and
+    // violet dots over a faintly tinted grey. Each axis is rounded to its nearest level, the
+    // levels spaced on a signed square root so most of them sit near grey (the snow, the road,
+    // the stone), and only the brightness carries the dither (the bridge map's matrix, 2 November
+    // 2026). The chroma range is +-0.5.
+    let half = cs * 0.5;
+    let coq = dp_chroma_expand(round(dp_chroma_compand(co) * half) / half);
+    let cgq = dp_chroma_expand(round(dp_chroma_compand(cg) * half) / half);
+    let rgb = vec3(yq + coq - cgq, yq + cgq, yq - coq - cgq);
+    return clamp(rgb, vec3(0.0), vec3(1.0));
+}
+
 fn dp_dithered_colour(lin: vec3<f32>, th: f32) -> vec3<f32> {
-    let levels = 8.0;
+    if (cr.look.x > 5.5 && cr.real.w < -0.5) { return dp_luma_chroma(lin, th); }
+    let rg = max(cr.real.z, 2.0);
+    let levels = select(vec3(8.0), vec3(rg, rg, select(rg, max(cr.real.w, 1.0), cr.real.w > 0.5)), cr.look.x > 5.5);
     let c = sqrt(clamp(display_encode(lin), vec3(0.0), vec3(1.0)));
     let q = floor(c * levels + vec3(th)) / levels;
     return clamp(q * q, vec3(0.0), vec3(1.0));
@@ -360,14 +416,15 @@ fn dp_dithered_colour(lin: vec3<f32>, th: f32) -> vec3<f32> {
 // has no heuristic left to be wrong. The ratio then snaps to eighths with dead zones at both ends
 // (fill patterns, not lone dots over a panel a shade above black).
 fn dp_pico8(lin: vec3<f32>, th: f32) -> vec3<f32> {
-    return dp_palette(lin, th, false);
+    return dp_palette(lin, th, false, cr.look.w);
 }
-fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool) -> vec3<f32> {
+fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool, smooth_lane: f32) -> vec3<f32> {
     let lab = dp_oklab(lin);
-    // KESSEL_PALETTE_SMOOTH (cr.look.w): 0 holds deltaP's flat bands between entries (the pair
-    // penalty, the ratio's dead zones and its eighths), 1 dithers across them (a tenth of the
-    // penalty, narrow dead zones, sixteenths).
-    let smoothing = clamp(cr.look.w, 0.0, 1.0);
+    // KESSEL_PALETTE_SMOOTH (cr.look.w for the palette looks; carried in cr.cabin_look under the
+    // tinted look, whose look.w is the outdoor pull): 0 holds deltaP's flat bands between entries
+    // (the pair penalty, the ratio's dead zones and its eighths), 1 dithers across them (a tenth
+    // of the penalty, narrow dead zones, sixteenths).
+    let smoothing = clamp(smooth_lane, 0.0, 1.0);
     var pl: array<vec3<f32>, 32>;
     var pk: array<vec3<f32>, 32>;
     for (var i = 0; i < 32; i = i + 1) {
@@ -410,16 +467,16 @@ fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool) -> vec3<f32> {
 fn dp_crush(lin: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
     let th = dp_threshold(px);
     var code = display_encode(lin);
-    if (cr.look.x < 1.5) { code = dp_dithered_colour(lin, th); }
+    if (cr.look.x < 1.5 || cr.look.x > 5.5) { code = dp_dithered_colour(lin, th); }
     else if (cr.look.x < 2.5) { code = dp_pico8(lin, th); }
     else if (cr.look.x > 4.5) {
         // The tinted look: inside the hull (the buttoned-up view's eye_range_strength) the pastel
         // palette itself when asked (the owner, 2 November 2026, on a cabin still under the
         // palette: "a fantastic shot"), else the plain dithered colour; outdoors the pulled tones.
-        if (cr.cabin_look > 0.5 && cr.eye_range_strength > 0.5) { code = dp_palette(lin, th, true); }
+        if (cr.cabin_look > 0.5 && cr.eye_range_strength > 0.5) { code = dp_palette(lin, th, true, cr.cabin_look - 1.0); }
         else { code = dp_tinted(lin, th); }
     }
-    else if (cr.look.x > 3.5) { code = dp_palette(lin, th, true); }
+    else if (cr.look.x > 3.5) { code = dp_palette(lin, th, true, cr.look.w); }
     return display_decode(code);
 }
 
@@ -459,7 +516,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         + textureSample(hdr, samp, in.uv - vec2(radius.x, 0.0)).rgb * 0.15
         + textureSample(hdr, samp, in.uv + vec2(0.0, radius.y)).rgb * 0.15
         + textureSample(hdr, samp, in.uv - vec2(0.0, radius.y)).rgb * 0.15;
-    var c = eye_response(mix(centre, blur, concussion));
+    let point = textureLoad(point_layer, clamp(vec2<i32>(in.uv * hd), vec2(0), vec2<i32>(hd) - vec2(1)), 0).rgb;
+    var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion));
     // Explicit user camera/display reproduction. Identity by default; black stays black.
     c *= cr.display_grade.x * vec3(1.0 + 0.2 * cr.display_grade.z, 1.0, 1.0 - 0.2 * cr.display_grade.z);
     c = eye_range(c);

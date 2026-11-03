@@ -60,6 +60,8 @@ mod game_acoustics;
 mod game_hit_sounds;
 #[path = "game_fea.rs"]
 mod game_fea;
+#[path = "game_fea_effects.rs"]
+mod game_fea_effects;
 #[path = "game_fea_section.rs"]
 pub(crate) mod game_fea_section;
 #[path = "game_fea_review.rs"]
@@ -271,6 +273,15 @@ mod expedition_runtime;
 mod halftrack_runtime;
 #[path = "expedition_theatre_game.rs"]
 mod expedition_theatre_game;
+#[path = "river_crossings.rs"]
+mod river_crossings;
+/// The water and bridge meshes a manifest declares (`river_crossings`), for the world editor.
+pub fn declared_river_meshes(m: &crate::act_manifest::ActManifest) -> anyhow::Result<Vec<CpuMesh>> {
+    let mut scene = Vec::new();
+    let mut occluders = Vec::new();
+    river_crossings::RiverRuntime::install(&mut scene, &mut occluders, m)?;
+    Ok(scene)
+}
 #[path = "expedition_theatre_review.rs"]
 pub mod expedition_theatre_review;
 #[path = "expedition_world_review.rs"]
@@ -3971,7 +3982,7 @@ fn generate_penetration_fragments(
         // exact sampled diameter remains shared by mass, collision and rendering.
         let size_t = hash01(s ^ 0xE1).powf(2.4);
         let size = profile.min_size_m + (profile.max_size_m - profile.min_size_m) * size_t;
-        let life = profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19));
+        let life = (profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19))).max(AUTHORED_FRAGMENT_LIFE_MIN_S);
         let entered_compartment = fragment_inside_compartment(frame, entry, size * 0.52);
         fragments.push(HotFragment {
             // Ten low bits are enough for the 768-slot population, leaving a stable compound ID
@@ -3999,7 +4010,7 @@ fn generate_penetration_fragments(
             life,
             bounces: 0,
             seed: s,
-            temp_k: 0.0,
+            temp_k: AUTHORED_FRAGMENT_KELVIN,
             lodged: false,
             embed_m: 0.0,
         });
@@ -4269,6 +4280,22 @@ fn hot_fragment_bounce_budget(seed: u32) -> u8 {
 /// orange, red-orange, dull red, and cold steel below 750 K (named bands of the incandescence
 /// colours the pages draw; visible glow begins near the Draper point, 798 K).
 const FEA_HEAT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1300.0, 1100.0, 900.0, 750.0, 0.0];
+/// The light the chips give the compartment follows the Planck visible radiance of their band
+/// (the 550 nm band at the band's lower temperature against 1,300 K: 2.5 % at 1,100 K, 1.3e-4
+/// at 900 K, 4e-7 at 750 K), not the page's display scale: a cabin of resting dull-red chips lit
+/// its own dust orange when the pages were lifted and drawn hotter (2026-11-02).
+const HOT_FRAGMENT_LIGHT_SHARE: [f32; N_HOT_FRAGMENT_BATCHES] = [1.0, 0.025, 1.3e-4, 4.0e-7, 0.0];
+/// An authored (unsolved) chip leaves the plate at this temperature (adiabatic shear and
+/// friction heat; the lattice's solved clusters span 500-1,400 K) and cools as a lumped body
+/// like a solved one (`fea_damage::fragments::cool`), so its glow holds for the seconds to tens
+/// of seconds its mass over its surface gives (a 5 mm chip about 13 s to the Draper point, a
+/// 1.4 mm splinter a second) instead of fading on an authored life (the owner, 2026-11-02).
+const AUTHORED_FRAGMENT_KELVIN: f32 = 1250.0;
+/// An authored chip stays at least this long so its cooling can be seen.
+const AUTHORED_FRAGMENT_LIFE_MIN_S: f32 = 20.0;
+/// The heat pages are drawn this much hotter than their band (white-yellow through red instead
+/// of orange through dull red): the owner's display choice, 2026-11-02; a named approximation.
+const HOT_PAGE_DRAWN_OVER_BAND: f32 = 1.7;
 /// Air density in the fighting compartment for fragment drag (named: 20 C, sea level).
 const CABIN_AIR_DENSITY: f32 = 1.2;
 /// Flow stress of the steel the cabin collision walls stand for (armour), for embedding (named).
@@ -4296,42 +4323,6 @@ fn hot_fragment_heat_stage(fragment: &HotFragment) -> usize {
     }
 }
 
-/// A chip without a solved temperature (the authored populations of HE, HEAT and harness hits)
-/// takes one from its normalized heat age through the old pages' bounds (named, authored):
-/// 1,500 K new, 1,300 / 1,100 / 900 K at the page changes, 750 K at the end of its life.
-const AUTHORED_HEAT_KNOTS: [(f32, f32); 5] = [(0.0, 1500.0), (0.014, 1300.0), (0.11, 1100.0), (0.58, 900.0), (1.0, 750.0)];
-
-fn hot_fragment_temperature(fragment: &HotFragment) -> f32 {
-    if fragment.temp_k > 0.0 {
-        return fragment.temp_k;
-    }
-    let jitter = (hash01(fragment.seed ^ 0x7E11) - 0.5) * 0.008;
-    let heat_age = (fragment.age / fragment.life.max(0.001) + jitter).clamp(0.0, 1.0);
-    AUTHORED_HEAT_KNOTS.windows(2).find(|w| heat_age <= w[1].0).map_or(750.0, |w| {
-        let t = (heat_age - w[0].0) / (w[1].0 - w[0].0).max(1.0e-6);
-        w[0].1 + (w[1].1 - w[0].1) * t
-    })
-}
-
-/// A chip's emitted radiance: Planck at its temperature on the renderer's scale, the law the wound
-/// rims and the rim grains use (`renderer_scars::rim_radiance`; zero below 700 K).
-fn hot_fragment_radiance(fragment: &HotFragment) -> Vec3 {
-    crate::renderer::scars::rim_radiance(hot_fragment_temperature(fragment))
-}
-
-/// Each heat page's colour is Planck's chroma at a temperature within its band (named: a chip
-/// draws its band's chroma, not its own); its glow is set every frame to the mean red-band
-/// radiance of the chips on it (`drive_penetration_fx`).
-const HOT_FRAGMENT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1450.0, 1200.0, 1000.0, 825.0, 0.0];
-
-fn hot_fragment_page_colour(stage: usize) -> [u8; 3] {
-    if HOT_FRAGMENT_PAGE_KELVIN[stage] > 0.0 {
-        crate::incandescence::planck_srgb8(HOT_FRAGMENT_PAGE_KELVIN[stage])
-    } else {
-        [70, 68, 64] // cold, oxidised steel: emits nothing
-    }
-}
-
 /// Collapse one moving compartment's bounded incandescent-chip population into one spherical
 /// compact source for the renderer's shadowed local-light transport. This is a source-clustering
 /// approximation, not a separate authored flash: position is the emitted-power centroid, source
@@ -4345,6 +4336,12 @@ fn hot_fragment_aggregate_light(
     frame: BloodFrame,
     parent: Mat4,
 ) -> Option<PointLight> {
+    let radiance: [Vec3; N_HOT_FRAGMENT_BATCHES] = std::array::from_fn(|stage| {
+        let linear = HOT_FRAGMENT_STAGE_COLOR[stage]
+            .to_array()
+            .map(crate::rt_surface::srgb_to_linear);
+        Vec3::from_array(linear) * HOT_FRAGMENT_STAGE_EMISSIVE[stage]
+    });
     let mut rgb_power = Vec3::ZERO;
     let mut weighted_pos = Vec3::ZERO;
     let mut weight_sum = 0.0f32;
@@ -4356,8 +4353,9 @@ fn hot_fragment_aggregate_light(
             && fragment.age >= 0.0
             && fragment.age < fragment.life
     }) {
+        let stage = hot_fragment_heat_stage(fragment);
         let area_m2 = 6.0 * fragment.size.max(0.0).powi(2);
-        let emission = hot_fragment_radiance(fragment) * (area_m2 / 4.0);
+        let emission = radiance[stage] * (area_m2 / 4.0) * HOT_FRAGMENT_LIGHT_SHARE[stage];
         let weight = emission.max_element();
         if weight <= 0.0 {
             continue;
@@ -6149,8 +6147,11 @@ const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
 // Cabin flame chromaticity needs an amber core after sRGB decoding, not almost pure red.
 // The first four pages also own the aggregate surface/air light color below. Keep the outdoor
 // pages independent: restoring cabin warmth must not retune distant wrecks or muzzle reports.
+/// The cabin's four pages were an authored amber set; since 2026-11-02 they are the same Planck
+/// law as the exterior's at the same temperatures (the owner: the Tiger's fire looked different
+/// from the T-34's), their display scale (`FIRE_FLAME_EMISSIVE`) unchanged.
 const CABIN_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_STAGES] = [
-    [183, 76, 12], [255, 160, 32], [255, 211, 94], [203, 81, 13],
+    [255, 111, 24], [255, 128, 38], [255, 160, 70], [255, 96, 14],
 ];
 /// Exterior pages: the soot's temperatures, base (0), body (1), core (2) and the tongues' tips
 /// and outer sheath (3), drawn on the one Planck law the sparks, rims, embers and jets share
@@ -8487,13 +8488,25 @@ const HOT_FRAGMENT_TAIL_MIN_SPEED: f32 = 1.2;
 // (2.4 m/s x 1/60 s): a dash a few bodies long. At 0.145 m, seen from a hand's breadth away in
 // the compartment and bloomed, the tails drew as rods spanning the room for a second (traced
 // with the lights debug, 2026-11-02: every tail at the cap, 0.17-0.7 m from the eye).
-const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.04;
-const HOT_FRAGMENT_TAIL_WIDTH_RATIO: f32 = 0.38;
-// The fragment-swarm emitter integrates each real chip's Planck radiance over its six cube faces
-// (`hot_fragment_radiance`); the narrow history tail is only a motion representation of that same
-// body and therefore contributes no duplicate source power. (Until 2026-11-02 the pages' authored
-// radiances, 2.45 / 2.05 / 1.05 / 0.18, stood for both: hundreds to tens of thousands of times a
-// chip's Planck radiance at its band, and their light flooded a closed turret deep red.)
+/// A fragment's tracer: the frame's own motion, at most this long (the owner, 2026-11-02:
+/// spall and shrapnel with tracers; a 1/60 s exposure of a 300 m/s chip is five metres, so the
+/// streak is bounded to read as a tracer and not a rod across the compartment).
+const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.45;
+const HOT_FRAGMENT_TAIL_WIDTH_RATIO: f32 = 0.22;
+// The visible temperature pages also define the radiance of the bounded fragment-swarm emitter.
+// Emission is integrated from each real chip's six cube faces; the narrow history tail is only a
+// motion representation of that same body and therefore contributes no duplicate source power.
+const HOT_FRAGMENT_STAGE_COLOR: [Vec3; N_HOT_FRAGMENT_BATCHES] = [
+    Vec3::new(1.0, 220.0 / 255.0, 54.0 / 255.0),
+    Vec3::new(1.0, 182.0 / 255.0, 28.0 / 255.0),
+    Vec3::new(225.0 / 255.0, 94.0 / 255.0, 9.0 / 255.0),
+    Vec3::new(104.0 / 255.0, 14.0 / 255.0, 3.0 / 255.0),
+    // Cold, oxidised steel: a body the lattice solved, below visible glow. No emission.
+    Vec3::new(70.0 / 255.0, 68.0 / 255.0, 64.0 / 255.0),
+];
+/// Display scale per heat page; the dull-red page is lifted so a solved chip at the Draper
+/// point still reads red hot in the dark cabin (the owner, 2026-11-02).
+const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.4, 0.6, 0.0];
 // These pre-allocated scene slots are retained only to avoid re-indexing the large fixed scene while
 // the renderer agent admits dynamic physical grains into the TLAS. They are submitted empty forever.
 const N_MICRO_SPARK_BATCHES: usize = 3;
@@ -9001,6 +9014,8 @@ struct Slots {
     armor_patch: [usize; N_ARMOR_MARKS],
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
     track_snow: [usize;2],
+    /// The breach effects' petrol and oil beads and pools (`game_fea_effects`).
+    fea_liquid: [usize;2],
     weapon_vfx: [usize; weapon_vfx::PAGES], // bounded raster trails, flash grains and expanding soot
     fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // advected hot/yellow/orange/red flame parcels
     fire_smoke_batch: [usize; FIRE_SMOKE_BATCHES], // sparse dark-grey cubic soot
@@ -9583,6 +9598,8 @@ pub struct Game {
     camp_people: Option<Box<camp_people::CampPeople>>,
     halftrack_runtime: Option<Box<halftrack_runtime::HalftrackRuntime>>,
     theatre: Option<Box<expedition_theatre_game::TheatreRuntime>>,
+    /// A declared river and its bridges on a non-theatre map (`river_crossings`).
+    river: Option<Box<river_crossings::RiverRuntime>>,
     workshop: workshop_runtime::WorkshopRuntime,
     tiger_refuel: tiger_refuel::Runtime,
     crew_status_panel: crew_status_panel::Panel,
@@ -9710,6 +9727,8 @@ pub struct Game {
     /// The layered damage model's state on the player's Tiger: lodged rounds and chain receipts
     /// (`game_fea`, docs/FEA_DAMAGE_MODEL_20261102.md).
     fea: game_fea::FeaRuntime,
+    /// What the breaches do outside the hull: leaks, vents, the fires they stand.
+    fea_effects: game_fea_effects::FeaEffects,
     /// Rotating LAN cursor over `armor_scars` (`net_snapshot`).
     armor_net_cursor: std::cell::Cell<usize>,
     /// Probed surface extent and plug rest per drawn wound (`push_vehicle_scars`), keyed by the
@@ -10437,6 +10456,12 @@ impl Game {
         let mut occluders: Vec<stealth::Occluder> = Vec::new();
         let theatre = if expedition_map {
             Some(Box::new(expedition_theatre_game::TheatreRuntime::install(&mut scene,&mut occluders,manifest.as_ref().unwrap(),&hf)?))
+        } else { None };
+        let river = if theatre.is_none() {
+            match manifest.as_ref() {
+                Some(m) => river_crossings::RiverRuntime::install(&mut scene, &mut occluders, m)?.map(Box::new),
+                None => None,
+            }
         } else { None };
 
         // Destructible standing structures — collected as the scene is assembled (near city walls/
@@ -12619,6 +12644,7 @@ impl Game {
             armor_patch,
             flame,
             track_snow: [usize::MAX;2],
+            fea_liquid: [usize::MAX;2],
             weapon_vfx: [usize::MAX; weapon_vfx::PAGES],
             fire_flame_batch,
             fire_smoke_batch,
@@ -12943,6 +12969,9 @@ impl Game {
         let mut manifest_walk_surfaces = walk_surfaces::WalkSurfaces::default();
         if let Some(t)=&theatre {for &slot in &t.crossing_meshes {
             manifest_walk_surfaces.append("floor_ceiling_expedition_bridge",&scene[slot],Mat4::IDENTITY)?;
+        }}
+        if let Some(rv)=&river {for slot in rv.deck_meshes() {
+            manifest_walk_surfaces.append("floor_ceiling_river_bridge",&scene[slot],Mat4::IDENTITY)?;
         }}
         let mut manifest_structures = 0usize;
         let mut manifest_compatibility_shells = 0usize;
@@ -13443,7 +13472,13 @@ impl Game {
             manifest.as_ref().is_some_and(|m| m.value()["terrain"]["grass_season"].as_str()==Some("winter")),
             grass_half_extent,
             act.seed,
-        ));
+        )).map(|mut grass| {
+            // A spring map on the raymarch backend: the GPU meadow over every green ground.
+            if let Some(m) = manifest.as_ref().filter(|m| m.value()["terrain"]["grass_season"].as_str() == Some("spring")) {
+                grass.enable_meadow(&mut renderer, device, queue, m.value(), &hf, grass_half_extent);
+            }
+            grass
+        });
 
         // Infantry is one shared authored character library, not 24 uploaded copies. Validate all
         // 17 static deformation frames first, then allocate one fixed, exact-TLAS pool per pose.
@@ -13519,9 +13554,15 @@ impl Game {
         // page is amber rather than cream-white and is intentionally brief; saturated orange/red
         // carries the effect after the flash. Every page reserves the bounded pool because an
         // impact frame may legitimately put every chip in the same heat stage.
-        let hot_steel: [[u8; 3]; N_HOT_FRAGMENT_BATCHES] = std::array::from_fn(hot_fragment_page_colour);
-        // Every page starts dark; `drive_penetration_fx` sets its glow from its chips each frame.
-        let hot_emissive = [0.0f32; N_HOT_FRAGMENT_BATCHES];
+        // The four hot pages are the Planck law, the one law the fire pages, sparks and rims glow
+        // on, drawn at `HOT_PAGE_DRAWN_OVER_BAND` times their bands' lower temperatures
+        // (`FEA_HEAT_PAGE_KELVIN`: 2200, 1870, 1530 and 1275 K drawn for 1300, 1100, 900 and
+        // 750 K): white-yellow, orange, orange-red, red. The owner's call (2026-11-02: "orange-yellow
+        // white hot metal", not the dull red the solved temperatures give); named as a display
+        // choice, the chips' temperatures themselves are the lattice's. The fifth is cold steel.
+        let hot_steel = [crate::incandescence::planck_srgb8(1300.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(1100.0 * HOT_PAGE_DRAWN_OVER_BAND),
+            crate::incandescence::planck_srgb8(900.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(750.0 * HOT_PAGE_DRAWN_OVER_BAND), [70, 68, 64]];
+        let hot_emissive = HOT_FRAGMENT_STAGE_EMISSIVE;
         slots.hot_fragment_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
@@ -13538,7 +13579,7 @@ impl Game {
         // A second bounded page set draws one narrow, velocity-aligned tail for each flying head.
         // It reuses a plain unit box rather than crossed fins/billboards, so two luminous axes can
         // never be baked into one fragment. Slower and settled chips submit no tail transform.
-        let tail_emissive = [0.0f32; N_HOT_FRAGMENT_BATCHES];
+        let tail_emissive = [2.10, 1.78, 1.10, 0.50, 0.0];
         slots.hot_fragment_tail_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
@@ -13554,6 +13595,7 @@ impl Game {
         });
         // Rounds held by the Tiger's steel: exact physical pools, one per kinetic specification.
         let fea_lodged_draw = game_fea::allocate_lodged_round_pools(device, queue, &mut renderer);
+        slots.fea_liquid = game_fea_effects::allocate_liquid_pools(device, queue, &mut renderer);
         // Retired fixed-scene slots. Scene indices stay stable during the renderer transaction, but
         // `drive_penetration_fx` submits empty arrays and these meshes never become visible.
         let retired_micro = [[1, 1, 1], [1, 1, 1], [1, 1, 1]];
@@ -14102,6 +14144,7 @@ impl Game {
             camp_people,
             halftrack_runtime,
             theatre,
+            river,
             workshop,
             tiger_refuel,
             crew_status_panel,
@@ -14195,6 +14238,7 @@ impl Game {
             armor_tick: 0,
             armor_scars: crate::armor_damage::ArmorField::default(),
             fea: game_fea::FeaRuntime::with_draw_pools(fea_lodged_draw),
+            fea_effects: Default::default(),
             armor_net_cursor: std::cell::Cell::new(0),
             scar_geometry_cache: Default::default(),
             armor_clock_s: 0.0,
@@ -17164,9 +17208,10 @@ impl Game {
         // precipitation (`surface_wear`).
         self.surface_wear.update(dt, self.player.speed, self.rounds_spent, r.precipitation);
         r.wear = self.surface_wear.uniform();
-        // Winter: the crews' washable white coat over the grey (a December 1942 Tiger in the
-        // snow would carry one); none in the other seasons.
-        r.whitewash = if self.act.season == crate::world::Season::Winter { 1.0 } else { 0.0 };
+        // The scratched, worn Dunkelgrau in every season, the owner's choice of 2 November 2026
+        // over the winter coat. A crew in the snow would often carry a washable white coat
+        // (December 1942); `KESSEL_WHITEWASH=1` lays it on (renderer_raymarch's override).
+        r.whitewash = 0.0;
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
@@ -17188,6 +17233,7 @@ impl Game {
         }
         r.apply_authored_lighting(self.scene_environment.lighting,
             self.act.season == crate::world::Season::Winter);
+        r.low_clouds = self.scene_environment.low_clouds(&self.hf);
         if self.act.id == 1 && self.act.season == crate::world::Season::Winter
             && self.tank_editor_scene.is_none() {
             let base = if self.scene_environment.lighting.enabled {
@@ -18520,7 +18566,7 @@ impl Game {
 
         // Advance wreck fire clocks, tumbling turret-pop physics, and delayed cook-offs.
         self.sim_phase.seg("dressing_scars_portable");
-        let phase_t = std::time::Instant::now(); self.update_wrecks(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_wrecks"); self.update_wrecks(dt); } self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
         self.enemy_crew.update(dt, &self.enemies, &self.wrecks, &self.hf, &self.occluders);
         self.enemy_crew.draw(r);
         self.living_wounds.update_draw(dt,r);
@@ -18544,8 +18590,8 @@ impl Game {
         // Advance the PLAYER's interior fire: it grows once lit and, once established, reaches the
         // ammunition on a countdown — an unchecked fire cooks off the ammo (catastrophic kill).
         self.sim_phase.seg("trees_scatter_push");
-        let phase_t = std::time::Instant::now(); self.update_fire(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
-        let phase_t = std::time::Instant::now(); self.update_haze(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_fire"); self.update_fire(dt); } self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_haze"); self.update_haze(dt); } self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
 
         // Push enemy transforms. A LIVING enemy draws normally (lit, no glow). A DEAD one stays on
         // the field as a BURNING WRECK — its hull (and, unless the turret popped, its turret) keep
@@ -20978,6 +21024,7 @@ impl Game {
                 self.armor_scars = crate::armor_damage::ArmorField::default();
                 // Its steel holds no rounds, and the lost hull's fragments stay with the lost hull.
                 self.fea.reset();
+                self.fea_effects = Default::default();
                 self.hot_fragments.iter_mut().for_each(|f| f.active = false);
                 self.crew = default_crew();
                 self.reset_singleplayer_crew();
@@ -21272,6 +21319,13 @@ impl Game {
             r.set_hovered_meshes(&slots);
             return;
         }
+        // No outline while shrapnel flies inside the vehicle (the owner, 2026-11-02): the prompt's
+        // silhouette has no place in a compartment crossed by hot steel.
+        if self.hot_fragments.iter().any(|f| f.active && !f.settled && f.entered_compartment
+            && f.vel.length() > HOT_FRAGMENT_TAIL_MIN_SPEED) {
+            r.set_hovered_meshes(&slots);
+            return;
+        }
         if let Some(slot) = self.cigarette_pick.and_then(|pick|
             self.hand_props.as_ref().and_then(|props| props.stock_slot(pick))) {
             // The one cigarette in the open packet that the left button would take.
@@ -21306,13 +21360,9 @@ impl Game {
                 }
             } else if let Some(station) = self.hover_station {
                 match station {
-                    Station::Gunner => {
-                        // From the cupola the outlined thing is the gunner himself.
-                        match self.gunner_body_slot().filter(|_| self.station == Station::Commander) {
-                            Some(slot) => slots.push(slot),
-                            None => slots.extend(self.slots.gunner_sight),
-                        }
-                    }
+                    // The gunner's station is outlined by its sight, never by the man (the owner,
+                    // 2026-11-02: the outline then has nothing to do with his death).
+                    Station::Gunner => slots.extend(self.slots.gunner_sight),
                     Station::Loader => slots.push(self.slots.breechcover),
                     Station::Commander => slots.extend(self.slots.tiger_periscopes.iter()
                         .step_by(tiger_periscopes::CUPOLA_PART_COUNT).take(7).copied()),
@@ -23890,6 +23940,7 @@ impl Game {
         self.armor_scars = crate::armor_damage::ArmorField::default();
         // A fresh Tiger: no rounds in its steel, no plate solves pending, no chip in hand.
         self.fea.reset();
+        self.fea_effects = Default::default();
         self.death_cause = None;
         self.last_fatal = None;
         self.fire = 0.0;
@@ -28085,7 +28136,7 @@ impl Game {
     }
 
     fn enemy_ai(&mut self, dt: f32) {
-        self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
+        { let _p = crate::sim_phase::Probe::new("ai_weather_pose"); self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model()); }
         // Garage and Playtest practice have stationary targets. Skip detection and all AI orders,
         // but retain physical braking/terrain settling and the ordinary player-hit damage path.
         if self.targets_only || !self.enemy_return_fire_allowed() {
@@ -28107,10 +28158,10 @@ impl Game {
         // Detection + platoon alert state machine first: accrue the per-enemy detection meters,
         // resolve the 5-second rule, and log every SPOTTED / platoon transition. The per-enemy
         // behaviour branch below reads the fresh alert state to decide who may track and fire.
-        self.enemy_ai_stats.tick(dt);
-        let phase_t = std::time::Instant::now(); self.update_stealth(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyStealth, phase_t);
+        { let _p = crate::sim_phase::Probe::new("ai_stats_tick"); self.enemy_ai_stats.tick(dt); }
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_stealth"); self.update_stealth(dt); } self.sim_phase.add(crate::sim_phase::Phase::EnemyStealth, phase_t);
         let phase_t = std::time::Instant::now(); let winter_orders = self.winter_enemy_orders(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyOrders, phase_t);
-        let phase_t = std::time::Instant::now(); self.update_at_guns(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyAtGuns, phase_t);
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_at_guns"); self.update_at_guns(dt); } self.sim_phase.add(crate::sim_phase::Phase::EnemyAtGuns, phase_t);
 
         // Snapshot once before the stable-index update loop: avoidance for enemy N must not depend
         // on whether enemy N-1 has already moved this frame. The parked/dead player hull remains a
@@ -28124,13 +28175,14 @@ impl Game {
                 .filter(|(i, _)| self.enemy_active.get(*i).copied().unwrap_or(false))
                 .map(|(i, enemy)| vehicle_motion(i, enemy)),
         );
-        avoidance_bodies.extend(self.platoon_bodies());
+        { let _p = crate::sim_phase::Probe::new("ai_platoon_bodies"); avoidance_bodies.extend(self.platoon_bodies()); }
 
         for i in 0..self.enemies.len() {
             if !self.enemies[i].alive {
                 continue;
             }
-            if settle_incapacitated_enemy(&mut self.enemies[i],dt,&self.hf) {
+            let _loop_probe = crate::sim_phase::Probe::new("ai_loop_body");
+            if { let _p = crate::sim_phase::Probe::new("ai_settle_incapacitated"); settle_incapacitated_enemy(&mut self.enemies[i],dt,&self.hf) } {
                 if let Some(age) = self.enemy_track_age.get_mut(i) { *age = 0.0; }
                 continue;
             }
@@ -28138,10 +28190,10 @@ impl Game {
             // encounter still ticks its perception, but its orders are not applied.
             let evolved_drives = self.enemy_policy_over_orders && self.enemy_policy.is_some();
             let winter = winter_orders.get(i).copied().flatten().filter(|_| !evolved_drives);
-            if winter.is_none() && self.enemy_return_fire_allowed() && self.mixed_tank_engagement(i, dt) {
+            if winter.is_none() && self.enemy_return_fire_allowed() && { let _p = crate::sim_phase::Probe::new("ai_mixed_engagement"); self.mixed_tank_engagement(i, dt) } {
                 continue;
             }
-            let mode = winter.map_or_else(|| self.enemy_mode(i), |order| match order.phase {
+            let mode = winter.map_or_else(|| { let _p = crate::sim_phase::Probe::new("ai_mode"); self.enemy_mode(i) }, |order| match order.phase {
                 winter_encounter_ai::Phase::Track => AiMode::Track,
                 winter_encounter_ai::Phase::Patrol => AiMode::Patrol,
                 _ => AiMode::Search,
@@ -28176,9 +28228,11 @@ impl Game {
             } else if self.brawl {
                 (0.0, 0.0, false) // opposing team eliminated: hold, do not seek the referee
             } else if let Some(net) = &self.enemy_policy {
-                let a = net.forward(&self.executor_obs(i));
+                let obs = { let _p = crate::sim_phase::Probe::new("ai_executor_obs"); self.executor_obs(i) };
+                let a = { let _p = crate::sim_phase::Probe::new("ai_net_forward"); net.forward(&obs) };
                 (a[0], a[1], a[2] > 0.0)
             } else {
+                let _p = crate::sim_phase::Probe::new("ai_maneuver");
                 let (d, st) = match mode {
                     AiMode::Track => {
                         if casemate {
@@ -28192,15 +28246,15 @@ impl Game {
                 };
                 (d, st, true)
             };
-            let (drive, steer) = apply_vehicle_avoidance(
+            let (drive, steer) = { let _p = crate::sim_phase::Probe::new("ai_avoidance"); apply_vehicle_avoidance(
                 vehicle_motion(i, &self.enemies[i]),
                 &avoidance_bodies,
                 drive,
                 steer,
-            );
+            ) };
             let previous = self.enemies[i].pos;
-            self.enemies[i].update(drive, steer, 0.0, 0.0, dt, &self.hf);
-            self.constrain_winter_enemy_motion(i, previous);
+            { let _p = crate::sim_phase::Probe::new("ai_tank_update"); self.enemies[i].update(drive, steer, 0.0, 0.0, dt, &self.hf); }
+            { let _p = crate::sim_phase::Probe::new("ai_constrain_motion"); self.constrain_winter_enemy_motion(i, previous); }
             if self.campaign_channel {
                 let requested = Vec2::new(self.enemies[i].pos.x, self.enemies[i].pos.z);
                 let resolved =
@@ -28215,18 +28269,23 @@ impl Game {
             // this supported chassis transform, including the Act-II bridge deck.
             let channel = self.campaign_channel;
             let theatre = &self.theatre;
+            let river = &self.river;
+            let _settle_probe = crate::sim_phase::Probe::new("ai_settle_bounded");
             crate::vehicle_ground::settle_bounded(&mut self.enemies[i], |x,z|
                 (if channel {act2_bridge_deck_height(&self.hf,Vec2::new(x,z))} else {None})
-                    .or_else(||theatre.as_ref().and_then(|t|t.crossings.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
+                    .or_else(||theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||river.as_ref().map(|r|r.crossings.as_slice()))
+                        .and_then(|c|c.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
                     .unwrap_or_else(|| self.hf.vehicle_height_at(x,z)),
-                |lo,hi|bridge_support_upper_bound(&self.hf,channel,theatre.as_ref().map(|t|t.crossings.as_slice()),
+                |lo,hi|bridge_support_upper_bound(&self.hf,channel,theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||river.as_ref().map(|r|r.crossings.as_slice())),
                     lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
+            drop(_settle_probe);
+            let _lay_probe = crate::sim_phase::Probe::new("ai_lay_fire");
             if self.enemy_active.get(i).copied().unwrap_or(false) {
                 self.enemy_ai_stats.frame(i, dt, mode != AiMode::Patrol, mode == AiMode::Track,
                     self.enemies[i].speed, drive, self.enemies[i].pos);
             }
 
-            if !self.enemy_has_live_threat() && !self.brawl {
+            if { let _p = crate::sim_phase::Probe::new("ai_live_threat"); !self.enemy_has_live_threat() } && !self.brawl {
                 continue;
             }
             if self.enemies[i].overturned() { continue; } // inversion during this frame's movement
@@ -28508,6 +28567,7 @@ impl Game {
     }
 
     fn los_clear(&self, from: Vec3, to: Vec3) -> bool {
+        let _p = crate::sim_phase::Probe::new("los_clear");
         let d = to - from;
         let dist = d.length();
         if dist < 1e-3 {
@@ -29954,8 +30014,12 @@ impl Game {
                         }
                     }
                     if let Some(body) = &mut w.t_body {
+                        let was_settled = body.settled;
                         body.advance(dt, &self.hf, self.enemies[i].hull_model());
                         w.t_pos = body.model().transform_point3(Vec3::ZERO);
+                        if body.settled && !was_settled {
+                            println!("[wreck turret] #{i} settled {:.1} s after the throw, {:.2} m from the ring", w.fire_t, w.t_pos.distance(w.t_initial.transform_point3(Vec3::ZERO)));
+                        }
                     }
                 }
             }
@@ -30559,17 +30623,18 @@ impl Game {
                 // Contact projection can translate a vehicle after its AI update. Keep the final
                 // supported pose consistent without re-running movement or fire decisions.
                 let support = |x,z| (if campaign_channel {act2_bridge_deck_height(&self.hf,Vec2::new(x,z))} else {None})
-                    .or_else(||self.theatre.as_ref().and_then(|t|t.crossings.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
+                    .or_else(||self.theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||self.river.as_ref().map(|r|r.crossings.as_slice()))
+                        .and_then(|c|c.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
                     .unwrap_or_else(|| self.hf.vehicle_height_at(x,z));
                 if !self.enemies[i].alive {
                     let turret_attached = self.enemy_turret_attached(i);
                     crate::vehicle_ground::settle_wreck_bounded(&mut self.enemies[i], dt,
                         turret_attached, support, |lo,hi|bridge_support_upper_bound(&self.hf,campaign_channel,
-                            self.theatre.as_ref().map(|t|t.crossings.as_slice()),lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
+                            self.theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||self.river.as_ref().map(|r|r.crossings.as_slice())),lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
                 } else {
                     crate::vehicle_ground::settle_bounded(&mut self.enemies[i], support,
                         |lo,hi|bridge_support_upper_bound(&self.hf,campaign_channel,
-                            self.theatre.as_ref().map(|t|t.crossings.as_slice()),lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
+                            self.theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||self.river.as_ref().map(|r|r.crossings.as_slice())),lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
                 }
             }
         }
@@ -31436,6 +31501,7 @@ impl Game {
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("update_fx");
         self.drive_cookoff_build(dt);
+        self.drive_fea_effects(dt, r);
         self.hide_claimed_field_people(r);
         // Persistent casualty physics advances once with the host simulation, never once per split
         // viewport. Every camera therefore sees the same directional throw and final body pose.
@@ -32057,12 +32123,10 @@ impl Game {
             std::array::from_fn(|_| Vec::with_capacity(HOT_FRAGMENT_STAGE_CAPACITY));
         let mut tail_stage_mats: [Vec<Mat4>; N_HOT_FRAGMENT_BATCHES] =
             std::array::from_fn(|_| Vec::with_capacity(HOT_FRAGMENT_STAGE_CAPACITY));
-        let mut stage_red = [0.0f32; N_HOT_FRAGMENT_BATCHES];
         for fragment in self.hot_fragments.iter().filter(|fragment| fragment.active) {
             let parent = blood_parent_model(&self.player, fragment.frame);
             let (scale, rot) = hot_fragment_render_pose(fragment);
             let stage = hot_fragment_heat_stage(fragment);
-            stage_red[stage] += hot_fragment_radiance(fragment).x;
             stage_mats[stage]
                 .push(parent * Mat4::from_scale_rotation_translation(scale, rot, fragment.pos));
             if let Some((tail_scale, tail_rot, tail_pos)) = hot_fragment_tail_pose(fragment) {
@@ -32071,35 +32135,27 @@ impl Game {
                 );
             }
         }
-        // A page glows at the mean Planck radiance of the chips on it (its colour is the band's
-        // chroma with the red band 1); a trail at the old pages' ratio of trail to head, 0.86.
-        let page_glow: [f32; N_HOT_FRAGMENT_BATCHES] = std::array::from_fn(|stage|
-            if stage_mats[stage].is_empty() { 0.0 } else { stage_red[stage] / stage_mats[stage].len() as f32 });
-        for ((batch, mats), glow) in self
+        for (batch, mats) in self
             .slots
             .hot_fragment_batch
             .into_iter()
             .zip(stage_mats.iter())
-            .zip(page_glow)
         {
             assert!(
                 r.set_dynamic_instanced_mats(batch, mats),
                 "hot-fragment instance pool exceeded its fixed capacity"
             );
-            r.set_dynamic_instanced_emissive(batch, glow);
         }
-        for ((batch, mats), glow) in self
+        for (batch, mats) in self
             .slots
             .hot_fragment_tail_batch
             .into_iter()
             .zip(tail_stage_mats.iter())
-            .zip(page_glow)
         {
             assert!(
                 r.set_dynamic_instanced_mats(batch, mats),
                 "hot-fragment tail instance pool exceeded its fixed capacity"
             );
-            r.set_dynamic_instanced_emissive(batch, glow * 0.86);
         }
 
         let empty: [Mat4; 0] = [];
@@ -33186,6 +33242,11 @@ impl Game {
                 ));
             }
         }
+        // The player's Tiger's breaches (`game_fea_effects`): the engine bay's fire out of the deck
+        // grilles and the petrol pools' fires, once the breach's fire burns.
+        for (pos, strength, seed) in self.fea_fire_sources() {
+            world_sources.push((pos.distance_squared(listener), pos, strength, seed));
+        }
         // Tableau stovepipes (`urban_tableaux`): a stove's fire is inside its shelter, so its
         // source is smoke only, drawn as a thin column from the pipe mouth; it shares the world
         // budget (nearest first) and never exceeds a world source's soot allowance.
@@ -33777,6 +33838,11 @@ impl Game {
             w.t_impact = Some((breach, breach_normal.normalize_or_zero()));
         }
         true
+    }
+
+    /// The thrown turrets' state for the bench: (wreck index, settled, speed m/s, quiet seconds).
+    pub fn debug_thrown_turrets(&self) -> Vec<(usize, bool, f32, f32)> {
+        self.wrecks.iter().enumerate().filter_map(|(i, w)| w.t_body.as_ref().map(|b| (i, b.settled, b.velocity.length(), b.quiet_seconds()))).collect()
     }
 
     pub fn capture_catastrophic(&self, enemy: Option<usize>) -> bool {
@@ -37797,17 +37863,33 @@ mod tests {
     }
 
     #[test]
-    fn hot_fragment_source_is_planck_at_its_temperature_over_its_face_area() {
-        // A chip's light is Planck's radiance at its temperature on the renderer's scale (the
-        // wound rims' law) over a quarter of its six faces; its page glows at the same red band.
+    fn hot_fragment_source_agrees_with_visible_material_and_lambertian_face_area() {
+        // These are the actual four textures passed to hot_fragment_mesh by scene construction.
+        // Evaluate the real mesh texel and triangle area independently of the source helper so an
+        // sRGB-as-linear error or a return of the former *42 conversion fails the regression.
+        let visible_colors = [[255, 220, 54], [255, 182, 28], [225, 94, 9], [104, 14, 3]];
         let heat_ages = [0.0, 0.04, 0.30, 0.80];
         // The fifth page is cold, solved steel: it emits nothing and lights nothing.
+        assert_eq!(HOT_FRAGMENT_STAGE_EMISSIVE[N_HOT_FRAGMENT_BATCHES - 1], 0.0);
         let cold = HotFragment { active: true, settled: true, frame: BloodFrame::Turret, size: 0.006,
             life: f32::MAX, temp_k: 400.0, seed: 3, ..HotFragment::default() };
         assert_eq!(hot_fragment_heat_stage(&cold), N_HOT_FRAGMENT_BATCHES - 1);
-        assert_eq!(hot_fragment_radiance(&cold), Vec3::ZERO);
         assert!(hot_fragment_aggregate_light(&[cold], cold.frame, Mat4::IDENTITY).is_none());
-        for stage in 0..heat_ages.len() {
+        for stage in 0..visible_colors.len() {
+            let mesh = hot_fragment_mesh(visible_colors[stage]);
+            let texture = mesh.texture.as_ref().unwrap();
+            let linear = Vec3::new(
+                crate::rt_surface::srgb_to_linear(texture.rgba[0] as f32 / 255.0),
+                crate::rt_surface::srgb_to_linear(texture.rgba[1] as f32 / 255.0),
+                crate::rt_surface::srgb_to_linear(texture.rgba[2] as f32 / 255.0),
+            );
+            let unit_area: f32 = mesh.indices.chunks_exact(3).map(|triangle| {
+                let p: [Vec3; 3] = std::array::from_fn(|i| {
+                    Vec3::from_array(mesh.vertices[triangle[i] as usize].pos)
+                });
+                (p[1] - p[0]).cross(p[2] - p[0]).length() * 0.5
+            }).sum();
+            assert!((unit_area - 6.0).abs() < 1.0e-6);
             let chip = HotFragment {
                 active: true,
                 settled: true,
@@ -37820,27 +37902,20 @@ mod tests {
                 ..HotFragment::default()
             };
             assert_eq!(hot_fragment_heat_stage(&chip), stage);
-            let kelvin = hot_fragment_temperature(&chip);
-            assert!(kelvin >= FEA_HEAT_PAGE_KELVIN[stage], "stage {stage} at {kelvin} K");
-            let radiance = crate::renderer::scars::rim_radiance(kelvin);
-            assert!(radiance.x > 0.0);
             let light = hot_fragment_aggregate_light(&[chip], chip.frame, Mat4::IDENTITY).unwrap();
-            let expected = radiance * (6.0 * chip.size.powi(2) / 4.0);
+            // The source's power is the page's visible emission over the Lambertian face area,
+            // scaled by the band's Planck visible share (`HOT_FRAGMENT_LIGHT_SHARE`).
+            let expected = linear * HOT_FRAGMENT_STAGE_EMISSIVE[stage]
+                * (unit_area * chip.size.powi(2) / 4.0) * HOT_FRAGMENT_LIGHT_SHARE[stage];
             let actual = light.color * light.radiant_intensity;
             assert!((actual - expected).abs().max_element() < expected.max_element() * 2.0e-6,
-                "stage {stage}: source {actual:?} is not Planck over the faces {expected:?}");
+                "stage {stage}: source {actual:?} does not match visible face emission {expected:?}");
             assert!(light.pos.distance(chip.pos) < 1.0e-6);
             let twice = hot_fragment_aggregate_light(&[chip, chip], chip.frame, Mat4::IDENTITY).unwrap();
             assert!((twice.radiant_intensity / light.radiant_intensity - 2.0).abs() < 1.0e-6);
             assert!(hot_fragment_aggregate_light(&[HotFragment { age: chip.life, ..chip }],
                 chip.frame, Mat4::IDENTITY).is_none());
-            // The page's colour is Planck's chroma within its band, red full.
-            assert_eq!(hot_fragment_page_colour(stage)[0], 255);
         }
-        // Planck's steepness: steel at 1,100 K glows hundreds of times dimmer than at 1,500 K.
-        let rim = crate::renderer::scars::rim_radiance;
-        assert!(rim(1100.0).x * 100.0 < rim(1500.0).x);
-        assert_eq!(rim(650.0), Vec3::ZERO);
     }
 
     #[test]
