@@ -141,11 +141,14 @@ def views(mp):
 
 # The owner's live game or editor (2026-11-03: "before any compute use verify the panzer editor or
 # game isn't live before starting. if its live that means im using it and don't render").
-OWNER_LIVE = r'panzerrechnersystem( fea-range| edit)?$|launch_demo'
+# Bracketed so the pattern never matches a shell that carries it on its own command line.
+OWNER_LIVE = [r'[p]anzerrechnersystem( fea-range| edit)?$', r'[l]aunch_demo']
+# A headless GPU run exits with this while the owner's window is open (main.rs window-live guard).
+WINDOW_LIVE_EXIT = 75
 
 
 def owner_live():
-    return subprocess.run(['pgrep', '-f', OWNER_LIVE], capture_output=True).returncode == 0
+    return any(subprocess.run(['pgrep', '-f', pattern], capture_output=True).returncode == 0 for pattern in OWNER_LIVE)
 
 
 def gpu_busy():
@@ -183,8 +186,13 @@ def shoot(mp, tag, set_name, label, utc, eye, yaw, pitch, aim=None, fov=None, ex
     ex, ey, ez = eye
     cmd = [str(ROOT / 'target/release/panzerrechnersystem'), 'screenshot', out,
            f'{ex:.2f}', f'{ey:.2f}', f'{ez:.2f}', f'{yaw:.2f}', f'{pitch:.2f}', '0.0']
-    wait_for_gpu()
-    r = subprocess.run(cmd, env=env, cwd=ROOT, capture_output=True, text=True, timeout=1200)
+    while True:
+        wait_for_gpu()
+        r = subprocess.run(cmd, env=env, cwd=ROOT, capture_output=True, text=True, timeout=1200)
+        if r.returncode != WINDOW_LIVE_EXIT:
+            break
+        print(f'{label}: the owner opened a window; waiting', flush=True)
+        time.sleep(30)
     lines = [l for l in r.stdout.splitlines() if l.startswith(('[sky]', '[light] photometry'))]
     record = {'map': mp.name, 'set': set_name, 'label': label, 'utc': utc, 'eye': eye, 'yaw': yaw, 'pitch': pitch,
               'aim': aim, 'fov': fov, 'ok': r.returncode == 0, 'log': lines,
