@@ -543,10 +543,20 @@ impl SourceContacts<'_> {
         }
         candidates.sort_unstable();
         candidates.dedup();
+        // The cell's own plane's triangles, and those of a facet beside it turned by less than
+        // FACET_COVER_COS whose plane passes within the cell's own reach of every corner: a curved
+        // panel is flat facets, and a cell across the crease between two of them is covered by the
+        // two together (2026-11-03, the owner: lines along the mesh through a pooled coat). Their
+        // footprints are projected onto the cell's plane, so a hole or a gap still has no cover.
+        let edge = (corners[1] - corners[0]).length();
+        let reach = FACET_COVER_REACH * edge + 1e-4;
         for index in candidates {
             let t = grid.triangles[index];
             let triangle_normal = (t.b-t.a).cross(t.c-t.a).normalize();
-            if corners.iter().any(|p| (*p-t.a).dot(triangle_normal).abs() > 1e-4) { continue; }
+            let coplanar = corners.iter().all(|p| (*p-t.a).dot(triangle_normal).abs() <= 1e-4);
+            let facet = triangle_normal.dot(n).abs() >= FACET_COVER_COS
+                && corners.iter().all(|p| (*p-t.a).dot(triangle_normal).abs() <= reach);
+            if !coplanar && !facet { continue; }
             let mut tri = [project(t.a),project(t.b),project(t.c)];
             if (tri[1]-tri[0]).perp_dot(tri[2]-tri[0]) < 0.0 { tri.swap(1,2); }
             let mut uncovered = Vec::new();
@@ -568,6 +578,11 @@ impl SourceContacts<'_> {
         remainder.iter().map(|p| source_polygon_area(p)).sum::<f32>() <= 1e-10
     }
 }
+/// A neighbouring facet covers a cell when turned from it by less than 25 degrees (the film's own
+/// facet carry, `surface_blood`) and its plane within this share of the cell's edge of every corner
+/// (sin 25 degrees: a corner across a 25-degree crease stands that far off the other facet).
+pub const FACET_COVER_COS: f32 = 0.906;
+pub const FACET_COVER_REACH: f32 = 0.43;
 fn source_polygon_area(p: &[glam::Vec2]) -> f32 {
     if p.len() < 3 { return 0.0; }
     (0..p.len()).map(|i| p[i].perp_dot(p[(i+1)%p.len()])).sum::<f32>().abs()*0.5
