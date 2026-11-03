@@ -3708,8 +3708,8 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   is the ground band, not resolved geometry; the acceptance is symmetric per axis; a relay's thin
   lens passes a ray straight on the energy path (its imaging stays the relay captures'); without
   ray queries the record is open and unrestricted on the piece's shortest axis and no fitting
-  shadows the pane (the raymarch backend's portable fallback). The key beam through a slot is
-  unchanged: the shadow cascades'. Gate for the A/B: `KESSEL_RM_SKIP=2097152` leaves the term
+  shadows the pane (the raymarch backend's portable fallback). The key beam through a slot was
+  the shadow cascades' here; since the same day it is traced (below, "Sun shafts through the openings"). Gate for the A/B: `KESSEL_RM_SKIP=2097152` leaves the term
   out; `KESSEL_RM_PROBE` prints the measure (`[rm-aperture]`). Cost: the measure's ~200 ray
   queries per pane run on one thread each and cost 1.07 ms a frame every frame (gfxbench, the
   merged line of 2 November 2026, the largest single pass); it now runs every eighth frame or
@@ -3763,6 +3763,64 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   sight's round lamp armour-piercing yellow, high explosive red (APCR stays blue).
 - **The tinted look's pull outdoors only** (`crush.wgsl`): a presentation change back to the
   2 November morning state; the cabin stills the owner preferred had been rendered that way.
+
+### Sun shafts through the openings — 2 November 2026 (raymarch backend)
+
+The owner: "we need light shafts coming from the ports inside the tank". Engineering note:
+`docs/RAYMARCHING_ENGINE.md`, "Sun shafts through the openings".
+
+- **Removed: the cascades as the compartment's key beam** (with ray queries). They let the beam
+  through every vision block at full strength (glass casts no depth), let none down a periscope
+  (its windows and mirrors cast), resolved a port's 1.2 cm slot with one 1.2 cm texel under a
+  3 x 3 filter, and leaked: with the loader's hatch open under a 35 degree Sun they lit an arc
+  along the turret ring and a bar beside the hatch that no line to the Sun reaches
+  (`captures/agent-ab9914c8cec360e9c-shafts_20261102x_cascades_sky_shafts_loader_hatch_smoke.jpg`
+  against `..._shafts_20261102x_sky_shafts_loader_hatch_smoke.jpg`).
+- **Live: the beam traced through the vehicle** (`rm_rt.wgsl` `rm_beam_trace`, `rm_vehicle_beam`;
+  `rm_medium.wgsl` `rm_cabin_beam`; `rm_shade.wgsl`, `rm_volume.wgsl`). A compartment surface
+  facing the Sun and each cell of the cabin's air trace toward the body through the scene's own
+  triangles: opaque stops it; a direct-view pane (rt optic kind 3, `OPTIC_PANE`; every other ray
+  still counts it as cover) passes it at the pane material's throughput, the same numbers as the
+  apertures' records (`pane_transmittance`: entry 0.96, absorption 3.4/2.0/3.8 per metre along
+  the path between the two faces, the glass load's share); a periscope window or thin lens
+  passes it at 0.957 a face (uncoated crown glass, n 1.52); a mirror folds it at 0.90 (silvered
+  or aluminised glass, 0.85-0.95). Beyond 8 m the cascades at the exit point and the cloud deck's
+  and low banks' transmittance. A periscope out of parallel is found by a second trace along the
+  met mirrors' inverse fold. The surface's Lambert and GGX terms take the direction the beam
+  arrives from; no screen-space contact march for it.
+- **Live: the shaft's sampling in the cabin's air.** Four stratified points through each cabin
+  cell's depth (`RM_BEAM_STRATA`): a beam thinner than a cell (8 cm deep at 1 m, 15 cm at 2 m) is
+  held as the share of the cell it crosses. Sampling, not transport. The froxel slicing
+  (0.25..320 m) is unchanged.
+- **The cabin medium, sourced** (values unchanged): dust floor 1.3e-3 /m (about 0.4 mg/m^3 of
+  fine dust at 3 m^2/g, Hand & Malm 2007, JGR 112 D16203), 4.5e-3 /m a round fired and 1.4e-3 /m
+  a breech venting, saturating at 0.042 /m (about 5 mg/m^3 of smoke at 8.7 m^2/g, Mulholland &
+  Croarkin 2000, Fire and Materials 24, 227); albedo 0.80, g 0.55. The dust and smoke loads per
+  round are estimates of a mass, not measured for the KwK 36.
+- **Named approximations**: a point Sun (the disc's penumbra, about 5 mm per metre behind an
+  edge, not drawn); refraction in a pane not followed (the path in the glass along the
+  unrefracted line, a few per cent long obliquely; one entry face for direct glass, as the pane
+  material and the records); periscope faces and mirrors at normal incidence; a fold whose
+  straight trace never meets its mirror is not searched for; twelve segments; beyond 8 m the
+  cascades. Portable path and A/B: without ray queries, or with `KESSEL_RM_SKIP=8388608`
+  (`SKIP_BEAM_TRACE`), the cascades as before.
+- **Verified** (headless `sky-review` stills in the locked look, deltap-real 15/15/7 at
+  1024x576, `captures/agent-ab9914c8cec360e9c-shafts_20261102x_sky_*`): the loader's hatch open
+  under a 35 degree mid-March Sun throws a patch on the far wall and, after four rounds' smoke,
+  a shaft from the hatch to it; shut, no beam; the driver's visor toward a 6 degree Sun lights
+  his fittings, away from it nothing. Not shown in a picture: a beam through a side port's slot
+  (it admits the Sun within about 1.1-1.6 degrees of its axis, i.e. only at sunrise or sunset
+  across the hull, and lands on the breech; the port stills found none in the frame), the cupola
+  periscopes (their lower windows still measure closed, above), the gunner's seat (the AI
+  gunner's body fills that eye in the harness). Cost not measured. Gate: `beam_tests` (a CPU
+  replica of the trace over a slot, a glass block and a periscope with parallel and skewed
+  mirrors; the shader's constants against it and `pane_transmittance`),
+  `every_raymarch_shader_validates_with_and_without_ray_queries`.
+- **Open, found on the way**: the cabin air's apertures' sky term (`rm_volume.wgsl`) has no
+  occlusion ray, so a periscope's upper window outside the compartment lights the cabin's air
+  through its housing; with the hatch shut the smoke reads grey-lit (`..._shafts_loader_hatch_shut`).
+  The sky-review interior stills ran under the act's own weather, which can shade the tank with
+  a cloud; the shaft stills set clear air.
 
 ### The Tiger at the real vehicle's size — 2 November 2026 (`docs/TIGER_SCALE_20261102.md`)
 

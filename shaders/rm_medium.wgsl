@@ -221,3 +221,17 @@ fn rm_march_tau(origin: vec3<f32>, dir: vec3<f32>, length_m: f32, steps: u32, ji
     }
     return tau;
 }
+// The key beam at a point of the crew compartment, traced through the vehicle (rm_vehicle_beam,
+// rm_rt.wgsl: panes with their throughput, periscopes folded at their mirrors, the slot's walls
+// exact) and beyond the vehicle's reach through the cascades at the point the beam leaves it.
+// Point source: the body's disc (0.27 degrees in radius) casts no penumbra here (about 5 mm per
+// metre behind an edge). The cloud deck's and the low banks' transmittance are the caller's.
+// Off without ray queries, with the ray queries' debug skip (fr.debug.w) and with KESSEL_RM_SKIP
+// 8388608 (fr.worn_count.z, the A/B against the cascades): the cascades alone, as before.
+struct CabinBeam { throughput: vec3<f32>, toward: vec3<f32> };
+fn rm_cabin_beam_traced() -> bool { return RM_RAY_QUERIES && fr.debug.w < 0.5 && fr.worn_count.z < 0.5; }
+fn rm_cabin_beam(origin: vec3<f32>) -> CabinBeam {
+    let path = rm_vehicle_beam(origin, fr.sun_dir.xyz);
+    if (!path.open) { return CabinBeam(vec3(0.0), path.toward); }
+    return CabinBeam(path.throughput * rm_sun_visibility_maps(path.exit, 0.0), path.toward);
+}

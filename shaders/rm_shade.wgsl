@@ -632,14 +632,31 @@ fn fs(in: VsOut) -> ShadeOut {
         } else if (fr.sun_radiance.w > 0.5) {
             // Grass is dead straw: thin, two-sided, lit through; the beam wraps round a blade
             // instead of leaving its back black (named approximation, no transmission solve).
-            let ndl = select(dot(n, fr.sun_dir.xyz), max(dot(n, fr.sun_dir.xyz), 0.35 * abs(dot(n, fr.sun_dir.xyz)) + 0.15), grass);
+            let ndl_sun = select(dot(n, fr.sun_dir.xyz), max(dot(n, fr.sun_dir.xyz), 0.35 * abs(dot(n, fr.sun_dir.xyz)) + 0.15), grass);
+            // A surface of the crew compartment takes the beam traced through the vehicle
+            // (rm_cabin_beam): through a pane at the pane's throughput, through a periscope
+            // along the folded direction out of its lower window, through a port's slot only
+            // while the body lies within the slot's line of sight. No screen-space contact march:
+            // the trace has met every triangle on the way.
+            var key = fr.sun_dir.xyz;
+            var key_vis = vec3(1.0);
+            let beam_traced = ndl_sun > 0.0 && !terrain && !grass && rm_cabin_beam_traced() && rm_cabin_domain(world + n * 0.03) >= 0;
+            if (beam_traced) {
+                let beam = rm_cabin_beam(world + n * (0.01 + 0.002 * dist));
+                key = beam.toward;
+                key_vis = beam.throughput * rm_cloud_shadow(world) * exp(-tau_low.x);
+            }
+            let ndl = select(ndl_sun, dot(n, key), beam_traced);
             if (ndl > 0.0) {
                 let bias = select(select(0.03, 0.35, terrain), 0.12, grass) + 0.25 * (1.0 - ndl);
-                var vis = rm_sun_visibility_tau(world, bias, tau_low.x);
-                if (vis > 0.001 && !terrain && !grass) {
-                    vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, still));
+                var vis = key_vis;
+                if (!beam_traced) {
+                    vis = vec3(rm_sun_visibility_tau(world, bias, tau_low.x));
+                    if (vis.x > 0.001 && !terrain && !grass) {
+                        vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, still));
+                    }
                 }
-                color += (diffuse + rm_ggx_specular(n, v, fr.sun_dir.xyz, roughness, f0)) * fr.sun_radiance.rgb * ndl * vis;
+                color += (diffuse + rm_ggx_specular(n, v, key, roughness, f0)) * fr.sun_radiance.rgb * ndl * vis;
                 // Snow glitter: a random ice facet per 4 cm of surface flashes the beam into the
                 // eye when its half-vector lines up (named approximation: facets are a hash, not
                 // a crystal model; the dither keeps them one-pixel sparks).
