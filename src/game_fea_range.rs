@@ -1831,6 +1831,10 @@ impl Range {
         }
         // A casualty's tissue solving on its worker (`Game::casualty_tissue_pending`): the
         // simulation waits for it without holding the window (the next step would block on it).
+        // Solves already done are taken back here (the world is frozen while any is pending, so
+        // this is the strike's own result, as the game's death screen takes them back); nothing
+        // else would, and the range waited for ever once the player's own man was killed.
+        self.g.settle_casualty_tissue(false);
         if self.g.casualty_tissue_pending() {
             self.status = "A BODY'S TISSUE IS SOLVING (THE SIMULATION WAITS FOR IT)".into();
             return;
