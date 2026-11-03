@@ -13,6 +13,8 @@ mod engine_operability;
 mod cold_recommission;
 #[path = "loader_hand_service.rs"]
 mod loader_hand_service;
+#[path = "game_hot_surfaces.rs"]
+mod game_hot_surfaces;
 #[path = "death_replay.rs"]
 mod death_replay;
 #[path = "vehicle_finish.rs"]
@@ -8860,6 +8862,10 @@ struct Casing {
     /// Stowed upright in the empties rack at this slot (solo crew): no solving, it rides the
     /// turret at the slot's pose and is never recycled.
     stowed: Option<u8>,
+    /// Seconds since it was drawn from the breech, while its wall is still warm
+    /// (`hot_surfaces::case_wall_k`); none for a case never fired here or cooled.
+    #[serde(default)]
+    fired_s: Option<f32>,
     /// Seconds left of the loader's carry from the breech to the slot; the pose lerps meanwhile.
     stow_t: f32,
     stow_s: f32,
@@ -13837,6 +13843,8 @@ impl Game {
                 .expect("hot-fragment instance pool allocation");
             renderer.set_batch_flags(batch, 2.0); // authored amber/orange/red, not generic FX tint
             assert!(renderer.set_dynamic_instanced_emissive(batch, hot_emissive[i]));
+            // Under 3 pixels a chip is a filled square of pixels, never a plus (the owner, 2026-11-03).
+            renderer.set_batch_point_square(batch, true);
             batch
         });
         // A second bounded page set draws one narrow, velocity-aligned tail for each flying head.
@@ -19858,6 +19866,7 @@ impl Game {
             + Vec3::Y * (0.65 + 0.35 * s(2)) + back * (2.0 + 0.60 * s(3));
         let Some(k) = self.spawn_casing_from(position, velocity) else { return; };
         self.casings[k].rotation = rotation.normalize();
+        self.casings[k].fired_s = Some(0.0);
         self.cabin_fumes.case_freed(k);
         // The solo crew's loader stows the empty upright in the rear rack unless he is rushed,
         // hurt, or the rack is full; then it tumbles as before.
@@ -20727,6 +20736,11 @@ impl Game {
             upper_hatches: open(lids[1]) + open(lids[3]) + open(self.hatch_t),
             lower_hatches: open(lids[0]) + open(lids[2]),
         };
+        // A drawn case's wall cools on its own clock (`hot_surfaces::case_wall_k`).
+        let hot_s = crate::hot_surfaces::case_hot_s();
+        for c in self.casings.iter_mut() {
+            c.fired_s = c.fired_s.map(|s| s + dt.max(0.0)).filter(|&s| c.active && s < hot_s);
+        }
         let hull_inverse = self.player.hull_model().inverse();
         let casings = &self.casings;
         self.cabin_fumes.step(dt, air, |k| {
@@ -31515,6 +31529,7 @@ impl Game {
             solve_debt_s: 0.0,
             still_at: (Vec3::splat(f32::MAX), Vec3::Z),
             still_s: 0.0,
+            fired_s: None,
         };
         Some(k)
     }

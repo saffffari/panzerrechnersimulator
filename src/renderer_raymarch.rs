@@ -3390,7 +3390,9 @@ impl Backend {
                 // glows), else an ordinary surface (or an effect's incandescent glow).
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor,
                     if flags > 3.5 { 4.0 } else if (flags - 2.0).abs() < 0.5 { 2.0 } else { 0.0 }] },
-                extra: [if aboard(b.world_min, b.world_max) { 0.0 } else { self.snow_load(r.world_snow_load) }, 0.0, 0.0, 0.0],
+                // y: a point-like body drawn as a filled pixel square in the G-buffer (rm_gbuffer.wgsl vs_inst).
+                extra: [if aboard(b.world_min, b.world_max) { 0.0 } else { self.snow_load(r.world_snow_load) },
+                    if b.point_square && !shadow { 1.0 } else { 0.0 }, 0.0, 0.0],
                 scars: [0; 4],
                 vehicle: [0.0; 4],
             };

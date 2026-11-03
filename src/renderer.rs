@@ -1874,6 +1874,9 @@ struct InstBatch {
     /// raster instance stream, so every raster pass collapses it to a degenerate point that
     /// produces no fragment, and it occupies no TLAS slot.
     hidden: InstanceVisibility,
+    /// A point-like body (a hot chip): under 3 pixels across the G-buffer draws it as a filled
+    /// square of whole pixels about its centre (`set_batch_point_square`).
+    point_square: bool,
 }
 
 /// Hidden bits of one page's instances: one bit per instance ordinal, set = hidden, trailing zero
@@ -7375,6 +7378,13 @@ impl Renderer {
     /// The Sun's altitude above the horizon, degrees (the act's ephemeris).
     pub fn sun_altitude_deg(&self) -> f32 { self.celestial.sun_altitude_deg() as f32 }
 
+    /// Draw a batch of point-like bodies (hot chips) as filled squares of whole pixels while they
+    /// project under 3 pixels across, their light spread evenly over the square (rm_gbuffer.wgsl
+    /// `vs_inst`; the owner, 2026-11-03: a 2-3 pixel cube rasterised as a plus, never a star).
+    pub fn set_batch_point_square(&mut self, batch: usize, on: bool) {
+        if let Some(b) = self.inst_batches.get_mut(batch) { b.point_square = on; }
+    }
+
     pub fn set_batch_flags(&mut self, batch: usize, flags: f32) {
         if let Some(b) = self.inst_batches.get_mut(batch) {
             let rt_membership_changed = (b.flags <= 3.5) != (flags <= 3.5);
@@ -7674,6 +7684,7 @@ impl Renderer {
                 object_id_base: plan.object_id_base,
                 object_id_capacity: plan.inst_count,
                 hidden: InstanceVisibility::default(),
+                point_square: false,
             };
             for instance in 0..plan.inst_count {
                 if hidden_of(page_index, instance as usize) {

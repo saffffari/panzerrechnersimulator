@@ -177,6 +177,7 @@ mod pixel_particles;
 mod pressure_front;
 mod incandescence;
 mod cabin_fumes;
+mod hot_surfaces;
 #[cfg(test)]
 mod point_footprint;
 mod heat_haze;
@@ -8101,6 +8102,82 @@ fn run_haze() -> anyhow::Result<()> {
 /// stored 3D cabin volume toggled: OFF proves the underlying black point/geometry did not change;
 /// ON shows the tight own-colour halos around lamps and annunciators plus aperture shafts. Keeping
 /// the comparison independent from `run_haze` makes it fast enough for iterative lighting work.
+/// Headless check of the froxel medium's history (the owner, 2026-11-03: the cabin's haze builds up
+/// while the camera is held and vanishes the moment it moves). The frozen Loader view of `atmo`,
+/// rendered three ways with the eye left as it is: converged (history kept for N frames: a held
+/// camera), single frames just after a history reset (a moving camera in the editor, which resets
+/// on every move), and the mean of K such singles (the medium's unbiased estimate, no history).
+/// Converged far above the singles' mean is feedback; equal means the held picture is the medium.
+/// Prints the displayed means (whole frame, lower half) and writes the three stills.
+fn run_haze_history(prefix: &str) -> anyhow::Result<()> {
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build_act(&device, &queue, true, &world::act(0))?;
+    g.mute_audio();
+    g.god = true;
+    g.set_lan_role(lan::LanRole::Commander);
+    let mut crew = lan::CrewFrame::default();
+    for (role, peer_id) in [(lan::LanRole::Commander, 1), (lan::LanRole::Gunner, 2), (lan::LanRole::Driver, 3), (lan::LanRole::Loader, 4)] {
+        crew.roster[role as usize] = peer_id;
+        crew.inputs[role as usize].post = role;
+    }
+    let input = TankInput { coop: Some(crew), coop_host: true, couch_crew: true, ..TankInput::default() };
+    for _ in 0..30 { g.update(&input, 1.0 / 60.0, &mut r); }
+    let role = lan::LanRole::Loader;
+    let (eye, forward, fov, mask, reticle) = g.coop_view_camera(role);
+    r.camera.pos = eye;
+    r.camera.set_forward(forward);
+    r.camera.fov_y = fov;
+    r.optic_mask = mask;
+    r.reticle = reticle;
+    r.weather_shelter = 1.0;
+    r.set_active_view(3);
+    if let Some(peer_id) = g.couch_role_occupant(role) { g.drive_couch_crew_rigs_for_view(peer_id, &mut r); }
+    g.configure_crew_render_view(role, false, &mut r);
+    let (w, h) = (r.iw, r.ih);
+    let n: u32 = std::env::var("KESSEL_HAZE_PROBE_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(120);
+    let k: u32 = std::env::var("KESSEL_HAZE_PROBE_SINGLES").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
+    let luma = |px: &[u8]| 0.2126 * px[0] as f64 + 0.7152 * px[1] as f64 + 0.0722 * px[2] as f64;
+    let means = |img: &[f64]| {
+        let (mut all, mut low) = (0.0, 0.0);
+        for (i, v) in img.iter().enumerate() { all += v; if (i as u32 / w) >= h / 2 { low += v; } }
+        (all / img.len() as f64, low / (img.len() / 2) as f64)
+    };
+    let to_luma = |rgba: &[u8]| rgba.chunks(4).map(luma).collect::<Vec<f64>>();
+    let save = |name: &str, rgba: Vec<u8>| -> anyhow::Result<()> {
+        image::RgbaImage::from_raw(w, h, rgba).ok_or_else(|| anyhow::anyhow!("bad capture"))?.save(format!("{prefix}_{name}.png"))?;
+        Ok(())
+    };
+    let mut converged = |r: &mut renderer::Renderer| -> anyhow::Result<Vec<u8>> {
+        r.reset_history();
+        for _ in 1..n { r.render_offscreen(&device, &queue); }
+        r.render_to_rgba(&device, &queue, w, h)
+    };
+    let held = converged(&mut r)?;
+    let mut mean = vec![0.0f64; (w * h) as usize];
+    let mut first = None;
+    for _ in 0..k {
+        r.reset_history();
+        let single = r.render_to_rgba(&device, &queue, w, h)?;
+        for (m, v) in mean.iter_mut().zip(to_luma(&single)) { *m += v / k as f64; }
+        first.get_or_insert(single);
+    }
+    let held_again = converged(&mut r)?;
+    let (a, b, c, d) = (means(&to_luma(&held)), means(&mean), means(&to_luma(first.as_ref().unwrap())), means(&to_luma(&held_again)));
+    println!("[haze-history] displayed luma (0-255), whole frame / lower half:");
+    println!("[haze-history]   held {n} frames      {:.2} / {:.2}", a.0, a.1);
+    println!("[haze-history]   one moving frame    {:.2} / {:.2}", c.0, c.1);
+    println!("[haze-history]   mean of {k} singles  {:.2} / {:.2}", b.0, b.1);
+    println!("[haze-history]   held again (drift)  {:.2} / {:.2}", d.0, d.1);
+    println!("[haze-history] held / singles' mean, lower half: {:.3}", a.1 / b.1.max(1e-6));
+    save("held", held)?;
+    save("moving", first.unwrap())?;
+    let mean_rgba: Vec<u8> = mean.iter().flat_map(|v| { let q = v.round().clamp(0.0, 255.0) as u8; [q, q, q, 255] }).collect();
+    save("singles_mean_luma", mean_rgba)?;
+    Ok(())
+}
+
 fn run_atmo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -18311,6 +18388,10 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "haze" {
         return run_haze();
+    }
+    if args.len() >= 2 && args[1] == "haze-history" {
+        let prefix = capture_arg(&args, 2, "haze_history");
+        return run_haze_history(&prefix);
     }
     if args.len() >= 2 && args[1] == "atmo" {
         let prefix = capture_arg(&args, 2, "atmo");

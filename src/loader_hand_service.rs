@@ -66,6 +66,7 @@ impl Game {
                 self.set_carry_pose(position, rotation, Vec3::ZERO, Vec3::ZERO);
                 let k = self.spawn_casing_from(position, Vec3::ZERO)
                     .expect("the extraction gate reserved an unused casing body");
+                self.casings[k].fired_s = Some(0.0);
                 self.cabin_fumes.case_freed(k);
                 self.casings[k].carried = true;
                 self.carried_casing = Some(k);
