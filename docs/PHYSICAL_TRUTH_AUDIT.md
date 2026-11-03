@@ -1332,8 +1332,19 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   round; fuel 80 %; turret forward, gun level. The 14.5 mm B-32 case round is a case-set projectile
   (no anti-tank rifle fires in the game yet) with estimated data.
 - **Lattice in play** (`game_fea::fea_solve_impact`): every kinetic strike on the player's Tiger
-  that perforates or stops in the plate is solved. A perforation is solved inside its tick before
-  its scar, consequences and fragments are resolved (the tick waits and logs the wall time). A round
+  that perforates or stops in the plate is solved. Since 2026-11-03 a kinetic perforation's plate
+  lattice and the round's own solve run on workers (`PendingPenetration`): the strike is seen and
+  heard at once (its sound takes the chain's burst; casualties and an ammunition detonation are
+  heard through their own consequences), and its measured scar, exterior strike, fragments, crew
+  wounds and module damage commit a fixed 0.35 s of game time later (`FEA_PENETRATION_COMMIT_S`,
+  named latency), the update waiting for the solves if they are late (logged), so the result lands
+  at the same simulation moment on every machine. Points are kept in the struck part's frame, so
+  the consequences land where the steel is then. Measured (CPU, release, owner's game running):
+  88 mm PzGr 39 through the hull side, strike frame 339 ms before, chain 0.01 ms after (lattice 124
+  ms and round 339 ms on workers); the owner's log showed 210-460 ms strike frames from these
+  solves. The behind-armour pass (`resolve_player_penetration`: fragments followed through the
+  vehicle, crew and modules) still runs on the main thread at the commit (50-100 ms in the owner's
+  log). A world save taken inside the 0.35 s does not keep the pending perforation (named). A round
   the plate stopped changes only its scar and grip: its solve runs on a worker thread and commits a
   fixed 0.25 s of game time later (`FEA_STOP_COMMIT_S`, named), the update waiting for it if it is
   late (logged), so the switch happens at the same simulation moment on every machine; until then
