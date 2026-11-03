@@ -17450,6 +17450,10 @@ fn main() -> anyhow::Result<()> {
         // GPU: review clips of the spring meadow by day and at dusk (KESSEL_RENDERER=raymarch).
         return meadow_film::run(&capture_arg(&args, 2, "meadow_film"));
     }
+    if args.len() >= 2 && args[1] == "ai-film" {
+        // GPU: an AI-against-AI battle filmed by an event-following director (KESSEL_RENDERER=raymarch).
+        return game::game_ai_film::run(&args[2..]);
+    }
     if args.len() >= 2 && args[1] == "fea-film" {
         // GPU: video clips of the layered damage model in play (KESSEL_RENDERER=raymarch).
         return game::game_fea_film::run(&capture_arg(&args, 2, "fea_film"));
