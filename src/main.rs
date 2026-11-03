@@ -151,6 +151,7 @@ mod grass;
 mod meadow;
 mod meadow_fauna;
 mod leaf_optics;
+mod meadow_film;
 mod infantry;
 mod infantry_combat;
 mod interior_rig;
@@ -17234,6 +17235,10 @@ fn main() -> anyhow::Result<()> {
         // CPU only: wall time per impact of the layered damage model, apart from driving.
         let seeds = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
         return game::game_fea_section::bench(seeds, &capture_arg(&args, 3, "artifacts/perf/fea_bench.json"));
+    }
+    if args.len() >= 2 && args[1] == "meadow-film" {
+        // GPU: review clips of the spring meadow by day and at dusk (KESSEL_RENDERER=raymarch).
+        return meadow_film::run(&capture_arg(&args, 2, "meadow_film"));
     }
     if args.len() >= 2 && args[1] == "fea-film" {
         // GPU: video clips of the layered damage model in play (KESSEL_RENDERER=raymarch).
