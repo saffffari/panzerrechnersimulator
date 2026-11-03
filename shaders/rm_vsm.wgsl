@@ -369,8 +369,8 @@ fn vsm_finish(frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32>, up: vec3<f32
         if (cls == 2u) {
             // Manganese track steel, oxidised dark; its running faces polished by the wheels.
             f.albedo = vec3(0.085, 0.072, 0.062);
-            f.roughness = 0.72;
-            f.metallic = 0.45;
+            f.roughness = 0.60;
+            f.metallic = 0.55;
         } else if (cls == 3u || cls == 9u) {
             // Exhaust steel, heat-scaled; the tow cables' wire rope, oiled and weathered.
             f.albedo = vec3(0.065, 0.048, 0.040);
@@ -408,11 +408,14 @@ fn vsm_finish(frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32>, up: vec3<f32
     if (cls == 6u) { paint = source; }
     let spray = vsm_noise(p * 2.2) * 0.6 + vsm_noise(p * 7.0) * 0.4;
     paint *= 0.95 + 0.10 * spray;
-    let paint_rough = select(0.68, 0.62, inside);
+    // Outside a little shinier than a flat field paint (the owner, 2 November 2026: "lower the
+    // roughness and increase metallic a bit ... a bit shinier"): satin, with a small metallic share.
+    let paint_rough = select(0.50, 0.62, inside);
+    let paint_metal = select(0.15, 0.0, inside);
     if (keep >= 3u && painted) {
         f.albedo = paint;
         f.roughness = paint_rough;
-        f.metallic = 0.0;
+        f.metallic = paint_metal;
     }
     return vsm_wear(f, frame, s, p, n, up, inside, keep, painted, paint, paint_rough, steel, mech, grime_load, face_up);
 }
@@ -528,11 +531,12 @@ fn vsm_wear(f_in: VsmFinish, frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32
         let primer_seen = select(mix(VSM_PRIMER, vec3(0.085, 0.040, 0.030), 0.5 * s.sky), VSM_PRIMER, inside);
         f.albedo = mix(f.albedo, primer_seen, through_top);
         f.roughness = mix(f.roughness, 0.78, through_top);
+        f.metallic = mix(f.metallic, 0.0, through_top);
         var bare = steel;
-        var bare_rough = 0.38;
+        var bare_rough = 0.30;
         // Steel the crew keep touching stays bright and smooth; elsewhere it darkens.
         bare = mix(VSM_DARK_STEEL, bare, contact);
-        bare_rough = mix(0.5, 0.2, contact);
+        bare_rough = mix(0.42, 0.18, contact);
         f.albedo = mix(f.albedo, bare, through_primer);
         f.roughness = mix(f.roughness, bare_rough, through_primer);
         f.metallic = mix(f.metallic, 1.0, through_primer);
@@ -560,7 +564,7 @@ fn vsm_wear(f_in: VsmFinish, frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32
         let chalk = s.sky * 0.55 * (0.8 + 0.4 * vsm_noise(p * 3.0)) * (1.0 - 0.7 * contact) * (1.0 - through_top);
         let grey = dot(f.albedo, vec3(0.2126, 0.7152, 0.0722));
         f.albedo = mix(f.albedo, mix(f.albedo, vec3(grey), 0.4) * 1.45 + vec3(0.008), chalk);
-        f.roughness = mix(f.roughness, 0.86, chalk);
+        f.roughness = mix(f.roughness, 0.70, chalk);
     }
     return vsm_processes(f, frame, s, p, n, up, inside, keep, painted);
 }
