@@ -6199,6 +6199,8 @@ const FLAME_CUBES_PER_INTERIOR_SPOT: usize = 6144;
 const MAX_INTERIOR_FLAME_CUBES: usize = 49152;
 /// Updates between two regenerations of the fire's grains (`drive_interior_fire`).
 const FIRE_PRESENTATION_PERIOD: u32 = 2;
+/// Fire time between rebuilds of a burning wreck's surface-fire patches (`Game::wreck_surface_patches`).
+const WRECK_PATCH_PERIOD_S: f32 = 0.1;
 // Authored particle radiance calibration, not a temperature or physical fire-power model.
 // The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
 const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
@@ -10288,6 +10290,10 @@ pub struct Game {
     world_fire_lights: [Option<PointLight>; MAX_WORLD_FIRE_SOURCES],
     wreck_deck_anchors: [Option<Vec3>; 6],
     wreck_fire_surfaces: [[wreck_surface_fire::Surface; 2]; 6],
+    /// Each burning wreck's surface-fire patches, rebuilt every WRECK_PATCH_PERIOD_S of fire time or
+    /// when its hull or turret moves (a thrown turret): the burn front creeps over seconds, and
+    /// rebuilding every update cost 18 ms a frame with five wrecks burning (2026-11-02 playtest).
+    wreck_patch_cache: std::collections::HashMap<usize, (f32, [Mat4; 2], Vec<wreck_surface_fire::Patch>)>,
     player_fire_surfaces: [wreck_surface_fire::Surface; 2],
     player_surface_burn: Option<[wreck_surface_fire::Burn; 2]>,
     player_surface_fire_started: f32,
@@ -14703,7 +14709,7 @@ impl Game {
             interior_fire_lights: [None; N_INT_FIRE_LIGHTS],
             world_fire_lights: [None; MAX_WORLD_FIRE_SOURCES],
             wreck_deck_anchors,
-            wreck_fire_surfaces, player_fire_surfaces, player_surface_burn: None, player_surface_fire_started: 0.0,
+            wreck_fire_surfaces, wreck_patch_cache: std::collections::HashMap::new(), player_fire_surfaces, player_surface_burn: None, player_surface_fire_started: 0.0,
             wreck_turret_sources,
             fire_t: 0.0,
             ammo_fire: ammunition_fire::AmmunitionFire::default(),
@@ -33447,6 +33453,13 @@ impl Game {
             wreck.surface_burn = Some(std::array::from_fn(|i|surfaces[i].ignite(
                 models[i].inverse().transform_point3(source))));
         }
+        // Reuse the last build while the fire has advanced less than the period and nothing moved.
+        if let Some((t, at, cached)) = self.wreck_patch_cache.get(&index) {
+            let moved = (0..2).any(|k| (at[k].w_axis - models[k].w_axis).truncate().length() > 0.01);
+            if !moved && (wreck.fire_t - *t).abs() < WRECK_PATCH_PERIOD_S {
+                return cached.clone();
+            }
+        }
         let burn = wreck.surface_burn.as_ref().unwrap();
         let strength = wreck.fire_strength();
         let mut patches = surfaces[0].patches(&burn[0],models[0],wreck.fire_t,
@@ -33457,6 +33470,7 @@ impl Game {
         patches.extend(surfaces[1].patches(&burn[1],models[1],turret_age,
             wreck.ignition_load,strength*if wreck.kind==WreckKind::TurretPop {0.30}else{0.50})
             .into_iter().map(|mut patch| {patch.frame=1;patch}));
+        self.wreck_patch_cache.insert(index, (wreck.fire_t, models, patches.clone()));
         patches
     }
 
