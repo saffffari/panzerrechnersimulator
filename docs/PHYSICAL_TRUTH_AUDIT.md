@@ -1690,6 +1690,16 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     response is the owner's art direction, not a measured property. The droplets, the coat and the
     pools under the couch dead share it.
   - Not yet seen rendered (no renders while the owner works).
+- **The gun mantlet is armour on the gun's frame** (2026-11-03, `projectile_armor_source::plate_on`,
+  `TIGER_MANTLET_NODE`; the owner: the mantlet appeared to be left out of the FEA). The armour
+  contact surfaces held the hull, turret, hatches and visors but not the gun's frame, so a shell
+  aimed at the mantlet passed through it and met the turret face behind. The mantlet's own node
+  (Gun_0008, from the gun's baked mesh; not the barrel or breech) is now armour on the gun frame,
+  posed with the gun's elevation; a contact on it is the scheme's 120 mm turret-front plate in
+  cast armour (the materials table's cast mantlet), at its own face's angle, so the chain and the
+  plate lattice solve it as cast steel. Named: a scar on the mantlet is kept in the turret's frame
+  at the gun's pose when it was struck (scars are keyed by turret facing); if the gun elevates
+  afterwards the mark stays where the mantlet was. A hit on the barrel is not an armour contact.
 - **Refraction by blasts and hot air** (2026-11-03, `pressure_front` physical mode,
   `fea_damage::blast`, `HeatPlume`; behind `KESSEL_REFRACTION=physical`, off by default until the
   owner approves stills: the look is locked). One pass bends the camera's rays through two fields:

@@ -12,8 +12,23 @@ const HORIZONTAL_PLATE_NORMAL_Y:f32=0.94;
 /// Hull-local Z of the Tiger driver's front plate (visor aperture at z=2.386). Upward-facing
 /// hull plate ahead of it is the 60 mm glacis, not the 25 mm hull roof.
 const TIGER_GLACIS_MIN_Z:f32=2.45;
+/// The source frame of the gun (`Game::fire_surface_models`): on the Tiger, the mantlet.
+pub(super) const GUN_FRAME:usize=2;
+
 fn plate(scheme:crate::ballistics::ArmorScheme,part:ArmorPart,point:Vec3,normal:Vec3)->SurfacePlate {
+    plate_on(scheme,part,point,normal,false)
+}
+
+/// `plate`, with `mantlet` for a contact on the gun's mantlet: the scheme's turret-front plate in
+/// cast armour (`fea_damage::materials` CAST_ARMOUR: the Tiger's cast mantlet parts), at its own
+/// face's angle.
+fn plate_on(scheme:crate::ballistics::ArmorScheme,part:ArmorPart,point:Vec3,normal:Vec3,mantlet:bool)->SurfacePlate {
     use crate::ballistics::{ArmorScheme as A,ArmorMaterial as M};
+    if mantlet && scheme==A::TigerI {
+        let mut p=scheme.plate(crate::ballistics::Facing::TurretFront);p.slope_deg=0.0;p.material=M::Cast;p.name="Tiger mantlet";
+        return SurfacePlate{plate:p,coverage:"the gun mantlet's own source triangles on the gun frame; nominal mantlet thickness",
+            manufacture:"cast",provenance:"existing Tiger mantlet class (120 mm); cast per the materials table"};
+    }
     let facing=facing_from_local_normal(normal,part);
     let mut p=scheme.plate(facing);p.slope_deg=0.0; // angle is measured from the actual source normal
     let (mut coverage,mut provenance)=("plate-class mapping; source triangle verified, local variation unresolved","existing armor scheme; not a per-triangle measured thickness map");
@@ -50,7 +65,7 @@ pub(super) fn contact(source:&surface_fire::CabinFire,models:&[Mat4;surface_fire
     let local_normal=model.transpose().transform_vector3(world_normal).normalize_or_zero();
     Some(ProjectileContact{t_m:start.distance(end)*hit.fraction,pos,kind:ProjectileContactKind::Vehicle(VehicleArmorContact{
         vehicle,part,facing:facing_from_local_normal(local_normal,part),local_point,world_normal,
-        surface_plate:Some(plate(scheme,part,local_point,local_normal)),})})
+        surface_plate:Some(plate_on(scheme,part,local_point,local_normal,hit.frame==GUN_FRAME)),})})
 }
 
 #[cfg(test)]
@@ -68,6 +83,47 @@ mod tests {
         for p in [roof,belly,lower,upper] {assert_eq!(p.plate.slope_deg,0.0);}
         assert!(plate(A::T34_76,ArmorPart::Hull,Vec3::Y,Vec3::Y).coverage.contains("unverified"));
     }
+    #[test]
+    fn a_shell_meets_the_mantlet_on_the_gun_frame_as_cast_armour_and_it_follows_the_gun() {
+        let hf=crate::terrain::Heightfield {res:2,spacing:1000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0,openings:Default::default(),detail:None};
+        let mut tank=Tank::new(0.0,0.0,0.0,&hf,crate::tank::TIGER_PARTS);
+        // The turret face, and a mantlet 0.3 m in front of it on the gun frame.
+        let turret=crate::prims::box_mesh(Vec3::new(-1.0,1.6,-1.0),Vec3::new(1.0,2.6,1.0),[100;3]);
+        let mantlet=crate::prims::box_mesh(Vec3::new(-0.4,-0.3,0.2),Vec3::new(0.4,0.3,0.35),[100;3]);
+        let source=surface_fire::CabinFire::new(&[(1,&turret),(GUN_FRAME,&mantlet)]);
+        let shoot=|tank:&Tank|{
+            let mut models=[Mat4::IDENTITY;surface_fire::FRAMES];
+            models[0]=tank.hull_model();models[1]=tank.turret_model();models[GUN_FRAME]=tank.gun_model();
+            let target=tank.gun_model().transform_point3(Vec3::new(0.0,0.0,0.3));
+            let from=target+tank.forward()*20.0;
+            contact(&source,&models,tank,ProjectileVehicle::Player,crate::ballistics::ArmorScheme::TigerI,from,target-tank.forward()*0.5)
+        };
+        let hit=shoot(&tank).unwrap();
+        let ProjectileContactKind::Vehicle(armor)=hit.kind else{panic!()};
+        let plate=armor.surface_plate.unwrap().plate;
+        assert_eq!((plate.name,plate.material),("Tiger mantlet",crate::ballistics::ArmorMaterial::Cast));
+        assert_eq!(armor.part,ArmorPart::Turret);
+        // Elevated, the mantlet is met where the gun has taken it.
+        tank.gun_pitch=0.15;
+        let raised=shoot(&tank).unwrap();
+        assert!((raised.pos-hit.pos).length()>0.01, "the contact follows the gun");
+        let ProjectileContactKind::Vehicle(armor)=raised.kind else{panic!()};
+        assert_eq!(armor.surface_plate.unwrap().plate.name,"Tiger mantlet");
+    }
+
+    #[test]
+    fn the_tigers_mantlet_node_loads_from_the_gun_mesh_and_sits_at_its_front() {
+        let Ok(pages)=crate::gltf_load::load_glb_partitioned_subtrees(TIGER_MANTLET_GLB,&[TIGER_MANTLET_NODE]) else {
+            eprintln!("tiger gun GLB unavailable; skipped");return;
+        };
+        assert_eq!(pages.len(),2);
+        let (gun,mantlet)=(&pages[0],&pages[1]);
+        assert!(!mantlet.indices.is_empty());
+        // The mantlet is a broad shield, much wider than the barrel, within the gun's extent.
+        assert!(mantlet.max.x-mantlet.min.x>0.4,"{:?} {:?}",mantlet.min,mantlet.max);
+        assert!(mantlet.min.cmpge(gun.min.min(mantlet.min)-Vec3::splat(1e-3)).all());
+    }
+
     #[test]
     fn sloped_front_plates_are_not_classified_as_roof() {
         use crate::ballistics::ArmorScheme as A;
