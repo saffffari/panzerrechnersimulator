@@ -574,7 +574,7 @@ fn run_case(
     g.set_defer_rtt_to_render(true);
     if canyon {g.set_playtest_return_fire(true);}
     let policy = crate::resource::resolve("assets/ai/weights_academy.bin")?;
-    if !course_review {g.enemy_policy = Some(ai::Mlp::load(policy.to_str().context("policy path")?)?);}
+    if !course_review {g.enemy_policy = Some(ai::Mlp::load_t34(policy.to_str().context("policy path")?)?);}
     ensure!(!g.god, "scene suite refuses invulnerability");
     let view = if scene.inside {
         crate::crew_blizzard_capture::View::Inside

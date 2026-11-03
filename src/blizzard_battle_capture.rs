@@ -83,7 +83,7 @@ pub fn run_with_encounter(prefix: &str, seconds: f32, preview: bool,
         g.enemies[i].reload = (if platoon { 6.0 } else { 2.0 }) + k as f32 * 2.5;
     }
     let policy_path = crate::resource::resolve("assets/ai/weights_academy.bin")?;
-    g.enemy_policy = Some(ai::Mlp::load(policy_path.to_str().context("policy path")?)?);
+    g.enemy_policy = Some(ai::Mlp::load_t34(policy_path.to_str().context("policy path")?)?);
     ensure!(!g.god, "capture must retain ordinary damage");
     r.apply_campaign_atmosphere(1, true, DayPhase::Day);
     r.set_weather_seed(world::act(1).seed);

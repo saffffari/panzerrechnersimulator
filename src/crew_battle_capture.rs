@@ -419,7 +419,7 @@ pub fn run_crew_battle_capture(
         .context("manifest path is not UTF-8")?;
     let manifest_sha256 = file_sha256(manifest_path)?;
     let t34 =
-        ai::Mlp::load(t34_weights).with_context(|| format!("loading T34 policy {t34_weights}"))?;
+        ai::Mlp::load_t34(t34_weights).with_context(|| format!("loading T34 policy {t34_weights}"))?;
     let tiger = ai::Mlp::load(tiger_weights)
         .with_context(|| format!("loading Tiger policy {tiger_weights}"))?;
     let weights = json!({"t34":{"path":t34_weights,"sha256":file_sha256(t34_weights)?},

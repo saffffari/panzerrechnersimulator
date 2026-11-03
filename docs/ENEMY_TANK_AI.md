@@ -198,6 +198,8 @@ path"). List: `artifacts/t34-ai-20261028/full_tests.txt`.
   (`KESSEL_T34_BRAIN=doctrine` restores the orders above). It was evolved on open ground with a
   14-input view and can drive into walls; `Game::enemy_maneuver`'s avoidance and the stuck
   recovery are what keep it moving there, and `canyon-ai-run`'s `stuck_tank_s` is the measure.
+  `docs/T34_EYES.md` (in progress) gives the T-34 net the room to drive, a memory of the Tiger,
+  its mates and the doctrine's posts as inputs, and retrains it on the Canyon.
 - **Turret faces** are not in the armour solution (hull faces only), and the solution ignores
   scars and the solver's per-shot variation.
 - **Reinforcement platoons** are only reached by the radio relay of a living leader; a wiped

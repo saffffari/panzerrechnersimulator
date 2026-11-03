@@ -621,6 +621,17 @@ const ALARM_RADIUS: f32 = 40.0; // m — a blown encounter cascades to neighbour
 const INF_DAMAGE: f32 = 34.0; // hp per infantry round that connects (~3 = down)
 /// The evolved T-34 policy the arena's crews fight by (docs/ENEMY_TANK_AI.md).
 const ARENA_T34_POLICY: &str = "assets/ai/weights_academy.bin";
+/// The T-34 policy wherever a winter encounter is fielded (`install_t34_brain`):
+/// `KESSEL_T34_WEIGHTS` if set, else `ARENA_T34_POLICY`.
+fn t34_policy_path() -> String {
+    std::env::var("KESSEL_T34_WEIGHTS").ok().filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| ARENA_T34_POLICY.to_string())
+}
+/// How far, and in what steps, a T-34 crew judges the room to drive (`executor_obs` slots 14-17).
+const T34_RAY_M: f32 = 24.0;
+const T34_RAY_STEP_M: f32 = 3.0;
+/// Frames between a crew's judgements of the room to drive (0.1 s at 60 Hz).
+const T34_ROOM_EVERY: usize = 6;
 const ENEMY_RELOAD: f32 = 5.5; // s — per-enemy cadence (the swarm's volume of fire = the pressure)
 const N_ENEMIES: usize = 6; // swarm size (independent shooters for now)
 /// The first level's district reaches about 300 m from the spawn; beyond this the Tiger has left
@@ -9541,6 +9552,13 @@ pub struct Game {
     enemy_skill: Vec<u8>,
     /// Seconds each enemy tank has had the Tiger as its target without a break.
     enemy_track_age: Vec<f32>,
+    /// Seconds each enemy crew has been driving without the hull moving, decaying when it moves:
+    /// the evolved brain's sense of being stuck (`executor_obs` slot 19).
+    enemy_stall_s: Vec<f32>,
+    /// Each crew's last judgement of the room to drive (`executor_obs` slots 14-17), refreshed
+    /// every `T34_ROOM_EVERY` frames, staggered by slot, and the frame counter that staggers it.
+    enemy_room: Vec<[f32; 4]>,
+    enemy_room_frame: u32,
     /// The sky's darkness now, 0 day to 1 night, and the weather as the map authored it.
     darkness: f32,
     authored_weather: Option<(f32, f32, f32)>,
@@ -14048,6 +14066,9 @@ impl Game {
             enemy_active: vec![!isolated_population; N_ENEMIES],
             enemy_skill: vec![42; N_ENEMIES],
             enemy_track_age: vec![0.0; N_ENEMIES],
+            enemy_stall_s: vec![0.0; N_ENEMIES],
+            enemy_room: vec![[1.0; 4]; N_ENEMIES],
+            enemy_room_frame: 0,
             darkness: 0.0,
             authored_weather: None,
             enemy_concealed: vec![false; N_ENEMIES],
@@ -23555,7 +23576,28 @@ impl Game {
     /// Executor observation for enemy `i` — egocentric, normalized to ~[-1,1] (the doc's §2 at
     /// smoke-test width). Partial observability: the Tiger's true position is only fed while THIS
     /// tank tracks it (spotted / platoon Engaged); otherwise the slot is zeroed with a blind flag.
-    pub fn executor_obs(&self, i: usize) -> [f32; crate::ai::OBS] {
+    ///
+    /// Slots 0-13 are the July inputs, unchanged, so a July `KSL1` net reads this observation as it
+    /// always did. Slots 14-23 (the `KSL2` T-34 net, 2026-11-02) are what the crew can see of the
+    /// ground and what it remembers of the Tiger:
+    /// - 14-17: room to drive, as a fraction of `T34_RAY_M`, toward the left front, ahead, the
+    ///   right front and astern: the first of the probes every `T34_RAY_STEP_M` along the bearing
+    ///   that `street_way_clear` refuses (the same footprint test that clips this hull's motion in
+    ///   a street district or on the Canyon, `constrain_winter_enemy_motion`).
+    /// - 18: grade of the ground ahead (rise over 8 m, a 50 % grade reads 1).
+    /// - 19: how long the crew has driven without the hull moving (`enemy_stall_s`, 3 s reads 1).
+    /// - 20-23: where the crew would look for the Tiger: in sight, the Tiger; else the winter
+    ///   encounter's fix, sighting or heard area (`WinterEncounter::memory_of_target`), or on open ground the
+    ///   platoon's last-known position while it is alerted. Bearing sin/cos from the hull, range
+    ///   over 300 m, and a flag (+1 a memory, -1 none; all zero but the flag when none).
+    /// - 24-25: where the nearest living mate stands around that Tiger, relative to me: sin/cos of
+    ///   the angle between our bearings from it (a pincer reads cos -1). Zero without a memory.
+    /// - 26: mates with the Tiger in their own sight now, over 4.
+    /// - 27-30: orders. In a winter encounter, the firing post its armour doctrine has chosen for
+    ///   this crew (`WinterEncounter::assigned_post`): bearing sin/cos from the hull, range over
+    ///   300 m, and the stance: +1 take the post and fight; -1 no post, walk the beat (the corner
+    ///   of its platoon's beat it is walking to, `WinterEncounter::patrol_corner`); 0 no orders.
+    pub fn executor_obs(&self, i: usize) -> [f32; crate::ai::T34_OBS] {
         let e = &self.enemies[i];
         let tracks = matches!(self.enemy_mode(i), AiMode::Track);
         let pc = self.player.center();
@@ -23585,7 +23627,8 @@ impl Game {
                 }
             }
         }
-        [
+        let mut obs = [0.0f32; crate::ai::T34_OBS];
+        obs[..crate::ai::OBS].copy_from_slice(&[
             dxn,
             dzn,
             rn,
@@ -23610,7 +23653,72 @@ impl Game {
             1.0, // bias
             ally.x.clamp(-1.0, 1.0),
             ally.y.clamp(-1.0, 1.0),
-        ]
+        ]);
+        let at = Vec2::new(e.pos.x, e.pos.z);
+        obs[14..18].copy_from_slice(&self.enemy_room.get(i).copied().unwrap_or_else(|| self.t34_room(i)));
+        let ahead = at + Vec2::new(e.heading.sin(), e.heading.cos()) * 8.0;
+        obs[18] = ((self.hf.height_at(ahead.x, ahead.y) - self.hf.height_at(at.x, at.y)) / 8.0 / 0.5).clamp(-1.0, 1.0);
+        obs[19] = (self.enemy_stall_s.get(i).copied().unwrap_or(0.0) / 3.0).min(1.0);
+        let lead = if tracks { Some(pc) } else {
+            match &self.winter_encounter {
+                Some(encounter) => encounter.memory_of_target(i),
+                None => matches!(self.stealth.platoon_state(i), AlertState::Engaged | AlertState::Searching)
+                    .then(|| self.stealth.platoons[self.stealth.platoon_index_of(i)].last_known),
+            }
+        };
+        match lead.filter(|p| p.is_finite()) {
+            Some(p) => {
+                let to = Vec2::new(p.x - ec.x, p.z - ec.z);
+                let b = to.x.atan2(to.y) - e.heading;
+                obs[20] = b.sin();
+                obs[21] = b.cos();
+                obs[22] = (to.length() / 300.0).min(1.0);
+                obs[23] = 1.0;
+            }
+            None => obs[23] = -1.0,
+        }
+        if let Some(p) = lead.filter(|p| p.is_finite()) {
+            let around = |q: Vec3| (q.x - p.x).atan2(q.z - p.z);
+            let mine = around(ec);
+            let mate = self.enemies.iter().enumerate()
+                .filter(|&(j, o)| j != i && o.alive && self.enemy_active.get(j).copied().unwrap_or(false))
+                .min_by(|a, b| a.1.pos.distance_squared(e.pos).total_cmp(&b.1.pos.distance_squared(e.pos)));
+            if let Some((_, o)) = mate {
+                let d = around(o.center()) - mine;
+                obs[24] = d.sin();
+                obs[25] = d.cos();
+            }
+        }
+        let seeing = (0..self.enemies.len()).filter(|&j| j != i && self.enemies[j].alive
+            && self.enemy_active.get(j).copied().unwrap_or(false)
+            && self.stealth.spotted.get(j).copied().unwrap_or(false)
+            && self.stealth.meters.get(j).copied().unwrap_or(0.0) >= 0.9).count();
+        obs[26] = (seeing as f32 / 4.0).min(1.0);
+        let orders = self.winter_encounter.as_ref().and_then(|w| w.assigned_post(i).map(|p| (p, 1.0))
+            .or_else(|| w.patrol_corner(i).map(|p| (p, -1.0))));
+        if let Some((goal, stance)) = orders {
+            let to = goal - at;
+            let b = to.x.atan2(to.y) - e.heading;
+            obs[27] = b.sin();
+            obs[28] = b.cos();
+            obs[29] = (to.length() / 300.0).min(1.0);
+            obs[30] = stance;
+        }
+        obs
+    }
+
+    /// Room to drive for enemy `i`, as a fraction of `T34_RAY_M`, toward the left front, ahead,
+    /// the right front and astern (`executor_obs` slots 14-17).
+    fn t34_room(&self, i: usize) -> [f32; 4] {
+        let e = &self.enemies[i];
+        let at = Vec2::new(e.pos.x, e.pos.z);
+        let steps = (T34_RAY_M / T34_RAY_STEP_M) as usize;
+        [-0.55f32, 0.0, 0.55, std::f32::consts::PI].map(|offset| {
+            let h = e.heading + offset;
+            let dir = Vec2::new(h.sin(), h.cos());
+            (1..=steps).take_while(|&k| self.street_way_clear(at, at + dir * (k as f32 * T34_RAY_STEP_M))).count() as f32
+                / steps as f32
+        })
     }
 
     /// AI-Tiger observation, normalized to roughly `[-1, 1]`.
@@ -27582,6 +27690,11 @@ impl Game {
 
     /// The enemy crews' fighting so far (docs/ENEMY_TANK_AI.md), for headless receipts.
     pub fn enemy_ai_summary(&self) -> serde_json::Value { self.enemy_ai_stats.summary() }
+    /// Training episodes re-field the same world: start the crews' telemetry and stall clocks afresh.
+    pub(crate) fn reset_enemy_ai_summary(&mut self) {
+        self.enemy_ai_stats = Default::default();
+        self.enemy_stall_s.iter_mut().for_each(|s| *s = 0.0);
+    }
 
     fn enemy_return_fire_allowed(&self) -> bool {
         self.playtest_return_fire.unwrap_or(true)
@@ -27673,7 +27786,7 @@ impl Game {
         }
         // The ruin field is the ground the T-34 policy was evolved on (docs/AI_SHOWREEL.md), so
         // its crews fight by it here; without the weights the scripted flanking swarm drives.
-        self.enemy_policy = crate::ai::Mlp::load(ARENA_T34_POLICY)
+        self.enemy_policy = crate::ai::Mlp::load_t34(ARENA_T34_POLICY)
             .map_err(|error| eprintln!("[arena] no T-34 policy at {ARENA_T34_POLICY} ({error}); scripted swarm drives"))
             .ok();
         println!(
@@ -28030,9 +28143,11 @@ impl Game {
         let brain = std::env::var("KESSEL_T34_BRAIN").unwrap_or_else(|_| "evolved".into());
         match brain.trim() {
             "evolved" => {
-                self.enemy_policy = Some(crate::ai::Mlp::load(ARENA_T34_POLICY)?);
+                let path = t34_policy_path();
+                let net = crate::ai::Mlp::load_t34(&path)?;
+                println!("[{scope}] T-34 brain: the evolved policy {path} ({} inputs) drives maneuver and fire hold; the doctrine's orders are not applied (KESSEL_T34_BRAIN=doctrine for the winter encounter's orders, KESSEL_T34_WEIGHTS=FILE for another policy)", net.obs);
+                self.enemy_policy = Some(net);
                 self.enemy_policy_over_orders = true;
-                println!("[{scope}] T-34 brain: the evolved policy {ARENA_T34_POLICY} drives maneuver and fire hold; the doctrine's orders are not applied (KESSEL_T34_BRAIN=doctrine for the winter encounter's orders)");
             }
             "doctrine" => {
                 self.enemy_policy_over_orders = false;
@@ -28044,6 +28159,7 @@ impl Game {
     }
 
     fn enemy_ai(&mut self, dt: f32) {
+        self.enemy_room_frame = self.enemy_room_frame.wrapping_add(1);
         { let _p = crate::sim_phase::Probe::new("ai_weather_pose"); self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model()); }
         // Garage and Playtest practice have stationary targets. Skip detection and all AI orders,
         // but retain physical braking/terrain settling and the ordinary player-hit damage path.
@@ -28135,9 +28251,21 @@ impl Game {
                 (drive, steer, true)
             } else if self.brawl {
                 (0.0, 0.0, false) // opposing team eliminated: hold, do not seek the referee
-            } else if let Some(net) = &self.enemy_policy {
+            } else if self.enemy_policy.is_some() {
+                if (self.enemy_room_frame as usize + i) % T34_ROOM_EVERY == 0 || self.enemy_room.len() <= i {
+                    let room = self.t34_room(i);
+                    if self.enemy_room.len() <= i { self.enemy_room.resize(i + 1, [1.0; 4]); }
+                    self.enemy_room[i] = room;
+                }
+                let net = self.enemy_policy.as_ref().unwrap();
                 let obs = { let _p = crate::sim_phase::Probe::new("ai_executor_obs"); self.executor_obs(i) };
                 let a = { let _p = crate::sim_phase::Probe::new("ai_net_forward"); net.forward(&obs) };
+                if std::env::var("KESSEL_T34_OBS_DBG").ok().and_then(|v| v.parse::<usize>().ok()) == Some(i)
+                    && (self.enemy_ai_stats.clock_s * 2.0).fract() < dt * 2.0 {
+                    println!("[t34-obs] {}", serde_json::json!({"t":self.enemy_ai_stats.clock_s,"slot":i,
+                        "pos":[self.enemies[i].pos.x,self.enemies[i].pos.z],"heading":self.enemies[i].heading,
+                        "speed":self.enemies[i].speed,"obs":obs.to_vec(),"act":a}));
+                }
                 (a[0], a[1], a[2] > 0.0)
             } else {
                 let _p = crate::sim_phase::Probe::new("ai_maneuver");
@@ -28190,6 +28318,10 @@ impl Game {
                 self.enemy_ai_stats.frame(i, dt, mode != AiMode::Patrol, mode == AiMode::Track,
                     self.enemies[i].speed, drive, self.enemies[i].pos);
             }
+            if self.enemy_stall_s.len() <= i { self.enemy_stall_s.resize(i + 1, 0.0); }
+            let moved = Vec2::new(self.enemies[i].pos.x - previous.x, self.enemies[i].pos.z - previous.z).length();
+            self.enemy_stall_s[i] = if drive.abs() > 0.15 && moved < 0.3 * dt { self.enemy_stall_s[i] + dt }
+                else { (self.enemy_stall_s[i] - 2.0 * dt).max(0.0) };
 
             if { let _p = crate::sim_phase::Probe::new("ai_live_threat"); !self.enemy_has_live_threat() } && !self.brawl {
                 continue;
