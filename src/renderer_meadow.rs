@@ -167,6 +167,11 @@ impl MeadowGpu {
         let canopy_tex = tex(device, "meadow-canopy", res, res, wgpu::TextureFormat::Rgba32Float);
         write(queue, &canopy_tex, [0, 0], [res, res], 16, bytemuck::cast_slice(&canopy));
         let canopy_view = canopy_tex.create_view(&Default::default());
+        let er = meadow::EXPOSURE_RES as u32;
+        // Exposure 0..2 as R8Unorm (exposure / 2; steps of 0.008).
+        let exposure_tex = tex(device, "meadow-exposure", er, er, wgpu::TextureFormat::R8Unorm);
+        let bytes: Vec<u8> = build.exposure.iter().map(|&v| (v * 0.5 * 255.0).round().clamp(0.0, 255.0) as u8).collect();
+        write(queue, &exposure_tex, [0, 0], [er, er], 1, &bytes);
         let pc = meadow::PUSH_CELLS as u32;
         let push_tex = tex(device, "meadow-push", pc, pc, wgpu::TextureFormat::Rg32Float);
         write(queue, &push_tex, [0, 0], [pc, pc], 8, &vec![0u8; (pc * pc * 8) as usize]);
@@ -197,6 +202,7 @@ impl MeadowGpu {
                 t(5, wgpu::TextureSampleType::Uint),
                 t(6, wgpu::TextureSampleType::Uint),
                 t(7, wgpu::TextureSampleType::Float { filterable: false }),
+                t(8, wgpu::TextureSampleType::Float { filterable: true }),
             ],
         });
         let view_bufs: Vec<wgpu::Buffer> = (0..VIEWS).map(|i| device.create_buffer(&wgpu::BufferDescriptor {
@@ -205,7 +211,7 @@ impl MeadowGpu {
         })).collect();
         let views = [heights_tex.create_view(&Default::default()), cover_tex.create_view(&Default::default()),
             wind_tex.create_view(&Default::default()), track_table.create_view(&Default::default()), track_atlas.create_view(&Default::default()),
-            push_tex.create_view(&Default::default())];
+            push_tex.create_view(&Default::default()), exposure_tex.create_view(&Default::default())];
         let binds = view_bufs.iter().map(|buf| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meadow"), layout: &bgl, entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
@@ -216,6 +222,7 @@ impl MeadowGpu {
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&views[3]) },
                 wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&views[4]) },
                 wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(&views[5]) },
+                wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(&views[6]) },
             ],
         })).collect();
         let tiles = device.create_buffer(&wgpu::BufferDescriptor {

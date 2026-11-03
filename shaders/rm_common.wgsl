@@ -39,7 +39,8 @@ struct Frame {
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
     cabin_air: RmCabinAir,        // the player's cabin air domains (cabin_medium.rs; rm_visibility.wgsl)
     cabin_motion: array<mat4x4<f32>, 3>, // per domain: world point now -> same frame point last frame
-    worn_count: vec4<f32>,        // x other vehicles worn at their edges and corners (Renderer::set_worn_vehicles)
+    worn_count: vec4<f32>,        // x other vehicles worn at their edges and corners (Renderer::set_worn_vehicles),
+                                  // y the apertures, z 1 = the cabin's key beam from the cascades alone (KESSEL_RM_SKIP 8388608)
     worn: array<vec4<f32>, 32>,   // per vehicle: centre xyz + reach m, then mechanical wear, exterior grime
     // The player's panes as daylight apertures (worn_count.y of them; rm_aperture.wgsl measures
     // each and names its face): col0 centre xyz + tint r, col1 the piece's shortest axis (unit)
@@ -59,6 +60,13 @@ struct Frame {
     // w 1 when filled this frame; its texel size xyz, w the refresh (2 all, 0/1 that z parity).
     low_vol_min: vec4<f32>,
     low_vol_cell: vec4<f32>,
+    // The clear air of the physical atmosphere (the sky cache's): molecular scattering per band at
+    // the local planet surface xyz /m, scale height w; the aerosol's 550 nm extinction there,
+    // single-scattering albedo, asymmetry, scale height; its Angstrom factor per band xyz and the
+    // planet surface's local y w (renderer_raymarch.rs FrameUniform).
+    air_rayleigh: vec4<f32>,
+    air_aerosol: vec4<f32>,
+    air_spectrum: vec4<f32>,
     // A fire's soot in the cabin air: x its extinction /m (Renderer::set_interior_soot).
     soot: vec4<f32>,
 };

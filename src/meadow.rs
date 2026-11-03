@@ -26,10 +26,10 @@ use glam::{Vec2, Vec3};
 use std::collections::HashMap;
 
 pub const TILE_M: f32 = 2.0;
-/// Near blades per square metre: a meadow leaf area index of about 3 (900 x 7 mm x 0.45 m),
+/// Near blades per square metre: a meadow leaf area index of about 3 (1200 x 7 mm x 0.3 m mean),
 /// where a closed canopy hides the soil from above (gap fraction ~ exp(-0.5 LAI) = 0.2 straight
 /// down, less at any oblique view). An estimate for a lush spring sward, not a field count.
-pub const NEAR_DENSITY: f32 = 900.0;
+pub const NEAR_DENSITY: f32 = 1200.0;
 /// Mean near blade width (leaf blades of meadow grasses are 3-10 mm).
 pub const BLADE_WIDTH_M: f32 = 0.007;
 /// Smallest drawn width in pixels (camera) or texels (shadow maps).
@@ -68,10 +68,18 @@ pub const HEIGHT_SPAN_M: f32 = 0.30;
 /// Last year's standing dead among the spring blades: a May steppe sward carries its litter
 /// (senescent straw) through the new growth. The share of blades and their height relative to the
 /// live ones are estimates (the owner, 2 November 2026: "a bit too saturated, a bit dryer").
-pub const LITTER_SHARE: f32 = 0.24;
+pub const LITTER_SHARE: f32 = 0.30;
 pub const LITTER_HEIGHT: f32 = 0.6;
 /// The least share of the pale (older, less chlorophyll) leaf state in a live blade.
-pub const PALE_BASE: f32 = 0.30;
+pub const PALE_BASE: f32 = 0.45;
+/// Exposure to leaf state: below `EXPOSURE_GREEN` (shade, far slopes) the live blades stay green;
+/// toward `EXPOSURE_TAN` (sun-facing slopes, open ground in full sun) up to `EXPOSURE_DRY_MAX` of
+/// a live blade is senescent straw. Drought and radiation load dry exposed steppe swards first,
+/// sun-facing slopes most (Holland & Steyn 1975, J. Biogeogr. 2:179, on aspect and vegetation);
+/// the mapping's numbers are estimates.
+pub const EXPOSURE_GREEN: f32 = 0.60;
+pub const EXPOSURE_TAN: f32 = 1.10;
+pub const EXPOSURE_DRY_MAX: f32 = 0.70;
 /// Mean blade height over the stand height (tussock, per-blade and litter variation).
 pub const MEAN_HEIGHT: f32 = 0.75 * (1.0 - (1.0 - LITTER_HEIGHT) * LITTER_SHARE);
 
@@ -264,7 +272,8 @@ pub fn wgsl_constants() -> String {
     f("MD_MIN_PIXELS", MIN_PIXELS); f("MD_NEAR_RADIUS", NEAR_RADIUS_M); f("MD_BAND", BAND_M);
     f("MD_FAR_RADIUS", FAR_RADIUS_M); f("MD_FAR_TILE", FAR_TILE_M);
     f("MD_CLUMP", CLUMP_M); f("MD_LITTER_SHARE", LITTER_SHARE); f("MD_LITTER_HEIGHT", LITTER_HEIGHT);
-    f("MD_PALE_BASE", PALE_BASE); f("MD_MEAN_HEIGHT", MEAN_HEIGHT); f("MD_PUSH_CELL", PUSH_CELL_M); f("MD_PUSH_CELLS", PUSH_CELLS as f32);
+    f("MD_PALE_BASE", PALE_BASE); f("MD_MEAN_HEIGHT", MEAN_HEIGHT);
+    f("MD_EXPOSURE_GREEN", EXPOSURE_GREEN); f("MD_EXPOSURE_TAN", EXPOSURE_TAN); f("MD_EXPOSURE_DRY_MAX", EXPOSURE_DRY_MAX); f("MD_PUSH_CELL", PUSH_CELL_M); f("MD_PUSH_CELLS", PUSH_CELLS as f32);
     f("MD_SLAB_START", SLAB_START_M); f("MD_SLAB_FULL", SLAB_FULL_M); f("MD_SLAB_TILE", SLAB_TILE_M); f("MD_SLAB_TILE_FAR", SLAB_TILE_FAR_M);
     f("MD_SHADOW_RADIUS", SHADOW_RADIUS_M); f("MD_FLOWER_RADIUS", FLOWER_RADIUS_M); f("MD_FLOWER_CAP", FLOWER_CAP_PER_M2);
     f("MD_HEIGHT_MIN", HEIGHT_MIN_M); f("MD_HEIGHT_SPAN", HEIGHT_SPAN_M); f("MD_R2_A1", R2_A1); f("MD_R2_A2", R2_A2);
@@ -378,7 +387,9 @@ pub fn build_cover(material: Option<(&[u8], usize)>, mask: Option<(&[u8], usize)
                         let qz = (pz as i32 + dz).clamp(0, res as i32 - 1) as usize;
                         sum += sample(k, qx, qz)[0] as f32;
                     }
-                    sum / 9.0 / 255.0
+                    // A stand is full once the mask passes one half (the owner: thick enough
+                    // that the earth beneath is not really seen).
+                    smoothstep(0.05, 0.5, sum / 9.0 / 255.0)
                 }
                 (None, Some(m)) => { let c = sample(m, px, pz); greenness(c[0], c[1], c[2]) }
                 _ => 0.0,
@@ -411,6 +422,80 @@ pub fn build_cover(material: Option<(&[u8], usize)>, mask: Option<(&[u8], usize)
         }
     }
     CoverMap { res, half_extent, rg }
+}
+
+// ── Sun exposure: the season's direct-sun dose and open sky per area ─────────────────────────
+
+/// Exposure grid resolution over the map (about 5-10 m cells).
+pub const EXPOSURE_RES: usize = 512;
+/// An occluder of the sun and sky: a tree's crown (centre, top above the ground, radius).
+#[derive(Clone, Copy, Debug)]
+pub struct Occluder { pub at: Vec2, pub height: f32, pub radius: f32 }
+
+/// The exposure of the ground to the growing season's sun: per cell, the direct beam's daily dose
+/// on the slope (its normal against each hour's sun, with the terrain's and the trees' horizon
+/// cast toward the sun, the beam thinned by the air mass), over the dose on open flat ground,
+/// weighted 0.8, plus the sky view factor (mean cos^2 of the horizon elevation over eight
+/// azimuths) weighted 0.2. 1 on open flat ground; above on sun-facing slopes, below on the far
+/// slopes and in the shade of trees. `suns` are the season's hourly sun directions (engine space,
+/// toward the sun) with their altitudes above zero.
+pub fn sun_exposure(ground: &dyn Fn(f32, f32) -> f32, occluders: &[Occluder], half_extent: f32, suns: &[Vec3]) -> Vec<f32> {
+    let n = EXPOSURE_RES;
+    let cell = 2.0 * half_extent / n as f32;
+    let centre = |i: usize| (i as f32 + 0.5) * cell - half_extent;
+    // Ground raster plus crowns on the same grid.
+    let mut top = vec![0.0f32; n * n];
+    let mut base = vec![0.0f32; n * n];
+    for j in 0..n { for i in 0..n { let h = ground(centre(i), centre(j)); base[j * n + i] = h; top[j * n + i] = h; } }
+    for o in occluders {
+        let r = (o.radius / cell).ceil() as i32 + 1;
+        let (ci, cj) = (((o.at.x + half_extent) / cell) as i32, ((o.at.y + half_extent) / cell) as i32);
+        for dj in -r..=r { for di in -r..=r {
+            let (i, j) = (ci + di, cj + dj);
+            if i < 0 || j < 0 || i >= n as i32 || j >= n as i32 { continue; }
+            let p = Vec2::new(centre(i as usize), centre(j as usize));
+            if p.distance(o.at) <= o.radius.max(cell * 0.5) {
+                let k = j as usize * n + i as usize;
+                top[k] = top[k].max(base[k] + o.height);
+            }
+        } }
+    }
+    let at = |x: f32, z: f32| -> f32 {
+        let (i, j) = (((x + half_extent) / cell - 0.5).round(), ((z + half_extent) / cell - 0.5).round());
+        if i < 0.0 || j < 0.0 || i >= n as f32 || j >= n as f32 { return f32::MIN; }
+        top[j as usize * n + i as usize]
+    };
+    let steps = [2.0f32, 4.0, 7.0, 11.0, 16.0, 24.0, 35.0, 50.0, 75.0, 110.0, 160.0, 240.0];
+    let beam = |s: Vec3| (-0.2 / s.y.max(0.03)).exp();
+    let flat: f32 = suns.iter().map(|s| s.y * beam(*s)).sum::<f32>().max(1e-6);
+    let mut out = vec![1.0f32; n * n];
+    for j in 0..n {
+        for i in 0..n {
+            let (x, z) = (centre(i), centre(j));
+            let y0 = base[j * n + i] + 0.3;
+            let e = cell;
+            let normal = Vec3::new(ground(x - e, z) - ground(x + e, z), 2.0 * e, ground(x, z - e) - ground(x, z + e)).normalize();
+            let blocked = |dir: Vec2, tan_elev: f32| steps.iter().any(|&d| at(x + dir.x * d, z + dir.y * d) > y0 + d * tan_elev);
+            let mut dose = 0.0;
+            for s in suns {
+                let ndl = normal.dot(*s);
+                if ndl <= 0.0 { continue; }
+                let horiz = Vec2::new(s.x, s.z);
+                let len = horiz.length();
+                if len > 1e-4 && blocked(horiz / len, s.y / len) { continue; }
+                dose += ndl * beam(*s);
+            }
+            let mut svf = 0.0;
+            for k in 0..8 {
+                let a = k as f32 * std::f32::consts::TAU / 8.0;
+                let dir = Vec2::new(a.cos(), a.sin());
+                let elev = steps.iter().map(|&d| ((at(x + dir.x * d, z + dir.y * d) - y0) / d).max(0.0)).fold(0.0f32, f32::max).atan();
+                svf += elev.cos().powi(2) / 8.0;
+            }
+            out[j * n + i] = (0.8 * dose / flat + 0.2 * svf).clamp(0.0, 2.0);
+        }
+    }
+    out
 }
 
 // ── Wind: a grid of blade springs driven by the act's wind with travelling gusts ───────────────
@@ -688,6 +773,8 @@ pub fn canopy_grid(heights: &[f32], res: usize, spacing: f32, cover: &CoverMap) 
 
 /// The ground and cover the GPU meadow is built over (once per map).
 pub struct Build {
+    /// Sun exposure per cell (`sun_exposure`, EXPOSURE_RES^2 over the cover's extent).
+    pub exposure: Vec<f32>,
     pub heights: Vec<f32>,
     pub height_res: usize,
     pub height_spacing: f32,
@@ -941,7 +1028,28 @@ mod tests {
         assert!(rho[1] > rho[0] && rho[1] > rho[2], "{rho:?}");
         assert!(rho[0] > fresh[0] * 1.5, "the straw's red: {rho:?}");
         for i in 0..3 { assert!(rho[i] + tau[i] < 1.0); }
-        assert!((MEAN_HEIGHT - 0.678).abs() < 0.01);
+        assert!((MEAN_HEIGHT - 0.75 * (1.0 - 0.4 * LITTER_SHARE)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn exposure_is_high_on_sun_slopes_and_low_on_far_slopes_and_under_trees() {
+        // A ridge running east-west at z = 0: the +z face tilts toward +z, the -z face away.
+        let ground = |_: f32, z: f32| 30.0 - z.abs() * 0.3;
+        // A noon-ish sun high toward +z and a morning and evening sun.
+        let suns = [Vec3::new(0.0, 0.8, 0.6).normalize(), Vec3::new(0.7, 0.4, 0.5).normalize(), Vec3::new(-0.7, 0.4, 0.5).normalize()];
+        let trees = [Occluder { at: Vec2::new(300.0, -300.0), height: 12.0, radius: 4.0 }];
+        let half = 800.0;
+        let e = sun_exposure(&ground, &[], half, &suns);
+        let et = sun_exposure(&ground, &trees, half, &suns);
+        let cell = 2.0 * half / EXPOSURE_RES as f32;
+        let idx = |x: f32, z: f32| ((((z + half) / cell) as usize) * EXPOSURE_RES) + ((x + half) / cell) as usize;
+        let south = e[idx(0.0, -200.0)];  // the face toward -z (z < 0): normal leans to -z, away from the suns
+        let north = e[idx(0.0, 200.0)];   // the face toward +z: facing the suns
+        assert!(north > 1.05 && south < 0.95, "toward {north}, away {south}");
+        // Just north of the tree (toward the suns' side is +z, so its shadow falls to -z of it).
+        let shade = et[idx(300.0, -306.0)];
+        let open = et[idx(300.0, -340.0)];
+        assert!(shade < open * 0.7, "shade {shade} open {open}");
     }
 
     #[test]

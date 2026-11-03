@@ -248,6 +248,16 @@ struct FrameUniform {
     /// The banks' optical-depth grid (rm_low_clouds.wgsl): min corner + filled, texel size.
     low_vol_min: [f32; 4],
     low_vol_cell: [f32; 4],
+    /// The clear air the surfaces' aerial perspective crosses (rm_shade.wgsl `fog_to`), the same
+    /// atmosphere the sky cache marches: molecular scattering per band at the local planet surface
+    /// (xyz, m^-1) and its scale height (w).
+    air_rayleigh: [f32; 4],
+    /// The aerosol: extinction at 550 nm at the planet surface (x, m^-1), single-scattering albedo,
+    /// asymmetry g, scale height m.
+    air_aerosol: [f32; 4],
+    /// The aerosol's Angstrom factor per band (xyz, physical_environment::aerosol_band_factor;
+    /// also the spectrum of the `fog_density` layer's aerosol) and the planet surface's local y (w).
+    air_spectrum: [f32; 4],
     /// A fire's soot in the cabin air (`Renderer::set_interior_soot`): x its extinction /m (the
     /// light gun-fume haze is `cabin.w`); rm_medium.wgsl gives it soot's low albedo.
     soot: [f32; 4],
@@ -275,6 +285,12 @@ pub(super) const MAX_APERTURES: usize = 24;
 const SKIP_APERTURES: u32 = 2097152;
 /// `KESSEL_RM_SKIP` bit: no low cloud or mist banks (`low_clouds.rs`), for the A/B.
 const SKIP_LOW_CLOUDS: u32 = 4194304;
+/// `KESSEL_RM_SKIP` bit: the key beam into the crew compartment from the depth cascades alone
+/// (glass casting nothing, periscopes opaque) instead of traced through the vehicle
+/// (rm_medium.wgsl `rm_cabin_beam`), for the A/B.
+const SKIP_BEAM_TRACE: u32 = 8388608;
+/// The rt optic kind of a direct-view pane (rm_rt.wgsl `rm_optics`).
+const OPTIC_PANE: f32 = 3.0;
 /// Frames between measures of the apertures (rm_aperture.wgsl): about 200 ray queries per pane
 /// on one thread each cost 1.07 ms a frame measured every frame (gfxbench, 2 November 2026); the
 /// panes' openness changes only as the turret traverses against the hull.
@@ -1920,6 +1936,10 @@ impl Backend {
                         let n = mesh.model.transform_vector3(mesh.mirror_normal).normalize_or_zero();
                         self.rt_optics[i] = [n.x, n.y, n.z, 2.0];
                     }
+                    // Direct-view glass (the ports, the visors): cover to every ray but the key
+                    // beam traced into the compartment, which passes it at the pane material's
+                    // throughput (rm_rt.wgsl `rm_beam_trace`).
+                    _ if mesh.glass => self.rt_optics[i] = [0.0, 0.0, 0.0, OPTIC_PANE],
                     _ => {}
                 }
             }
@@ -2265,7 +2285,8 @@ impl Backend {
             puffs,
             cabin_air,
             cabin_motion,
-            worn_count: [if self.debug_skip & 65536 != 0 { 0.0 } else { r.worn_vehicles.len() as f32 }, aperture_count as f32, 0.0, 0.0],
+            worn_count: [if self.debug_skip & 65536 != 0 { 0.0 } else { r.worn_vehicles.len() as f32 }, aperture_count as f32,
+                if self.debug_skip & SKIP_BEAM_TRACE != 0 { 1.0 } else { 0.0 }, 0.0],
             worn: std::array::from_fn(|i| r.worn_vehicles.get(i).copied().unwrap_or([[0.0; 4]; 2])),
             apertures,
             section: r.film_section().unwrap_or([0.0; 4]),
@@ -2273,6 +2294,15 @@ impl Backend {
             low_banks,
             low_vol_min,
             low_vol_cell,
+            air_rayleigh: [atmosphere.rayleigh_scattering_m_inv.x as f32, atmosphere.rayleigh_scattering_m_inv.y as f32,
+                atmosphere.rayleigh_scattering_m_inv.z as f32, atmosphere.rayleigh_scale_height_m as f32],
+            air_aerosol: [atmosphere.mie_extinction_m_inv as f32,
+                if atmosphere.mie_extinction_m_inv > 0.0 { (atmosphere.mie_scattering_m_inv / atmosphere.mie_extinction_m_inv).clamp(0.0, 1.0) as f32 } else { 0.0 },
+                atmosphere.mie_asymmetry as f32, atmosphere.mie_scale_height_m as f32],
+            air_spectrum: {
+                let band = atmosphere.aerosol_band_factor();
+                [band.x as f32, band.y as f32, band.z as f32, (atmosphere.planet_center_m.y + atmosphere.planet_radius_m) as f32]
+            },
             soot: [if r.atmo_enabled { r.atmo_soot * SOOT_EXTINCTION_PER_M } else { 0.0 }, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
@@ -3736,10 +3766,7 @@ impl Renderer {
     fn raymarch_atmosphere(&self) -> AtmosphereParameters {
         let mut atmosphere = AtmosphereParameters::default();
         let campaign = self.current_campaign_environment();
-        atmosphere.mie_scale_height_m = campaign.mie_scale_height_m;
-        atmosphere.mie_scattering_m_inv = campaign.mie_scattering_m_inv;
-        atmosphere.mie_extinction_m_inv = campaign.mie_extinction_m_inv;
-        atmosphere.mie_asymmetry = campaign.mie_asymmetry;
+        self.apply_aerosol(&mut atmosphere, &campaign);
         atmosphere.cloud.bottom_altitude_m = campaign.cloud_bottom_m;
         atmosphere.cloud.top_altitude_m = campaign.cloud_top_m;
         atmosphere.cloud.liquid_water_content_kg_m3 = campaign.cloud_lwc_kg_m3;
@@ -4062,5 +4089,222 @@ mod film_section_tests {
             }
         }
         assert_eq!(openers, vec!["game_fea_film.rs".to_string()], "only the film harness opens a section");
+    }
+}
+
+/// The key beam into the crew compartment (rm_rt.wgsl `rm_beam_trace`, `rm_vehicle_beam`): a CPU
+/// replica of the shader's trace over small analytic scenes (a slot through armour, a glass
+/// block, a periscope's two mirrors), checked against the geometry, and the shader's constants
+/// checked against this replica and the pane material (`pane_transmittance`).
+#[cfg(test)]
+mod beam_tests {
+    use super::*;
+    use glam::Mat3;
+
+    // The shader's constants (rm_rt.wgsl), asserted against its source below.
+    const REACH_M: f32 = 8.0;
+    const GLASS_ENTRY_T: f32 = 0.96;
+    const GLASS_ABSORPTION: Vec3 = Vec3::new(3.4, 2.0, 3.8);
+    const OPTIC_FACE_T: f32 = 0.957;
+    const MIRROR_REFLECTANCE: f32 = 0.90;
+    const ALIGN_COS: f32 = 0.99985;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Optic { Opaque, Window, Mirror(Vec3), Pane }
+    struct Tri { v: [Vec3; 3], optic: Optic }
+
+    fn quad(c: Vec3, u: Vec3, v: Vec3, optic: Optic, out: &mut Vec<Tri>) {
+        let (a, b, cc, d) = (c - u - v, c + u - v, c + u + v, c - u + v);
+        out.push(Tri { v: [a, b, cc], optic });
+        out.push(Tri { v: [a, cc, d], optic });
+    }
+    fn cuboid(min: Vec3, max: Vec3, optic: Optic, out: &mut Vec<Tri>) {
+        let c = 0.5 * (min + max);
+        let h = 0.5 * (max - min);
+        for (n, u, v) in [(Vec3::X, Vec3::Y, Vec3::Z), (Vec3::Y, Vec3::Z, Vec3::X), (Vec3::Z, Vec3::X, Vec3::Y)] {
+            for s in [-1.0f32, 1.0] {
+                quad(c + n * h * s, u * h, v * h, optic, out);
+            }
+        }
+    }
+    // Möller-Trumbore, both faces, the nearest hit beyond a hair.
+    fn nearest(scene: &[Tri], o: Vec3, d: Vec3, tmax: f32) -> Option<(f32, Optic)> {
+        let mut best: Option<(f32, Optic)> = None;
+        for tri in scene {
+            let (e1, e2) = (tri.v[1] - tri.v[0], tri.v[2] - tri.v[0]);
+            let p = d.cross(e2);
+            let det = e1.dot(p);
+            if det.abs() < 1.0e-9 { continue; }
+            let s = o - tri.v[0];
+            let u = s.dot(p) / det;
+            if !(0.0..=1.0).contains(&u) { continue; }
+            let q = s.cross(e1);
+            let v = d.dot(q) / det;
+            if v < 0.0 || u + v > 1.0 { continue; }
+            let t = e2.dot(q) / det;
+            if t > 1.0e-6 && t < tmax && best.map_or(true, |(b, _)| t < b) { best = Some((t, tri.optic)); }
+        }
+        best
+    }
+    struct Trace { throughput: Vec3, out_dir: Vec3, open: bool, folded: bool, fold: Mat3 }
+    fn trace(scene: &[Tri], origin: Vec3, dir: Vec3, range: f32, grime: f32) -> Trace {
+        let (mut o, mut d, mut left, mut t) = (origin, dir, range, Vec3::ONE);
+        let (mut fold, mut folded, mut in_glass, mut entry) = (Mat3::IDENTITY, false, false, origin);
+        for _ in 0..12 {
+            let Some((ht, optic)) = nearest(scene, o, d, left) else {
+                return Trace { throughput: t, out_dir: d, open: true, folded, fold };
+            };
+            let p = o + d * ht;
+            match optic {
+                Optic::Pane => {
+                    if in_glass { t *= (-GLASS_ABSORPTION * p.distance(entry)).exp(); } else { t *= GLASS_ENTRY_T * (1.0 - 0.2 * grime); entry = p; }
+                    in_glass = !in_glass;
+                }
+                Optic::Mirror(n) => {
+                    let n = n.normalize();
+                    d = d - 2.0 * d.dot(n) * n;
+                    fold = (Mat3::IDENTITY - 2.0 * Mat3::from_cols(n * n.x, n * n.y, n * n.z)) * fold;
+                    folded = true;
+                    t *= MIRROR_REFLECTANCE;
+                }
+                Optic::Window => t *= OPTIC_FACE_T,
+                Optic::Opaque => break,
+            }
+            left -= ht;
+            o = p + d * 0.001;
+            if left <= 0.0 { return Trace { throughput: t, out_dir: d, open: true, folded, fold }; }
+        }
+        Trace { throughput: Vec3::ZERO, out_dir: d, open: false, folded, fold }
+    }
+    /// rm_vehicle_beam: (throughput, the direction the beam arrives from).
+    fn vehicle_beam(scene: &[Tri], origin: Vec3, sun: Vec3, grime: f32) -> (Vec3, Vec3) {
+        let mut tr = trace(scene, origin, sun, REACH_M, grime);
+        let mut toward = sun;
+        if tr.folded && !(tr.open && tr.out_dir.dot(sun) >= ALIGN_COS) {
+            toward = (tr.fold.transpose() * sun).normalize();
+            tr = trace(scene, origin, toward, REACH_M, grime);
+        }
+        let open = tr.open && tr.out_dir.dot(sun) >= ALIGN_COS;
+        (if open { tr.throughput } else { Vec3::ZERO }, toward)
+    }
+    fn elevated(deg: f32) -> Vec3 { Vec3::new(0.0, deg.to_radians().sin(), deg.to_radians().cos()) }
+
+    /// A Tiger side port's slot: 1.2 cm tall through 22 cm of armour (rm_aperture.wgsl measured
+    /// 1.6 degrees of half-acceptance on the bake). From the slot's inner mouth the Sun enters
+    /// only while it stands within atan(0.6 cm / 22 cm) = 1.56 degrees of the slot's axis.
+    #[test]
+    fn a_slot_admits_the_sun_only_within_its_line_of_sight() {
+        let mut scene = Vec::new();
+        cuboid(Vec3::new(-0.5, 0.006, 0.0), Vec3::new(0.5, 0.5, 0.22), Optic::Opaque, &mut scene);
+        cuboid(Vec3::new(-0.5, -0.5, 0.0), Vec3::new(0.5, -0.006, 0.22), Optic::Opaque, &mut scene);
+        let mouth = Vec3::new(0.0, 0.0, -0.001);
+        for (deg, lit) in [(0.0, true), (1.0, true), (1.5, true), (1.7, false), (2.5, false), (6.0, false), (-1.0, true), (-1.7, false)] {
+            let (t, toward) = vehicle_beam(&scene, mouth, elevated(deg), 0.0);
+            assert_eq!(t.max_element() > 0.0, lit, "Sun {deg} deg up: {t:?}");
+            if lit { assert!((t - Vec3::ONE).abs().max_element() < 1.0e-6 && toward == elevated(deg), "an open slot passes the whole beam"); }
+        }
+        // A point a metre behind the slot sees the Sun through it only along the line through
+        // the slot: one degree up from 1.75 cm below the axis (tan 1 deg x 1 m), not from the axis.
+        let behind = Vec3::new(0.0, -0.0175, -1.0);
+        assert!(vehicle_beam(&scene, behind, elevated(1.0), 0.0).0.max_element() > 0.0);
+        assert_eq!(vehicle_beam(&scene, Vec3::new(0.0, 0.0, -1.0), elevated(1.0), 0.0).0, Vec3::ZERO);
+    }
+
+    /// A glass block on the beam's path takes the pane material's throughput: the entry face,
+    /// the laminate's absorption over the path between its faces and the glass load, the same
+    /// as the daylight apertures' record (`pane_transmittance`) at normal incidence; obliquely
+    /// the path in the glass is longer (refraction's shortening of it is not taken: named).
+    #[test]
+    fn glass_on_the_sun_path_passes_the_pane_materials_throughput() {
+        let mut scene = Vec::new();
+        cuboid(Vec3::new(-0.2, -0.2, 0.10), Vec3::new(0.2, 0.2, 0.16), Optic::Pane, &mut scene);
+        for grime in [0.0, 0.5, 1.0] {
+            let (t, _) = vehicle_beam(&scene, Vec3::ZERO, Vec3::Z, grime);
+            let reference = pane_transmittance(0.06, grime);
+            assert!((t - reference).abs().max_element() < 1.0e-4, "grime {grime}: {t:?} against the record's {reference:?}");
+        }
+        let oblique = elevated(30.0);
+        let (t, _) = vehicle_beam(&scene, Vec3::ZERO, oblique, 0.0);
+        assert!((t - pane_transmittance(0.06 / 30f32.to_radians().cos(), 0.0)).abs().max_element() < 1.0e-4, "{t:?}");
+        // Glass is no opening: a pane in a wall passes the beam, the wall beside it does not.
+        cuboid(Vec3::new(-0.5, 0.2, 0.10), Vec3::new(0.5, 0.5, 0.16), Optic::Opaque, &mut scene);
+        assert_eq!(vehicle_beam(&scene, Vec3::new(0.0, 0.3, 0.0), Vec3::Z, 0.0).0, Vec3::ZERO);
+    }
+
+    /// A periscope: two mirrors folding the line of sight down 0.5 m, the exit window's two
+    /// faces, a housing round the lower mirror. The Sun inside the periscope's line of sight
+    /// enters the compartment folded out of the lower mirror, at the mirrors' reflectance and the
+    /// window faces' Fresnel share; beside it, nothing does. A periscope whose upper mirror is
+    /// out of parallel by a degree folds the line by two: the straight trace leaves two degrees
+    /// off the Sun and the trace along the met mirrors' inverse fold finds the beam.
+    #[test]
+    fn a_periscope_admits_the_sun_folded_and_only_inside_its_field() {
+        let build = |tilt_deg: f32| {
+            let mut scene = Vec::new();
+            let half = 0.08;
+            let n1 = Vec3::new(0.0, 1.0, -1.0).normalize();
+            let tilt = Mat3::from_rotation_x(tilt_deg.to_radians());
+            let n2 = tilt * Vec3::new(0.0, -1.0, 1.0).normalize();
+            let in_plane = |n: Vec3| n.cross(Vec3::X).normalize();
+            quad(Vec3::new(0.0, 0.0, 0.3), Vec3::X * half, in_plane(n1) * half, Optic::Mirror(n1), &mut scene);
+            quad(Vec3::new(0.0, 0.5, 0.3), Vec3::X * half, in_plane(n2) * half, Optic::Mirror(n2), &mut scene);
+            // The exit window's two faces.
+            for z in [0.40, 0.41] { quad(Vec3::new(0.0, 0.5, z), Vec3::X * 0.1, Vec3::Y * 0.1, Optic::Window, &mut scene); }
+            // The housing: a wall behind the lower mirror rising to the window's sill, the roof
+            // over the compartment, the head's back, top and sides round the upper mirror.
+            cuboid(Vec3::new(-1.0, -0.3, 0.45), Vec3::new(1.0, 0.42, 0.5), Optic::Opaque, &mut scene);
+            cuboid(Vec3::new(-1.0, 0.25, -1.0), Vec3::new(1.0, 0.3, 0.2), Optic::Opaque, &mut scene);
+            cuboid(Vec3::new(-0.15, 0.3, 0.15), Vec3::new(0.15, 0.62, 0.2), Optic::Opaque, &mut scene);
+            cuboid(Vec3::new(-0.15, 0.58, 0.2), Vec3::new(0.15, 0.62, 0.5), Optic::Opaque, &mut scene);
+            for x in [-0.15f32, 0.12] { cuboid(Vec3::new(x, 0.25, 0.15), Vec3::new(x + 0.03, 0.62, 0.5), Optic::Opaque, &mut scene); }
+            scene
+        };
+        let parallel = build(0.0);
+        let through = MIRROR_REFLECTANCE * MIRROR_REFLECTANCE * OPTIC_FACE_T * OPTIC_FACE_T;
+        let (t, toward) = vehicle_beam(&parallel, Vec3::ZERO, Vec3::Z, 0.0);
+        assert!((t - Vec3::splat(through)).abs().max_element() < 1.0e-5 && toward == Vec3::Z, "{t:?}");
+        for sun in [Vec3::new(0.6, 0.0, 0.8), elevated(40.0), Vec3::Y] {
+            assert_eq!(vehicle_beam(&parallel, Vec3::ZERO, sun, 0.0).0, Vec3::ZERO, "the Sun outside the field at {sun:?}");
+        }
+        let skew = build(1.0);
+        let straight = trace(&skew, Vec3::ZERO, Vec3::Z, REACH_M, 0.0);
+        assert!(straight.open && straight.folded && straight.out_dir.dot(Vec3::Z) < ALIGN_COS, "two degrees off");
+        let (t, toward) = vehicle_beam(&skew, Vec3::ZERO, Vec3::Z, 0.0);
+        assert!((t - Vec3::splat(through)).abs().max_element() < 1.0e-5, "found along the inverse fold: {t:?}");
+        assert!(toward.dot(Vec3::Z) < ALIGN_COS && toward.dot(Vec3::Z) > 0.999, "it arrives two degrees off the Sun's own line: {toward:?}");
+    }
+
+    /// The shader carries the replica's constants, the glass absorption is the pane material's,
+    /// direct-view glass is its own optic kind (cover to every other ray), and both shading
+    /// passes take the traced beam in the compartment with the cascades as the portable path.
+    #[test]
+    fn the_shader_traces_the_beam_with_the_replicas_constants() {
+        let rt = rm_source("rm_rt.wgsl");
+        for line in ["const RM_BEAM_REACH_M: f32 = 8.0;", "const RM_GLASS_ENTRY_T: f32 = 0.96;",
+            "const RM_GLASS_ABSORPTION: vec3<f32> = vec3<f32>(3.4, 2.0, 3.8);", "const RM_OPTIC_FACE_T: f32 = 0.957;",
+            "const RM_MIRROR_REFLECTANCE: f32 = 0.90;", "const RM_BEAM_ALIGN_COS: f32 = 0.99985;",
+            "if (optic.w < 0.5 || optic.w > 2.5) { return vec4(d, 0.0); }"] {
+            assert!(rt.contains(line), "rm_rt.wgsl lost `{line}`");
+        }
+        // The absorption per metre and the entry share are pane_transmittance's.
+        for thickness in [0.03f32, 0.07, 0.12] {
+            let record = pane_transmittance(thickness, 0.0);
+            let replica = GLASS_ENTRY_T * (-GLASS_ABSORPTION * thickness).exp();
+            assert!((record - replica).abs().max_element() < 1.0e-6, "{record:?} against {replica:?}");
+        }
+        // Uncoated crown glass (n 1.52) at normal incidence: 1 - ((n - 1) / (n + 1))^2.
+        assert!((1.0 - ((1.52f32 - 1.0) / 2.52).powi(2) - OPTIC_FACE_T).abs() < 5.0e-4);
+        assert_eq!(OPTIC_PANE, 3.0);
+        assert!(rm_source("rm_rt_stub.wgsl").contains("fn rm_vehicle_beam("));
+        let medium = rm_source("rm_medium.wgsl");
+        assert!(medium.contains("fn rm_cabin_beam_traced() -> bool { return RM_RAY_QUERIES && fr.debug.w < 0.5 && fr.worn_count.z < 0.5; }"));
+        assert!(medium.contains("path.throughput * rm_sun_visibility_maps(path.exit, 0.0)"), "beyond the vehicle the cascades");
+        let shade = rm_source("rm_shade.wgsl");
+        assert!(shade.contains("let beam = rm_cabin_beam(world + n * (0.01 + 0.002 * dist));"));
+        assert!(shade.contains("rm_ggx_specular(n, v, key, roughness, f0)"), "the specular lobe follows the folded beam");
+        let volume = rm_source("rm_volume.wgsl");
+        assert!(volume.contains("let b = rm_cabin_beam(fr.cam_pos.xyz + ray * t);") && volume.contains("const RM_BEAM_STRATA: u32 = 4u;"));
+        assert_eq!(SKIP_BEAM_TRACE, 1 << 23);
+        assert!(SKIP_BEAM_TRACE & (SKIP_APERTURES | SKIP_LOW_CLOUDS | SKIP_RELAYS) == 0);
     }
 }

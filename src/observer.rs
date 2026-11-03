@@ -54,6 +54,12 @@ pub const ROD_SUMMATION_DIAMETER_DEG: f64 = 0.5;
 /// not drawn).
 pub const ROD_FREE_RADIUS_DEG: f64 = 0.6;
 pub const ROD_FULL_DEG: f64 = 5.0;
+/// The eye's point spread at a large (night) pupil, full width, arcminutes: aberrations widen it
+/// to about two arcminutes (Campbell & Gubisch 1966, "Optical quality of the human eye", J.
+/// Physiol. 186:558). A fixated sub-pixel point's foveal cone stimulus is its pixel's luminance
+/// times (pixel width / spread)^2 (crush.wgsl); outside the fovea, as the rods take over, the
+/// gain fades with them. The point layer only (the lanterns).
+pub const POINT_PSF_ARCMIN: f64 = 2.0;
 /// The share of a sub-pixel emitter's scotopic luminance its own pixel's rods see (crush.wgsl).
 pub fn rod_point_share(pixel_deg: f64) -> f64 {
     (pixel_deg * pixel_deg / (std::f64::consts::PI * 0.25 * ROD_SUMMATION_DIAMETER_DEG * ROD_SUMMATION_DIAMETER_DEG)).clamp(0.0, 1.0)
@@ -616,6 +622,7 @@ pub fn wgsl_constants() -> String {
     push("OBS_ROD_SUMMATION_DEG", ROD_SUMMATION_DIAMETER_DEG);
     push("OBS_ROD_FREE_RADIUS_DEG", ROD_FREE_RADIUS_DEG);
     push("OBS_ROD_FULL_DEG", ROD_FULL_DEG);
+    push("OBS_POINT_PSF_ARCMIN", POINT_PSF_ARCMIN);
     push("OBS_METER_MIN", METER_MIN_CD_M2);
     push("OBS_METER_MAX", METER_MAX_CD_M2);
     push("OBS_FOVEA_RADIUS_DEG", METER_FOVEA_RADIUS_DEG);

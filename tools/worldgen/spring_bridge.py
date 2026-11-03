@@ -105,7 +105,9 @@ def carve(H, cx, cz):
     valley = bank+(H-bank)*s
     H1 = np.where(H > valley, valley, H)
     # A low spot in the floodplain is filled to the bank so the channel has two banks to cut.
-    H1 = np.where(ad < FLOOD_HALF, np.maximum(H1, bank), H1)
+    # ...faded in over the floodplain's outer 150 m, never a step (a hard fill left a cliff).
+    fill = 1.0-smoothstep((ad-(FLOOD_HALF-150.0))/150.0)
+    H1 = H1+np.maximum(bank-H1, 0.0)*fill
     wall = bed+(bank-bed)*np.clip((ad-RIVER_HALF_W)/BANK_RUN, 0, 1)
     H2 = np.where(ad < RIVER_HALF_W+BANK_RUN, np.minimum(H1, wall), H1)
     return H2, d, c, water, axis

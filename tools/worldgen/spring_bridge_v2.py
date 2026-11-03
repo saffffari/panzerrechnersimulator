@@ -67,10 +67,10 @@ RAMP_M = 90.0
 SQUARE_R = 16.0
 
 VARIANTS = {
-    'playtest': dict(dest='spring-bridge-v2', houses=14, lot_gap=(0.0, 3.0), outer_gap=(4.0, 10.0), dressing=1.0,
-                     kerbs=True, trees=26000, street_tree_m=13.0, craters=16, alleys=False, low_clouds=18),
-    'render': dict(dest='spring-bridge-lite-v2', houses=10, lot_gap=(3.0, 8.0), outer_gap=(10.0, 20.0), dressing=0.35,
-                   kerbs=False, trees=7000, street_tree_m=24.0, craters=12, alleys=False, low_clouds=8),
+    'playtest': dict(dest='spring-bridge-v2', houses=14, natural=1.0, rubble=1.0, field_craters=320, battle=1.0, trash=1.0, lot_gap=(0.0, 3.0), outer_gap=(4.0, 10.0), dressing=1.0,
+                     kerbs=True, trees=16000, street_tree_m=13.0, craters=16, alleys=False, low_clouds=18),
+    'render': dict(dest='spring-bridge-lite-v2', houses=10, natural=0.25, rubble=0.4, field_craters=140, battle=0.4, trash=0.3, lot_gap=(3.0, 8.0), outer_gap=(10.0, 20.0), dressing=0.35,
+                   kerbs=False, trees=5000, street_tree_m=24.0, craters=12, alleys=False, low_clouds=8),
 }
 CONDITIONS = [('intact', .15), ('shelled', .30), ('burned', .25), ('partly_collapsed', .30)]
 
@@ -96,10 +96,75 @@ ASSET = {
     'dead_back': 'assets/warprops/dead/dead_sol_sprawl_back.glb', 'dead_down': 'assets/warprops/dead/dead_sol_face_down.glb',
     'dead_side': 'assets/warprops/dead/dead_sol_on_side.glb', 'dead_curled': 'assets/warprops/dead/dead_sol_curled.glb',
     'wreck_kv1': cc.ASSETS['wreck_kv1'], 'wreck_pz3': cc.ASSETS['wreck_pz3'],
+    'stone_s': NATP+'stone_5.glb', 'stone_m': NATP+'stone_4.glb', 'stone_l': NATP+'stone_1.glb',
+    'boulder_a': NATP+'stone_2.glb', 'boulder_b': NATP+'stone_3.glb',
+    'branch': NATP+'tree_log_1.glb', 'stump': NATP+'tree_stump_1.glb',
+    'fern_a': NATP+'fern_1.glb', 'fern_b': NATP+'fern_2.glb', 'mushroom': NATP+'mushroom_n_1.glb',
+    'scrap': PZ+'Props/scrap_metal_mx_1.glb', 'scrap2': PZ+'Props/scrap_metal_mx_1_1.glb',
+    'tire2': PZ+'Props/tire_2.glb', 'plank4': PZ+'Props/wooden_plank_4.glb', 'brick3': PZ+'Debris & Misc/brick_mx_3.glb',
+    'cement_bag': PZ+'Props/cement_bag_mp_1.glb', 'pole': PZ+'Props/pipe_mx_1.glb', 'lamp_head': PZ+'Light Sources/lamp_mx_2_on.glb',
+    'shattered_a': 'assets/worlds/berlin1945/tree_shattered_a.glb', 'shattered_b': 'assets/worlds/berlin1945/tree_shattered_b.glb',
+    'dead_raised': 'assets/warprops/dead/dead_sol_arm_raised.glb', 'dead_slump': 'assets/warprops/dead/dead_sol_seated_slump.glb',
+    'canister': 'assets/warprops/supply_canister.glb', 'wire_stake': 'assets/warprops/wire_stake.glb', 'bricks_stacked1': PZ+'Debris & Misc/bricks_stacked_mx_1.glb',
     'charred': cc.ASSETS['charred_plank'], 'scorch': cc.ASSETS['scorch'],
+    # Household goods and the war's trash (period-plausible pieces of the PSX packs only).
+    'suitcase': PZ+'Props/luggage_mp_1.glb', 'mattress': PZ+'Props/old_mattress_mx_1.glb', 'bucket': PZ+'Props/bucket_mx_1.glb',
+    'bucket2': PZ+'Props/bucket_mx_2.glb', 'stool': PZ+'Props/stool_mx_1_1.glb', 'bench': PZ+'Props/bench_mx_1_1.glb',
+    'shelf': PZ+'Props/shelf_mx_4_1.glb', 'crate': PZ+'Props/wooden_crate_1.glb', 'crate2': PZ+'Props/wooden_crate_2_b.glb',
+    'crate3': PZ+'Props/wooden_crate_hx_3_2.glb', 'barrel_w': PZ+'Props/wooden_barrel_1.glb', 'barrel_m': PZ+'Props/metal_barrel_hr_4_1.glb',
+    'barrel_m2': PZ+'Props/metal_barrel_hr_2.glb', 'jerrycan': PZ+'Props/jerrycan_mx_1.glb', 'bottle': PZ+'Props/glass_bottle_mx_1.glb',
+    'bottle2': PZ+'Props/glass_bottle_mx_3.glb', 'jar': PZ+'Props/jam_jar_mp_1_medium.glb', 'board1': PZ+'Props/wooden_board_1.glb',
+    'board2': PZ+'Props/wooden_board_3.glb', 'plank1': PZ+'Props/wooden_plank_1.glb', 'plank2': PZ+'Props/wooden_plank_2.glb',
+    'plank5': PZ+'Props/wooden_plank_5.glb', 'concrete': PZ+'Props/concrete_block_mx_1.glb', 'tire1': PZ+'Props/tire_1.glb',
+    'scrap3': PZ+'Props/scrap_metal_mx_1_2.glb', 'gear': PZ+'Props/gear_mx_3.glb', 'pipe2': PZ+'Props/pipe_mx_2.glb',
+    'gravel1': PZ+'Debris & Misc/gravel_pile_hr_1.glb', 'gravel2': PZ+'Debris & Misc/gravel_pile_hr_2.glb',
+    'brick1': PZ+'Debris & Misc/brick_mx_1_2.glb', 'brick2': PZ+'Debris & Misc/brick_mx_2_1.glb', 'brick4': PZ+'Debris & Misc/brick_mx_4_3.glb',
+    'bricks_s2': PZ+'Debris & Misc/bricks_stacked_mx_2_0.glb', 'bricks_s3': PZ+'Debris & Misc/bricks_stacked_mx_3.glb',
+    'debris_b1': PZ+'Debris & Misc/debris_bricks_mx_1_0.glb', 'debris_b2': PZ+'Debris & Misc/debris_bricks_mx_2_0.glb',
+    'wires': PZ+'Large Props & Machinery/wires_hr_2_1.glb', 'chimney_fallen': PZ+'Large Props & Machinery/chimney_a_1_1.glb',
+    'stretcher_occ': 'assets/warprops/stretcher_occupied.glb', 'horse_butchered': 'assets/warprops/horse_dead_butchered.glb',
+    'grave_mound': 'assets/warprops/grave_mound.glb', 'spoil': 'assets/warprops/at_ditch_spoil.glb', 'panje': 'assets/warprops/panje_wagon.glb',
 }
-BIG_TREES = ['tree_5', 'tree_6', 'tree_7', 'tree_8']
-SMALL_TREES = ['tree_1', 'tree_9']
+HOUSEHOLD = [('suitcase', .08), ('mattress', .05), ('bucket', .06), ('bucket2', .04), ('stool', .05), ('bench', .03), ('shelf', .03),
+             ('crate', .05), ('barrel_w', .04), ('bottle', .07), ('bottle2', .05), ('jar', .05), ('board1', .06), ('board2', .05),
+             ('plank1', .06), ('plank2', .05), ('plank5', .04), ('charred', .1)]
+MASONRY = [('brick1', .12), ('brick2', .12), ('brick3', .12), ('brick4', .1), ('debris_b1', .12), ('debris_b2', .1), ('bricks_s2', .06),
+           ('bricks_s3', .05), ('concrete', .07), ('gravel1', .07), ('gravel2', .07)]
+KIT = [('helmet', .2), ('jerrycan', .12), ('canister', .12), ('ammo_burst', .12), ('crate2', .08), ('crate3', .06), ('barrel_m', .06),
+       ('barrel_m2', .05), ('drum_burst', .05), ('tire1', .04), ('scrap', .04), ('scrap3', .04), ('stretcher', .02)]
+WRECKAGE = [('scrap', .2), ('scrap2', .15), ('scrap3', .15), ('tire1', .1), ('tire2', .08), ('gear', .06), ('pipe2', .06), ('plank2', .08),
+            ('jerrycan', .06), ('charred', .06)]
+# Trees and shrubs: the spring 1943 set (tools/vegetation/spring1943.py), real mature sizes, May
+# foliage; the species by place, the way a Ukrainian river town grows them.
+VEG = 'assets/vegetation/spring1943/'
+STREET_TREES = ['tree_linden_a', 'tree_linden_b', 'tree_chestnut_a', 'tree_chestnut_b']
+BANK_TREES = ['tree_willow_a', 'tree_willow_b', 'tree_willow_c', 'tree_willow_c', 'tree_poplar_a', 'tree_poplar_c']
+BANK_SCRUB = ['shrub_willowscrub_a', 'shrub_willowscrub_b', 'shrub_elder_a']
+ORCHARD = ['tree_apple_a', 'tree_apple_b', 'tree_apple_c', 'tree_cherry_a', 'tree_cherry_b', 'tree_pear_a', 'tree_pear_b']
+GARDEN_SHRUBS = ['shrub_elder_b', 'shrub_dogrose_a', 'shrub_dogrose_b', 'shrub_hazel_b']
+HEDGE = ['shrub_hawthorn_a', 'shrub_hawthorn_b', 'shrub_blackthorn_a', 'shrub_blackthorn_b', 'shrub_dogrose_a',
+         'shrub_elder_a', 'shrub_hazel_a']
+WOOD_MIX = [('tree_oak_a', 3), ('tree_oak_b', 2), ('tree_oak_c', 2), ('tree_birch_a', 2), ('tree_birch_b', 2),
+            ('tree_birch_c', 2), ('tree_linden_a', 2), ('tree_linden_b', 1), ('tree_poplar_b', 1),
+            ('shrub_hazel_a', 2), ('shrub_hazel_b', 2), ('shrub_hawthorn_a', 1), ('shrub_elder_a', 1)]
+FALLEN = [('fallen_oak_uprooted_a', None), ('fallen_birch_uprooted_a', None), ('fallen_apple_uprooted_a', None),
+          ('fallen_poplar_snapped_a', 'stump_poplar_snapped_a'), ('fallen_willow_snapped_a', 'stump_willow_snapped_a'),
+          ('fallen_linden_snapped_a', 'stump_linden_snapped_a'), ('fallen_birch_snapped_a', 'stump_birch_snapped_a')]
+
+
+def veg_damaged(name, key):
+    """The shelled form of a tree or shrub (shattered or burnt, same species where the set has it)."""
+    if name.startswith('shrub_'):
+        return 'shrub_burnt_a' if 'hazel' in name or 'elder' in name else 'shrub_burnt_b'
+    species = name.split('_')[1]
+    forms = [f.stem for f in sorted((ASSET_ROOT/VEG).glob(f'tree_{species}_*.glb')) if 'shattered' in f.stem or 'burnt' in f.stem]
+    if not forms:
+        forms = ['tree_oak_shattered_a', 'tree_poplar_shattered_a', 'tree_linden_shattered_b']
+    return forms[int(rnd(key, 41)*len(forms))]
+
+
+def veg_path(name):
+    return VEG+name+'.glb'
 WATER_RGB = [44, 84, 116]          # a clear river under a blue sky; see the ledger's river water row
 WATER_ROUGHNESS = 0.05
 
@@ -404,7 +469,7 @@ def dress(P, buildings, streets, squares, cx, cz, centre_x, variant, deck_y):
         P.put(name, x, z, rnd(f'wr{k}', 2)*40-20+(0 if k % 2 else 180), 1.0, tag='wreck')
         if name == 'wagon_wreck':
             P.put('horse_dead', x+3.5, z+2.0, rnd(f'wr{k}', 3)*360, 1.0, tag='wreck')
-    dead = ['dead_back', 'dead_down', 'dead_side', 'dead_curled']
+    dead = ['dead_down', 'dead_side', 'dead_curled', 'dead_down', 'dead_side']
     for k in range(int(26*dens)+6):
         key = f'dead{k}'
         q = route_pts[int((0.25+0.6*rnd(key, 1))*(len(route_pts)-1))] if rnd(key, 6) < 0.6 else \
@@ -441,15 +506,16 @@ def dress(P, buildings, streets, squares, cx, cz, centre_x, variant, deck_y):
             if free(x, back_z, 1.0):
                 P.put('fence_a' if rnd(b['id'], 21) < 0.5 else 'fence_b', x, back_z, 90.0, 1.0, tag='fences')
     # Trees: street trees on the outer lanes, the river's banks, gardens.
-    big = [NATP+t+'.glb' for t in BIG_TREES]
-    small = [NATP+t+'.glb' for t in SMALL_TREES]
-    def tree(key, x, z, big_tree=True):
+    def tree(key, x, z, pool=STREET_TREES, damage=0.0):
         if in_river(x, z, 4.0) or not free(x, z, 2.5):
             return
         if abs(z-cz) < BRIDGE_HALF_W+8 and abs(x-cx) < BRIDGE_HALF_L+RAMP_M:
             return
-        pool = big if big_tree else small
-        P.put(None, x, z, rnd(key, 1)*360, 1.3+0.9*rnd(key, 2), sink=0.05, tag='town_trees', path=pool[int(rnd(key, 3)*len(pool))])
+        name = pool[int(rnd(key, 3)*len(pool))]
+        # In the town the street trees took the fighting: some snapped, some burnt with the houses.
+        if rnd(key, 8) < damage:
+            name = veg_damaged(name, key)
+        P.put(None, x, z, rnd(key, 1)*360, 0.85+0.3*rnd(key, 2), sink=0.05, tag='town_trees', path=veg_path(name))
     for si, st in enumerate(streets):
         if st['kind'] in ('lane', 'alley'):
             p = st['pts']
@@ -459,8 +525,12 @@ def dress(P, buildings, streets, squares, cx, cz, centre_x, variant, deck_y):
                         continue
                     d = (p[k+1]-p[k])/max(np.linalg.norm(p[k+1]-p[k]), 1e-6)
                     q = p[k]+np.array([-d[1], d[0]])*side*(st['half']+1.6)
-                    if np.hypot(q[0]-cx, q[1]-cz) > 200 and rnd(f'st{si}.{k}.{side}', 4) < 0.7:
-                        tree(f'st{si}.{k}.{side}', float(q[0]), float(q[1]))
+                    r = np.hypot(q[0]-cx, q[1]-cz)
+                    if r > 200 and rnd(f'st{si}.{k}.{side}', 4) < 0.7:
+                        tree(f'st{si}.{k}.{side}', float(q[0]), float(q[1]), damage=0.35 if r < 320 else 0.1)
+                    elif r > 200 and rnd(f'st{si}.{k}.{side}', 9) < 0.5:
+                        # Hedgerow along the lane where no tree stands.
+                        tree(f'hg{si}.{k}.{side}', float(q[0]), float(q[1]), pool=HEDGE, damage=0.08)
     for side in (-1, 1):
         for z in np.arange(-CROP_HALF+40, CROP_HALF-40, 9.0 if dens > 0.5 else 20.0):
             key = f'bank{side}.{int(z)}'
@@ -469,15 +539,419 @@ def dress(P, buildings, streets, squares, cx, cz, centre_x, variant, deck_y):
                 off = RIVER_HALF_W+BANK_RUN+4.5          # between the quay and the water in town
             x = float(centre_x(np.array([z]))[0])+side*off
             if rnd(key, 6) < 0.75:
-                tree(key, x, float(z), big_tree=rnd(key, 7) < 0.8)
+                tree(key, x, float(z), pool=BANK_TREES if rnd(key, 7) < 0.7 else BANK_SCRUB,
+                     damage=0.3 if abs(z-cz) < 330 else 0.05)
     for b, (x0, x1, z0, z1) in zip(buildings, rects):
         if b['typology'] == 'wooden_house' and rnd(b['id'], 30) < 0.8*dens+0.2:
             for k in range(1+int(rnd(b['id'], 31)*3)):
                 key = f"{b['id']}.g{k}"
-                tree(key, (x0+x1)/2+(rnd(key, 4)-0.5)*16, (z1 if rnd(key, 5) < .5 else z0)+(rnd(key, 6)-0.5)*20, big_tree=rnd(key, 7) < 0.5)
+                tree(key, (x0+x1)/2+(rnd(key, 4)-0.5)*16, (z1 if rnd(key, 5) < .5 else z0)+(rnd(key, 6)-0.5)*20,
+                     pool=ORCHARD if rnd(key, 7) < 0.7 else GARDEN_SHRUBS, damage=0.25)
 
 
-def ground_paint(colour, grass, axis_tex, streets, rects, squares, centre_tex, cx, cz):
+def scatter_ground(P, buildings, streets, cx, cz, centre_x, variant, trees_xz):
+    """Sticks and stones and small natural objects over the whole square, and the war's litter:
+    clumped by world-fixed noise, clear of the river, the streets, the houses and the bridge."""
+    pts, half = street_samples(streets)
+    rects = [cc.footprint(b['x'], b['z'], b['width_m'], b['depth_m'], b['yaw_deg']) for b in buildings]
+    reach = BRIDGE_HALF_L+RAMP_M
+    def ok(x, z, r=0.6, streets_ok=False):
+        if abs(x) > CROP_HALF-10 or abs(z) > CROP_HALF-10:
+            return False
+        if abs(x-float(centre_x(np.array([z]))[0])) < RIVER_HALF_W+BANK_RUN+2.0:
+            return False
+        if abs(z-cz) < BRIDGE_HALF_W+6 and abs(x-cx) < reach:
+            return False
+        if not streets_ok and rect_hits_streets((x-r, x+r, z-r, z+r), pts, half, margin=-0.3):
+            return False
+        return all(not (x0-r < x < x1+r and z0-r < z < z1+r) for x0, x1, z0, z1 in rects)
+    def clump(x, z, scale, salt):
+        # world-fixed clumping: a coarse hash lattice smoothly interpolated
+        gx, gz = x/scale, z/scale
+        ix, iz = math.floor(gx), math.floor(gz)
+        fx, fz = gx-ix, gz-iz
+        v = [[rnd(f'cl{salt}.{ix+i}.{iz+j}', 1) for i in (0, 1)] for j in (0, 1)]
+        top = v[0][0]*(1-fx)+v[0][1]*fx
+        bot = v[1][0]*(1-fx)+v[1][1]*fx
+        return top*(1-fz)+bot*fz
+    n_nat = variant['natural']
+    k = 0
+    # Stones: small ones everywhere in clumps, larger ones rarer, the odd boulder.
+    for kind, count, scale_lo, scale_hi, sink in (('stone_s', 9000, 0.6, 1.6, 0.35), ('stone_m', 3500, 0.5, 1.4, 0.4),
+                                                   ('stone_l', 700, 0.25, 0.6, 0.45), ('boulder_a', 60, 0.25, 0.5, 0.5),
+                                                   ('boulder_b', 60, 0.25, 0.5, 0.5)):
+        placed = 0
+        tries = 0
+        while placed < int(count*n_nat) and tries < count*8:
+            tries += 1
+            key = f'stone.{kind}.{tries}'
+            x = (rnd(key, 1)-0.5)*2*(CROP_HALF-20)
+            z = (rnd(key, 2)-0.5)*2*(CROP_HALF-20)
+            if rnd(key, 3) > clump(x, z, 60.0, 'stone')**2.2 or not ok(x, z, 0.8):
+                continue
+            sc = scale_lo+(scale_hi-scale_lo)*rnd(key, 4)
+            P.put(kind, x, z, rnd(key, 5)*360, sc, sink=sink*sc, tag='stones')
+            placed += 1
+    # Fallen branches, stumps, ferns and mushrooms where trees stand; branches scattered thinly elsewhere.
+    trees = trees_xz if len(trees_xz) else np.zeros((1, 2))
+    for kind, count, near, lo, hi, sink in (('branch', 4200, 9.0, 0.12, 0.30, 0.05), ('stump', 500, 7.0, 0.6, 1.1, 0.1),
+                                             ('fern_a', 900, 6.0, 0.6, 1.0, 0.05), ('fern_b', 500, 6.0, 0.5, 0.9, 0.05),
+                                             ('mushroom', 600, 4.0, 0.6, 1.3, 0.02)):
+        for i in range(int(count*n_nat)):
+            key = f'wood.{kind}.{i}'
+            if kind == 'branch' and rnd(key, 9) < 0.25:
+                x = (rnd(key, 1)-0.5)*2*(CROP_HALF-20)
+                z = (rnd(key, 2)-0.5)*2*(CROP_HALF-20)
+            else:
+                t = trees[int(rnd(key, 1)*len(trees)) % len(trees)]
+                a = rnd(key, 2)*math.tau
+                r = near*(0.3+0.7*rnd(key, 3))
+                x, z = float(t[0])+math.cos(a)*r, float(t[1])+math.sin(a)*r
+            if not ok(x, z, 0.4):
+                continue
+            sc = lo+(hi-lo)*rnd(key, 4)
+            P.put(kind, x, z, rnd(key, 5)*360, sc, sink=sink, tag='woodland_litter')
+            k += 1
+    # The war's litter: rubble heaped round every damaged house, the streets strewn, kit along the roads.
+    n_rub = variant['rubble']
+    litter = [('brick3', .22), ('brick', .12), ('debris_bricks', .12), ('debris_bricks2', .08), ('bricks_stacked1', .06),
+              ('plank4', .10), ('plank', .06), ('board', .05), ('scrap', .06), ('scrap2', .04), ('gravel', .04),
+              ('cement_bag', .03), ('tire2', .02)]
+    for b, (x0, x1, z0, z1) in zip(buildings, rects):
+        if b['condition'] == 'intact':
+            continue
+        heavy = {'partly_collapsed': 150, 'shelled': 110, 'burned': 80}[b['condition']]
+        for i in range(int(heavy*n_rub)):
+            key = f"rub.{b['id']}.{i}"
+            side = int(rnd(key, 1)*4)
+            t = rnd(key, 2)
+            out = 0.3+11.0*rnd(key, 3)**1.8          # most close under the walls, a fan into the street
+            x, z = [(x0+(x1-x0)*t, z0-out), (x0+(x1-x0)*t, z1+out), (x0-out, z0+(z1-z0)*t), (x1+out, z0+(z1-z0)*t)][side]
+            if not ok(x, z, 0.15, streets_ok=True):
+                continue
+            name = pick(key, [('charred', .5), ('plank4', .2), ('brick3', .3)]) if b['condition'] == 'burned' else pick(key, litter)
+            P.put(name, x, z, rnd(key, 4)*360, 0.7+0.7*rnd(key, 5), sink=0.02, tag='rubble')
+    for si, st in enumerate(streets):
+        p = st['pts']
+        for j in range(0, len(p), 1):
+            for q in range(7 if st['kind'] in ('main', 'quay') else 3):
+                key = f'strew.{si}.{j}.{q}'
+                if rnd(key, 1) > 0.8*n_rub:
+                    continue
+                d = (p[min(j+1, len(p)-1)]-p[max(j-1, 0)])
+                d = d/max(np.linalg.norm(d), 1e-6)
+                off = (rnd(key, 2)-0.5)*2*st['half']*1.1
+                x, z = float(p[j][0]-d[1]*off), float(p[j][1]+d[0]*off)
+                if not ok(x, z, 0.1, streets_ok=True):
+                    continue
+                P.put(pick(key, litter), x, z, rnd(key, 3)*360, 0.6+0.8*rnd(key, 4), sink=0.02, tag='street_litter')
+
+
+def battlefield(P, cx, cz, centre_x, route, variant, craters, town_rects):
+    """The remains of the fighting before the crossing (attested recurring conditions of the 1943
+    river battles, not a named engagement): a broken assault line across the field west of the
+    town, a knocked-out anti-tank gun on a rise with its crew, a burnt column on the east road,
+    knocked-out armour across the fields, and the kit the infantry left."""
+    b = variant['battle']
+    def clear(x, z):
+        return (abs(x) < CROP_HALF-20 and abs(z) < CROP_HALF-20
+                and abs(x-float(centre_x(np.array([z]))[0])) > RIVER_HALF_W+BANK_RUN+8
+                and not any(x0-3 < x < x1+3 and z0-3 < z < z1+3 for x0, x1, z0, z1 in town_rects))
+    # Lying poses only: the raised-arm and seated poses read as living figures in open ground.
+    dead = ['dead_down', 'dead_side', 'dead_curled', 'dead_down', 'dead_side']
+    # The assault line: rows of riflemen fallen facing the town, thickest where it broke.
+    for row in range(3):
+        for k in range(int(26*b)):
+            key = f'line{row}.{k}'
+            t = (k+rnd(key, 1))/26.0
+            x = cx-430+row*45+(rnd(key, 2)-0.5)*20+t*40
+            z = cz-260+t*520
+            if not clear(x, z) or rnd(key, 3) > 0.25+0.6*math.exp(-((z-cz+40)/140)**2):
+                continue
+            P.put(dead[int(rnd(key, 4)*len(dead))], x, z, 90+(rnd(key, 5)-0.5)*120, 1.0, tag='dead')
+            if rnd(key, 6) < 0.4:
+                P.put('helmet', x+(rnd(key, 7)-0.5)*3, z+(rnd(key, 8)-0.5)*3, rnd(key, 9)*360, 1.0, tag='kit')
+    # The anti-tank gun position on the rise south-west of the road, its crew round it.
+    gx, gz = cx-640, cz-330
+    if clear(gx, gz):
+        P.put('gun_wreck', gx, gz, 70, 1.0, tag='wreck')
+        P.put('sandbags', gx+3, gz-2, 160, 1.0, tag='defence'); P.put('sandbags', gx-3, gz-3, 200, 1.0, tag='defence')
+        for k in range(4):
+            P.put(dead[k], gx+(rnd(f'gun{k}', 1)-0.5)*8, gz+(rnd(f'gun{k}', 2)-0.5)*8, rnd(f'gun{k}', 3)*360, 1.0, tag='dead')
+        for k in range(3):
+            P.put('ammo_burst', gx+4+k*1.2, gz+2, rnd(f'gunb{k}', 1)*360, 1.0, tag='kit')
+    # The burnt column on the east road: lorries, wagons, horses, their drivers.
+    east = [p for p in route if cx+250 < p[0] < cx+1000]
+    for k, name in enumerate(['truck_burned', 'wagon_wreck', 'truck_hit', 'wagon_wreck', 'truck_burned', 'wagon_wreck'][:max(3, int(6*b))]):
+        if not east:
+            break
+        q = east[min(int(len(east)*(0.15+0.12*k)), len(east)-1)]
+        x, z = float(q[0])+(rnd(f'col{k}', 1)-0.5)*4, float(q[1])+(5.0 if k % 2 else -5.0)
+        if clear(x, z):
+            P.put(name, x, z, rnd(f'col{k}', 2)*30-15+90, 1.0, tag='wreck')
+            if name == 'wagon_wreck':
+                P.put('horse_dead', x+3.0, z+(2.5 if k % 2 else -2.5), rnd(f'col{k}', 3)*360, 1.0, tag='wreck')
+            if rnd(f'col{k}', 4) < 0.7:
+                P.put(dead[k % len(dead)], x-3.0, z+1.5, rnd(f'col{k}', 5)*360, 1.0, tag='dead')
+    # Knocked-out armour across the fields, some in the crater lines, each with its dead.
+    for k in range(int(16*b)):
+        key = f'ko{k}'
+        if craters and rnd(key, 9) < 0.5:
+            c = craters[int(rnd(key, 1)*len(craters))]
+            x, z = c[0]+6+rnd(key, 2)*8, c[1]+(rnd(key, 3)-0.5)*10
+        else:
+            x, z = (rnd(key, 1)-0.5)*2*(CROP_HALF-120), (rnd(key, 2)-0.5)*2*(CROP_HALF-120)
+        if not clear(x, z):
+            continue
+        P.put(['wreck_kv1', 'wreck_pz3', 'wreck_kv1', 'truck_hit'][k % 4], x, z, rnd(key, 4)*360, 1.0, tag='wreck')
+        for d in range(int(rnd(key, 5)*3)):
+            P.put(dead[(k+d) % len(dead)], x+(rnd(f'{key}d{d}', 1)-0.5)*10, z+(rnd(f'{key}d{d}', 2)-0.5)*10,
+                  rnd(f'{key}d{d}', 3)*360, 1.0, tag='dead')
+    # The infantry's scattered dead and their kit across the whole field, and field graves.
+    for k in range(int(140*b)):
+        key = f'fall{k}'
+        x, z = (rnd(key, 1)-0.5)*2*(CROP_HALF-60), (rnd(key, 2)-0.5)*2*(CROP_HALF-60)
+        if not clear(x, z) or rnd(key, 3) > 0.6:
+            continue
+        P.put(dead[int(rnd(key, 4)*len(dead))], x, z, rnd(key, 5)*360, 1.0, tag='dead')
+        for j in range(int(rnd(key, 6)*3)):
+            P.put(pick(f'{key}k{j}', [('helmet', .4), ('rifle_grave', .1), ('canister', .2), ('ammo_burst', .15), ('stretcher', .15)]),
+                  x+(rnd(f'{key}k{j}', 1)-0.5)*5, z+(rnd(f'{key}k{j}', 2)-0.5)*5, rnd(f'{key}k{j}', 3)*360, 1.0, tag='kit')
+    for k in range(int(8*b)):
+        key = f'shat{k}'
+        x, z = (rnd(key, 1)-0.5)*2*(CROP_HALF-80), (rnd(key, 2)-0.5)*2*(CROP_HALF-80)
+        if clear(x, z):
+            name = veg_damaged(['tree_oak_a', 'tree_poplar_a', 'tree_linden_a', 'tree_birch_a', 'tree_willow_a'][k % 5], key)
+            P.put(None, x, z, rnd(key, 3)*360, 0.85+0.3*rnd(key, 4), sink=0.1, tag='shattered_trees', path=veg_path(name))
+    # Where the eye goes: the road. The thaw gives back the winter's dead where they fell and no
+    # burial party reached (an attested recurring condition of the 1942-43 Eastern Front spring:
+    # corpses surfacing from the snow along roads and in the fields, collected weeks or months
+    # later); they lie on the verges and in the ditches of the approach, in the open short grass of
+    # the road's edge, kit strewn round them, a stretcher party that did not get back.
+    pr = np.asarray(route, dtype=np.float64)
+    if len(pr) > 2:
+        along = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pr, axis=0).T))])
+        for s in np.arange(10.0, along[-1]-10.0, 22.0/max(b, 0.25)):
+            key = f'verge{s:.0f}'
+            i = int(np.searchsorted(along, s))
+            if i <= 0 or i >= len(pr):
+                continue
+            q, d = pr[i], pr[i]-pr[i-1]
+            d = d/max(np.hypot(*d), 1e-6)
+            if abs(q[0]-cx) < BRIDGE_HALF_L+RAMP_M+10 and abs(q[1]-cz) < 40:
+                continue
+            near_bridge = math.exp(-((q[0]-cx)/420.0)**2)   # thickest where the crossing was fought for
+            if rnd(key, 1) > 0.25+0.55*near_bridge:
+                continue
+            side = 1.0 if rnd(key, 2) < 0.5 else -1.0
+            off = 3.6+rnd(key, 3)*6.0
+            x, z = float(q[0]-d[1]*side*off), float(q[1]+d[0]*side*off)
+            if not clear(x, z):
+                continue
+            yaw = math.degrees(math.atan2(d[0], d[1]))+(rnd(key, 4)-0.5)*140
+            P.put(dead[int(rnd(key, 5)*len(dead))], x, z, yaw, 1.0, tag='dead_verge')
+            if rnd(key, 6) < 0.3:     # a second man, fallen beside the first
+                P.put(dead[int(rnd(key, 7)*len(dead))], x+(rnd(key, 8)-0.5)*4, z+(rnd(key, 9)-0.5)*4, rnd(key, 10)*360, 1.0, tag='dead_verge')
+            if rnd(key, 11) < 0.12:
+                P.put('stretcher', x+1.5*d[0], z+1.5*d[1], yaw+90, 1.0, tag='kit')
+            for j in range(int(rnd(key, 12)*3)):
+                P.put(pick(f'{key}k{j}', [('helmet', .45), ('canister', .25), ('ammo_burst', .15), ('rifle_grave', .15)]),
+                      x+(rnd(f'{key}k{j}', 1)-0.5)*4, z+(rnd(f'{key}k{j}', 2)-0.5)*4, rnd(f'{key}k{j}', 3)*360, 1.0, tag='kit')
+    # The shell holes near the road: men caught by the barrage lie on the torn rims, bare earth
+    # round them where the sward was blown away.
+    for x0, z0, r in craters:
+        key = f'rim{x0:.0f},{z0:.0f}'
+        dmin = np.hypot(*(pr-[x0, z0]).T).min() if len(pr) else 1e9
+        if dmin > 160 or rnd(key, 1) > 0.45*b+0.1:
+            continue
+        a = rnd(key, 2)*math.tau
+        x, z = x0+math.cos(a)*r*1.05, z0+math.sin(a)*r*1.05
+        if clear(x, z):
+            P.put(dead[int(rnd(key, 3)*len(dead))], x, z, math.degrees(a)+90+(rnd(key, 4)-0.5)*60, 1.0, tag='dead_crater')
+    # A row of field graves dug in haste on the camp side, rifles and helmets for markers.
+    gx, gz = cx-520, cz+60
+    for k in range(int(9*b)+3):
+        x, z = gx+k*2.2+(rnd(f'grave{k}', 1)-0.5)*0.6, gz+(rnd(f'grave{k}', 2)-0.5)*0.8
+        if clear(x, z):
+            P.put('rifle_grave' if k % 3 else 'grave_cross', x, z, 90+(rnd(f'grave{k}', 3)-0.5)*20, 1.0, tag='graves')
+            if rnd(f'grave{k}', 4) < 0.5:
+                P.put('helmet', x+0.4, z+0.3, rnd(f'grave{k}', 5)*360, 1.0, tag='graves')
+    # Trees brought down by shellfire, leaves still green on them, beside their stumps.
+    for k in range(int(30*b)):
+        key = f'felled{k}'
+        x, z = (rnd(key, 1)-0.5)*2*(CROP_HALF-80), (rnd(key, 2)-0.5)*2*(CROP_HALF-80)
+        if clear(x, z):
+            fallen, stump = FALLEN[int(rnd(key, 3)*len(FALLEN))]
+            yaw = rnd(key, 4)*360
+            P.put(None, x, z, yaw, 0.9+0.2*rnd(key, 5), sink=0.05, tag='felled_trees', path=veg_path(fallen))
+            if stump:
+                P.put(None, x, z, yaw, 1.0, sink=0.02, tag='felled_trees', path=veg_path(stump))
+
+
+def war_trash(P, cx, cz, centre_x, route, variant, craters, town_rects):
+    """The war's trash, everywhere the fighting went: masonry and household goods blown out of
+    the houses into the yards and lanes, debris fans round every wreck, dumps of abandoned kit
+    along the roads, scattered kit across the fields, wire-stake lines, spoil round the holes."""
+    n = variant['trash']
+    if n <= 0:
+        return
+    def ok(x, z):
+        return (abs(x) < CROP_HALF-15 and abs(z) < CROP_HALF-15
+                and abs(x-float(centre_x(np.array([z]))[0])) > RIVER_HALF_W+BANK_RUN+2
+                and not any(x0-0.2 < x < x1+0.2 and z0-0.2 < z < z1+0.2 for x0, x1, z0, z1 in town_rects)
+                and not (abs(z-cz) < BRIDGE_HALF_W+2 and abs(x-cx) < BRIDGE_HALF_L+RAMP_M))
+    def strew(key, x, z, table, tag, sc=(0.7, 1.4)):
+        if ok(x, z):
+            P.put(pick(key, table), x, z, rnd(key, 7)*360, sc[0]+(sc[1]-sc[0])*rnd(key, 8), sink=0.02, tag=tag)
+    # The town: masonry and household goods over the whole built-up area, thickest by the houses.
+    for k in range(int(9000*n)):
+        key = f'tw{k}'
+        r = 230.0*math.sqrt(rnd(key, 1))
+        a = rnd(key, 2)*math.tau
+        x, z = cx+math.cos(a)*r, cz+math.sin(a)*r
+        near = min((max(x0-x, 0, x-x1)**2+max(z0-z, 0, z-z1)**2) for x0, x1, z0, z1 in town_rects) if town_rects else 1e9
+        if rnd(key, 3) > math.exp(-math.sqrt(near)/30.0)+0.25:
+            continue
+        strew(key, x, z, MASONRY if rnd(key, 4) < 0.62 else HOUSEHOLD, 'town_trash')
+    # Fallen telegraph wires and toppled chimneys in the town.
+    for k in range(int(40*n)):
+        key = f'tww{k}'
+        r, a = 200.0*math.sqrt(rnd(key, 1)), rnd(key, 2)*math.tau
+        strew(key, cx+math.cos(a)*r, cz+math.sin(a)*r, [('wires', .7), ('chimney_fallen', .3)], 'town_trash', (0.9, 1.1))
+    # Debris fans round the wrecks already placed (the battlefield's armour, lorries, wagons, guns).
+    wreck_ids = {P.asset(ASSET[w]) for w in ('wreck_kv1', 'wreck_pz3', 'truck_burned', 'truck_hit', 'wagon_wreck', 'gun_wreck')
+                 if (ASSET_ROOT/ASSET[w]).exists()}
+    wrecks = [(q[1], q[3]) for q in P.m['placements'] if q[0] in wreck_ids]
+    for wi, (wx, wz) in enumerate(wrecks):
+        for k in range(int(45*n)):
+            key = f'wf{wi}.{k}'
+            r, a = 2.5+16.0*rnd(key, 1)**1.5, rnd(key, 2)*math.tau
+            strew(key, wx+math.cos(a)*r, wz+math.sin(a)*r, WRECKAGE if rnd(key, 3) < 0.7 else KIT, 'wreck_debris')
+    # Along the roads: kit dropped on the march, and dumps where a column was caught.
+    pr = np.asarray(route, dtype=np.float64)
+    if len(pr) > 2:
+        along = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pr, axis=0).T))])
+        for s in np.arange(5.0, along[-1]-5.0, 3.0/max(n, 0.1)):
+            key = f'rk{s:.0f}'
+            if rnd(key, 1) > 0.55:
+                continue
+            i = min(max(int(np.searchsorted(along, s)), 1), len(pr)-1)
+            d = pr[i]-pr[i-1]
+            d = d/max(np.hypot(*d), 1e-6)
+            off = (rnd(key, 2)-0.5)*2*(2.0+9.0*rnd(key, 3))
+            strew(key, float(pr[i][0]-d[1]*off), float(pr[i][1]+d[0]*off), KIT if rnd(key, 4) < 0.6 else WRECKAGE+MASONRY[:3], 'road_trash')
+        for k in range(int(14*n)):
+            key = f'dump{k}'
+            s = rnd(key, 1)*along[-1]
+            i = min(max(int(np.searchsorted(along, s)), 1), len(pr)-1)
+            bx, bz = float(pr[i][0])+(rnd(key, 2)-0.5)*16, float(pr[i][1])+(rnd(key, 3)-0.5)*16
+            for j in range(10+int(rnd(key, 4)*22)):
+                strew(f'{key}.{j}', bx+(rnd(f'{key}.{j}', 1)-0.5)*9, bz+(rnd(f'{key}.{j}', 2)-0.5)*9, KIT, 'road_dump')
+            if rnd(key, 5) < 0.4:
+                strew(f'{key}.p', bx+4, bz, [('panje', .6), ('horse_butchered', .4)], 'road_dump', (1.0, 1.0))
+    # Across the fields: kit, scrap, earth thrown out of the holes.
+    for k in range(int(5000*n)):
+        key = f'ft{k}'
+        x, z = (rnd(key, 1)-0.5)*2*(CROP_HALF-30), (rnd(key, 2)-0.5)*2*(CROP_HALF-30)
+        strew(key, x, z, KIT+WRECKAGE[:4], 'field_trash')
+    for x0, z0, r in craters:
+        for j in range(int(rnd(f'sp{x0:.0f}', 1)*4*n)+1):
+            key = f'sp{x0:.0f},{z0:.0f}.{j}'
+            a = rnd(key, 2)*math.tau
+            strew(key, x0+math.cos(a)*r*1.4, z0+math.sin(a)*r*1.4, [('gravel1', .4), ('gravel2', .4), ('stone_m', .2)], 'crater_spoil')
+    # Wire-stake lines: the infantry's obstacles strung across the approach, broken in places.
+    for k in range(int(10*n)):
+        key = f'wire{k}'
+        x, z = cx-200-rnd(key, 1)*600, cz+(rnd(key, 2)-0.5)*900
+        ang = rnd(key, 3)*math.pi
+        for j in range(18+int(rnd(key, 4)*30)):
+            if rnd(f'{key}.{j}', 1) < 0.2:
+                continue
+            strew(f'{key}.{j}', x+math.cos(ang)*j*3.0, z+math.sin(ang)*j*3.0, [('wire_stake', 1.0)], 'wire', (0.95, 1.05))
+    # Graves in mounds by the town's edge and the occupied stretchers no one carried back.
+    for k in range(int(12*n)):
+        key = f'mound{k}'
+        strew(key, cx-260+rnd(key, 1)*30, cz-120+k*2.6, [('grave_mound', .6), ('grave_cross', .4)], 'graves', (1.0, 1.0))
+    for k in range(int(6*n)):
+        key = f'sto{k}'
+        x, z = cx-300+(rnd(key, 1)-0.5)*300, cz+(rnd(key, 2)-0.5)*400
+        strew(key, x, z, [('stretcher_occ', 1.0)], 'dead_verge', (1.0, 1.0))
+
+
+def bridge_fight(P, cx, cz, centre_x, deck_y, variant):
+    """The crossing was fought for: men fell along the railings where the only cover was, their
+    kit lies where it dropped, and shelled timber and steel lie on the deck; at the water's edge
+    below, the men who went into the river trying to cross lie on the banks. Deck pieces stand at
+    the deck's height (the terrain under the span is the river bed)."""
+    b = variant['battle']
+    dead = ['dead_down', 'dead_side', 'dead_curled', 'dead_down', 'dead_side']
+    def on_deck(name, x, z, yaw, scale=1.0, tag='bridge_dead'):
+        path = ASSET[name]
+        if (ASSET_ROOT/path).exists():
+            P.m['placements'].append([P.asset(path), cc.r3(x), cc.r3(deck_y), cc.r3(z), round(yaw % 360.0, 2), cc.r3(scale)])
+            P.count[tag] = P.count.get(tag, 0)+1
+    span = BRIDGE_HALF_L-3.0
+    for k in range(int(9*b)+3):
+        key = f'bd{k}'
+        x = cx-span+rnd(key, 1)*2*span
+        side = 1.0 if rnd(key, 2) < 0.5 else -1.0
+        z = cz+side*(BRIDGE_HALF_W-0.9-rnd(key, 3)*1.2)       # against the railing, out of the tank lane
+        on_deck(dead[int(rnd(key, 4)*len(dead))], x, z, (90 if side > 0 else 270)+(rnd(key, 5)-0.5)*90)
+        for j in range(int(rnd(key, 6)*3)):
+            kk = f'{key}k{j}'
+            on_deck(pick(kk, [('helmet', .45), ('canister', .2), ('ammo_burst', .2), ('jerrycan', .15)]),
+                    x+(rnd(kk, 1)-0.5)*3, z-side*rnd(kk, 2)*1.0, rnd(kk, 3)*360, 1.0, 'bridge_kit')
+    for k in range(int(40*b)+10):
+        key = f'bdeb{k}'
+        x = cx-span+rnd(key, 1)*2*span
+        side = 1.0 if rnd(key, 2) < 0.5 else -1.0
+        z = cz+side*(BRIDGE_HALF_W-0.5-rnd(key, 3)*2.0)
+        on_deck(pick(key, [('charred', .3), ('plank2', .2), ('scrap', .15), ('scrap3', .15), ('brick3', .1), ('helmet', .1)]),
+                x, z, rnd(key, 4)*360, 0.7+0.6*rnd(key, 5), 'bridge_debris')
+    for side in (-1, 1):
+        for k in range(int(14*b)+4):
+            key = f'shore{side}.{k}'
+            z = cz+(rnd(key, 1)-0.5)*260
+            x = float(centre_x(np.array([z]))[0])+side*(RIVER_HALF_W+0.8+rnd(key, 2)*3.5)
+            P.put(dead[int(rnd(key, 3)*len(dead))], x, z, rnd(key, 4)*360, 1.0, sink=0.05, tag='shore_dead')
+            if rnd(key, 5) < 0.4:
+                P.put('helmet', x+(rnd(key, 6)-0.5)*3, z+(rnd(key, 7)-0.5)*3, rnd(key, 8)*360, 1.0, tag='shore_dead')
+
+
+def night_lights(P, H, grid, cx, cz, deck_y, town, craters, variant):
+    """Lights for the night (environment_authoring's authored lights). The front was blacked out:
+    the bridge's lamp is a shielded blackout lamp on its pole at the camp side (warm, low); the
+    rest are fires (houses and wrecks still burning off across the fields) and a curtained window
+    or two in the houses that stand."""
+    lights = []
+    def light(id_, x, z, h, temp, tint, power, radius, rng, flicker):
+        lights.append(dict(id=id_, kind='point', position=[cc.r3(x), cc.r3(grid.sample(H, x, z)+h), cc.r3(z)],
+                           direction=[0, -1, 0], temperature_k=temp, tint_rgb=tint, radiant_intensity=power,
+                           source_radius_m=radius, range_m=rng, cone_angle_deg=60.0, flicker=flicker, enabled=True))
+    # The bridge lamp: a pole at the west abutment, the camp's side, a shielded lamp head on top.
+    lx, lz = cx-BRIDGE_HALF_L-4.0, cz+BRIDGE_HALF_W+1.5
+    ground = deck_y
+    P.put('pole', lx, lz, 0.0, [1.6, 1.6, 15.0], sink=-(deck_y-grid.sample(H, lx, lz))-2.25, tag='lamp')
+    P.m['placements'][-1].append([90.0, 0.0])
+    P.put('lamp_head', lx, lz, 90.0, 1.4, sink=-(deck_y-grid.sample(H, lx, lz))-4.3, tag='lamp')
+    lights.append(dict(id='bridge_lamp', kind='point', position=[cc.r3(lx), cc.r3(deck_y+4.2), cc.r3(lz)], direction=[0, -1, 0],
+                       temperature_k=2600.0, tint_rgb=[1.0, 0.86, 0.66], radiant_intensity=18.0, source_radius_m=0.08,
+                       range_m=22.0, cone_angle_deg=70.0, flicker=0.02, enabled=True))
+    # Fires: burned houses still smouldering, and a few wrecks burning off across the fields.
+    burning = [b for b in town if b['condition'] == 'burned'][:3]
+    for k, b in enumerate(burning):
+        light(f'house_fire_{k}', b['x'], b['z'], 2.5, 1850.0, [1.0, 0.72, 0.46], 95.0, 0.5, 30.0, 0.35)
+    far = sorted(craters, key=lambda c: -math.hypot(c[0]-cx, c[1]-cz))[:6]
+    for k, (x, z, r) in enumerate(far[:max(2, int(5*variant['battle']))]):
+        light(f'field_fire_{k}', x+3, z, 1.2, 1800.0, [1.0, 0.70, 0.44], 120.0, 0.6, 40.0, 0.4)
+    # A curtained window or two in the houses that stand.
+    standing = [b for b in town if b['condition'] in ('intact', 'shelled')][:2]
+    for k, b in enumerate(standing):
+        light(f'window_{k}', b['x'], b['z'], 3.0, 2700.0, [1.0, 0.84, 0.62], 6.0, 0.3, 10.0, 0.05)
+    return lights
+
+
+def ground_paint(colour, grass, axis_tex, streets, rects, squares, centre_tex, cx, cz, craters=()):
     """Streets (cobbles in the centre, dirt lanes), squares, yards; the river and its banks."""
     d_tex = axis_tex[None, :]-centre_tex[:, None]
     ad = np.abs(d_tex)
@@ -518,6 +992,18 @@ def ground_paint(colour, grass, axis_tex, streets, rects, squares, centre_tex, c
         stamp(float(q[0]), float(q[1]), SQUARE_R, [0.37, 0.36, 0.34])
     for x0, x1, z0, z1 in rects:
         stamp((x0+x1)/2, (z0+z1)/2, max(x1-x0, z1-z0)*0.5+4.0, [0.33, 0.28, 0.21], 0.7)
+    # Shell holes: torn earth, the sward blown away to the rim and thrown soil beyond it.
+    for x, z, r in craters:
+        stamp(x, z, r*1.25, [0.17, 0.13, 0.09], 1.0)
+        stamp(x, z, r*1.9, [0.24, 0.19, 0.13], 0.45)
+    # Earth under the sward: the meadow (its presence is the ground class's red) covers it; where
+    # the grass thins the loam shows, never a painted green.
+    # A May sward is continuous: wherever grass grows at all it grows thick (the meadow's density
+    # is its own); ploughed strips, roads, craters and the river stay bare.
+    grass[:] = np.where(grass > 0.06, np.maximum(grass, 0.75), grass)
+    g = np.clip(grass*2.2, 0, 1)[..., None]
+    loam = np.array([0.20, 0.16, 0.11], dtype=np.float32)*(0.85+0.3*fine[..., None])
+    colour[:] = colour*(1-g)+loam*g
 
 
 # ── the map ──────────────────────────────────────────────────────────────────────────────────────
@@ -532,8 +1018,8 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     cc.GROUPS = v1.GROUPS
     cc.CRATERS = variant['craters']
     cc.RAZED_PLOTS = 4
-    cc.ASSETS['tree_tall'] = NATP+'tree_5.glb'
-    cc.ASSETS['tree_small'] = NATP+'tree_7.glb'
+    cc.ASSETS['tree_tall'] = veg_path('tree_linden_a')
+    cc.ASSETS['tree_small'] = veg_path('tree_apple_a')
     manifest, edits, H, receipt = gaea.build(source)
     drifts = {i for i, p in enumerate(manifest['assets']) if 'snow_drift' in p}
     manifest['placements'] = [p for p in manifest['placements'] if p[0] not in drifts]
@@ -582,6 +1068,31 @@ def build(variant_name='playtest', carry_from=None, plan=None):
         if any(x0-5 < x < x1+5 and z0-5 < z < z1+5 for x0, x1, z0, z1 in town_rects):
             continue
         crater(H, axis, x, z, 2.2+2.0*rnd(key, 4), 0.7+0.6*rnd(key, 5))
+    # Shelling across the landscape: walking barrages leave lines of craters, harassing fire
+    # single ones; clear of the river, the bridge and the houses. Recorded for the ground paint.
+    field_craters = []
+    lines = variant['field_craters']//10
+    for li in range(lines):
+        key = f'barrage{li}'
+        x0 = (rnd(key, 1)-0.5)*2*(CROP_HALF-150); z0 = (rnd(key, 2)-0.5)*2*(CROP_HALF-150)
+        a = rnd(key, 3)*math.tau; n = 5+int(rnd(key, 4)*8)
+        for k in range(n):
+            ck = f'{key}.{k}'
+            x = x0+math.cos(a)*k*(14+10*rnd(ck, 1))+(rnd(ck, 2)-0.5)*10
+            z = z0+math.sin(a)*k*(14+10*rnd(ck, 1))+(rnd(ck, 3)-0.5)*10
+            field_craters.append((x, z, ck))
+    for k in range(variant['field_craters']-len(field_craters)):
+        ck = f'single{k}'
+        field_craters.append(((rnd(ck, 1)-0.5)*2*(CROP_HALF-60), (rnd(ck, 2)-0.5)*2*(CROP_HALF-60), ck))
+    kept_craters = []
+    for x, z, ck in field_craters:
+        if in_river(x, z, 15) or (abs(z-cz) < BRIDGE_HALF_W+12 and abs(x-cx) < BRIDGE_HALF_L+RAMP_M+12):
+            continue
+        if any(x0_-6 < x < x1_+6 and z0_-6 < z < z1_+6 for x0_, x1_, z0_, z1_ in town_rects):
+            continue
+        r = 1.6+3.4*rnd(ck, 5)**1.5           # mostly field-gun and mortar holes, some heavy
+        crater(H, axis, x, z, r, 0.5+0.35*r)
+        kept_craters.append((x, z, r))
     H = grade_bridge(H, axis, cx, cz, deck_y)
     ad = np.abs(X-centre[:, None])
     wall = (water[:, None]-BED_DEPTH)+(BANK_ABOVE+BED_DEPTH)*np.clip((ad-RIVER_HALF_W)/BANK_RUN, 0, 1)
@@ -610,8 +1121,28 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     woods &= ~((np.abs(X-centre[:, None]) < FLOOD_HALF*0.6) | (np.hypot(X-cx, Z-cz) < town_r+40))
     woods &= (np.abs(X) < CROP_HALF-20) & (np.abs(Z) < CROP_HALF-20)
     trees = sp.plant_woods(manifest, H, woods)
+    # The woods in the spring set's species (mature, real size), an understorey of hazel and
+    # hawthorn; within reach of the shelling a wood's trees are shattered or burnt.
+    weights = np.cumsum([w for _, w in WOOD_MIX])/sum(w for _, w in WOOD_MIX)
+    crater_xz = np.array([[x, z] for x, z, _ in kept_craters]) if kept_craters else np.zeros((0, 2))
     for p in manifest['placements'][-trees:]:
-        p[5] = cc.r3(p[5]*1.45)                   # mature trees: the library's are saplings
+        key = f'wood{p[1]:.1f},{p[3]:.1f}'
+        name = WOOD_MIX[int(np.searchsorted(weights, rnd(key, 1)))][0]
+        near = np.hypot(*(crater_xz-[p[1], p[3]]).T).min() if len(crater_xz) else 1e9
+        if near < 35.0 and rnd(key, 2) < 0.6*(1.0-near/35.0)+0.15:
+            name = veg_damaged(name, key)
+        p[0] = P.asset(veg_path(name))
+        p[5] = cc.r3(0.8+0.35*rnd(key, 3))
+    tree_paths = {i for i, a in enumerate(manifest['assets']) if any(t in a for t in ('tree_', 'pine_tree', 'shrub_'))}
+    trees_xz = np.array([[q[1], q[3]] for q in manifest['placements'] if q[0] in tree_paths])
+    scatter_ground(P, town, streets, cx, cz, centre_x, variant, trees_xz)
+    battlefield(P, cx, cz, centre_x, route, variant, kept_craters, town_rects)
+    war_trash(P, cx, cz, centre_x, route, variant, kept_craters, town_rects)
+    bridge_fight(P, cx, cz, centre_x, deck_y, variant)
+    for x, z, r in kept_craters:
+        if rnd(f'crs{x:.0f}{z:.0f}', 1) < 0.35:
+            P.put('scorch', x, z, rnd(f'crs{x:.0f}{z:.0f}', 2)*360, r*0.9, sink=0.0, tag='crater_scorch')
+    edits['authored_lights'] = night_lights(P, H, grid, cx, cz, deck_y, town, kept_craters, variant)
     # The course: route, start, goal, encounter, all on the cropped square.
     course = edits['canyon_course']
     inside = (np.abs(route[:, 0]) < CROP_HALF-60) & (np.abs(route[:, 1]) < CROP_HALF-60)
@@ -727,10 +1258,13 @@ def build(variant_name='playtest', carry_from=None, plan=None):
                                   deck_thickness_m=1.2, piers=piers, name='the_bridge',
                                   truss=dict(over_m=6.0, under_m=2.5, panel_m=7.0))]
     # Ground, cropped with everything else.
-    colour, grass = sp.ground(rng, H, ravine*(np.abs(X-centre[:, None]) > FLOOD_HALF), route, buildings, woods)
+    # A May meadow is a continuous sward; in a war spring most strips went unsown and run to weeds,
+    # only a few were ploughed before the front came through.
+    colour, grass = sp.ground(rng, H, ravine*(np.abs(X-centre[:, None]) > FLOOD_HALF), route, buildings, woods,
+                              clump_floor=0.82, bare=(42, 47))
     axis_tex = np.linspace(-EXTENT/2, EXTENT/2, TEX, dtype=np.float32)
     centre_tex = np.interp(axis_tex, axis, centre).astype(np.float32)
-    ground_paint(colour, grass, axis_tex, streets, town_rects, squares, centre_tex, cx, cz)
+    ground_paint(colour, grass, axis_tex, streets, town_rects, squares, centre_tex, cx, cz, kept_craters)
     t0, t1 = int(np.searchsorted(axis_tex, -CROP_HALF)), int(np.searchsorted(axis_tex, CROP_HALF))
     terrain_dir = ASSET_ROOT/f"assets/terrain/{variant['dest'].replace('-', '_')}"
     terrain_dir.mkdir(parents=True, exist_ok=True)
@@ -747,13 +1281,30 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     manifest['overview'] = dict(pos=[cc.r3(cx+420), 260.0, cc.r3(cz+480)], target=[cx, cc.r3(deck_y), cz])
     edits['editor_home'] = dict(eye=[cx, cc.r3(deck_y+1.8), cz], target=[cc.r3(cx+30.0), cc.r3(deck_y+0.8), cz])
     # A bright, warm afternoon in May, the sun in the south-west, thin high cloud, blue haze.
-    edits['environment_lighting'] = dict(enabled=True, fog_density=0.00045, overcast=0.06, storm=0.0,
+    # The haze is a May continental aerosol: fine-mode (Angstrom 1.6), AOD 0.2 at 550 nm (Moscow's
+    # monthly AOD runs ~0.08 in winter to ~0.3 in August, Chubarova et al. 2016), over a thicker
+    # near-ground haze layer; the far hills go blue through Rayleigh and the aerosol's own slope.
+    edits['environment_lighting'] = dict(enabled=True, fog_density=0.0010, overcast=0.06, storm=0.0,
+        aerosol=dict(aod_550=0.2, angstrom=1.6, scale_height_m=1500),
+        # The owner, 2 Nov, of the blue-hour meadow film: "this should be like the whole night".
+        # Each blue hour (Sun 6 to 14 deg down) lasts 25 play minutes, each sunset or sunrise 4,
+        # the deep night 2; only the clock's rate changes, never the Sun's place.
+        day_cycle=dict(night_s=120, blue_s=1500, twilight_s=240, day_s=300),
         schema='kessel.environment-authoring', utc='1943-05-12T14:10:00Z', version=2)
     # Low cloud and mist banks inside the map (src/low_clouds.rs): liquid-water volumes lit and
     # shadowed through the raymarch transport, drifting with the wind (the owner, 2 Nov 2026).
     edits['low_clouds'] = dict(seed=11, count=variant['low_clouds'],
         area=[-CROP_HALF+100, -CROP_HALF+100, CROP_HALF-100, CROP_HALF-100], base_m=[0, 60], size_m=[50, 260],
         depth_m=[15, 70], lwc_g_m3=[0.08, 0.3], droplet_radius_um=8, drift=1.0)
+    # Any tree still from the PSX library (the grammars' own) becomes a spring tree of the set.
+    import re
+    weights = np.cumsum([w for _, w in WOOD_MIX])/sum(w for _, w in WOOD_MIX)
+    psx_tree = re.compile(r'/(tree_\d+|pine_tree_n_\d+)\.glb$')
+    for q in manifest['placements']:
+        if psx_tree.search(manifest['assets'][q[0]]):
+            key = f'psx{q[1]:.1f},{q[3]:.1f}'
+            q[0] = P.asset(veg_path(WOOD_MIX[int(np.searchsorted(weights, rnd(key, 1)))][0]))
+            q[5] = cc.r3(0.8+0.35*rnd(key, 3))
     edits['base_placements'] = len(manifest['placements'])
     edits['base_markers'] = len(manifest['markers'])
     edits['ops'] = []
