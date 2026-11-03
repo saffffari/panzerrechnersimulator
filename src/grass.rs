@@ -363,6 +363,7 @@ impl Grass {
                 "nearest_butterfly": m.butterflies.alive.iter().min_by(|a, b| a.pos.distance(m.eye).total_cmp(&b.pos.distance(m.eye))).map(|b| b.pos.to_array()),
                 "butterflies_flying": m.butterflies.alive.iter().filter(|b| !b.perched()).count(),
                 "fireflies_lit_within_30_m": m.fireflies.iter().filter(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye) < 30.0).count(),
+                "nearest_lit_firefly": m.fireflies.iter().min_by(|a, b| Vec3::new(a[0], a[1], a[2]).distance(m.eye).total_cmp(&Vec3::new(b[0], b[1], b[2]).distance(m.eye))).map(|f| [f[0], f[1], f[2]]),
                 "nearest_lit_firefly_m": m.fireflies.iter().map(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye)).fold(f32::INFINITY, f32::min), "sun_altitude_deg": m.sun_altitude_deg,
                 "near_density_per_m2": crate::meadow::NEAR_DENSITY, "draw_radius_m": crate::meadow::FAR_RADIUS_M,
                 "ground_class_loaded": self.mask.is_some(), "primary_raster_only": false,

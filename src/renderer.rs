@@ -13458,9 +13458,11 @@ mod atmosphere_tests {
         // The crush applies the eye's two channels and nothing else before ACES.
         let crush = include_str!("../shaders/crush.wgsl");
         // The eye takes the frame and the sub-pixel emitters' point layer (fireflies; `observer.rs`).
-        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion));"));
+        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion), in.uv);"));
         assert!(crush.contains("let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));"));
-        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
+        // The cone channel is the frame plus a fixated sub-pixel point's foveal concentration.
+        assert!(crush.contains("let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));"));
+        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
             "owner-directed cabin reproduction still acts only on the display rod term");
         assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));"),
             "the night's hue outdoors, the cabin's own hue inside");
