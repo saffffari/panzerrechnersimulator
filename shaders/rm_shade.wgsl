@@ -798,7 +798,8 @@ fn fs(in: VsOut) -> ShadeOut {
                 color += (diffuse + env_brdf(f0, roughness, ndv) / RM_PI) * radiance * omega;
             }
         }
-        if (!leaf) { color += g2.rgb; }
+        // A leaf's and the canopy slab's g2 holds tau and leaf area, not emission.
+        if (!leaf && !slab) { color += g2.rgb; }
     }
     let fog = fog_to(in.uv, ray, dist);
     return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), shares_out, bounce_out);
