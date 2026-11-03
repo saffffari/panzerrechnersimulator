@@ -7,6 +7,12 @@
 // NAMED APPROXIMATIONS (docs/RAYMARCHING_ENGINE.md): no refraction offset of what is seen
 // through the pane, no second-interface bounce, scalar (mean) transmittance for the blend, dirt
 // from a fixed noise field.
+// A vision block's inner window (pc.extra.w = 1) is a closed slab drawn over its relay pane: each
+// face is drawn as its own interface with half the slab's path (pc.params.w), so the two faces
+// carry the slab's absorption once, both faces' Fresnel loss, and the second face's reflection as
+// the ghost offset by the glass thickness. The relay traces the refraction through it
+// (raster_optics.wgsl). Its eye-side face carries wiped-glass grooves (glass_scratches.wgsl):
+// lamp and sun light reflected off the groove walls, and the share the grooves scatter back.
 @group(0) @binding(1) var lit_tex: texture_2d<f32>;
 @group(0) @binding(2) var g0_tex: texture_2d<f32>;
 @group(0) @binding(3) var g1_tex: texture_2d<f32>;
@@ -34,6 +40,7 @@ struct VsOut {
     @location(1) normal: vec3<f32>,
     @location(2) relative: vec3<f32>,
     @location(3) local: vec3<f32>,
+    @location(4) local_normal: vec3<f32>,
 };
 
 fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
@@ -56,6 +63,7 @@ fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) 
     out.uv = uv;
     out.normal = normalize(inverse_transpose_3x3(linear) * normal);
     out.local = pos * vec3(length(linear[0]), length(linear[1]), length(linear[2]));
+    out.local_normal = normal;
     return out;
 }
 
@@ -131,6 +139,15 @@ fn pane_open_side(world: vec3<f32>, n: vec3<f32>, pixel: vec2<i32>) -> f32 {
     return open;
 }
 
+// A groove's specular fan for one light, weighted by the groove's share of the pixel and the
+// dielectric's reflectance at the groove wall (Schlick at the half angle).
+fn groove_glint(n: vec3<f32>, t: vec3<f32>, v: vec3<f32>, l: vec3<f32>, coverage: f32) -> f32 {
+    if (coverage <= 0.0) { return 0.0; }
+    let h = normalize(v + l);
+    let fresnel = 0.04 + 0.96 * pow(1.0 - clamp(dot(v, h), 0.0, 1.0), 5.0);
+    return coverage * fresnel * scratch_fan(n, t, v, l);
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.clip.xy);
@@ -140,7 +157,16 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let v = -rel / max(dist, 1.0e-4);
     let world = fr.cam_pos.xyz + rel;
     var n = normalize(in.normal);
-    if (dot(n, v) < 0.0) { n = -n; }
+    let facing_eye = dot(n, v) >= 0.0;
+    if (!facing_eye) { n = -n; }
+    // Grooves on a vision block's eye-side face (the outward normal of the face toward the eye).
+    let footprint = max(length(dpdx(in.local)), length(dpdy(in.local)));
+    var groove = ScratchSample(0.0, vec3(1.0, 0.0, 0.0));
+    if (pc.extra.w > 0.5 && facing_eye) {
+        groove = glass_scratches(in.local, normalize(in.local_normal), footprint);
+    }
+    let linear_model = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
+    let groove_t = normalize(linear_model * groove.tangent);
     // Fixed per pixel: the pane's reflection march is not accumulated, and a per-frame offset made
     // its edge flicker between a hit and the fallback (2026-10-28).
     let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u);
@@ -151,7 +177,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let fresnel = f0 + (1.0 - f0) * pow(1.0 - cos_i, 5.0);
     let sin_t = sqrt(max(1.0 - cos_i * cos_i, 0.0)) / 1.52;
     let cos_t = sqrt(max(1.0 - sin_t * sin_t, 0.0));
-    let path_m = max(pc.params.w, 0.003) / max(cos_t, 0.25);
+    let path_m = max(pc.params.w, 0.001) / max(cos_t, 0.25);
     // Soda-lime laminate absorbs red and blue a little more than green over its thickness.
     let tint = exp(-vec3(3.4, 2.0, 3.8) * path_m);
     let clear_transmit = (1.0 - fresnel) * (tint.r + tint.g + tint.b) / 3.0;
@@ -188,7 +214,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // a pane in a dark compartment reflected that much sky, three to four orders of magnitude
     // brighter than the compartment, and clipped to white (2026-10-28).
     let r = reflect(-v, n);
-    let sky_vis = mix(0.15, 1.0, rm_sky_visibility(world, 0.3));
+    // A vision block's glass sits against the roof armour: the lifted open-ground cover test
+    // reaches above the cupola roof and took the whole sky for it (grey, sky-lit housing
+    // interiors by day, 2026-11-03). Ask the cover map from inside the compartment instead,
+    // as the cabin's own surfaces do; no sky floor under a closed roof.
+    let sky_vis = select(mix(0.15, 1.0, rm_sky_visibility(world, 0.3)),
+                         rm_cabin_sky_visibility(world, n), pc.extra.w > 0.5);
     let sky_r = mix(rm_sky_hemisphere(r), rm_sky_background(r).rgb, smoothstep(-0.05, 0.25, r.y));
     var reflected = sky_r * sky_vis;
     let hit = march_reflection(rel, r, jitter);
@@ -209,6 +240,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         if (ndl > 0.0) {
             let vis = rm_sun_visibility(world, 0.05);
             spec += rm_ggx_specular(n, v, fr.sun_dir.xyz, rough, vec3(f0)) * fr.sun_radiance.rgb * ndl * vis;
+            spec += groove_glint(n, groove_t, v, fr.sun_dir.xyz, groove.coverage) * fr.sun_radiance.rgb * ndl * vis;
             dirt_light += fr.sun_radiance.rgb * ndl * vis / RM_PI;
         }
     }
@@ -227,10 +259,13 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // over the dial: at its peak twice an ivory wall's brightness, the TPZ "like the sun inside
         // the tank" that evening. Removed; the cover's dust still scatters (`dirt_colour`).
         spec += rm_ggx_specular(n, v, s.dir, rough, vec3(f0)) * s.e * ndl * vis;
+        spec += groove_glint(n, groove_t, v, s.dir, groove.coverage) * s.e * ndl * vis;
         dirt_light += s.e * ndl * vis / RM_PI;
     }
     dirt_light += rm_sky_hemisphere(n) * open_side;
-    let dirt_colour = vec3(0.30, 0.27, 0.22) * dirt * dirt_light;
+    // Glass powder in the grooves scatters back what it does not pass on (white: no tint).
+    let dirt_colour = vec3(0.30, 0.27, 0.22) * dirt * dirt_light
+        + groove.coverage * (1.0 - SCRATCH_FORWARD) * dirt_light;
 
     // Snow lying on a pane's upper face blocks it. Seen from above it scatters the light that
     // reaches it; seen from below, a few centimetres pass about a tenth of the light above.
