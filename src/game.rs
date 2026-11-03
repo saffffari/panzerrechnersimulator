@@ -4695,18 +4695,24 @@ impl<'a> FragmentWorld<'a> {
     /// HOT_FRAGMENT_SWEEP_START_M is not tested, so a body born on a face (a burst at the struck
     /// plate's back face) leaves it.
     fn first_surface(&self, frame: BloodFrame, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
+        self.first_surface_after(frame, from, to, HOT_FRAGMENT_SWEEP_START_M)
+    }
+
+    /// `first_surface` with the untested start of the segment given: zero for a body that is
+    /// never born on a face (a crewman's segment, kept a contact gap clear of the steel).
+    fn first_surface_after(&self, frame: BloodFrame, from: Vec3, to: Vec3, skip: f32) -> Option<(f32, Vec3)> {
         let surfaces = self.surfaces.as_ref()?;
         let length = from.distance(to);
-        if length <= HOT_FRAGMENT_SWEEP_START_M {
+        if length <= skip.max(1.0e-7) {
             return None;
         }
         let i = blood_frame_index(frame);
-        let start = from.lerp(to, HOT_FRAGMENT_SWEEP_START_M / length);
+        let start = from.lerp(to, skip / length);
         let contact = surfaces.sweep(self.parent[i].transform_point3(start), self.parent[i].transform_point3(to))?;
         let normal = self.parent_inverse[i]
             .transform_vector3(surfaces.model(contact.frame).transform_vector3(contact.normal))
             .normalize_or_zero();
-        let fraction = (HOT_FRAGMENT_SWEEP_START_M + contact.fraction * (length - HOT_FRAGMENT_SWEEP_START_M)) / length;
+        let fraction = (skip + contact.fraction * (length - skip)) / length;
         Some((fraction, normal))
     }
 
@@ -5625,15 +5631,18 @@ fn crew_segment_bounce(
 
 /// Project one anatomical OBB against the conservative Tiger compartment geometry. This operates
 /// per segment, so a shoulder can hit the breech while legs continue folding beneath the torso.
+/// With `slack` > 0 the drawn steel is the contact (`sweep_crew_segment`) and these bounds only
+/// catch a segment that has left it by more than `slack`; the breech box is then not used.
 fn collide_crew_segment(
     segment: &mut crew_physics::CrewSegment,
     frame: BloodFrame,
     scale: f32,
+    slack: f32,
 ) -> u8 {
     if !segment.present {
         return 0;
     }
-    let ext = crew_segment_extents(segment, scale);
+    let ext = crew_segment_extents(segment, scale) - Vec3::splat(slack);
     let mut contacts = 0u8;
     let mut register = |segment: &mut crew_physics::CrewSegment,
                         normal: Vec3,
@@ -5674,7 +5683,7 @@ fn collide_crew_segment(
 
             let bmin = crate::interior_rig::BREECH_MIN - ext;
             let bmax = crate::interior_rig::BREECH_MAX + ext;
-            if segment.pos.cmpgt(bmin).all() && segment.pos.cmplt(bmax).all() {
+            if slack <= 0.0 && segment.pos.cmpgt(bmin).all() && segment.pos.cmplt(bmax).all() {
                 let faces = [
                     (segment.pos.x - bmin.x, Vec3::NEG_X, 0usize),
                     (bmax.x - segment.pos.x, Vec3::X, 1usize),
@@ -5728,9 +5737,101 @@ fn collide_crew_segment(
     contacts
 }
 
-/// Advance one eleven-body casualty. Fixed substeps, compliant anchor constraints, segment-level
-/// cabin/breech contacts, gravity and contact damping produce a limp collapse and finite rest state.
+/// Clearance a crewman's segment is left from the steel it was pushed out of, so its next sweep
+/// starts in front of the face.
+const CREW_SEGMENT_CONTACT_GAP_M: f32 = 1.0e-3;
+/// How far a segment may leave the drawn compartment before the old proxy bounds catch it: a
+/// tunnelling guard only (named in docs/PHYSICAL_TRUTH_AUDIT.md), never the contact.
+const CREW_SEGMENT_ESCAPE_SLACK_M: f32 = 0.08;
+
+/// Sweep one anatomical box's centre and eight corners from its previous pose to its current one
+/// against the vehicle's posed source triangles (the surfaces fragments, fire and blood meet: seat,
+/// wheels, breech, walls, floor). The earliest crossing moves the box back out along that face's
+/// normal, a contact gap clear, and bounces it; up to four faces per call (a hand wedged between
+/// floor and wall). Returns the contacts above 0.2 m/s.
+fn sweep_crew_segment(
+    segment: &mut crew_physics::CrewSegment,
+    prev_pos: Vec3,
+    prev_rot: Quat,
+    frame: BloodFrame,
+    scale: f32,
+    world: &FragmentWorld,
+) -> u8 {
+    if !segment.present {
+        return 0;
+    }
+    let half = segment.part.half_extents() * scale;
+    let mut offsets = [Vec3::ZERO; 9];
+    for (i, offset) in offsets.iter_mut().skip(1).enumerate() {
+        *offset = Vec3::new(
+            if i & 1 == 0 { -half.x } else { half.x },
+            if i & 2 == 0 { -half.y } else { half.y },
+            if i & 4 == 0 { -half.z } else { half.z },
+        );
+    }
+    let mut contacts = 0u8;
+    for _ in 0..4 {
+        let mut earliest: Option<(f32, Vec3, Vec3, Vec3)> = None;
+        for offset in offsets {
+            let from = prev_pos + prev_rot * offset;
+            let to = segment.pos + segment.rot * offset;
+            if let Some((fraction, normal)) = world.first_surface_after(frame, from, to, 0.0) {
+                if earliest.map_or(true, |e| fraction < e.0) {
+                    earliest = Some((fraction, normal, from, to));
+                }
+            }
+        }
+        let Some((fraction, normal, from, to)) = earliest else { break };
+        let normal = if normal.dot(to - from) > 0.0 { -normal } else { normal };
+        let depth = (from.lerp(to, fraction) - to).dot(normal).max(0.0);
+        segment.pos += normal * (depth + CREW_SEGMENT_CONTACT_GAP_M);
+        let (restitution, tangent_keep) = if normal.y > 0.5 {
+            segment.grounded = true;
+            (0.10, 0.50)
+        } else if normal.y < -0.5 {
+            (0.14, 0.58)
+        } else {
+            (0.15, 0.56)
+        };
+        if crew_segment_bounce(segment, normal, restitution, tangent_keep) > 0.20 {
+            contacts = contacts.saturating_add(1);
+        }
+    }
+    contacts
+}
+
+/// Contacts of every present segment: the drawn steel when `world` has surfaces (with the proxy
+/// bounds as an escape guard), else the proxy compartment.
+fn collide_crew_segments(
+    ragdoll: &mut CrewRagdoll,
+    prev: &[(Vec3, Quat)],
+    world: Option<&FragmentWorld>,
+) -> u8 {
+    let mut contacts = 0u8;
+    let world = world.filter(|w| w.surfaces.is_some());
+    for (segment, &(prev_pos, prev_rot)) in ragdoll.segments.iter_mut().zip(prev) {
+        let found = match world {
+            Some(world) => {
+                sweep_crew_segment(segment, prev_pos, prev_rot, ragdoll.frame, ragdoll.scale, world)
+                    .saturating_add(collide_crew_segment(segment, ragdoll.frame, ragdoll.scale,
+                        CREW_SEGMENT_ESCAPE_SLACK_M))
+            }
+            None => collide_crew_segment(segment, ragdoll.frame, ragdoll.scale, 0.0),
+        };
+        contacts = contacts.saturating_add(found);
+    }
+    contacts
+}
+
+/// Advance one eleven-body casualty against the proxy compartment (no vehicle surfaces).
 fn integrate_crew_ragdoll(ragdoll: &mut CrewRagdoll, dt: f32) {
+    integrate_crew_ragdoll_in(ragdoll, dt, None);
+}
+
+/// Advance one eleven-body casualty. Fixed substeps, compliant anchor constraints, segment-level
+/// contacts with the drawn interior (`world`), gravity and contact damping produce a limp collapse
+/// and finite rest state.
+fn integrate_crew_ragdoll_in(ragdoll: &mut CrewRagdoll, dt: f32, world: Option<&FragmentWorld>) {
     if ragdoll.settled {
         return;
     }
@@ -5752,24 +5853,17 @@ fn integrate_crew_ragdoll(ragdoll: &mut CrewRagdoll, dt: f32) {
     let step_dt = physics_dt / steps as f32;
 
     for _ in 0..steps {
+        let prev: Vec<(Vec3, Quat)> = ragdoll.segments.iter().map(|s| (s.pos, s.rot)).collect();
         crew_physics::integrate_free_motion(&mut ragdoll.segments, step_dt);
         crew_physics::solve_joint_constraints(&mut ragdoll.segments, ragdoll.scale, step_dt, 8);
-        for segment in &mut ragdoll.segments {
-            ragdoll.bounces = ragdoll.bounces.saturating_add(collide_crew_segment(
-                segment,
-                ragdoll.frame,
-                ragdoll.scale,
-            ));
-        }
+        let found = collide_crew_segments(ragdoll, &prev, world);
+        ragdoll.bounces = ragdoll.bounces.saturating_add(found);
         // Contact projection can separate a joint. A short zero-velocity projection restores the
         // anchor, then a final collision pass keeps that repair on the correct side of steel.
         crew_physics::solve_joint_constraints(&mut ragdoll.segments, ragdoll.scale, 0.0, 3);
+        let found = collide_crew_segments(ragdoll, &prev, world);
+        ragdoll.bounces = ragdoll.bounces.saturating_add(found);
         for segment in &mut ragdoll.segments {
-            ragdoll.bounces = ragdoll.bounces.saturating_add(collide_crew_segment(
-                segment,
-                ragdoll.frame,
-                ragdoll.scale,
-            ));
             if segment.grounded {
                 let floor_drag = (-5.8 * step_dt).exp();
                 segment.vel.x *= floor_drag;
@@ -32207,13 +32301,15 @@ impl Game {
         let models=self.fire_surface_models();
         let corpse_contacts=self.cabin_fire.source_contacts(&models);
         let recovery_contacts=self.recovery_body_contact_triangles();
+        // Interior bodies meet the same posed triangles as the fragments: seat, wheels, breech, floor.
+        let ragdoll_world=FragmentWorld::new(&self.cabin_fire,&models,&self.player,self.fea_articulation());
         let camp_patients:Vec<u32>=self.couch_ragdolls.iter().map(|b|b.casualty.peer_id)
             .filter(|&actor|self.expedition_camp_owns_actor(actor)||self.recovery_owns_actor(actor)).collect();
         for ragdoll in &mut self.couch_ragdolls {
             if self.crew_body_recovery.holds(ragdoll.casualty.peer_id)||camp_patients.contains(&ragdoll.casualty.peer_id) {continue;}
             if ragdoll.world_space {
                 crew_body_recovery::integrate_exterior(ragdoll,dt,&self.hf,&corpse_contacts,&models,self.player.center(),&recovery_contacts);
-            } else {integrate_crew_ragdoll(ragdoll, dt);}
+            } else {integrate_crew_ragdoll_in(ragdoll, dt, Some(&ragdoll_world));}
         }
         if self.breech_gas_t > 0.0 {
             self.breech_gas_t = (self.breech_gas_t - dt).max(0.0);
@@ -37341,6 +37437,71 @@ mod tests {
                 - fitted[Head.index()].as_ref().unwrap().min.x)
                 < 0.15
         );
+    }
+
+    #[test]
+    fn a_body_thrown_at_drawn_steel_stops_at_it_and_rests_on_the_drawn_floor() {
+        let heightfield = projectile_test_heightfield();
+        let player = Tank::new(0.0, 0.0, 0.3, &heightfield, tank::TIGER_PARTS);
+        let casualty = CouchCrewCasualty {
+            peer_id: 22,
+            identity: crate::lan::LanRole::Gunner,
+            role: crate::lan::LanRole::Gunner,
+        };
+        let corners = |body: &CrewRagdoll| -> Vec<Vec3> {
+            let mut out = Vec::new();
+            for segment in body.segments.iter().filter(|s| s.present) {
+                let half = segment.part.half_extents() * body.scale;
+                for i in 0..8 {
+                    let o = Vec3::new(
+                        if i & 1 == 0 { -half.x } else { half.x },
+                        if i & 2 == 0 { -half.y } else { half.y },
+                        if i & 4 == 0 { -half.z } else { half.z },
+                    );
+                    out.push(segment.pos + segment.rot * o);
+                }
+            }
+            out
+        };
+        for thickness in [0.05, 0.003] {
+            let mut body = new_crew_ragdoll(&player, casualty, Vec3::X, 0.35, 0xA11C_E551);
+            let frame = blood_frame_index(body.frame);
+            let start = corners(&body);
+            let reach_x = start.iter().map(|p| p.x).fold(f32::MIN, f32::max);
+            let low_y = start.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+            // A wall 0.25 m beyond the body and a floor 2 cm under it, both drawn source surfaces in
+            // the body's frame; the wall stands well inside the proxy compartment's escape bounds.
+            let wall_x = reach_x + 0.25;
+            let floor_y = low_y - 0.02;
+            let wall = crate::prims::box_mesh(Vec3::new(wall_x, floor_y - 1.0, -3.0),
+                Vec3::new(wall_x + thickness, floor_y + 3.0, 3.0), [90; 3]);
+            let floor = crate::prims::box_mesh(Vec3::new(-3.0, floor_y - 0.05, -3.0),
+                Vec3::new(3.0, floor_y, 3.0), [90; 3]);
+            let source = surface_fire::CabinFire::new(&[(frame, &wall), (frame, &floor)]);
+            let mut models = [Mat4::IDENTITY; surface_fire::FRAMES];
+            models[0] = player.hull_model();
+            models[1] = player.turret_model();
+            let world = FragmentWorld::new(&source, &models, &player,
+                crate::fea_damage::components::Articulation::rest(player.parts.turret_pivot));
+            for segment in &mut body.segments {
+                segment.vel = Vec3::new(9.0, 0.5, 0.0);
+            }
+            body.settled = false;
+            let mut touched = false;
+            for _ in 0..180 {
+                integrate_crew_ragdoll_in(&mut body, 1.0 / 60.0, Some(&world));
+                for p in corners(&body) {
+                    assert!(p.x <= wall_x + 1.0e-4, "{thickness} m wall crossed: {p:?}");
+                    assert!(p.y >= floor_y - 1.0e-4, "floor crossed: {p:?}");
+                    touched |= p.x > wall_x - 0.01;
+                }
+            }
+            assert!(touched, "the body reached the wall");
+            assert!(body.bounces > 0);
+            let after = corners(&body);
+            let lowest = after.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+            assert!(lowest < floor_y + 0.01, "the body lies on the drawn floor: {lowest} vs {floor_y}");
+        }
     }
 
     #[test]
