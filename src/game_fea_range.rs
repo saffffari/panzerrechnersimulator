@@ -1576,6 +1576,12 @@ impl Range {
                 self.sky.day += 1;
             }
         }
+        // A casualty's tissue solving on its worker (`Game::casualty_tissue_pending`): the
+        // simulation waits for it without holding the window (the next step would block on it).
+        if self.g.casualty_tissue_pending() {
+            self.status = "A BODY'S TISSUE IS SOLVING (THE SIMULATION WAITS FOR IT)".into();
+            return;
+        }
         if self.playing && self.mode == Mode::Live {
             if self.next_run_frame().is_some() {
                 self.play_clock += self.time_speed;
