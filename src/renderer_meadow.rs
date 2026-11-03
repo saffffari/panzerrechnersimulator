@@ -40,6 +40,7 @@ pub struct MeadowStats {
     pub flower_tiles: usize,
     pub far_tiles: usize,
     pub slab_tiles: [usize; 2],
+    pub prepare_ms: f32,
     /// Upper bound of blades the camera's draws can emit this frame (capacity of its tiles).
     pub camera_blade_capacity: u64,
     pub track_pages: usize,
@@ -78,6 +79,58 @@ pub struct MeadowGpu {
     track_pages: usize,
     pub stats: MeadowStats,
     skip: bool,
+    /// `KESSEL_MEADOW_TIMING=1`: print the CPU cost of the per-frame tile lists.
+    timing: bool,
+    /// The drawn ground's (min, max) per world-aligned cell of 8, 16, 32, 64 and 128 m: each
+    /// tile's box from one lookup instead of five height samples per frame.
+    bounds: Vec<BoundsLevel>,
+    /// The push grid's origin uploaded last (the grid is uploaded only when it changes).
+    push_uploaded: Option<Vec<[f32; 2]>>,
+}
+
+struct BoundsLevel { cell: f32, lo: i32, n: usize, minmax: Vec<[f32; 2]> }
+
+fn build_bounds(ground: &dyn Fn(f32, f32) -> f32, half: f32) -> Vec<BoundsLevel> {
+    let mut levels: Vec<BoundsLevel> = Vec::new();
+    let cell = 8.0f32;
+    let lo = (-half / cell).floor() as i32;
+    let n = ((half / cell).ceil() as i32 - lo) as usize;
+    let mut minmax = vec![[f32::MAX, f32::MIN]; n * n];
+    for j in 0..n {
+        for i in 0..n {
+            let (x0, z0) = ((lo + i as i32) as f32 * cell, (lo + j as i32) as f32 * cell);
+            let m = &mut minmax[j * n + i];
+            // A 1 m sample lattice over the cell (the terrain grid is 4.9 m; its triangles are
+            // linear between nodes, so the lattice's extremes are within centimetres; the
+            // tiles' margins cover them).
+            for b in 0..=8 {
+                for a in 0..=8 {
+                    let h = ground(x0 + a as f32 * cell / 8.0, z0 + b as f32 * cell / 8.0);
+                    m[0] = m[0].min(h);
+                    m[1] = m[1].max(h);
+                }
+            }
+        }
+    }
+    levels.push(BoundsLevel { cell, lo, n, minmax });
+    while levels.last().unwrap().cell < 128.0 {
+        let prev = levels.last().unwrap();
+        let cell = prev.cell * 2.0;
+        let lo = prev.lo.div_euclid(2);
+        let n = ((prev.lo + prev.n as i32).div_euclid(2) + 1 - lo) as usize;
+        let mut minmax = vec![[f32::MAX, f32::MIN]; n * n];
+        for j in 0..prev.n {
+            for i in 0..prev.n {
+                let src = prev.minmax[j * prev.n + i];
+                let (pi, pj) = ((prev.lo + i as i32).div_euclid(2) - lo, (prev.lo + j as i32).div_euclid(2) - lo);
+                let m = &mut minmax[pj as usize * n + pi as usize];
+                m[0] = m[0].min(src[0]);
+                m[1] = m[1].max(src[1]);
+            }
+        }
+        levels.push(BoundsLevel { cell, lo, n, minmax });
+    }
+    levels
 }
 
 fn tex(device: &wgpu::Device, label: &str, w: u32, h: u32, format: wgpu::TextureFormat) -> wgpu::Texture {
@@ -207,6 +260,21 @@ impl MeadowGpu {
                 stencil: Default::default(), bias: wgpu::DepthBiasState { constant: 1, slope_scale: 1.5, clamp: 0.0 } }),
             multisample: Default::default(), fragment: None, multiview: None, cache: None,
         });
+        let bounds = {
+            let (heights, res, spacing) = (&build.heights, build.height_res, build.height_spacing);
+            let ground = |x: f32, z: f32| {
+                let half = (res as f32 - 1.0) * 0.5;
+                let (gx, gz) = (x / spacing + half, z / spacing + half);
+                let last = res.saturating_sub(2) as f32;
+                let (x0, z0) = (gx.floor().clamp(0.0, last), gz.floor().clamp(0.0, last));
+                let (tx, tz) = ((gx - x0).clamp(0.0, 1.0), (gz - z0).clamp(0.0, 1.0));
+                let (i, j) = (x0 as usize, z0 as usize);
+                let h = |a: usize, b: usize| heights[b * res + a];
+                if tx + tz <= 1.0 { h(i, j) + (h(i + 1, j) - h(i, j)) * tx + (h(i, j + 1) - h(i, j)) * tz }
+                else { h(i + 1, j + 1) + (h(i, j + 1) - h(i + 1, j + 1)) * (1.0 - tx) + (h(i + 1, j) - h(i + 1, j + 1)) * (1.0 - tz) }
+            };
+            build_bounds(&ground, build.cover.half_extent)
+        };
         println!("[meadow] installed: heights {}x{} at {:.2} m, cover {}x{} over {:.0} m, {} species of flowers",
             res, res, build.height_spacing, cover_res, cover_res, 2.0 * build.cover.half_extent, meadow::SPECIES.len());
         Self {
@@ -216,6 +284,8 @@ impl MeadowGpu {
             pending: None, wind_origin: Vec2::ZERO, mean_wind: Vec2::ZERO, time: 0.0, track_pages: 0,
             stats: MeadowStats::default(),
             skip: std::env::var("KESSEL_MEADOW_SKIP").as_deref() == Ok("1"),
+            timing: std::env::var("KESSEL_MEADOW_TIMING").as_deref() == Ok("1"),
+            bounds, push_uploaded: None,
         }
     }
 
@@ -235,6 +305,23 @@ impl MeadowGpu {
         }
     }
 
+    /// The drawn ground's (min, max) over a world-aligned square tile of `size` (2, 8, 32 or
+    /// 128 m) at (x0, z0), from the bounds pyramid; five samples where it has no level.
+    fn tile_bounds(&self, x0: f32, z0: f32, size: f32) -> (f32, f32) {
+        let want = size.max(8.0);
+        if let Some(level) = self.bounds.iter().find(|l| l.cell == want) {
+            let (cx, cz) = (x0 + size * 0.5, z0 + size * 0.5);
+            let (i, j) = ((cx / level.cell).floor() as i32 - level.lo, (cz / level.cell).floor() as i32 - level.lo);
+            if i >= 0 && j >= 0 && (i as usize) < level.n && (j as usize) < level.n {
+                let m = level.minmax[j as usize * level.n + i as usize];
+                if m[0] <= m[1] { return (m[0], m[1]); }
+            }
+        }
+        let h = size * 0.5;
+        [self.ground(x0, z0), self.ground(x0 + size, z0), self.ground(x0, z0 + size), self.ground(x0 + size, z0 + size), self.ground(x0 + h, z0 + h)]
+            .iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)))
+    }
+
     /// The drawn grid's height (as `md_ground`).
     fn ground(&self, x: f32, z: f32) -> f32 {
         let res = self.height_res;
@@ -251,11 +338,16 @@ impl MeadowGpu {
 
     /// Per frame from `upload_uniforms`: the simulation's frame, the tiles of every view, the views.
     pub(super) fn prepare(&mut self, r: &Renderer, shadow_views: &[Mat4], shadow_texels: [f32; 3], queue: &wgpu::Queue) {
+        let started = std::time::Instant::now();
         if let Some(frame) = self.pending.take() {
             let n = meadow::WIND_CELLS as u32;
             write(queue, &self.wind_tex, [0, 0], [n, n], 8, bytemuck::cast_slice(&frame.wind));
             let pc = meadow::PUSH_CELLS as u32;
-            write(queue, &self.push_tex, [0, 0], [pc, pc], 8, bytemuck::cast_slice(&frame.push));
+            // The push grid is mostly still: upload it only when it changed.
+            if self.push_uploaded.as_ref() != Some(&frame.push) || self.push_origin != frame.push_origin {
+                write(queue, &self.push_tex, [0, 0], [pc, pc], 8, bytemuck::cast_slice(&frame.push));
+                self.push_uploaded = Some(frame.push.clone());
+            }
             self.push_origin = frame.push_origin;
             self.wind_origin = frame.wind_origin;
             self.mean_wind = frame.mean_wind;
@@ -298,10 +390,7 @@ impl MeadowGpu {
                     // The far corner must reach the band.
                     let farthest = Vec2::new(if eye.x < x0 + size * 0.5 { x0 + size } else { x0 }, if eye.z < z0 + size * 0.5 { z0 + size } else { z0 });
                     if farthest.distance(eye2) < inner { continue; }
-                    let h = size * 0.5;
-                    let samples = [self.ground(x0, z0), self.ground(x0 + size, z0), self.ground(x0, z0 + size),
-                        self.ground(x0 + size, z0 + size), self.ground(x0 + h, z0 + h)];
-                    let (gmin, gmax) = samples.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+                    let (gmin, gmax) = self.tile_bounds(x0, z0, size);
                     let margin = if far { 1.5 } else { 0.4 };
                     let lo = Vec3::new(x0, gmin - margin, z0);
                     let hi = Vec3::new(x0 + size, gmax + 0.9 + margin, z0 + size);
@@ -323,9 +412,7 @@ impl MeadowGpu {
             let reach = (meadow::SLAB_RADIUS_M / big).ceil() as i32 + 1;
             let (cx, cz) = ((eye.x / big).floor() as i32, (eye.z / big).floor() as i32);
             let tile_box = |x0: f32, z0: f32, size: f32| {
-                let h = size * 0.5;
-                let s = [self.ground(x0, z0), self.ground(x0 + size, z0), self.ground(x0, z0 + size), self.ground(x0 + size, z0 + size), self.ground(x0 + h, z0 + h)];
-                let (lo, hi) = s.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+                let (lo, hi) = self.tile_bounds(x0, z0, size);
                 (Vec3::new(x0, lo - 4.0, z0), Vec3::new(x0 + size, hi + 4.0, z0 + size))
             };
             let near_far = |x0: f32, z0: f32, size: f32| {
@@ -431,6 +518,8 @@ impl MeadowGpu {
             };
         }
         for (view, buf) in views.iter().zip(&self.view_bufs) { queue.write_buffer(buf, 0, bytemuck::bytes_of(view)); }
+        stats.prepare_ms = started.elapsed().as_secs_f32() * 1000.0;
+        if self.timing && r.frame % 60 == 0 { println!("[meadow] prepare {:.2} ms, tiles {:?}, slab {:?}", stats.prepare_ms, stats.tiles, stats.slab_tiles); }
         self.stats = stats;
     }
 
@@ -499,6 +588,23 @@ mod tests {
             .validate(&module)
             .unwrap_or_else(|error| panic!("crush: {}", error.emit_to_string(&source)));
         assert!(source.contains("point * (1.0 - share)"));
+    }
+
+    /// Every level of the bounds pyramid holds the ground of every point of its cells.
+    #[test]
+    fn the_bounds_pyramid_holds_the_ground() {
+        let ground = |x: f32, z: f32| (x * 0.05).sin() * 3.0 + z * 0.02;
+        let levels = super::build_bounds(&ground, 300.0);
+        assert_eq!(levels.iter().map(|l| l.cell).collect::<Vec<_>>(), vec![8.0, 16.0, 32.0, 64.0, 128.0]);
+        for k in 0..2000u32 {
+            let p = glam::Vec2::new((k * 37 % 600) as f32 - 299.5, (k * 53 % 600) as f32 - 299.5);
+            for l in &levels {
+                let (i, j) = ((p.x / l.cell).floor() as i32 - l.lo, (p.y / l.cell).floor() as i32 - l.lo);
+                let m = l.minmax[j as usize * l.n + i as usize];
+                let h = ground(p.x, p.y);
+                assert!(h >= m[0] - 0.05 && h <= m[1] + 0.05, "{p:?} at {}: {h} not in {m:?}", l.cell);
+            }
+        }
     }
 
     /// The shader's blade ribbon emits the vertex count the draw asks for at every level.
