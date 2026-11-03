@@ -904,6 +904,11 @@ impl Range {
     /// some of the game's clocks and counters running on (the projectile serial, the armour clock,
     /// the infantry), so a Tiger built again does not start a strike from the same state.
     fn fresh(&mut self) {
+        // Every reset and run rebuilds the Tiger through the match reset. The kept checkpoint is the
+        // world save's state, which holds no shells in flight, cook-off or thrown turret, so putting
+        // it back left the last run's shell flying and its damage in place (owner, 2026-11-03:
+        // "reset is still autoplaying and also firing the shell from previous run").
+        self.rewind.fresh = None;
         let key = format!("{:?}", (self.shot.seed, self.scene.racks_loaded, self.scene.cabin_lamps, self.tiger_at,
             self.tiger_heading, self.engine, self.muted));
         let kept = self.rewind.fresh.as_ref().filter(|(k, _)| *k == key).map(|(_, c)| c.clone());
@@ -1252,7 +1257,10 @@ impl Range {
             self.r.player_snow_load = tank;
             self.r.world_snow_load = world;
         }
-        if !self.accumulate_moving && self.last_pose.is_some_and(|p| p != pose) {
+        // Sharp (the default) restarts the history every frame, held still too: a held camera built
+        // the cabin air's in-scatter up into expanding haze that vanished on the next move, which the
+        // owner found jarring (2026-11-03). Held and moving views now look the same.
+        if !self.accumulate_moving {
             self.r.reset_history();
         }
         self.last_pose = Some(pose);
@@ -1939,6 +1947,8 @@ impl Range {
             self.dot(p, 0.008, INK);
             self.dot(p, 0.005, BLACK);
         }
+        // The shot's gizmo shows only while the SHOT tab is open (owner, 2026-11-03).
+        if self.open[0] {
         let (aim, dir) = self.aim_line();
         let entry = self.entry();
         let start = entry.map_or(aim, |(p, _)| p);
@@ -1978,6 +1988,10 @@ impl Range {
                 self.dot(p, 0.009, [0.95, 0.15, 0.1, 1.0]);
             }
             self.line(e, e + n * 0.6, [0.6, 0.6, 0.6, 0.8]);
+        }
+        } else {
+            self.shot_az_at = None;
+            self.shot_el_at = None;
         }
         if let Some(plane) = self.section_plane() {
             let n = plane.truncate();
