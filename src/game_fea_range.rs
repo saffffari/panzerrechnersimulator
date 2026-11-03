@@ -225,7 +225,7 @@ enum Knob {
     Shell, Range, Velocity, FromAz, FromEl, TargetKind, Seed,
     Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
     MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame,
-    Focal, SavedCam, AddCam, DeleteCam,
+    Focal, SavedCam, AddCam, DeleteCam, ExportCams,
     SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset,
     Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure,
     Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
@@ -248,7 +248,7 @@ fn kind(knob: Knob) -> Kind {
     match knob {
         Shell | TargetKind | Seed | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
         Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance => Kind::Toggle,
-        AddCam | DeleteCam | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
+        AddCam | DeleteCam | ExportCams | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
         _ => Kind::Dial,
     }
 }
@@ -298,7 +298,7 @@ fn group_rows(group: usize) -> Vec<Knob> {
     match group {
         0 => vec![Shell, Range, Velocity, FromAz, FromEl, TargetKind, Seed],
         1 => vec![TimeSpeed, Loop, Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength],
-        2 => vec![Focal, SavedCam, AddCam, DeleteCam, MovingCamera],
+        2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams, MovingCamera],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
         4 => vec![Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure],
         5 => vec![Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
@@ -419,16 +419,52 @@ fn capture_stamp() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// A saved camera (`target/fea_range_cameras.json`).
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+/// A saved camera (`target/fea_range_cameras.json`; the shared set in `CAMERA_CATALOG`): its name,
+/// its place and view in the Tiger's hull frame (it follows the Tiger wherever it stands), and the
+/// world pose it was saved at.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct SavedCam {
+    #[serde(default)]
+    name: String,
     eye: [f32; 3],
     yaw: f32,
     pitch: f32,
     focal_mm: f32,
+    #[serde(default)]
+    hull_eye: Option<[f32; 3]>,
+    #[serde(default)]
+    hull_forward: Option<[f32; 3]>,
 }
 
 const CAMERAS_PATH: &str = "target/fea_range_cameras.json";
+/// The tracked camera set for development (interior and exterior views of the Tiger, hull frame).
+const CAMERA_CATALOG: &str = "catalog/fea_range_cameras.v1.json";
+
+/// A name for a camera from where it stands and looks in the hull frame (+Z forward, +X left).
+fn camera_name(eye: Vec3, forward: Vec3) -> String {
+    let inside = eye.x.abs() < 1.6 && eye.y > 0.3 && eye.y < 2.95 && eye.z > -3.3 && eye.z < 3.4;
+    let side = |x: f32| if x > 0.3 { "left" } else if x < -0.3 { "right" } else { "centre" };
+    let place = if inside {
+        if eye.z < -1.15 {
+            "interior engine bay".to_string()
+        } else if eye.z > 1.5 {
+            format!("interior hull front, {}", if eye.x > 0.2 { "driver's side" } else if eye.x < -0.2 { "radio operator's side" } else { "between the seats" })
+        } else if eye.y > 1.9 {
+            format!("interior turret, {}", if eye.x > 0.3 { "commander's and gunner's side" } else if eye.x < -0.3 { "loader's side" } else { "centre" })
+        } else {
+            format!("interior fighting compartment, {} low", side(eye.x))
+        }
+    } else {
+        let end = if eye.z > 1.5 { "front" } else if eye.z < -1.5 { "rear" } else { "" };
+        let height = if eye.y > 6.0 { "high " } else if eye.y < 1.5 { "low " } else { "" };
+        format!("exterior {height}{end}{}{}", if end.is_empty() { "" } else { " " }, side(eye.x)).replace("  ", " ")
+    };
+    let look = if forward.y < -0.9 { "straight down" } else {
+        let (ax, az) = (forward.x.abs(), forward.z.abs());
+        if az >= ax { if forward.z > 0.0 { "forward" } else { "aft" } } else if forward.x > 0.0 { "to the left" } else { "to the right" }
+    };
+    format!("{place}, looking {look}")
+}
 /// The editor's settings between launches (`--shots` neither reads nor writes it).
 const STATE_PATH: &str = "target/fea_range_state.json";
 
@@ -618,7 +654,11 @@ impl Range {
             tiger_at: TIGER_AT,
             tiger_heading: TIGER_HEADING,
             tab: 0,
-            cameras: std::fs::read_to_string(CAMERAS_PATH).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
+            cameras: std::fs::read_to_string(CAMERAS_PATH).ok().and_then(|t| serde_json::from_str(&t).ok())
+                .or_else(|| std::fs::read_to_string(CAMERA_CATALOG).ok()
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                    .and_then(|v| serde_json::from_value(v["cameras"].clone()).ok()))
+                .unwrap_or_default(),
             camera_at: None,
             dial_image: 0,
             fog: None,
@@ -1069,8 +1109,9 @@ impl Range {
                 if self.time_speed < 1.0 { " (SLOWER)" } else if self.time_speed > 1.0 { " (FASTER)" } else { "" })),
             Knob::Loop => ("LOOP".into(), if self.looping { "ON" } else { "OFF" }.into()),
             Knob::Focal => ("FOCAL LENGTH".into(), format!("{:.0} MM ({:.0} DEG)", self.focal_mm, self.fov_deg())),
+            Knob::ExportCams => ("SAVE TO CATALOG".into(), "FOR DEVELOPMENT".into()),
             Knob::SavedCam => ("CAMERA".into(), match self.camera_at {
-                Some(i) => format!("{} OF {} (KEY {})", i + 1, self.cameras.len(), i + 1),
+                Some(i) => format!("{}/{} {}", i + 1, self.cameras.len(), self.cameras[i].name.to_uppercase()),
                 None if self.cameras.is_empty() => "NONE SAVED".into(),
                 None => format!("FREE ({} SAVED)", self.cameras.len()),
             }),
@@ -1205,10 +1246,26 @@ impl Range {
                 }
             }
             Knob::AddCam => {
-                self.cameras.push(SavedCam { eye: self.eye.to_array(), yaw: self.yaw, pitch: self.pitch, focal_mm: self.focal_mm });
+                let inv = self.g.player.hull_model().inverse();
+                let (hull_eye, hull_forward) = (inv.transform_point3(self.eye), inv.transform_vector3(self.forward()).normalize_or_zero());
+                let name = camera_name(hull_eye, hull_forward);
+                self.cameras.push(SavedCam { name: name.clone(), eye: self.eye.to_array(), yaw: self.yaw, pitch: self.pitch,
+                    focal_mm: self.focal_mm, hull_eye: Some(hull_eye.to_array()), hull_forward: Some(hull_forward.to_array()) });
                 self.camera_at = Some(self.cameras.len() - 1);
                 self.save_cameras();
-                self.status = format!("CAMERA {} SAVED (KEY {})", self.cameras.len(), self.cameras.len());
+                self.status = format!("CAMERA {} SAVED: {} (KEY {})", self.cameras.len(), name.to_uppercase(), self.cameras.len());
+            }
+            Knob::ExportCams => {
+                let json = serde_json::json!({
+                    "schema": "fea-range-cameras/v1",
+                    "frame": "the Tiger's hull frame: +Z forward, +X left, +Y up, metres; the eye and forward are hull_eye and hull_forward",
+                    "saved_at_tiger": {"at": self.tiger_at.to_array(), "heading_rad": self.tiger_heading},
+                    "cameras": self.cameras,
+                });
+                self.status = match std::fs::write(CAMERA_CATALOG, serde_json::to_string_pretty(&json).unwrap_or_default()) {
+                    Ok(()) => format!("{} CAMERAS WRITTEN TO {CAMERA_CATALOG}", self.cameras.len()),
+                    Err(e) => format!("CATALOG NOT WRITTEN: {e}"),
+                };
             }
             Knob::DeleteCam => {
                 if let Some(i) = self.camera_at.take() {
@@ -1370,13 +1427,22 @@ impl Range {
 
     /// Look through saved camera `i`.
     fn view_camera(&mut self, i: usize) {
-        if let Some(c) = self.cameras.get(i).copied() {
-            self.eye = Vec3::from_array(c.eye);
-            self.yaw = c.yaw;
-            self.pitch = c.pitch;
+        if let Some(c) = self.cameras.get(i).cloned() {
+            match (c.hull_eye, c.hull_forward) {
+                (Some(e), Some(f)) => {
+                    let hull = self.g.player.hull_model();
+                    self.eye = hull.transform_point3(Vec3::from_array(e));
+                    self.set_view_forward(hull.transform_vector3(Vec3::from_array(f)));
+                }
+                _ => {
+                    self.eye = Vec3::from_array(c.eye);
+                    self.yaw = c.yaw;
+                    self.pitch = c.pitch;
+                }
+            }
             self.focal_mm = c.focal_mm;
             self.camera_at = Some(i);
-            self.status = format!("THROUGH CAMERA {} ({:.0} MM)", i + 1, c.focal_mm);
+            self.status = format!("CAMERA {}: {} ({:.0} MM)", i + 1, c.name.to_uppercase(), c.focal_mm);
         } else {
             self.status = format!("NO CAMERA {} (K OR ADD CAMERA SAVES ONE)", i + 1);
         }
@@ -3029,6 +3095,35 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         rg.r.render_to_png_hud(&rg.device, &rg.queue, &path, w, h)?;
         Ok(path)
     };
+    // KESSEL_FEA_RANGE_PROBE=catalog: the saved cameras (target/fea_range_cameras.json) put in the
+    // hull frame of the Tiger at the place they were saved (the editor's state file) and written to
+    // the catalog.
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("catalog") {
+        rg.cameras = std::fs::read_to_string(CAMERAS_PATH).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        if let Some(v) = std::fs::read_to_string(STATE_PATH).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
+            if let (Some(a), Some(h)) = (v["tiger"]["at"].as_array(), v["tiger"]["heading"].as_f64()) {
+                rg.tiger_at = Vec2::new(a[0].as_f64().unwrap_or(0.0) as f32, a[1].as_f64().unwrap_or(0.0) as f32);
+                rg.tiger_heading = h as f32;
+                rg.fresh();
+            }
+        }
+        let inv = rg.g.player.hull_model().inverse();
+        for c in &mut rg.cameras {
+            let mut cam = crate::camera::Camera::new(1.0);
+            cam.yaw = c.yaw;
+            cam.pitch = c.pitch;
+            let (e, f) = (inv.transform_point3(Vec3::from_array(c.eye)), inv.transform_vector3(cam.forward()).normalize_or_zero());
+            c.hull_eye = Some(e.to_array());
+            c.hull_forward = Some(f.to_array());
+            if c.name.is_empty() {
+                c.name = camera_name(e, f);
+            }
+            println!("[fea-range] camera {:?} {:?} {}", e, f, c.name);
+        }
+        rg.adjust(Knob::ExportCams, 1.0, false, false);
+        println!("[fea-range] {}", rg.status);
+        return Ok(());
+    }
     // KESSEL_FEA_RANGE_PROBE=ui: the interface on two tabs, then stop.
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("ui") {
         rg.tab = 0;
