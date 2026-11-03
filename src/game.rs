@@ -38726,7 +38726,7 @@ mod tests {
         // The owner's look: glossy and mostly metallic over a saturated red, so nearly black.
         assert_eq!(mesh.metallic_factor, BLOOD_METALLIC);
         assert!(BLOOD_METALLIC < 0.5 && mesh.roughness_factor <= 0.15, "glossy dark blood, a little metallic");
-        assert!(WET_BLOOD.iter().all(|c| c[0] > 150 && c[0] > 8 * c[1].max(c[2])), "a bright, saturated red base");
+        assert!(WET_BLOOD.iter().all(|c| c[0] < 140 && c[0] > 5 * c[1].max(c[2])), "a dark red base");
     }
 
     #[test]
