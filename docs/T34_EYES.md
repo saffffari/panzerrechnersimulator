@@ -52,8 +52,9 @@ what is still open. **Training is unfinished; the default T-34 weights are uncha
   drifts from a fresh run), small mutations on the July weights and larger ones on the new units,
   a fitness written in its header (hits and penetrations, flank and rear shots, contact, closing,
   being off the bow, minus exposure to the Tiger's front, pinned time, throttle see-sawing and
-  losses, minus drift from the July net's answers on open ground). It checks for the owner's game
-  before every episode and then runs one GPU job at a time, otherwise at most two.
+  losses, minus drift from the July net's answers on open ground). Right before every episode it
+  checks that the owner's game or editor is not live and waits while it is; otherwise it runs at
+  most two episodes at once.
 - `KESSEL_T34_WEIGHTS=FILE` picks another T-34 policy wherever a winter encounter is fielded
   (`install_t34_brain`), logged with its width. `KESSEL_T34_OBS_DBG=SLOT` prints one tank's
   observation and action twice a second.

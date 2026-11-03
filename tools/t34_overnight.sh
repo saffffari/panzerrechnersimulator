@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Overnight T-34 training and receipts (docs/T34_EYES.md). Resumes tools/t34_canyon_es.py from the
 # two best genomes of the last finished generation in $RUN, runs $GENS more generations (two GPU
-# episodes at once, one while the owner's game runs: the driver checks before every episode), then
+# episodes at once, none while the owner's game or editor is live: checked before each), then
 # writes before/after canyon-ai-run receipts for the held-out seeds 29, 7 and 211 at 60 s and 180 s,
 # one process at a time, and the arena gauntlet for the new champion.
 #
@@ -10,6 +10,8 @@
 # Binaries: $BIN (this branch, release) and $BASE (the main line before this branch, 79bcbfa).
 set -euo pipefail
 GENS=${1:-12}
+# Not even the trainer's first build of state starts while he is using the machine.
+while pgrep -f 'panzerrechnersystem( fea-range| edit)?$|launch_demo' >/dev/null; do sleep 30; done
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 BINS=/home/alex/panzer/t34-eyes-bin
 BIN=${BIN:-$BINS/eyes-train}
@@ -18,7 +20,8 @@ RUN=${RUN:-$BINS/es3}
 ROOT=/windows/shop/panzerrechnersystem
 JULY=$ROOT/assets/ai/weights_academy.bin
 OUT=$HERE/artifacts/t34-eyes-20261102
-OWNER_GAME="demo-20261101/target/release/panzerrechnersystem$"
+# The owner's standing rule (2026-11-03): nothing starts while his game or editor is live.
+OWNER_GAME='panzerrechnersystem( fea-range| edit)?$|launch_demo'
 export KESSEL_ASSET_ROOT=$ROOT
 export KESSEL_CANYON_MANIFEST=$ROOT/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json
 export KESSEL_CANYON_V2=1 KESSEL_CANYON_T34S=5 KESSEL_CANYON_GUNS=0
