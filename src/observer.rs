@@ -186,6 +186,11 @@ pub fn rise_tau(base_tau_s: f64, excess_log: f64) -> f64 {
 
 pub const DISPLAY_ADAPTATION_CD_M2: f64 = 100.0;
 pub const DISPLAY_KEY: f64 = 0.18;
+/// The display's exposure into AgX (`crush.wgsl` `agx`): the eye's key (0.18 of the adapted scene)
+/// enters the curve at 1.3 times, landing about 0.27 display-linear rather than AgX's own 0.21, the
+/// level the reproduction has used since the ACES fit it replaced. A named reproduction choice
+/// (docs/PHYSICAL_TRUTH_AUDIT.md, "The display tonemap is AgX"); it changes no light.
+pub const AGX_KEY_TRIM: f64 = 1.3;
 pub const ROD_SATURATION_SCOT_TD: f64 = 1_700.0;
 /// How much brighter than the threshold-matched level the screen shows the rod signal. At 1 a
 /// moonlit field is reproduced as dim as it is to a dark-adapted eye, which on a monitor in a
@@ -706,6 +711,7 @@ pub fn wgsl_constants() -> String {
     push("OBS_DAZZLE_TAU", DAZZLE_TAU_S);
     push("OBS_DISPLAY_ADAPTATION", DISPLAY_ADAPTATION_CD_M2);
     push("OBS_DISPLAY_KEY", DISPLAY_KEY);
+    push("OBS_AGX_KEY_TRIM", AGX_KEY_TRIM);
     push("OBS_ROD_SATURATION_TD", ROD_SATURATION_SCOT_TD);
     push("OBS_INSIDE_RESPONSE", INSIDE_RESPONSE);
     push("OBS_INSIDE_REFERENCE_TAU", INSIDE_REFERENCE_TAU_S);

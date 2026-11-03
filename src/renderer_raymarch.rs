@@ -216,7 +216,6 @@ struct FrameUniform {
     cloud: [f32; 4],
     fog: [f32; 4],
     optic_eye: [f32; 4],
-    livery: [f32; 4],
     /// x the per-pixel sample budget (`sample_budget`).
     samples: [f32; 4],
     /// The star lattice's frame (sin latitude, cos latitude, local sidereal angle, gain), as
@@ -707,8 +706,6 @@ pub(super) struct Backend {
     binds: Option<Binds>,
     /// `KESSEL_GLASS_GRIME`: a fixed glass grime load in place of the game's.
     glass_grime: Option<f32>,
-    /// `KESSEL_WHITEWASH`: a fixed winter whitewash in place of the game's.
-    whitewash: Option<f32>,
     /// The vehicle surface model on the GPU (`install_vehicle_surface`): its two storage buffers
     /// and uniform lanes; None until the bake is ready. The G-buffer bind group's other inputs are
     /// kept to rebuild it with them.
@@ -1683,7 +1680,6 @@ impl Backend {
             points_pipe, no_canopy, point_layer_pipe, sparks_pipe, tracers_pipe,
             binds: None, history_valid: false,
             glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
-            whitewash: std::env::var("KESSEL_WHITEWASH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             vsm: None,
             vsm_placeholder,
             gbuffer_inputs: (terrain_detail_view.clone(), terrain_detail_sampler.clone(), cabin_medium_view.clone()),
@@ -2350,8 +2346,6 @@ impl Backend {
             cloud: [self.cloud_area[0], self.cloud_area[1], self.cloud_area[2], if cloud_shadows { 1.0 } else { 0.0 }],
             fog: r.fog_bank,
             optic_eye: [r.optic_eye[0], r.optic_eye[1], 0.0, 0.0],
-            // KESSEL_WHITEWASH=0..1 fixes the winter coat for review.
-            livery: [self.whitewash.unwrap_or(r.whitewash).clamp(0.0, 1.0), 0.0, 0.0, 0.0],
             samples: [self.quality.sample_budget(self.iw, self.ih), if r.theatre_weather {1.0}else{0.0}, r.weather_offset.x, r.weather_offset.z],
             stars: {
                 let latitude = r.sky_clock.site.latitude_deg.to_radians();
@@ -2721,7 +2715,7 @@ impl Backend {
             // (2026-10-28).
             let radius = if m.small_arms_flash { half.max_element().clamp(0.03, 0.10) } else { half.max_element().clamp(0.05, 6.0) };
             let x = m.emissive;
-            let color = Vec3::new(1.0, 0.24, 0.03).lerp(Vec3::new(1.0, 0.9, 0.7), (x / 8.0).clamp(0.0, 1.0));
+            let color = Vec3::from_array(crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(x)));
             // The gun's own flash mesh becomes a forward lobe along the bore, not a ball. Never a
             // small-arms flash: the coax's, then out along the barrel, took this path and drew the
             // 88's fire lobe at the muzzle on every MG round (2026-10-28).
@@ -3290,7 +3284,10 @@ impl Backend {
             }
             let push = Push {
                 model: Mat4::IDENTITY.to_cols_array_2d(),
-                params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor, if flags > 3.5 { 4.0 } else { 0.0 }] },
+                // Kind 4 grass, 2 an own-colour emitter (`set_batch_own_emissive`: its authored colour
+                // glows), else an ordinary surface (or an effect's incandescent glow).
+                params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor,
+                    if flags > 3.5 { 4.0 } else if (flags - 2.0).abs() < 0.5 { 2.0 } else { 0.0 }] },
                 extra: [self.snow_load(r.world_snow_load), 0.0, 0.0, 0.0],
                 scars: [0; 4],
                 vehicle: [0.0; 4],

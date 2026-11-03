@@ -4,8 +4,9 @@
 //! vehicle's history, growing with every round handled), interior grime (soot, oil, propellant
 //! residue, the crew's living), exterior grime (slush and mud thrown on the lower hull by the
 //! tracks), and glass grime (the film on the vision blocks and sight windows, cleared by a wipe).
-//! The renderer turns them into masks per pixel (`rm_gbuffer.wgsl` `apply_wear`, `rm_shade.wgsl`
-//! worn edges and cavity grime, `rm_glass.wgsl`).
+//! The renderer reads them as the amounts of the player's vehicle surface model's layers
+//! (`rm_vsm.wgsl`: chips, contact, deposits, mud), the other vehicles' screen-space worn edges and
+//! cavity grime (`rm_shade.wgsl`, before their own surface model) and the glass film (`rm_glass.wgsl`).
 //!
 //! Named approximations (docs/PHYSICAL_TRUTH_AUDIT.md): scalar loads for the whole vehicle, not
 //! per-face accumulation; the rates are presentation estimates, not measurements; the starting

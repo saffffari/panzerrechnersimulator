@@ -45,14 +45,13 @@ pub fn load_player_tiger() -> anyhow::Result<([CpuMesh; 3], [CpuMesh; 4], CpuMes
             super::tiger_front_optics::repair_mg_bore(hull.pop().expect("hull remainder"))?,
             turret,
             gun,
-        ]
-        .map(crate::tank::repaint_german_grey),
-        [driver, loader, radio, escape].map(crate::tank::repaint_german_grey),
-        crate::tank::repaint_german_grey(visor_holder),
+        ],
+        [driver, loader, radio, escape],
+        visor_holder,
         periscopes,
         sight,
         shutters,
-        crate::tank::repaint_german_grey(cupola_grip),
+        cupola_grip,
         controls,
     ))
 }

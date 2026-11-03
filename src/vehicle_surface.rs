@@ -52,7 +52,7 @@ const THICKNESS_REACH: f32 = 0.25;
 /// Edge record offsets are stored in units of this many frame units (0.1 mm).
 pub const EDGE_UNIT: f32 = 1.0e-4;
 /// Bump when the bake changes, so a stale cache is not read.
-const CACHE_VERSION: u32 = 9;
+const CACHE_VERSION: u32 = 10;
 
 /// What a part is made of, for the layer stack (`rm_vsm.wgsl` names the same numbers).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,6 +222,11 @@ const SOURCES: [&str; FRAMES] = [
     "assets/tanks/tiger/baked/tiger_hull.glb",
     "assets/tanks/tiger/baked/tiger_turret.glb",
     "assets/tanks/tiger/baked/tiger_gun.glb",
+];
+/// Parts baked on their own and drawn in a frame from a hinge (the game's `cupola_hatch_model`):
+/// the cupola's lid, closed, its origin on the hinge (game.rs `CUPOLA_HINGE`, the turret frame).
+const EXTRA_SOURCES: [(usize, &str, Vec3); 1] = [
+    (1, "assets/tanks/tiger/baked/tiger_hatch.glb", Vec3::new(0.963, 2.614, -0.333)),
 ];
 
 #[derive(Clone, Copy)]
@@ -704,6 +709,13 @@ pub fn build() -> anyhow::Result<Field> {
         let (tris, h) = read_frame(f, path)?;
         key ^= h.rotate_left(17 * f as u32 + 5);
         frames_src.push(tris);
+    }
+    for (k, (f, path, offset)) in EXTRA_SOURCES.iter().enumerate() {
+        // A missing part bake leaves its frame without it (the lid falls back to its plain paint).
+        if let Ok((tris, h)) = read_frame(*f, path) {
+            key ^= h.rotate_left(29 + 7 * k as u32);
+            frames_src[*f].extend(tris.into_iter().map(|t| SrcTri { v: t.v.map(|v| v + *offset), class: t.class }));
+        }
     }
     let catalogue = include_str!("../catalog/tiger_surface_cad_folders.v1.json");
     for b in catalogue.bytes() { key = (key ^ b as u64).wrapping_mul(0x100_0000_01b3); }
@@ -1470,6 +1482,13 @@ mod tests {
                 assert!(line.contains(&text), "{name} lacks {text}");
             }
         }
+    }
+    #[test]
+    fn the_cupola_lid_is_baked_at_the_hinge_the_game_draws_it_from() {
+        let game = include_str!("game.rs");
+        let line = game.lines().find(|l| l.starts_with("const CUPOLA_HINGE")).expect("CUPOLA_HINGE");
+        let h = EXTRA_SOURCES[0].2;
+        assert!(line.contains(&format!("Vec3::new({:?}, {:?}, {:?})", h.x, h.y, h.z)), "{line}");
     }
     #[test]
     fn the_review_view_is_off_unless_asked() {

@@ -483,8 +483,8 @@ fn emitted_radiance(hit: RtSurfaceHit) -> vec3<f32> {
         return base * authored * (strength + max(strength - 3.0, 0.0) * 0.15);
     }
     if (hit.emission_mode == 3u) {
-        return mix(authored, base, 0.18) * strength * 0.30 +
-            vec3(1.0, 0.88, 0.62) * max(strength - 6.0, 0.0) * 0.18;
+        // The effect's Planck colour at its drive, from the CPU (incandescence::fx_kelvin).
+        return authored * strength * 0.30;
     }
     if (hit.emission_mode == 4u) {
         return authored * strength;

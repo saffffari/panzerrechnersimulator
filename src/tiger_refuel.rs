@@ -112,6 +112,9 @@ impl Runtime {
         // The deck plate and the tank's neck are the hull's own source surfaces, drawn at its model:
         // they take the vehicle surface model's finish (vehicle_surface.rs) like the hull.
         r.mark_vsm_part(self.deck_slot,1,Vec3::ZERO);r.mark_vsm_part(self.tank_slot,1,Vec3::ZERO);
+        // The filler's two caps move along their path from the hull's model: at rest their
+        // vertices are the hull frame's, so their paint moves with them.
+        for &s in &self.slots{r.mark_vsm_part(s,1,Vec3::ZERO);}
         // The deck carries the player's vehicle's snow, as the hull around it does.
         r.mark_snow_vehicle(self.deck_slot);}
     pub(super) fn present(&self,r:&mut Renderer,hull:Mat4){
