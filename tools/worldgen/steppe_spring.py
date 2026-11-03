@@ -105,8 +105,11 @@ def route_distance_field(route):
     return upsample(best.reshape(X.shape))
 
 
-def ground(rng, H, ravine, route, buildings, woods):
-    """The ground's colour and where grass grows. Colours are linear-ish sRGB values 0..1."""
+def ground(rng, H, ravine, route, buildings, woods, clump_floor=0.0, bare=(42, 62)):
+    """The ground's colour and where grass grows. Colours are linear-ish sRGB values 0..1.
+
+    clump_floor lifts the drifts' thinnest grass (0 keeps the steppe's open patches; a May meadow
+    wants a continuous sward); bare is the crop-key range of ploughed strips that carry no grass."""
     slope = upsample(np.hypot(*np.gradient(H, EXTENT/(RES-1))))
     rav = upsample(ravine)
     wood = upsample(woods.astype(np.float32))
@@ -159,11 +162,12 @@ def ground(rng, H, ravine, route, buildings, woods):
         yard[z0:z1, x0:x1] = np.maximum(yard[z0:z1, x0:x1], np.clip(1.0-(dist-r+5.0)/5.0, 0, 1)*0.8)
     colour = colour*(1-yard[..., None])+np.array([0.33, 0.28, 0.20])*yard[..., None]
     # Grass stands in drifts and clumps, thick in the meadows and thin on the crops.
-    clump = np.clip(0.5+0.9*mid+0.5*fine, 0, 1)
+    clump = np.clip(np.maximum(0.5+0.9*mid+0.5*fine, clump_floor), 0, 1)
     grass = np.clip(1.0-track*1.5-yard-clay[..., 0]*0.8, 0, 1)*clump
     grass[fieldable & (crop < 42)] *= 0.35
     grass[fieldable & (crop >= 62) & (crop < 76)] *= 0.35
-    grass[fieldable & (crop >= 42) & (crop < 62)] = 0.0       # ploughed strips carry none
+    grass[fieldable & (crop >= bare[0]) & (crop < bare[1])] = 0.0   # ploughed strips carry none
+    grass[fieldable & (crop >= bare[1]) & (crop < 62)] *= 0.6     # fallow: weeds over last year's furrows
     grass *= 1.0-0.75*np.clip(wood, 0, 1)                     # little grows under the canopy
     return np.clip(colour, 0, 1), grass
 

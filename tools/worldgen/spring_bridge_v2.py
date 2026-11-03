@@ -68,9 +68,9 @@ SQUARE_R = 16.0
 
 VARIANTS = {
     'playtest': dict(dest='spring-bridge-v2', houses=14, natural=1.0, rubble=1.0, field_craters=320, battle=1.0, lot_gap=(0.0, 3.0), outer_gap=(4.0, 10.0), dressing=1.0,
-                     kerbs=True, trees=26000, street_tree_m=13.0, craters=16, alleys=False, low_clouds=18),
+                     kerbs=True, trees=16000, street_tree_m=13.0, craters=16, alleys=False, low_clouds=18),
     'render': dict(dest='spring-bridge-lite-v2', houses=10, natural=0.25, rubble=0.4, field_craters=140, battle=0.4, lot_gap=(3.0, 8.0), outer_gap=(10.0, 20.0), dressing=0.35,
-                   kerbs=False, trees=7000, street_tree_m=24.0, craters=12, alleys=False, low_clouds=8),
+                   kerbs=False, trees=5000, street_tree_m=24.0, craters=12, alleys=False, low_clouds=8),
 }
 CONDITIONS = [('intact', .15), ('shelled', .30), ('burned', .25), ('partly_collapsed', .30)]
 
@@ -108,8 +108,37 @@ ASSET = {
     'canister': 'assets/warprops/supply_canister.glb', 'wire_stake': 'assets/warprops/wire_stake.glb', 'bricks_stacked1': PZ+'Debris & Misc/bricks_stacked_mx_1.glb',
     'charred': cc.ASSETS['charred_plank'], 'scorch': cc.ASSETS['scorch'],
 }
-BIG_TREES = ['tree_5', 'tree_6', 'tree_7', 'tree_8']
-SMALL_TREES = ['tree_1', 'tree_9']
+# Trees and shrubs: the spring 1943 set (tools/vegetation/spring1943.py), real mature sizes, May
+# foliage; the species by place, the way a Ukrainian river town grows them.
+VEG = 'assets/vegetation/spring1943/'
+STREET_TREES = ['tree_linden_a', 'tree_linden_b', 'tree_chestnut_a', 'tree_chestnut_b']
+BANK_TREES = ['tree_willow_a', 'tree_willow_b', 'tree_willow_c', 'tree_willow_c', 'tree_poplar_a', 'tree_poplar_c']
+BANK_SCRUB = ['shrub_willowscrub_a', 'shrub_willowscrub_b', 'shrub_elder_a']
+ORCHARD = ['tree_apple_a', 'tree_apple_b', 'tree_apple_c', 'tree_cherry_a', 'tree_cherry_b', 'tree_pear_a', 'tree_pear_b']
+GARDEN_SHRUBS = ['shrub_elder_b', 'shrub_dogrose_a', 'shrub_dogrose_b', 'shrub_hazel_b']
+HEDGE = ['shrub_hawthorn_a', 'shrub_hawthorn_b', 'shrub_blackthorn_a', 'shrub_blackthorn_b', 'shrub_dogrose_a',
+         'shrub_elder_a', 'shrub_hazel_a']
+WOOD_MIX = [('tree_oak_a', 3), ('tree_oak_b', 2), ('tree_oak_c', 2), ('tree_birch_a', 2), ('tree_birch_b', 2),
+            ('tree_birch_c', 2), ('tree_linden_a', 2), ('tree_linden_b', 1), ('tree_poplar_b', 1),
+            ('shrub_hazel_a', 2), ('shrub_hazel_b', 2), ('shrub_hawthorn_a', 1), ('shrub_elder_a', 1)]
+FALLEN = [('fallen_oak_uprooted_a', None), ('fallen_birch_uprooted_a', None), ('fallen_apple_uprooted_a', None),
+          ('fallen_poplar_snapped_a', 'stump_poplar_snapped_a'), ('fallen_willow_snapped_a', 'stump_willow_snapped_a'),
+          ('fallen_linden_snapped_a', 'stump_linden_snapped_a'), ('fallen_birch_snapped_a', 'stump_birch_snapped_a')]
+
+
+def veg_damaged(name, key):
+    """The shelled form of a tree or shrub (shattered or burnt, same species where the set has it)."""
+    if name.startswith('shrub_'):
+        return 'shrub_burnt_a' if 'hazel' in name or 'elder' in name else 'shrub_burnt_b'
+    species = name.split('_')[1]
+    forms = [f.stem for f in sorted((ASSET_ROOT/VEG).glob(f'tree_{species}_*.glb')) if 'shattered' in f.stem or 'burnt' in f.stem]
+    if not forms:
+        forms = ['tree_oak_shattered_a', 'tree_poplar_shattered_a', 'tree_linden_shattered_b']
+    return forms[int(rnd(key, 41)*len(forms))]
+
+
+def veg_path(name):
+    return VEG+name+'.glb'
 WATER_RGB = [44, 84, 116]          # a clear river under a blue sky; see the ledger's river water row
 WATER_ROUGHNESS = 0.05
 
@@ -414,7 +443,7 @@ def dress(P, buildings, streets, squares, cx, cz, centre_x, variant, deck_y):
         P.put(name, x, z, rnd(f'wr{k}', 2)*40-20+(0 if k % 2 else 180), 1.0, tag='wreck')
         if name == 'wagon_wreck':
             P.put('horse_dead', x+3.5, z+2.0, rnd(f'wr{k}', 3)*360, 1.0, tag='wreck')
-    dead = ['dead_back', 'dead_down', 'dead_side', 'dead_curled']
+    dead = ['dead_down', 'dead_side', 'dead_curled', 'dead_down', 'dead_side']
     for k in range(int(26*dens)+6):
         key = f'dead{k}'
         q = route_pts[int((0.25+0.6*rnd(key, 1))*(len(route_pts)-1))] if rnd(key, 6) < 0.6 else \
@@ -451,15 +480,16 @@ def dress(P, buildings, streets, squares, cx, cz, centre_x, variant, deck_y):
             if free(x, back_z, 1.0):
                 P.put('fence_a' if rnd(b['id'], 21) < 0.5 else 'fence_b', x, back_z, 90.0, 1.0, tag='fences')
     # Trees: street trees on the outer lanes, the river's banks, gardens.
-    big = [NATP+t+'.glb' for t in BIG_TREES]
-    small = [NATP+t+'.glb' for t in SMALL_TREES]
-    def tree(key, x, z, big_tree=True):
+    def tree(key, x, z, pool=STREET_TREES, damage=0.0):
         if in_river(x, z, 4.0) or not free(x, z, 2.5):
             return
         if abs(z-cz) < BRIDGE_HALF_W+8 and abs(x-cx) < BRIDGE_HALF_L+RAMP_M:
             return
-        pool = big if big_tree else small
-        P.put(None, x, z, rnd(key, 1)*360, 1.3+0.9*rnd(key, 2), sink=0.05, tag='town_trees', path=pool[int(rnd(key, 3)*len(pool))])
+        name = pool[int(rnd(key, 3)*len(pool))]
+        # In the town the street trees took the fighting: some snapped, some burnt with the houses.
+        if rnd(key, 8) < damage:
+            name = veg_damaged(name, key)
+        P.put(None, x, z, rnd(key, 1)*360, 0.85+0.3*rnd(key, 2), sink=0.05, tag='town_trees', path=veg_path(name))
     for si, st in enumerate(streets):
         if st['kind'] in ('lane', 'alley'):
             p = st['pts']
@@ -469,8 +499,12 @@ def dress(P, buildings, streets, squares, cx, cz, centre_x, variant, deck_y):
                         continue
                     d = (p[k+1]-p[k])/max(np.linalg.norm(p[k+1]-p[k]), 1e-6)
                     q = p[k]+np.array([-d[1], d[0]])*side*(st['half']+1.6)
-                    if np.hypot(q[0]-cx, q[1]-cz) > 200 and rnd(f'st{si}.{k}.{side}', 4) < 0.7:
-                        tree(f'st{si}.{k}.{side}', float(q[0]), float(q[1]))
+                    r = np.hypot(q[0]-cx, q[1]-cz)
+                    if r > 200 and rnd(f'st{si}.{k}.{side}', 4) < 0.7:
+                        tree(f'st{si}.{k}.{side}', float(q[0]), float(q[1]), damage=0.35 if r < 320 else 0.1)
+                    elif r > 200 and rnd(f'st{si}.{k}.{side}', 9) < 0.5:
+                        # Hedgerow along the lane where no tree stands.
+                        tree(f'hg{si}.{k}.{side}', float(q[0]), float(q[1]), pool=HEDGE, damage=0.08)
     for side in (-1, 1):
         for z in np.arange(-CROP_HALF+40, CROP_HALF-40, 9.0 if dens > 0.5 else 20.0):
             key = f'bank{side}.{int(z)}'
@@ -479,12 +513,14 @@ def dress(P, buildings, streets, squares, cx, cz, centre_x, variant, deck_y):
                 off = RIVER_HALF_W+BANK_RUN+4.5          # between the quay and the water in town
             x = float(centre_x(np.array([z]))[0])+side*off
             if rnd(key, 6) < 0.75:
-                tree(key, x, float(z), big_tree=rnd(key, 7) < 0.8)
+                tree(key, x, float(z), pool=BANK_TREES if rnd(key, 7) < 0.7 else BANK_SCRUB,
+                     damage=0.3 if abs(z-cz) < 330 else 0.05)
     for b, (x0, x1, z0, z1) in zip(buildings, rects):
         if b['typology'] == 'wooden_house' and rnd(b['id'], 30) < 0.8*dens+0.2:
             for k in range(1+int(rnd(b['id'], 31)*3)):
                 key = f"{b['id']}.g{k}"
-                tree(key, (x0+x1)/2+(rnd(key, 4)-0.5)*16, (z1 if rnd(key, 5) < .5 else z0)+(rnd(key, 6)-0.5)*20, big_tree=rnd(key, 7) < 0.5)
+                tree(key, (x0+x1)/2+(rnd(key, 4)-0.5)*16, (z1 if rnd(key, 5) < .5 else z0)+(rnd(key, 6)-0.5)*20,
+                     pool=ORCHARD if rnd(key, 7) < 0.7 else GARDEN_SHRUBS, damage=0.25)
 
 
 def scatter_ground(P, buildings, streets, cx, cz, centre_x, variant, trees_xz):
@@ -595,7 +631,8 @@ def battlefield(P, cx, cz, centre_x, route, variant, craters, town_rects):
         return (abs(x) < CROP_HALF-20 and abs(z) < CROP_HALF-20
                 and abs(x-float(centre_x(np.array([z]))[0])) > RIVER_HALF_W+BANK_RUN+8
                 and not any(x0-3 < x < x1+3 and z0-3 < z < z1+3 for x0, x1, z0, z1 in town_rects))
-    dead = ['dead_back', 'dead_down', 'dead_side', 'dead_curled', 'dead_raised', 'dead_slump']
+    # Lying poses only: the raised-arm and seated poses read as living figures in open ground.
+    dead = ['dead_down', 'dead_side', 'dead_curled', 'dead_down', 'dead_side']
     # The assault line: rows of riflemen fallen facing the town, thickest where it broke.
     for row in range(3):
         for k in range(int(26*b)):
@@ -658,7 +695,71 @@ def battlefield(P, cx, cz, centre_x, route, variant, craters, town_rects):
         key = f'shat{k}'
         x, z = (rnd(key, 1)-0.5)*2*(CROP_HALF-80), (rnd(key, 2)-0.5)*2*(CROP_HALF-80)
         if clear(x, z):
-            P.put('shattered_a' if k % 2 else 'shattered_b', x, z, rnd(key, 3)*360, 0.8+0.5*rnd(key, 4), sink=0.1, tag='shattered_trees')
+            name = veg_damaged(['tree_oak_a', 'tree_poplar_a', 'tree_linden_a', 'tree_birch_a', 'tree_willow_a'][k % 5], key)
+            P.put(None, x, z, rnd(key, 3)*360, 0.85+0.3*rnd(key, 4), sink=0.1, tag='shattered_trees', path=veg_path(name))
+    # Where the eye goes: the road. The thaw gives back the winter's dead where they fell and no
+    # burial party reached (an attested recurring condition of the 1942-43 Eastern Front spring:
+    # corpses surfacing from the snow along roads and in the fields, collected weeks or months
+    # later); they lie on the verges and in the ditches of the approach, in the open short grass of
+    # the road's edge, kit strewn round them, a stretcher party that did not get back.
+    pr = np.asarray(route, dtype=np.float64)
+    if len(pr) > 2:
+        along = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pr, axis=0).T))])
+        for s in np.arange(10.0, along[-1]-10.0, 22.0/max(b, 0.25)):
+            key = f'verge{s:.0f}'
+            i = int(np.searchsorted(along, s))
+            if i <= 0 or i >= len(pr):
+                continue
+            q, d = pr[i], pr[i]-pr[i-1]
+            d = d/max(np.hypot(*d), 1e-6)
+            if abs(q[0]-cx) < BRIDGE_HALF_L+RAMP_M+10 and abs(q[1]-cz) < 40:
+                continue
+            near_bridge = math.exp(-((q[0]-cx)/420.0)**2)   # thickest where the crossing was fought for
+            if rnd(key, 1) > 0.25+0.55*near_bridge:
+                continue
+            side = 1.0 if rnd(key, 2) < 0.5 else -1.0
+            off = 3.6+rnd(key, 3)*6.0
+            x, z = float(q[0]-d[1]*side*off), float(q[1]+d[0]*side*off)
+            if not clear(x, z):
+                continue
+            yaw = math.degrees(math.atan2(d[0], d[1]))+(rnd(key, 4)-0.5)*140
+            P.put(dead[int(rnd(key, 5)*len(dead))], x, z, yaw, 1.0, tag='dead_verge')
+            if rnd(key, 6) < 0.3:     # a second man, fallen beside the first
+                P.put(dead[int(rnd(key, 7)*len(dead))], x+(rnd(key, 8)-0.5)*4, z+(rnd(key, 9)-0.5)*4, rnd(key, 10)*360, 1.0, tag='dead_verge')
+            if rnd(key, 11) < 0.12:
+                P.put('stretcher', x+1.5*d[0], z+1.5*d[1], yaw+90, 1.0, tag='kit')
+            for j in range(int(rnd(key, 12)*3)):
+                P.put(pick(f'{key}k{j}', [('helmet', .45), ('canister', .25), ('ammo_burst', .15), ('rifle_grave', .15)]),
+                      x+(rnd(f'{key}k{j}', 1)-0.5)*4, z+(rnd(f'{key}k{j}', 2)-0.5)*4, rnd(f'{key}k{j}', 3)*360, 1.0, tag='kit')
+    # The shell holes near the road: men caught by the barrage lie on the torn rims, bare earth
+    # round them where the sward was blown away.
+    for x0, z0, r in craters:
+        key = f'rim{x0:.0f},{z0:.0f}'
+        dmin = np.hypot(*(pr-[x0, z0]).T).min() if len(pr) else 1e9
+        if dmin > 160 or rnd(key, 1) > 0.45*b+0.1:
+            continue
+        a = rnd(key, 2)*math.tau
+        x, z = x0+math.cos(a)*r*1.05, z0+math.sin(a)*r*1.05
+        if clear(x, z):
+            P.put(dead[int(rnd(key, 3)*len(dead))], x, z, math.degrees(a)+90+(rnd(key, 4)-0.5)*60, 1.0, tag='dead_crater')
+    # A row of field graves dug in haste on the camp side, rifles and helmets for markers.
+    gx, gz = cx-520, cz+60
+    for k in range(int(9*b)+3):
+        x, z = gx+k*2.2+(rnd(f'grave{k}', 1)-0.5)*0.6, gz+(rnd(f'grave{k}', 2)-0.5)*0.8
+        if clear(x, z):
+            P.put('rifle_grave' if k % 3 else 'grave_cross', x, z, 90+(rnd(f'grave{k}', 3)-0.5)*20, 1.0, tag='graves')
+            if rnd(f'grave{k}', 4) < 0.5:
+                P.put('helmet', x+0.4, z+0.3, rnd(f'grave{k}', 5)*360, 1.0, tag='graves')
+    # Trees brought down by shellfire, leaves still green on them, beside their stumps.
+    for k in range(int(30*b)):
+        key = f'felled{k}'
+        x, z = (rnd(key, 1)-0.5)*2*(CROP_HALF-80), (rnd(key, 2)-0.5)*2*(CROP_HALF-80)
+        if clear(x, z):
+            fallen, stump = FALLEN[int(rnd(key, 3)*len(FALLEN))]
+            yaw = rnd(key, 4)*360
+            P.put(None, x, z, yaw, 0.9+0.2*rnd(key, 5), sink=0.05, tag='felled_trees', path=veg_path(fallen))
+            if stump:
+                P.put(None, x, z, yaw, 1.0, sink=0.02, tag='felled_trees', path=veg_path(stump))
 
 
 def night_lights(P, H, grid, cx, cz, deck_y, town, craters, variant):
@@ -741,6 +842,9 @@ def ground_paint(colour, grass, axis_tex, streets, rects, squares, centre_tex, c
         stamp(x, z, r*1.9, [0.24, 0.19, 0.13], 0.45)
     # Earth under the sward: the meadow (its presence is the ground class's red) covers it; where
     # the grass thins the loam shows, never a painted green.
+    # A May sward is continuous: wherever grass grows at all it grows thick (the meadow's density
+    # is its own); ploughed strips, roads, craters and the river stay bare.
+    grass[:] = np.where(grass > 0.06, np.maximum(grass, 0.75), grass)
     g = np.clip(grass*2.2, 0, 1)[..., None]
     loam = np.array([0.20, 0.16, 0.11], dtype=np.float32)*(0.85+0.3*fine[..., None])
     colour[:] = colour*(1-g)+loam*g
@@ -758,8 +862,8 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     cc.GROUPS = v1.GROUPS
     cc.CRATERS = variant['craters']
     cc.RAZED_PLOTS = 4
-    cc.ASSETS['tree_tall'] = NATP+'tree_5.glb'
-    cc.ASSETS['tree_small'] = NATP+'tree_7.glb'
+    cc.ASSETS['tree_tall'] = veg_path('tree_linden_a')
+    cc.ASSETS['tree_small'] = veg_path('tree_apple_a')
     manifest, edits, H, receipt = gaea.build(source)
     drifts = {i for i, p in enumerate(manifest['assets']) if 'snow_drift' in p}
     manifest['placements'] = [p for p in manifest['placements'] if p[0] not in drifts]
@@ -861,9 +965,19 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     woods &= ~((np.abs(X-centre[:, None]) < FLOOD_HALF*0.6) | (np.hypot(X-cx, Z-cz) < town_r+40))
     woods &= (np.abs(X) < CROP_HALF-20) & (np.abs(Z) < CROP_HALF-20)
     trees = sp.plant_woods(manifest, H, woods)
+    # The woods in the spring set's species (mature, real size), an understorey of hazel and
+    # hawthorn; within reach of the shelling a wood's trees are shattered or burnt.
+    weights = np.cumsum([w for _, w in WOOD_MIX])/sum(w for _, w in WOOD_MIX)
+    crater_xz = np.array([[x, z] for x, z, _ in kept_craters]) if kept_craters else np.zeros((0, 2))
     for p in manifest['placements'][-trees:]:
-        p[5] = cc.r3(p[5]*1.45)                   # mature trees: the library's are saplings
-    tree_paths = {i for i, a in enumerate(manifest['assets']) if any(t in a for t in ('tree_', 'pine_tree'))}
+        key = f'wood{p[1]:.1f},{p[3]:.1f}'
+        name = WOOD_MIX[int(np.searchsorted(weights, rnd(key, 1)))][0]
+        near = np.hypot(*(crater_xz-[p[1], p[3]]).T).min() if len(crater_xz) else 1e9
+        if near < 35.0 and rnd(key, 2) < 0.6*(1.0-near/35.0)+0.15:
+            name = veg_damaged(name, key)
+        p[0] = P.asset(veg_path(name))
+        p[5] = cc.r3(0.8+0.35*rnd(key, 3))
+    tree_paths = {i for i, a in enumerate(manifest['assets']) if any(t in a for t in ('tree_', 'pine_tree', 'shrub_'))}
     trees_xz = np.array([[q[1], q[3]] for q in manifest['placements'] if q[0] in tree_paths])
     scatter_ground(P, town, streets, cx, cz, centre_x, variant, trees_xz)
     battlefield(P, cx, cz, centre_x, route, variant, kept_craters, town_rects)
@@ -986,7 +1100,10 @@ def build(variant_name='playtest', carry_from=None, plan=None):
                                   deck_thickness_m=1.2, piers=piers, name='the_bridge',
                                   truss=dict(over_m=6.0, under_m=2.5, panel_m=7.0))]
     # Ground, cropped with everything else.
-    colour, grass = sp.ground(rng, H, ravine*(np.abs(X-centre[:, None]) > FLOOD_HALF), route, buildings, woods)
+    # A May meadow is a continuous sward; in a war spring most strips went unsown and run to weeds,
+    # only a few were ploughed before the front came through.
+    colour, grass = sp.ground(rng, H, ravine*(np.abs(X-centre[:, None]) > FLOOD_HALF), route, buildings, woods,
+                              clump_floor=0.82, bare=(42, 47))
     axis_tex = np.linspace(-EXTENT/2, EXTENT/2, TEX, dtype=np.float32)
     centre_tex = np.interp(axis_tex, axis, centre).astype(np.float32)
     ground_paint(colour, grass, axis_tex, streets, town_rects, squares, centre_tex, cx, cz, kept_craters)
@@ -1006,6 +1123,9 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     manifest['overview'] = dict(pos=[cc.r3(cx+420), 260.0, cc.r3(cz+480)], target=[cx, cc.r3(deck_y), cz])
     edits['editor_home'] = dict(eye=[cx, cc.r3(deck_y+1.8), cz], target=[cc.r3(cx+30.0), cc.r3(deck_y+0.8), cz])
     # A bright, warm afternoon in May, the sun in the south-west, thin high cloud, blue haze.
+    # The far hills go blue through Rayleigh and the aerosol's spectral slope along the view ray
+    # (the campaign's spring aerosol). A May continental block (AOD 0.2, Angstrom 1.6, Chubarova
+    # et al. 2016) waits: on 2 Nov it darkened the horizon sky below the zenith, which is unphysical.
     edits['environment_lighting'] = dict(enabled=True, fog_density=0.00045, overcast=0.06, storm=0.0,
         schema='kessel.environment-authoring', utc='1943-05-12T14:10:00Z', version=2)
     # Low cloud and mist banks inside the map (src/low_clouds.rs): liquid-water volumes lit and
@@ -1013,6 +1133,15 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     edits['low_clouds'] = dict(seed=11, count=variant['low_clouds'],
         area=[-CROP_HALF+100, -CROP_HALF+100, CROP_HALF-100, CROP_HALF-100], base_m=[0, 60], size_m=[50, 260],
         depth_m=[15, 70], lwc_g_m3=[0.08, 0.3], droplet_radius_um=8, drift=1.0)
+    # Any tree still from the PSX library (the grammars' own) becomes a spring tree of the set.
+    import re
+    weights = np.cumsum([w for _, w in WOOD_MIX])/sum(w for _, w in WOOD_MIX)
+    psx_tree = re.compile(r'/(tree_\d+|pine_tree_n_\d+)\.glb$')
+    for q in manifest['placements']:
+        if psx_tree.search(manifest['assets'][q[0]]):
+            key = f'psx{q[1]:.1f},{q[3]:.1f}'
+            q[0] = P.asset(veg_path(WOOD_MIX[int(np.searchsorted(weights, rnd(key, 1)))][0]))
+            q[5] = cc.r3(0.8+0.35*rnd(key, 3))
     edits['base_placements'] = len(manifest['placements'])
     edits['base_markers'] = len(manifest['markers'])
     edits['ops'] = []
