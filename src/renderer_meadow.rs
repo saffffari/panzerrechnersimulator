@@ -470,6 +470,18 @@ mod tests {
             .unwrap_or_else(|error| panic!("rm_meadow: {}", error.emit_to_string(&source)));
     }
 
+    /// The display stage with the point layer's rod pooling (crush.wgsl) still validates.
+    #[test]
+    fn the_crush_with_rod_pooling_validates() {
+        let source = super::super::observer_shader_source(include_str!("../shaders/crush.wgsl"));
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("crush: {}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(), wgpu::naga::valid::Capabilities::all())
+            .validate(&module)
+            .unwrap_or_else(|error| panic!("crush: {}", error.emit_to_string(&source)));
+        assert!(source.contains("point * (1.0 - share)"));
+    }
+
     /// The shader's blade ribbon emits the vertex count the draw asks for at every level.
     #[test]
     fn level_vertex_counts_match_the_ribbons() {

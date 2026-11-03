@@ -2887,6 +2887,9 @@ pub struct Renderer {
     frame: u32,
 
     hdr_view: wgpu::TextureView,
+    /// Sub-pixel emitters' radiance at their pixel (crush.wgsl rod pooling).
+    point_view: wgpu::TextureView,
+    _point_layer_tex: wgpu::Texture,
     hdr_tex: wgpu::Texture,
     depth_view: wgpu::TextureView,
     ldr_view: wgpu::TextureView,
@@ -3893,6 +3896,17 @@ impl Renderer {
             view_formats: &[],
         });
         let hdr_view = hdr_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // The sub-pixel emitters' own radiance (`point_view`, the raymarch backend's firefly
+        // lanterns), for the eye's rod pooling in crush.wgsl; zero on the other backends.
+        let point_layer_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("point-layer"),
+            size: wgpu::Extent3d { width: iw, height: ih, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let point_view = point_layer_tex.create_view(&wgpu::TextureViewDescriptor::default());
         // TEXTURE_BINDING so the volumetric smoke pass can sample scene depth back for occlusion.
         // Kept as a texture (not just its view): the S1 bvhview PASS metric reads scene depth
         // back and correlates it against traced primary-ray depth.
@@ -5962,6 +5976,7 @@ impl Renderer {
                 wgpu::BindGroupLayoutEntry {binding:7,visibility:wgpu::ShaderStages::FRAGMENT,
                     ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Uint,
                         view_dimension:wgpu::TextureViewDimension::D2,multisampled:false},count:None},
+                tex_entry(8), // the sub-pixel emitters' radiance (rod pooling)
             ],
         });
         let crush_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -5993,6 +6008,7 @@ impl Renderer {
                     resource: environment_probe.uniform.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {binding:7,resource:wgpu::BindingResource::TextureView(&blue_noise_view)},
+                wgpu::BindGroupEntry {binding:8,resource:wgpu::BindingResource::TextureView(&point_view)},
             ],
         });
         let crush_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -6220,6 +6236,8 @@ impl Renderer {
             exhaust_puffs: Vec::new(),
             fog_bank: [0.0; 4],
             frame: 0,
+            point_view,
+            _point_layer_tex: point_layer_tex,
             hdr_view,
             hdr_tex,
             depth_view,
