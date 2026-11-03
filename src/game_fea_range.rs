@@ -4041,6 +4041,8 @@ fn prepare_environment() {
 
 /// `fea-range` (window) or `fea-range --shots PREFIX` (headless stills and the agreement check).
 pub fn run(shots: Option<&str>) -> anyhow::Result<()> {
+    // The owner (2026-11-03): "disable smoke". The range draws no smoke supports.
+    crate::renderer::SMOKE_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
     prepare_environment();
     anyhow::ensure!(graphics::raymarch_backend_enabled(), "fea-range requires KESSEL_RENDERER=raymarch");
     if let Some(prefix) = shots {
