@@ -3254,6 +3254,10 @@ impl ProjectileShooter {
     }
 }
 
+fn full_mass_fraction() -> f32 {
+    1.0
+}
+
 /// One live shell. `pos`, `velocity`, `distance_m` and `seed` are the authoritative modeled state;
 /// no target or terminal result exists until a swept segment actually reaches physical geometry.
 #[derive(Clone, Debug)]
@@ -3279,6 +3283,10 @@ struct AuthoritativeProjectile {
     /// Gravity/wind restart at a resolved deflection; total lifetime and range never reset.
     flight_epoch_s:f32,
     ricochet_count:u8,
+    /// The share of its mass the round still has after its ricochets (its own solve,
+    /// `fea_damage::shot`); 1 for a round that has struck nothing.
+    #[serde(default = "full_mass_fraction")]
+    mass_fraction:f32,
     muzzle_cleared:bool,
     passed_at_gun_part:Option<(usize,u8)>,
     ignored_structure: Option<usize>,
@@ -3324,6 +3332,7 @@ impl AuthoritativeProjectile {
             retained_speed:1.0,
             flight_epoch_s:0.0,
             ricochet_count:0,
+            mass_fraction:1.0,
             muzzle_cleared:false,
             passed_at_gun_part:None,
             ignored_structure: None,
@@ -26581,6 +26590,14 @@ impl Game {
                 };
                 self.enemy_report_audit.clock_s=flight_at+step_dt*fraction;
                 projectile.commit_fraction(step, fraction, contact.pos);
+                // A ricochet's own solve takes effect at the round's next contact.
+                if let Some(handle) = self.fea.ricochet_solves.remove(&projectile.id) {
+                    if let Ok(Some(solved)) = handle.join() {
+                        projectile.mass_fraction *= solved.residual_fraction;
+                        println!("[fea] ricochet solve for round {}: {:.0} % of its mass left, {} pieces, tumble {:.0} rad/s, hottest {:.0} K ({:.0} ms on a worker)",
+                            projectile.id, solved.residual_fraction * 100.0, solved.pieces, solved.tumble_rad_s, solved.peak_temp_k, solved.wall_ms);
+                    }
+                }
                 if let Some(bullet) = projectile.small_arm {
                     self.present_source_ground_impact(&projectile,contact,r);
                     self.finish_small_arm(&projectile,contact,bullet, &r.camera);
@@ -26606,7 +26623,7 @@ impl Game {
                     {
                         self.explode_at_gun(hit.index,contact.pos,armor_incident_velocity,projectile.shell.name);
                         if hit.steel {
-                            let deposited=0.5*projectile.shell.mass_kg
+                            let deposited=0.5*projectile.shell.mass_kg*projectile.mass_fraction
                                 *(armor_incident_velocity.length_squared()-projectile.velocity.length_squared()).max(0.0);
                             self.weapon_vfx.set_ground_hint(Some(self.hf.height_at(contact.pos.x,contact.pos.z)));
                             self.weapon_vfx.steel_perforation_spray(contact.pos,armor_incident_velocity,hit.normal,
@@ -26727,6 +26744,8 @@ impl Game {
             }
             drop(initial);
             active.append(&mut self.projectiles);
+            // A retired round's ricochet solve is let go (its worker ends on its own).
+            self.fea.ricochet_solves.retain(|id, _| active.iter().any(|p| p.id == *id) || pending.iter().any(|(p, _, _)| p.id == *id));
             self.finish_shell_flight_step(flight_start, &active);
             self.projectiles = active;
             self.projectile_scratch = flying;
@@ -26988,7 +27007,9 @@ impl Game {
                 projectile.seed ^ self.armor_tick,
                 projectile.penalty_mm,
                 projectile.disruption,
-                projectile.velocity.length(),
+                // A round lightened by an earlier ricochet meets the plate at the speed that gives
+                // its lighter body the same DeMarre capability (`chain::run_with_residual`).
+                projectile.velocity.length() * projectile.mass_fraction.sqrt(),
             );
             event.flight_time=projectile.age_s;
             // Preserve the existing non-kinetic terminal policy pending its separate audit.
@@ -27001,6 +27022,13 @@ impl Game {
             }
             ricochet=crate::ballistics::ricochet::response(&event,projectile.velocity,
                 armor.world_normal,projectile.ricochet_count);
+            if ricochet.is_some() {
+                // The round's own solve of the glancing strike: its mass and tumble (joined at its
+                // next contact).
+                if let Some(handle) = game_fea::RicochetShot::spawn(&event, projectile.seed ^ self.armor_tick ^ 0x5407_0000) {
+                    self.fea.ricochet_solves.insert(projectile.id, handle);
+                }
+            }
             if let Some(response)=ricochet {
                 event.terminal=crate::ballistics::Terminal::Ricochet;
                 event.residual_v=response.velocity.length();event.behind_armor=0.0;
@@ -27068,13 +27096,13 @@ impl Game {
                 );
             }
             ProjectileContactKind::FieldPerson(person,part)=>{
-                let energy=0.5*projectile.shell.mass_kg*projectile.velocity.length_squared();
+                let energy=0.5*projectile.shell.mass_kg*projectile.mass_fraction*projectile.velocity.length_squared();
                 let impact=CrewRagdollImpact{hit_part:part,point_world:contact.pos,velocity_world:projectile.velocity,energy_j:energy,
                     blast_origin_world:contact.pos,explosive_energy_j:0.,behind_armor:0.,blast_proximity_m:0.};
                 if let Ok(actor)=self.retain_struck_field_person(person,impact){self.injure_field_actor(actor,part,contact.pos,projectile.velocity,energy,0.,0.,projectile.id);}
             }
             ProjectileContactKind::ExposedCrew(actor,part)=>{
-                let energy=0.5*projectile.shell.mass_kg*projectile.velocity.length_squared();
+                let energy=0.5*projectile.shell.mass_kg*projectile.mass_fraction*projectile.velocity.length_squared();
                 self.injure_field_actor(actor,part,contact.pos,projectile.velocity,energy,0.,0.,projectile.id);
             }
             ProjectileContactKind::Foot => {
@@ -27096,7 +27124,7 @@ impl Game {
             ProjectileContactKind::Infantry(index) => {
                 // A direct cannon strike is lethal to an exposed body for AP and HE alike.
                 // HE already ran the existing blast above; shared casualty handling is idempotent.
-                self.infantry_contact(index,contact.pos,projectile.velocity,projectile.shell.mass_kg,0.0,false,projectile.shell.name);
+                self.infantry_contact(index,contact.pos,projectile.velocity,projectile.shell.mass_kg*projectile.mass_fraction,0.0,false,projectile.shell.name);
                 self.schedule_sound_from(crate::audio::Sfx::ImpactGround,contact.pos);
             }
             ProjectileContactKind::Structure(index) => {
