@@ -68,9 +68,9 @@ SQUARE_R = 16.0
 
 VARIANTS = {
     'playtest': dict(dest='spring-bridge-v2', houses=14, lot_gap=(0.0, 3.0), outer_gap=(4.0, 10.0), dressing=1.0,
-                     kerbs=True, trees=26000, street_tree_m=13.0, craters=16, alleys=False),
+                     kerbs=True, trees=26000, street_tree_m=13.0, craters=16, alleys=False, low_clouds=18),
     'render': dict(dest='spring-bridge-lite-v2', houses=10, lot_gap=(3.0, 8.0), outer_gap=(10.0, 20.0), dressing=0.35,
-                   kerbs=False, trees=7000, street_tree_m=24.0, craters=12, alleys=False),
+                   kerbs=False, trees=7000, street_tree_m=24.0, craters=12, alleys=False, low_clouds=8),
 }
 CONDITIONS = [('intact', .15), ('shelled', .30), ('burned', .25), ('partly_collapsed', .30)]
 
@@ -738,6 +738,11 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     # A bright, warm afternoon in May, the sun in the south-west, thin high cloud, blue haze.
     edits['environment_lighting'] = dict(enabled=True, fog_density=0.00045, overcast=0.06, storm=0.0,
         schema='kessel.environment-authoring', utc='1943-05-12T14:10:00Z', version=2)
+    # Low cloud and mist banks inside the map (src/low_clouds.rs): liquid-water volumes lit and
+    # shadowed through the raymarch transport, drifting with the wind (the owner, 2 Nov 2026).
+    edits['low_clouds'] = dict(seed=11, count=variant['low_clouds'],
+        area=[-CROP_HALF+100, -CROP_HALF+100, CROP_HALF-100, CROP_HALF-100], base_m=[0, 60], size_m=[50, 260],
+        depth_m=[15, 70], lwc_g_m3=[0.08, 0.3], droplet_radius_um=8, drift=1.0)
     edits['base_placements'] = len(manifest['placements'])
     edits['base_markers'] = len(manifest['markers'])
     edits['ops'] = []
