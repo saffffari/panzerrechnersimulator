@@ -13159,19 +13159,30 @@ impl WindowState {
 
     /// Acquire the swapchain frame + view, handling lost/outdated surfaces.
     fn acquire(&self) -> Option<(wgpu::SurfaceTexture, wgpu::TextureView)> {
+        // Consecutive failed acquires: the first is logged, then one line a second (at 60 Hz),
+        // never one per frame (a stuck swapchain once wrote 39 million lines, 1.6 GB, before the
+        // device failed under a full GPU).
+        static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        use std::sync::atomic::Ordering::Relaxed;
         match self.surface.get_current_texture() {
             Ok(f) => {
+                let failed = FAILED.swap(0, Relaxed);
+                if failed > 1 {
+                    eprintln!("[panzerrechnersystem] surface recovered after {failed} failed frames");
+                }
                 let view = f
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 Some((f, view))
             }
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.config);
-                None
-            }
             Err(e) => {
-                eprintln!("[panzerrechnersystem] surface error: {e:?}");
+                let n = FAILED.fetch_add(1, Relaxed) + 1;
+                if n == 1 || n % 60 == 0 {
+                    eprintln!("[panzerrechnersystem] surface error: {e:?} ({n} frames in a row)");
+                }
+                // Lost, outdated or an unspecified failure (often memory pressure): configure the
+                // surface again; a swapchain that cannot come back keeps failing quietly.
+                self.surface.configure(&self.device, &self.config);
                 None
             }
         }
