@@ -9,6 +9,16 @@
 // Per cell, the simulated processes (vehicle_surface::processes): flow, rust carried, dirt carried,
 // thrown mud; exhaust heat, soot, oil, standing water (a byte each).
 @group(0) @binding(8) var<storage, read> vsm_proc: array<vec2<u32>>;
+// Per cell, the lying snow's catch, a byte, four cells to a word (vehicle_surface::snow_catch).
+@group(0) @binding(9) var<storage, read> vsm_snow: array<u32>;
+
+// The snow catch at a point of a marked mesh (1 elsewhere, or with the field off): the G-buffer's
+// vertex lift, relief and lying share all use it, as the depth programs do.
+fn vsm_snow_catch(frame_id: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (frame_id == 0u || fr.vsm[6].y < 0.5 || fr.vsm[6].w > 254.5) { return 1.0; }
+    let f = frame_id - 1u;
+    return vsm_snow_catch_at(fr.vsm[f], fr.vsm[3u + f], fr.vsm[6].x, p, n);
+}
 
 const VSM_CELL: f32 = 0.01;
 const VSM_OFFSET_CELLS: f32 = 0.9;
@@ -40,29 +50,7 @@ struct VsmSample {
 };
 
 fn vsm_cell(frame: u32, c: vec3<i32>) -> i32 {
-    let o = fr.vsm[frame];
-    let d = fr.vsm[3u + frame];
-    let origin = vec3<i32>(round(o.xyz / VSM_CELL));
-    let r = c - origin;
-    if (any(r < vec3<i32>(0))) { return -1; }
-    let b = r / 4;
-    let dims = vec3<i32>(d.xyz);
-    if (any(b >= dims)) { return -1; }
-    let brick = vsm_index[u32(d.w) + u32((b.z * dims.y + b.y) * dims.x + b.x)];
-    if (brick == 0xffffffffu) { return -1; }
-    let m = u32(fr.vsm[6].x) + brick * 4u;
-    let lo = vsm_index[m];
-    let hi = vsm_index[m + 1u];
-    let base = vsm_index[m + 2u];
-    let l = r - b * 4;
-    let bit = u32(l.x + l.y * 4 + l.z * 16);
-    if (bit < 32u) {
-        if (((lo >> bit) & 1u) == 0u) { return -1; }
-        return i32(base + countOneBits(lo & ((1u << bit) - 1u)));
-    }
-    let b2 = bit - 32u;
-    if (((hi >> b2) & 1u) == 0u) { return -1; }
-    return i32(base + countOneBits(lo) + countOneBits(hi & ((1u << b2) - 1u)));
+    return vsm_core_cell(fr.vsm[frame], fr.vsm[3u + frame], fr.vsm[6].x, c);
 }
 
 fn vsm_byte(w: u32, k: u32) -> f32 { return f32((w >> (8u * k)) & 255u) / 255.0; }
@@ -219,6 +207,7 @@ fn vsm_view_colour(view: u32, frame: u32, p: vec3<f32>, n: vec3<f32>) -> vec3<f3
         case 19u: { return vsm_ramp(s.proc_b.y); }
         case 20u: { return vsm_ramp(s.proc_b.z); }
         case 21u: { return vsm_ramp(s.proc_b.w); }
+        case 22u: { return vsm_ramp(vsm_snow_catch(frame + 1u, p, n)); }
         default: { return vec3(1.0, 0.0, 1.0); }
     }
 }
@@ -252,6 +241,9 @@ const VSM_SOOT: vec3<f32> = vec3<f32>(0.018, 0.017, 0.016);
 // The crew's stations in their frames (hull: the driver, the radio operator; turret: the loader,
 // the gunner, the commander's eye), as cabin_medium's seeds and tiger_periscopes::COMMANDER_EYE.
 const VSM_HULL_STATIONS: array<vec3<f32>, 2> = array<vec3<f32>, 2>(vec3(0.5354, 1.6572, 1.5179), vec3(-0.66, 1.58, 1.48));
+// The roof hatches' centres and rim reach (vehicle_surface::HULL_HATCHES, TURRET_HATCHES).
+const VSM_HULL_HATCHES: array<vec4<f32>, 2> = array<vec4<f32>, 2>(vec4(1.099, 1.959, 1.889, 0.5), vec4(-1.099, 1.959, 1.889, 0.5));
+const VSM_TURRET_HATCHES: array<vec4<f32>, 2> = array<vec4<f32>, 2>(vec4(-0.704, 2.376, -0.066, 0.42), vec4(0.564, 2.62, -0.423, 0.45));
 const VSM_TURRET_STATIONS: array<vec3<f32>, 3> = array<vec3<f32>, 3>(vec3(-0.85, 2.0334, 0.15), vec3(0.4966, 1.994, 0.5398), vec3(0.564, 2.392244, -0.423));
 
 struct VsmFinish {
@@ -317,23 +309,23 @@ fn vsm_contact(frame: u32, p: vec3<f32>, n: vec3<f32>, up: vec3<f32>, inside: bo
             c = max(c, 0.8 * exp(-d * d));
         }
     } else {
-        // Outside: the hatches' rims and the deck round them, where the crew climb in and out
-        // (the roof hatches stand over the stations).
+        // Outside: the roof hatches' rims and the deck round them, where the crew climb in and out
+        // (vehicle_surface::HULL_HATCHES, TURRET_HATCHES), and the climb along the deck.
         let deck = smoothstep(0.55, 0.9, dot(n, up));
         if (frame == 0u) {
             for (var k = 0u; k < 2u; k += 1u) {
-                let d = length((p - VSM_HULL_STATIONS[k]).xz) / 0.55;
-                c = max(c, exp(-d * d) * smoothstep(1.6, 1.8, p.y));
+                let h = VSM_HULL_HATCHES[k];
+                let d = length((p - h.xyz).xz) / h.w;
+                c = max(c, exp(-d * d) * smoothstep(h.y - 0.2, h.y - 0.05, p.y));
             }
-            // The climb onto the front plate and along the deck's centre, beside the turret.
             let lx = (abs(p.x) - 1.15) / 0.35;
             let lane = exp(-lx * lx) * smoothstep(1.55, 1.75, p.y) * deck;
             c = max(c, 0.45 * lane);
         } else if (frame == 1u) {
-            for (var k = 0u; k < 3u; k += 1u) {
-                if (k == 1u) { continue; }
-                let d = length((p - VSM_TURRET_STATIONS[k]).xz) / 0.5;
-                c = max(c, exp(-d * d) * smoothstep(2.45, 2.65, p.y));
+            for (var k = 0u; k < 2u; k += 1u) {
+                let h = VSM_TURRET_HATCHES[k];
+                let d = length((p - h.xyz).xz) / h.w;
+                c = max(c, exp(-d * d) * smoothstep(h.y - 0.2, h.y - 0.05, p.y));
             }
         }
     }

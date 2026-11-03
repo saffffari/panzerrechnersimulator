@@ -63,12 +63,12 @@ fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(c0 * inv_det, c1 * inv_det, c2 * inv_det);
 }
 
-fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, local: vec3<f32>, gear: vec3<f32>) -> VsOut {
+fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, local: vec3<f32>, gear: vec3<f32>, snow_catch: f32) -> VsOut {
     let linear = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
     let n = normalize(inverse_transpose_3x3(linear) * normal);
     // Lying snow's relief and the running gear's crust (rm_snow_lift.wgsl): the face is raised
     // along its normal by the snow's thickness; the depth pre-pass lifts it the same.
-    let world = (model * vec4(pos, 1.0)).xyz + n * rm_snow_lift(local, n, clamp(pc.extra.x, 0.0, 1.0), gear);
+    let world = (model * vec4(pos, 1.0)).xyz + n * rm_snow_lift(local, n, clamp(pc.extra.x, 0.0, 1.0), gear, snow_catch);
     let t = normalize(linear * tangent.xyz);
     var out: VsOut;
     out.relative = world - fr.cam_pos.xyz;
@@ -84,7 +84,9 @@ fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>,
 fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
       @location(3) tangent: vec4<f32>) -> VsOut {
     let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
-    return project(pc.model, pos, normal, uv, tangent, pos * metric, snow_gear_unpack(pc.scars.w));
+    let frame_id = (u32(pc.extra.z + 0.5) >> 1u) & 3u;
+    return project(pc.model, pos, normal, uv, tangent, pos * metric, snow_gear_unpack(pc.scars.w),
+        vsm_snow_catch(frame_id, pos + pc.vehicle.xyz, normalize(normal)));
 }
 
 @vertex
@@ -106,7 +108,7 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
         n.y -= dot(derivative, n) / max(1.0 + derivative.y, 0.1);
         t += derivative * t.y;
     }
-    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz, vec3(0.0));
+    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz, vec3(0.0), 1.0);
 }
 
 // Surface wear on the player's vehicle (surface_wear.rs): scratches where boots, cases and tools
@@ -474,6 +476,13 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     // running gear's packed crust is a matte, slightly grey snow whatever the face's slope.
     let gear = snow_gear_unpack(pc.scars.w);
     let snow_load = clamp(pc.extra.x, 0.0, 1.0);
+    // The vehicle surface model's snow catch at this point (1 off the player's marked meshes).
+    var snow_catch = 1.0;
+    if (vsm_frame > 0u) {
+        let metric_c = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+        let linear_c = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
+        snow_catch = vsm_snow_catch(vsm_frame, in.local / metric_c + pc.vehicle.xyz, normalize(transpose(linear_c) * normalize(in.normal)));
+    }
     var crust = 0.0;
     if (kind < 2.5 && pc.params.w < 2.5 && (snow_load > 0.001 || gear.x > 0.001)) {
         let n0 = normalize(in.normal);
@@ -485,9 +494,9 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         let tl = (transpose(linear) * tw) / max(metric * metric, vec3(1e-6)) * metric;
         let bl = (transpose(linear) * bw) / max(metric * metric, vec3(1e-6)) * metric;
         let e = 0.03;
-        let l0 = rm_snow_lift(in.local, n0, snow_load, gear);
-        let lt = rm_snow_lift(in.local + tl * e, n0, snow_load, gear);
-        let lb = rm_snow_lift(in.local + bl * e, n0, snow_load, gear);
+        let l0 = rm_snow_lift(in.local, n0, snow_load, gear, snow_catch);
+        let lt = rm_snow_lift(in.local + tl * e, n0, snow_load, gear, snow_catch);
+        let lb = rm_snow_lift(in.local + bl * e, n0, snow_load, gear, snow_catch);
         n = normalize(n - tw * ((lt - l0) / e) - bw * ((lb - l0) / e));
         crust = snow_gear_crust(in.local, gear);
     }
@@ -612,7 +621,7 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     }
     // Ordinary surfaces carry the share of the face lying snow can cover in g0.a (0..0.9);
     // kinds 3+ keep their code.
-    let lying = rm_snow_lying(in.local, normalize(in.normal), clamp(pc.extra.x, 0.0, 1.0));
+    let lying = rm_snow_lying(in.local, normalize(in.normal), clamp(pc.extra.x, 0.0, 1.0)) * snow_catch;
     out.g0 = vec4(albedo, select(lying * 0.9, kind, kind > 2.5));
     out.g1 = vec4(n, roughness);
     out.g2 = vec4(0.0, 0.0, 0.0, metallic);

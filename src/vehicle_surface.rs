@@ -28,7 +28,7 @@
 //! The field is cached on disk by the meshes' hash. It is a material input only: nothing reads it
 //! as light or occlusion of light (`docs/PHYSICAL_TRUTH_AUDIT.md`, "the vehicle surface model").
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -52,7 +52,7 @@ const THICKNESS_REACH: f32 = 0.25;
 /// Edge record offsets are stored in units of this many frame units (0.1 mm).
 pub const EDGE_UNIT: f32 = 1.0e-4;
 /// Bump when the bake changes, so a stale cache is not read.
-const CACHE_VERSION: u32 = 6;
+const CACHE_VERSION: u32 = 8;
 
 /// What a part is made of, for the layer stack (`rm_vsm.wgsl` names the same numbers).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +114,9 @@ pub struct Field {
     /// carried << 8 | dirt carried << 16 | thrown mud << 24; y exhaust heat | soot << 8 | oil << 16 |
     /// standing water << 24.
     pub proc: Vec<[u32; 2]>,
+    /// Per cell, how much of the lying snow a surface holds (`snow_catch`), a byte, four cells to
+    /// a word: read by the depth pre-pass and the G-buffer alike so both lift a face the same.
+    pub snow: Vec<u32>,
     pub key: u64,
 }
 
@@ -169,7 +172,7 @@ impl Field {
         Some(decode(self.cells[i], cell))
     }
 
-    pub fn bytes(&self) -> usize { self.index.len() * 4 + self.cells.len() * 16 + self.proc.len() * 8 }
+    pub fn bytes(&self) -> usize { self.index.len() * 4 + self.cells.len() * 16 + self.proc.len() * 8 + self.snow.len() * 4 }
 }
 
 pub fn decode(c: Cell, cell: [i32; 3]) -> Sample {
@@ -781,6 +784,7 @@ pub fn build() -> anyhow::Result<Field> {
     let t0 = std::time::Instant::now();
     field.proc = processes(&field, &points, &bvh, &frames_src, offsets);
     println!("[vsm] processes in {:.1} s", t0.elapsed().as_secs_f32());
+    field.snow = snow_catch(&field, &points);
     if let Some(path) = &cache { write_cache(path, &field); }
     println!("[vsm] baked {} cells ({:.0} MB) in {:.1} s", field.cells.len(), field.bytes() as f64 / 1.0e6, started.elapsed().as_secs_f32());
     Ok(field)
@@ -841,7 +845,8 @@ fn pack(mut records: Vec<(u64, Cell, [f32; 6])>, key: u64) -> (Field, Vec<[f32; 
     let mask_base = index.len() as u32;
     index.extend(masks);
     let proc = vec![[0u32; 2]; cells.len()];
-    (Field { frames, index, mask_base, cells, proc, key }, points)
+    let snow = vec![u32::MAX; cells.len().div_ceil(4)];
+    (Field { frames, index, mask_base, cells, proc, snow, key }, points)
 }
 
 fn write_cache(path: &std::path::Path, f: &Field) {
@@ -859,6 +864,7 @@ fn write_cache(path: &std::path::Path, f: &Field) {
     bytes.extend_from_slice(bytemuck::cast_slice(&f.index));
     bytes.extend_from_slice(bytemuck::cast_slice(&f.cells));
     bytes.extend_from_slice(bytemuck::cast_slice(&f.proc));
+    bytes.extend_from_slice(bytemuck::cast_slice(&f.snow));
     let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
     let tmp = path.with_extension("tmp");
     if std::fs::write(&tmp, bytes).is_ok() { let _ = std::fs::rename(tmp, path); }
@@ -882,13 +888,15 @@ fn read_cache(path: &std::path::Path, key: u64) -> Option<Field> {
     let ib = bytes.get(at..at + ni * 4)?;
     let cb = bytes.get(at + ni * 4..at + ni * 4 + nc * 16)?;
     let pb = bytes.get(at + ni * 4 + nc * 16..at + ni * 4 + nc * 24)?;
+    let sb = bytes.get(at + ni * 4 + nc * 24..at + ni * 4 + nc * 24 + nc.div_ceil(4) * 4)?;
+    let snow: Vec<u32> = sb.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
     let index: Vec<u32> = ib.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
     let cells: Vec<Cell> = cb.chunks_exact(16).map(|c| {
         let w = |i: usize| u32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap());
         [w(0), w(1), w(2), w(3)]
     }).collect();
     let proc: Vec<[u32; 2]> = pb.chunks_exact(8).map(|c| [u32::from_le_bytes(c[0..4].try_into().unwrap()), u32::from_le_bytes(c[4..8].try_into().unwrap())]).collect();
-    Some(Field { frames, index, mask_base, cells, proc, key })
+    Some(Field { frames, index, mask_base, cells, proc, snow, key })
 }
 
 // ---- Phase 3: the processes, simulated once on the vehicle at rest ----
@@ -1192,6 +1200,64 @@ fn processes(field: &Field, points: &[[f32; 6]], bvh: &Bvh, frames_src: &[Vec<Sr
     }).collect()
 }
 
+// ---- Phase 4: where the lying snow can stay ----
+
+/// The roof hatches the crew climb through, in their frames (measured from the source GLBs' hatch
+/// subtrees, 2 November 2026: `Drivers Hatch Pivot`, `MG Operater`, `gunner_hatch`; the cupola
+/// over `COMMANDER_EYE`): centre and the rim's reach. rm_vsm.wgsl holds the same numbers.
+pub const HULL_HATCHES: [(Vec3, f32); 2] = [(Vec3::new(1.099, 1.959, 1.889), 0.5), (Vec3::new(-1.099, 1.959, 1.889), 0.5)];
+pub const TURRET_HATCHES: [(Vec3, f32); 2] = [(Vec3::new(-0.704, 2.376, -0.066), 0.42), (Vec3::new(0.564, 2.62, -0.423), 0.45)];
+
+/// The crew's routes outside, as rm_vsm.wgsl `vsm_contact` draws their wear: the roof hatches'
+/// rims and the deck round them, the climb along the deck beside the turret.
+pub fn crew_routes_outside(frame: usize, p: Vec3, n: Vec3) -> f32 {
+    let smooth = |a: f32, b: f32, x: f32| { let t = ((x - a) / (b - a)).clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t) };
+    let deck = smooth(0.55, 0.9, n.y);
+    let mut c = 0.0f32;
+    let hatches: &[(Vec3, f32)] = match frame { 0 => &HULL_HATCHES, 1 => &TURRET_HATCHES, _ => &[] };
+    for (h, reach) in hatches {
+        let d = Vec2::new(p.x - h.x, p.z - h.z).length() / reach;
+        c = c.max((-d * d).exp() * smooth(h.y - 0.2, h.y - 0.05, p.y));
+    }
+    if frame == 0 {
+        let lx = (p.x.abs() - 1.15) / 0.35;
+        c = c.max(0.45 * (-lx * lx).exp() * smooth(1.55, 1.75, p.y) * deck);
+    }
+    c.clamp(0.0, 1.0)
+}
+
+/// Per cell, the share of the lying snow a surface keeps: falling snow reaches only what the sky
+/// sees; the exhaust's heat and the warm engine deck over the radiators melt it; the crew's routes
+/// tread it off.
+fn snow_catch(field: &Field, points: &[[f32; 6]]) -> Vec<u32> {
+    let mut frame_of = vec![0u8; field.cells.len()];
+    for f in 0..FRAMES {
+        let m = field.frames[f];
+        let n = (m.dims[0] * m.dims[1] * m.dims[2]) as usize;
+        for &b in &field.index[m.brick_base as usize..m.brick_base as usize + n] {
+            if b == u32::MAX { continue; }
+            let w = field.mask_base as usize + b as usize * 4;
+            let count = field.index[w].count_ones() + field.index[w + 1].count_ones();
+            let base = field.index[w + 2] as usize;
+            for i in base..base + count as usize { frame_of[i] = f as u8; }
+        }
+    }
+    let smooth = |a: f32, b: f32, x: f32| { let t = ((x - a) / (b - a)).clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t) };
+    let catch: Vec<u8> = field.cells.iter().enumerate().map(|(i, c)| {
+        let s = decode(*c, [0, 0, 0]);
+        let p = Vec3::new(points[i][0], points[i][1], points[i][2]);
+        let n = Vec3::new(points[i][3], points[i][4], points[i][5]);
+        let f = frame_of[i] as usize;
+        let heat = (field.proc[i][1] & 255) as f32 / 255.0;
+        let mut k = smooth(0.08, 0.5, s.sky) * (1.0 - smooth(0.1, 0.4, heat));
+        // The engine deck: radiator air through the grilles and the compartment's warmth beneath.
+        if f == 0 && p.z < -1.25 && p.y > 1.85 && p.x.abs() < 1.45 { k *= 0.15; }
+        k *= 1.0 - 0.85 * crew_routes_outside(f, p, n);
+        (k.clamp(0.0, 1.0) * 255.0).round() as u8
+    }).collect();
+    catch.chunks(4).map(|b| b.iter().enumerate().fold(0u32, |w, (j, v)| w | (*v as u32) << (8 * j))).collect()
+}
+
 // ---- Access ----
 
 static FIELD: OnceLock<Result<Arc<Field>, String>> = OnceLock::new();
@@ -1210,9 +1276,9 @@ pub fn prefetch() {
 pub fn ready() -> Option<Arc<Field>> { FIELD.get().and_then(|r| r.as_ref().ok().cloned()) }
 
 /// `KESSEL_VSM_VIEW`: a measured channel drawn as false colour on the vehicle (a review view).
-pub const VIEWS: [&str; 22] = ["off", "class", "open_fine", "open_mid", "open_coarse", "sky", "enclosure", "edge", "thickness", "cells",
+pub const VIEWS: [&str; 23] = ["off", "class", "open_fine", "open_mid", "open_coarse", "sky", "enclosure", "edge", "thickness", "cells",
     "albedo", "roughness", "metallic", "rounding",
-    "flow", "rust_carried", "dirt_carried", "mud", "heat", "soot", "oil", "standing_water"];
+    "flow", "rust_carried", "dirt_carried", "mud", "heat", "soot", "oil", "standing_water", "snow_catch"];
 /// The review views drawn from the field (the rest are the finish's).
 pub fn field_view(view: usize) -> bool { (1..10).contains(&view) || view >= 14 }
 /// The finish's layers in physical order (`rm_vsm.wgsl`); `KESSEL_VSM_LAYERS=N` keeps 1..N (0 all,
@@ -1249,6 +1315,12 @@ pub fn report() -> anyhow::Result<()> {
         println!("[vsm] class {:>12}: {n}", CLASS_NAMES.get(i).copied().unwrap_or("?"));
     }
     println!("[vsm] cells with an edge record: {edges}");
+    let mut snow = [0usize; 10];
+    for i in 0..field.cells.len() {
+        let v = (field.snow[i / 4] >> (8 * (i % 4))) & 255;
+        snow[((v as usize) * 10 / 256).min(9)] += 1;
+    }
+    println!("[vsm]  snow catch deciles: {snow:?}");
     for (k, name) in ["open 0.6cm", "open 2cm", "open 6cm", "sky", "enclosure", "thick/10cm"].iter().enumerate() {
         println!("[vsm] {name:>11} deciles: {:?}", hist[k]);
     }
@@ -1367,6 +1439,17 @@ mod tests {
             assert_eq!(field.cells[field.cell_index(f, c).unwrap()][0], rec[0]);
         }
         assert!(field.cell_index(0, [100, 100, 100]).is_none());
+    }
+    #[test]
+    fn the_shader_draws_wear_on_the_hatches_the_snow_is_trodden_from() {
+        let wgsl = include_str!("../shaders/rm_vsm.wgsl");
+        for (name, list) in [("VSM_HULL_HATCHES", &HULL_HATCHES), ("VSM_TURRET_HATCHES", &TURRET_HATCHES)] {
+            let line = wgsl.lines().find(|l| l.starts_with(&format!("const {name}"))).expect(name);
+            for (h, reach) in list.iter() {
+                let text = format!("vec4({:?}, {:?}, {:?}, {:?})", h.x, h.y, h.z, reach);
+                assert!(line.contains(&text), "{name} lacks {text}");
+            }
+        }
     }
     #[test]
     fn the_review_view_is_off_unless_asked() {

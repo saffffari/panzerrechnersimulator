@@ -744,7 +744,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         step(&mut g, &mut r, 60, &idle);
         // (name, inside, frame (0 hull, 1 turret), eye, target in that frame, fov, note)
         let commander = g.player.parts.commander_eye.to_array();
-        let views: [(&str, bool, u8, [f32; 3], [f32; 3], f32, &str); 11] = [
+        let views: [(&str, bool, u8, [f32; 3], [f32; 3], f32, &str); 12] = [
             ("ext_front", false, 0, [-5.6, 2.9, 8.4], [0.0, 1.3, 0.4], 50.0, "front quarter, 9 m"),
             ("ext_rear", false, 0, [5.8, 3.4, -8.0], [0.0, 1.4, -0.6], 50.0, "rear quarter: the engine deck and exhausts"),
             ("ext_close", false, 0, [-2.3, 2.6, 4.6], [-0.7, 1.7, 2.6], 45.0, "close on the front plate, the driver's visor and the track guard"),
@@ -757,6 +757,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             ("ext_deck", false, 0, [1.55, 3.05, 2.55], [0.55, 2.0, 1.45], 50.0, "the hull roof at the driver's hatch, 1.7 m"),
             ("ext_exhaust", false, 0, [1.6, 2.7, -4.8], [0.35, 1.85, -3.25], 50.0, "the rear plate and the exhausts, 2 m"),
             ("ext_side", false, 0, [3.4, 1.7, 1.2], [1.6, 1.0, 0.0], 55.0, "the left side: track, road wheels, track guard, hull side"),
+            ("ext_top", false, 0, [3.2, 6.2, -5.2], [0.0, 2.0, -0.4], 55.0, "from above the rear quarter: the decks, the turret roof, the engine deck"),
         ];
         let views = views.map(|(name, inside, frame, eye, target, fov, note)| (name, inside, frame, Vec3::from(eye), Vec3::from(target), fov, note));
         let views = views.iter().chain([
@@ -800,8 +801,18 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             };
             g.debug_place_tiger(tiger, heading);
             step(&mut g, &mut r, 30, &idle);
+            // `KESSEL_VSM_REVIEW_SNOW=load`: the vehicle's lying snow held at that load, so the
+            // snow catch shows (the arena's own load on the vehicle is light).
+            if let Some(load) = std::env::var("KESSEL_VSM_REVIEW_SNOW").ok().and_then(|v| v.parse::<f32>().ok()) {
+                let world = g.debug_snow_loads().1;
+                g.debug_set_snow_loads(load, world);
+                step(&mut g, &mut r, 1, &idle);
+            }
             let model = if frame == 0 { g.player.hull_model() } else { g.player.turret_model() };
             let (eye, target) = (model.transform_point3(eye_local), model.transform_point3(target_local));
+            if std::env::var("KESSEL_VSM_DEBUG_MESHES").is_ok() {
+                for line in r.debug_meshes_at(target) { println!("[vsm] at {name}'s target: {line}"); }
+            }
             if inside {
                 g.station = Station::Commander;
                 g.commander_outside = false;

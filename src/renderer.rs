@@ -7034,6 +7034,12 @@ impl Renderer {
     }
     /// The vehicle surface model's review view (`vehicle_surface::VIEWS`; 0 off).
     pub fn set_vsm_view(&mut self, view: u32) { self.vsm_view = view; }
+    /// Review aid: the visible meshes whose bounds contain `p` (index, triangles, vsm frame, flags).
+    pub fn debug_meshes_at(&self, p: glam::Vec3) -> Vec<String> {
+        self.meshes.iter().enumerate().filter(|(_, m)| m.visible && p.cmpge(m.world_min - glam::Vec3::splat(0.05)).all() && p.cmple(m.world_max + glam::Vec3::splat(0.05)).all())
+            .map(|(i, m)| format!("mesh {i}: tris {} vsm {} painted {} snow_vehicle {} emissive {:.2} raster_only {} bounds {:.2?}..{:.2?}",
+                m.index_count / 3, m.vsm_frame, m.painted_steel, m.snow_vehicle, m.emissive, m.raster_only, m.world_min, m.world_max)).collect()
+    }
     pub fn set_vsm_layers(&mut self, layers: u32) { self.vsm_layers = layers; }
     /// On the raymarch backend the sky-visibility atlas serves only the periscope relays' views of
     /// the outside: leave the player's own tank out of it, so its turret and hull moving do not

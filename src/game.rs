@@ -12911,9 +12911,16 @@ impl Game {
             // The roof hatches turn about their hinges in their frame's coordinates (driver and
             // radio operator on the hull, loader and escape on the turret); the visor holder is
             // drawn at the hull's model; the cupola's grip sits in the cupola hinge's frame.
-            for (slot, frame) in slots.roof_hatches.iter().zip([1u8, 2, 1, 2]) { renderer.mark_vsm_part(*slot, frame, Vec3::ZERO); }
+            for (slot, frame) in slots.roof_hatches.iter().zip([1u8, 2, 1, 2]) {
+                renderer.mark_vsm_part(*slot, frame, Vec3::ZERO);
+                renderer.mark_snow_vehicle(*slot);
+            }
             renderer.mark_vsm_part(slots.driver_visor_holder, 1, Vec3::ZERO);
             renderer.mark_vsm_part(slots.cupola_grip, 2, CUPOLA_HINGE);
+            // Parts split off the source meshes and drawn at their frame's model: the visor's
+            // guides (hull) and the periscope housings (turret).
+            renderer.mark_vsm_part(slots.driver_visor_guides, 1, Vec3::ZERO);
+            for slot in &slots.tiger_periscopes { renderer.mark_vsm_part(*slot, 2, Vec3::ZERO); }
             crate::vehicle_surface::prefetch();
         }
         for (prototype, kind) in prototypes.iter().zip([

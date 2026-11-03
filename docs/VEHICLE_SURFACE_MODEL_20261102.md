@@ -198,8 +198,9 @@ surface model"); this section only says where the phases stand.
   and cupola grip; the noise layers and screen-space worn edges stand down there.
 - Phase 3, processes: implemented as layers 10-14 (water and its streaks, track throw, exhaust heat
   and soot, the gun's heat and soot, final-drive oil), simulated at bake time.
-- Phase 4, snow and season: the whitewash no longer reaches the player's vehicle; the lying snow is
-  still the earlier relief, not yet placed by the field's sky, heat and contact.
+- Phase 4, snow and season: implemented for the player's vehicle. The whitewash no longer reaches
+  it; the lying snow keeps to what the sky sees, melts off the exhaust and the warm engine deck,
+  and is trodden off the hatches and the deck lane, identically in the depth and G-buffer passes.
 - Phases 5 and 6 (battle damage written into the field, the solved lattice drawn; other vehicles):
   not started.
 
