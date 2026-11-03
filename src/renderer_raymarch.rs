@@ -3704,6 +3704,8 @@ impl Backend {
             let eye = &r.exp_bufs[r.active_view];
             encoder.copy_buffer_to_buffer(eye, 0, &r.crush_buf, 44, 4);
             encoder.copy_buffer_to_buffer(eye, 8, &r.crush_buf, 16, 8);
+            // The field's mesopic coefficient (lane 14) for the pixels' local mesopic weight.
+            encoder.copy_buffer_to_buffer(eye, 56, &r.crush_buf, 192, 4);
             if let Some(optics) = &r.raster_optics {
                 // The relayed views' particles take the same eye (one frame later).
                 optics.copy_eye_mapping(encoder, eye);

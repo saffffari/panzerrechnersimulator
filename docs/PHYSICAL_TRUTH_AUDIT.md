@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -4258,3 +4258,74 @@ unchanged; no grade.
 | Part | What the live code computes | Named approximation and source |
 | --- | --- | --- |
 | Glare treatment of the meter | Outdoors, a meter cell brighter than `GLARE_RATIO` (100) times the previous frame's log-average luminance enters the fovea, Gaussian and field windows at that log-average (photopic; scotopic shifted by the field's S/P) and adds its disability-glare veil L_v = 10 E / theta^2 to each window: the 252 E deg^2 integral over 0.5..30 deg spread over the field or weighted by the Gaussian at the source, and over the fovea its disc mean 20 ln((R^2 - theta^2) / (0.1 R)) / R^2 (10 / theta^2 outside). E is the cell's luminance above the background times its solid angle. The treatment stands down while such cells cover more than `GLARE_MAX_COVERAGE` (25 %) of the field. The first outdoor snap waits one frame for the background (lane 30). Result: commander_approach metered 0.59 -> 0.067 cd/m^2 (now mostly the veil of the fire it fixates), field_west -> 0.023; column_east and grass_close unchanged (mean pixel difference 0.1-0.2 of 255). | Local retinal adaptation reduced to one adaptation state plus the CIE 146:2002 / Stiles-Holladay veil (no age factor, no wavelength dependence). `GLARE_RATIO` = two decades: Naka-Rushton (n = 1) response at 100 x semi-saturation is 99 % of maximum, semi-saturation tracking adaptation (Valeton & van Norren 1983). The background is one frame late; each 4x4-pixel cell is one point source at its centre; the fovea's veil from a source outside it is taken at its centre; `GLARE_MAX_COVERAGE` is a design bound. CPU reference and test: `observer::glare_cell`, `observer::fovea_veil_per_lux`, `a_small_bright_source_adapts_the_field_through_its_veil_not_its_share_of_the_average`. Identical in both presets. |
+
+## Night lights lose their hue: the rods' local share, 2026-11-02 (`shaders/crush.wgsl` `eye_response`, `observer::local_rod_weight`)
+
+The owner, of spring-bridge-v2 at the blue hour (1943-05-12T18:20Z): "why do these lights at night
+all look like this weirdly red white phosphorous color? ... any hue or color or temperature is
+completely obliterated". Measured by following the crush's HDR input (`KESSEL_DUMP_HDR=FILE`,
+debug only: the crush's input after the bloom and the eye's lanes) through the display stages on
+the CPU, commander_approach, warm pixels (red over twice blue) by photopic luminance band; hue is
+the OKLab hue angle of the scale-free colour, C its chroma (1850 K source: h 45, C 0.20):
+
+| Band (cd/m^2), pixels | Transport (HDR) | Eye: cones | Eye: cones + rods | AgX | Quantised (15,15,7) | Shown (jpg) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.03-0.1 (halo, far road), 13,038 | h 51 C 0.18 | h 51 | **h 264 C 0.08** | h 267 | h 268 | h 264 |
+| 0.1-0.3 (road), 17,648 | h 46 C 0.20 | h 46 | **h 271** | h 281 | h 282 | white-lavender |
+| 1-3 (fire-lit ground), 4,884 | h 54 C 0.18 | h 54 | **h 347 C 0.06** (pink) | h 357 | h 351 | h 338 |
+| 3-10, 660 | h 51 C 0.19 | h 51 | **h 25 C 0.11** | h 24 C 0.08 | h 20 | h 358 |
+| 10-100 (flames, windows), 423 | h 46 C 0.20 | h 46 (peak 7.5) | h 42 | **h 46 C 0.05** | h 57 C 0.03 | h 67 C 0.05 |
+| 1000+ (fire cores), 72 | h 45 C 0.20 | h 45 (peak 217-576) | h 45 | **h 19 C 0.03** (pink-white) | h 9 C 0.01 | h 3 C 0.003 |
+
+Transport, the Planck colour of the authored lights (1850 K -> (1, 0.16, 0) linear) and white
+balance (off on this map) keep the hue. Two display stages lose it:
+
+1. **The eye's rod term** (0.003-10 cd/m^2: the halo, the road, the ground round the fires). Every
+   pixel of the night carried the rods' whole display term, capped at the key, in the night's
+   blue hue, (0.10, 0.15, 0.26) once the rods are in their Weber range, under its cones; at 1-3
+   cd/m^2 the cones gave (0.22, 0.05, 0.00): blue over orange, pink.
+2. **The tone curve** (above ~10 cd/m^2). The metered eye (0.066 cd/m^2) puts a 3,457 cd/m^2
+   fire core at 576 in eye units, 11.6 stops over the key and 5.5 past AgX's log ceiling (12.5);
+   AgX turns the clipped orange pink-white (h 45 -> 19, C 0.20 -> 0.03), its outset leaves the
+   [0, 1] range (peak 1.17) and the quantiser's clamp finishes it (C 0.01). The quantiser itself
+   keeps hue wherever its input is in range (3-10 cd/m^2: C 0.077 -> 0.077).
+
+What the code computes now: the displayed rod term is scaled by the rods' local share,
+(1 - m_local) / (1 - m_field), m_local the CIE 191:2010 mesopic coefficient of the pixel's own
+photopic and scotopic luminance, never below the field's (crush lane `eye.x`, copied from the
+eye's lane 14 every metered frame on both backends). The mesopic weight is set by the luminance a
+place is adapted to; the retina adapts locally, and a place lit far above the field is adapted
+toward its own light (the premise of `GLARE_RATIO`). A pixel no brighter than the field keeps the
+whole term (the night field, the moonlit snow, unchanged); a photopic pixel (from about 5 cd/m^2)
+takes none.
+
+Measured after, the shown frame, same view and pixels: 1-3 cd/m^2 h 338 C 0.10 -> h 32 C 0.12
+(red-orange), 3-10 h 358 C 0.08 -> h 51 C 0.14 (orange), 10-100 h 67 C 0.05 -> h 70 C 0.06; 0.03-1 cd/m^2 unchanged in hue (rod-seen, below), the fire cores
+unchanged (AgX, below). Daylight (09:00Z, commander_approach and field_west) and the 16:40Z frame:
+pixel-identical. The in-game cabin station views (`raymarch-showcase` dial set: commander,
+commander_lamps, loader_annunciators, driver_ignition, tpz_close): pixel-identical.
+
+Named approximations and open items:
+
+- Each pixel's own luminance stands for its local adaptation: complete local adaptation, an upper
+  bound on the rods' retreat (the retina's local adaptation is partial and pooled over space).
+- Outdoors only: in a closed cabin view (`eye_range_strength`) the rod term is unchanged, so the
+  owner's approved cabin lamps keep their look; the cabin keeps its own local-adaptation
+  presentation (`eye_range`). Physically the same eye; open. The `lamps` showcase close-ups, which
+  place an observer camera in the cabin with `interior_light` 0 (exterior display state), do change:
+  the annunciators' glow on the wall is greener.
+- 0.03-1 cd/m^2 (the road, the bloom halo round the town) stays lavender. There the rods carry
+  the eye's response (CIE 191 m 0.38-0.65 locally; the cones are at their increment threshold,
+  0.22 cd/m^2 at this adaptation); the lavender is the owner's two night departures on that rod
+  signal, `ROD_DISPLAY_GAIN` 6 (the road shown as bright as snow) and `ROD_DISPLAY_HUE` (deep blue
+  over orange cones). With achromatic rods the same pixels are a desaturated warm grey
+  (evidence still `lookbook_optneutralrods_commander_approach`, `KESSEL_ROD_HUE=1,1,1`). Owner's
+  decision; not changed.
+- The fire cores stay pink-white: AgX in the locked look. A hue-keeping curve shows them orange
+  (evidence still `lookbook_optaces_commander_approach`, `KESSEL_TONEMAP=aces`), but changes the
+  look and every bright colour by day. Owner's decision; not changed.
+
+Gates: `observer::tests::fire_lit_ground_keeps_its_cones_colour_and_the_dark_field_keeps_its_rods`
+(CPU statement and the shader's use of it), `renderer::tests` (the crush uniform's 208 bytes, the
+eye lane at 192, the three lane copies on both backends), `observer::spatial_meter_tests`
+(shader validation). Identical in both presets.
