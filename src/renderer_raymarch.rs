@@ -273,6 +273,11 @@ struct FrameUniform {
     /// frame the brick grid's origin and cell edge, its dims and first brick; then the mask base,
     /// the cell count, the review view and the layer switches. Zeros until the field is installed.
     vsm: [[f32; 4]; 8],
+    /// The Moon's disc (`celestial_sky::MoonDisc`; rm_common.wgsl `rm_moon_disc`): direction +
+    /// display radius (0: below the horizon); the sunlit part's irradiance at the eye through the
+    /// air + the slot carrying its light (1 key, 2 secondary, 0 neither); the earthlit night side's
+    /// irradiance at the eye were the whole disc earthlit; the direction to the Sun.
+    moon: [[f32; 4]; 4],
 }
 
 /// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
@@ -2152,6 +2157,23 @@ impl Backend {
         let secondary_radiance = if secondary_on {
             atmosphere.secondary_irradiance * physical_environment::solar_transmittance_at(&atmosphere, origin, secondary_dir, quality.source_steps.max(4))
         } else { glam::DVec3::ZERO };
+        // The Moon's disc, drawn by its phase whichever slot carries its light, and by day too
+        // (its light is dropped while the Sun keys; its disc is not).
+        let moon = {
+            let disc = r.celestial().moon_disc(AtmosphereParameters::default().solar_irradiance);
+            let dir = disc.direction.normalize_or_zero();
+            if dir.y > -0.02 && dir.length_squared() > 0.5 && disc.irradiance.max_element() > 0.0 {
+                let through = physical_environment::solar_transmittance_at(&atmosphere, origin, dir, quality.source_steps.max(4));
+                let lit = disc.irradiance * through;
+                let shine = disc.earthshine * through;
+                let sun = disc.sun_direction.normalize_or_zero();
+                let slot = if disc.is_key { 1.0 } else if disc.is_secondary { 2.0 } else { 0.0 };
+                [[dir.x as f32, dir.y as f32, dir.z as f32, disc.angular_radius_rad as f32],
+                 [lit.x as f32, lit.y as f32, lit.z as f32, slot],
+                 [shine.x as f32, shine.y as f32, shine.z as f32, 0.0],
+                 [sun.x as f32, sun.y as f32, sun.z as f32, 0.0]]
+            } else { [[0.0; 4]; 4] }
+        };
         // Sky cache refresh: one phase of the texel pattern per frame; every texel after a jump
         // of the key body or the weather (a time-of-day cut, a capture's weather override).
         let jumped = match self.prev_sky_key {
@@ -2404,6 +2426,7 @@ impl Backend {
                 lanes[6][3] = r.vsm_layers as f32;
                 lanes
             }),
+            moon,
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();

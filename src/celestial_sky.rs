@@ -41,11 +41,18 @@ pub fn moon_cycle_days() -> f64 {
         .filter(|v| v.is_finite() && (1.0..=1000.0).contains(v)).unwrap_or(MOON_CYCLE_DAYS))
 }
 /// The Sun's and the Moon's discs drawn this much larger than their real angular size (the
-/// owner, 2 November 2026: "moon and sun discs can also be a bit bigger"). The irradiance is
-/// untouched, so the light on the ground and the disc's total light do not change and the
-/// disc's radiance falls by the square of the scale. `KESSEL_DISC_SCALE` overrides; 1 is the
-/// real sky. A presentation choice named in docs/PHYSICAL_TRUTH_AUDIT.md.
-pub const DISC_DISPLAY_SCALE: f64 = 1.6;
+/// owner, 2 November 2026: "moon and sun discs can also be a bit bigger"; 1.6 then, 2.1 from
+/// 3 November, "a bit bigger again", so the Moon is some twelve pixels across at 1024 x 576 and
+/// its phase reads). The irradiance is untouched, so the light on the ground and the disc's total
+/// light do not change and the disc's radiance falls by the square of the scale.
+/// `KESSEL_DISC_SCALE` overrides; 1 is the real sky. A presentation choice named in
+/// docs/PHYSICAL_TRUTH_AUDIT.md.
+pub const DISC_DISPLAY_SCALE: f64 = 2.1;
+/// The Earth's geometric albedo in the visual (Allen's Astrophysical Quantities, 0.367): the
+/// earthshine on the Moon's night side is the Sun's light the Earth returns, so the ashen disc
+/// beside a crescent is the full Moon's radiance times p (R_earth / d)^2 times the Earth's phase.
+pub const EARTH_GEOMETRIC_ALBEDO: f64 = 0.367;
+pub const EARTH_RADIUS_KM: f64 = 6_371.0;
 pub fn disc_display_scale() -> f64 {
     static SCALE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
     *SCALE.get_or_init(|| std::env::var("KESSEL_DISC_SCALE").ok().and_then(|v| v.trim().parse::<f64>().ok())
@@ -66,6 +73,32 @@ pub struct DirectionalSource {
     pub direction: DVec3,
     pub irradiance: DVec3,
     pub angular_radius_rad: f64,
+}
+
+/// The Moon's disc as the sky shows it, whichever slot carries its light (or none, by day): its
+/// direction and display radius, the irradiance of its sunlit part and of its earthlit night side
+/// at the top of the atmosphere, and the direction of the Sun that draws the terminator.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MoonDisc {
+    pub direction: DVec3,
+    pub angular_radius_rad: f64,
+    /// The whole Moon's irradiance as the ephemeris gives it (the phase law included); the shader
+    /// spreads it over the sunlit part of the disc.
+    pub irradiance: DVec3,
+    /// What the disc would deliver were all of it earthlit; the shader shows it on the night side.
+    pub earthshine: DVec3,
+    pub sun_direction: DVec3,
+    /// The Moon carries the key beam, or is the secondary body; neither while the Sun keys (its
+    /// light dropped, `MOON_DROPPED_BOUND`, its disc still drawn).
+    pub is_key: bool,
+    pub is_secondary: bool,
+}
+
+/// The Lambert sphere's phase law, the share of its full-phase light a sphere returns at phase
+/// angle `alpha` (Russell 1916): (sin a + (pi - a) cos a) / pi.
+pub fn lambert_phase(alpha: f64) -> f64 {
+    let a = alpha.clamp(0.0, std::f64::consts::PI);
+    ((a.sin() + (std::f64::consts::PI - a) * a.cos()) / std::f64::consts::PI).max(0.0)
 }
 
 /// The two bodies of one instant, assigned to the key and secondary slots.
@@ -114,6 +147,27 @@ impl CelestialLighting {
             (sun, None)
         };
         Self { state, key, secondary }
+    }
+
+    /// The Moon's disc for the sky's drawing, above the horizon or not (the caller culls).
+    /// `solar_toa_at_1au` as `at`.
+    pub fn moon_disc(&self, solar_toa_at_1au: DVec3) -> MoonDisc {
+        let state = &self.state;
+        let mut full = *state;
+        full.moon_phase.elongation_rad = std::f64::consts::PI;
+        let full_moon = full.moon_toa_spectral_irradiance(solar_toa_at_1au);
+        // The Earth seen from the Moon is at the supplement of the Moon's phase angle.
+        let earth_phase = lambert_phase(std::f64::consts::PI - state.moon_phase.phase_angle_rad);
+        let earth_solid = (EARTH_RADIUS_KM / state.moon_distance_km).powi(2);
+        MoonDisc {
+            direction: state.moon.engine_direction(),
+            angular_radius_rad: state.moon_angular_radius_rad() * disc_display_scale(),
+            irradiance: state.moon_toa_spectral_irradiance(solar_toa_at_1au),
+            earthshine: full_moon * (EARTH_GEOMETRIC_ALBEDO * earth_solid * earth_phase),
+            sun_direction: state.sun.engine_direction(),
+            is_key: self.key.body == Body::Moon,
+            is_secondary: self.secondary.map(|s| s.body) == Some(Body::Moon),
+        }
     }
 
     /// Install both bodies into an atmosphere; weather and medium stay as the caller set them.
@@ -415,7 +469,7 @@ mod tests {
         let (_, day) = sky_at("1942-12-21T12:00:00Z", false);
         let real = day.state.sun_angular_radius_rad();
         assert!((day.key.angular_radius_rad / real - disc_display_scale()).abs() < 1e-9);
-        assert!((1.0..=2.0).contains(&DISC_DISPLAY_SCALE), "a bit bigger, not a different sky");
+        assert!((1.0..=2.5).contains(&DISC_DISPLAY_SCALE), "a bit bigger, not a different sky");
         let (atmosphere, _) = sky_at("1942-12-21T12:00:00Z", false);
         let au_ratio = crate::ephemeris::AU_KM / day.state.sun_distance_km;
         assert!((day.key.irradiance - atmosphere.solar_irradiance).length() < 1e-12
@@ -555,10 +609,92 @@ mod tests {
     }
 
     #[test]
+    fn the_moons_disc_shows_its_phase_and_the_earthshine() {
+        // Through one ten-day month the sunlit share of the disc follows the ephemeris' phase,
+        // waxing then waning; the earthshine is about 1e-4 of the full Moon beside a crescent and
+        // fades as the Moon fills.
+        let start = UtcInstant::parse_iso("1942-12-21T00:00:00Z").unwrap();
+        let mut clock = SkyClock::new(start, STALINGRAD);
+        clock.moon_cycle_days = 10.0;
+        let toa = AtmosphereParameters::default().solar_irradiance;
+        let mut seen_waxing = false;
+        let mut seen_waning = false;
+        for quarter_day in 0..40 {
+            clock.elapsed_s = quarter_day as f64 * 21_600.0;
+            let lighting = CelestialLighting::for_clock(&clock, toa);
+            let disc = lighting.moon_disc(toa);
+            let phase = lighting.state.moon_phase;
+            // The shader's lit share, from the two directions alone.
+            let share = 0.5 * (1.0 - disc.direction.dot(disc.sun_direction));
+            assert!((share - phase.illuminated_fraction).abs() < 0.01,
+                "day {:.2}: drawn {share:.3} against the ephemeris' {:.3}", quarter_day as f64 / 4.0, phase.illuminated_fraction);
+            assert!((disc.angular_radius_rad / lighting.state.moon_angular_radius_rad() - disc_display_scale()).abs() < 1e-9);
+            let full = {
+                let mut f = lighting.state;
+                f.moon_phase.elongation_rad = std::f64::consts::PI;
+                f.moon_toa_spectral_irradiance(toa).y
+            };
+            let earthshine = disc.earthshine.y / full;
+            if phase.illuminated_fraction < 0.1 {
+                assert!((0.5e-4..2.0e-4).contains(&earthshine), "crescent earthshine {earthshine:.2e} of the full Moon");
+            }
+            if phase.illuminated_fraction > 0.9 { assert!(earthshine < 0.2e-4, "{earthshine:.2e}"); }
+            if phase.waxing && (0.2..0.8).contains(&phase.illuminated_fraction) { seen_waxing = true; }
+            if !phase.waxing && (0.2..0.8).contains(&phase.illuminated_fraction) { seen_waning = true; }
+        }
+        assert!(seen_waxing && seen_waning, "a waxing and a waning half in ten days");
+        // The disc is drawn whichever slot carries the Moon's light, and named which.
+        let (_, night) = sky_at("1942-12-24T23:00:00Z", false);
+        assert!(night.moon_disc(toa).is_key);
+        let (_, day) = sky_at("1942-12-21T12:00:00Z", false);
+        let by_day = day.moon_disc(toa);
+        assert!(!by_day.is_key && !by_day.is_secondary);
+    }
+
+    #[test]
+    fn twilight_falls_as_measured_and_the_earths_shadow_is_lit() {
+        // The higher orders under a spherical atmosphere (physical_environment::spherical_cosine):
+        // the clear-sky illuminance through civil and nautical twilight against USNO 171's table,
+        // falling steadily with no step at sunset. The new Moon of 6 January 1943: no moonlight.
+        let base = UtcInstant::parse_iso("1943-01-06T12:30:00Z").unwrap();
+        let mut last = f64::INFINITY;
+        let mut minute = 0;
+        for (target, usno) in [(0.0, 984.0), (-1.0, 0.0), (-3.0, 66.4), (-6.0, 2.99), (-9.0, 0.116), (-12.0, 0.0044)] {
+            while CelestialState::at(base.plus_seconds(minute as f64 * 60.0), STALINGRAD).sun.altitude_deg > target { minute += 1; }
+            let instant = base.plus_seconds(minute as f64 * 60.0);
+            let mut atmosphere = AtmosphereParameters::default();
+            let lighting = CelestialLighting::at(instant, STALINGRAD, atmosphere.solar_irradiance);
+            lighting.apply_to(&mut atmosphere);
+            atmosphere.cloud.coverage = 0.0;
+            let lux = horizontal_illuminance_lux(&atmosphere);
+            eprintln!("sun {:+.2}: {lux:.4} lx (USNO {usno})", lighting.state.sun.altitude_deg);
+            if usno > 0.0 { assert!(lux > usno / 4.0 && lux < usno * 4.0, "sun {target}: {lux} lx against USNO {usno}"); }
+            assert!(lux < last, "{lux} after {last}");
+            last = lux;
+            if target == -3.0 {
+                // The Earth's shadow: the antisolar sky a degree up, under the pink band above it,
+                // lit by the sky that still sees the Sun: blue-grey, not black.
+                // The Moon may hold the key: the Sun's own bearing.
+                let sun = lighting.state.sun.engine_direction();
+                let anti = DVec3::new(-sun.x, 0.0, -sun.z).normalize();
+                let look = |d: DVec3, e: f64| (d * e.to_radians().cos() + DVec3::Y * e.to_radians().sin()).normalize();
+                let origin = DVec3::new(0.0, 2.0, 0.0);
+                let radiance = |d| integrate_environment(&atmosphere, origin, d, f64::INFINITY, IntegrationQuality::REFERENCE).inscattered_radiance;
+                let shadow = radiance(look(anti, 1.0));
+                let zenith = radiance(DVec3::Y);
+                let shadow_lum = photopic_illuminance_lux(shadow);
+                eprintln!("earth's shadow {shadow:?} ({shadow_lum:.3} cd/m2), zenith {:.3} cd/m2", photopic_illuminance_lux(zenith));
+                assert!(shadow_lum > 0.05 * photopic_illuminance_lux(zenith), "the Earth's shadow is black");
+                assert!(shadow.z > shadow.x, "the Earth's shadow is blue-grey: {shadow:?}");
+            }
+        }
+    }
+
+    #[test]
     fn twilight_single_scattering_is_named_not_hidden() {
-        // Civil dusk (-6 deg) under a clear sky measures about 3 lx (USNO 171). This atmosphere
-        // scatters sunlight once; multiple scattering, which dominates below about -6 deg, is the
-        // ledger's open item. The model must still be dark, finite and far above the night.
+        // Civil dusk (-6 deg) under a clear sky measures about 3 lx (USNO 171). The higher orders
+        // are the two-stream field under Chapman's effective cosine (the ledger's "The sky
+        // through the day"); the model must be dark, finite and far above the night.
         let base = UtcInstant::parse_iso("1942-12-21T13:00:00Z").unwrap();
         let minutes = (0..240).find(|m| CelestialState::at(base.plus_seconds(*m as f64 * 60.0),
             STALINGRAD).sun.altitude_deg < -6.0).unwrap();
