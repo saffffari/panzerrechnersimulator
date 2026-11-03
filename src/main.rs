@@ -201,6 +201,7 @@ mod static_wreck_support;
 mod static_wreck_ownership;
 mod snow_cover;
 mod surface_wear;
+mod vehicle_surface;
 mod exhaust_plume;
 mod explosion_volumes;
 mod powertrain;
@@ -17469,6 +17470,10 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "asset-trace" {
         return run_asset_trace();
+    }
+    if args.len() >= 2 && args[1] == "vsm-bake" {
+        // The vehicle surface model's measured field: bake (or read the cache) and report.
+        return vehicle_surface::report();
     }
     if args.len() >= 2 && args[1] == "lan-ifaces" {
         net_ifaces::print_report(lan::DEFAULT_PORT, lan::DISCOVERY_PORT);

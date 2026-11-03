@@ -732,6 +732,116 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         }
         stills.shots.push(serde_json::json!({"name": "turret_interior_strike", "strike": strike, "effects": g.debug_fea_effects_receipt()}));
     }
+    // Part 13 (`materials`): the vehicle surface model's measured field (vehicle_surface.rs,
+    // docs/VEHICLE_SURFACE_MODEL_20261102.md), each channel as false colour on the player's Tiger
+    // from three outside views and three crew stations, beside the current look, at noon. A review
+    // view (KESSEL_VSM_VIEW's lanes, set between stills): it draws placement, not the finish.
+    if part("materials") {
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
+        g.debug_place_tiger(tiger, 0.0);
+        let field = crate::vehicle_surface::load()?;
+        println!("[fx-review] materials: field of {} cells", field.cells.len());
+        step(&mut g, &mut r, 60, &idle);
+        // (name, inside, frame (0 hull, 1 turret), eye, target in that frame, fov, note)
+        let commander = g.player.parts.commander_eye.to_array();
+        let views: [(&str, bool, u8, [f32; 3], [f32; 3], f32, &str); 12] = [
+            ("ext_front", false, 0, [-5.6, 2.9, 8.4], [0.0, 1.3, 0.4], 50.0, "front quarter, 9 m"),
+            ("ext_rear", false, 0, [5.8, 3.4, -8.0], [0.0, 1.4, -0.6], 50.0, "rear quarter: the engine deck and exhausts"),
+            ("ext_close", false, 0, [-2.3, 2.6, 4.6], [-0.7, 1.7, 2.6], 45.0, "close on the front plate, the driver's visor and the track guard"),
+            ("int_commander", true, 1, commander, [0.0, 1.75, 1.7], 100.0, "the commander's seat, forward over the breech"),
+            ("int_loader", true, 1, [-0.45, 2.15, -0.25], [-1.15, 1.55, 0.7], 90.0, "the loader's side: turret wall, ring and floor"),
+            ("int_driver", true, 0, [0.52, 1.72, 1.15], [0.45, 1.25, 2.5], 90.0, "the driver's station: front plate, visor, controls"),
+            // Close views, where the centimetre-scale layers resolve (a pixel is 1-2 mm).
+            ("ext_corner", false, 0, [1.35, 2.35, 3.55], [0.75, 1.85, 2.55], 40.0, "the front plate's top edge and the driver's visor, 1.2 m"),
+            ("ext_lowfront", false, 0, [2.35, 1.55, 4.35], [1.25, 1.15, 2.85], 45.0, "the nose, the left track guard and the sprocket, 2 m"),
+            ("ext_deck", false, 0, [1.55, 3.05, 2.55], [0.55, 2.0, 1.45], 50.0, "the hull roof at the driver's hatch, 1.7 m"),
+            ("ext_exhaust", false, 0, [1.6, 2.7, -4.8], [0.35, 1.85, -3.25], 50.0, "the rear plate and the exhausts, 2 m"),
+            ("ext_side", false, 0, [3.4, 1.7, 1.2], [1.6, 1.0, 0.0], 55.0, "the left side: track, road wheels, track guard, hull side"),
+            ("ext_top", false, 0, [3.2, 6.2, -5.2], [0.0, 2.0, -0.4], 55.0, "from above the rear quarter: the decks, the turret roof, the engine deck"),
+        ];
+        let views = views.map(|(name, inside, frame, eye, target, fov, note)| (name, inside, frame, Vec3::from(eye), Vec3::from(target), fov, note));
+        let views = views.iter().chain([
+            ("int_wall", true, 1u8, Vec3::new(-0.45, 2.1, 0.2), Vec3::new(-1.2, 1.9, 0.35), 60.0f32, "the turret wall at the loader's station, 0.8 m"),
+            ("int_breech", true, 1u8, Vec3::new(-0.5, 2.15, -0.1), Vec3::new(0.0, 1.85, 0.6), 60.0, "the breech and the loader's working space"),
+        ].iter()).copied().collect::<Vec<_>>();
+        let only = std::env::var("KESSEL_VSM_REVIEW_VIEWS").ok().or_else(|| (std::env::var("KESSEL_VSM_REVIEW").as_deref() != Ok("field"))
+            .then(|| "ext_close,ext_corner,ext_lowfront,ext_deck,ext_exhaust,ext_side,int_loader,int_wall,int_breech".to_owned()));
+        let channels = std::env::var("KESSEL_VSM_REVIEW_CHANNELS").ok();
+        // `KESSEL_VSM_REVIEW=field` the measured channels (phase 1); `layers` (default) the finish
+        // built up layer by layer, lit and as unlit albedo, after the former noise finish.
+        let layers_mode = std::env::var("KESSEL_VSM_REVIEW").as_deref() != Ok("field");
+        // (index, view, layers, label)
+        let mut plan: Vec<(usize, u32, u32, String)> = Vec::new();
+        if layers_mode {
+            plan.push((0, 0, crate::vehicle_surface::LAYERS_OFF, "before".into()));
+            for (i, layer) in crate::vehicle_surface::LAYERS.iter().enumerate() {
+                plan.push((1 + i, 0, i as u32 + 1, format!("lit_{layer}")));
+            }
+            let n = crate::vehicle_surface::LAYERS.len();
+            for (i, layer) in crate::vehicle_surface::LAYERS.iter().enumerate() {
+                plan.push((1 + n + i, 10, i as u32 + 1, format!("albedo_{layer}")));
+            }
+        } else {
+            for (view, channel) in crate::vehicle_surface::VIEWS.iter().enumerate() {
+                if view == 0 || crate::vehicle_surface::field_view(view) {
+                    plan.push((view, view as u32, 0, (*channel).to_owned()));
+                }
+            }
+        }
+        for (name, inside, frame, eye_local, target_local, fov, note) in views {
+            if only.as_deref().is_some_and(|o| !o.split(',').any(|n| n.trim() == name)) { continue; }
+            // Outside, the vehicle is turned so the sun comes over the camera's shoulder (35 deg
+            // off its line), so the stills show the finish in light, not the shadow side; inside it
+            // keeps heading 0. A staging choice of the review, disclosed in its receipt.
+            let heading = if inside { 0.0 } else {
+                let sun = Vec2::new(r.sun_dir.x, r.sun_dir.z);
+                let look = Vec2::new(target_local.x - eye_local.x, target_local.z - eye_local.z);
+                let angle = |v: Vec2| v.x.atan2(v.y);
+                angle(-sun) + 35f32.to_radians() - angle(look)
+            };
+            g.debug_place_tiger(tiger, heading);
+            step(&mut g, &mut r, 30, &idle);
+            // `KESSEL_VSM_REVIEW_SNOW=load`: the vehicle's lying snow held at that load, so the
+            // snow catch shows (the arena's own load on the vehicle is light).
+            if let Some(load) = std::env::var("KESSEL_VSM_REVIEW_SNOW").ok().and_then(|v| v.parse::<f32>().ok()) {
+                let world = g.debug_snow_loads().1;
+                g.debug_set_snow_loads(load, world);
+                step(&mut g, &mut r, 1, &idle);
+            }
+            let model = if frame == 0 { g.player.hull_model() } else { g.player.turret_model() };
+            let (eye, target) = (model.transform_point3(eye_local), model.transform_point3(target_local));
+            if std::env::var("KESSEL_VSM_DEBUG_MESHES").is_ok() {
+                for line in r.debug_meshes_at(target) { println!("[vsm] at {name}'s target: {line}"); }
+            }
+            if inside {
+                g.station = Station::Commander;
+                g.commander_outside = false;
+                // Daylight through the open roof hatches, so the lit stills show the materials.
+                g.debug_set_roof_hatches(true, true, true);
+            } else {
+                g.debug_set_roof_hatches(false, false, true);
+            }
+            step(&mut g, &mut r, 2, &idle);
+            for (index, view, layers, label) in &plan {
+                if channels.as_deref().is_some_and(|c| !c.split(',').any(|n| n.trim() == label)) { continue; }
+                r.set_vsm_view(*view);
+                r.set_vsm_layers(*layers);
+                if inside {
+                    r.camera.pos = eye; r.camera.set_forward(target - eye); r.camera.fov_y = fov.to_radians();
+                    r.concussion = 0.0;
+                } else {
+                    observe(&mut r, eye, target, fov);
+                }
+                let what = if label == "before" || label == "off" { "the former finish".to_owned() } else { format!("vehicle surface model, {label}") };
+                stills.still(&mut r, &format!("materials_{name}_{index:02}{label}"), &format!("{note}: {what}"))?;
+            }
+            r.set_vsm_view(0);
+            r.set_vsm_layers(0);
+        }
+        stills.shots.push(serde_json::json!({"name": "materials_receipt", "cells": field.cells.len(), "bytes": field.bytes(),
+            "staging": "exterior views turn the vehicle so the sun is 35 deg off the camera's line behind it; interior views open the roof hatches",
+            "views": crate::vehicle_surface::VIEWS, "gain": std::env::var("KESSEL_VSM_VIEW_GAIN").ok()}));
+    }
     // Part 12 (`look_matrix`): the display look's colour count, for the owner to flip through.
     // From the map's own editor home view (`manifest_edits.json` `editor_home`; run it with
     // KESSEL_CANYON_MANIFEST at the spring bridge map, whose home is the middle of the deck) and

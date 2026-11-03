@@ -108,7 +108,12 @@ impl Runtime {
     pub(super) fn armor_surfaces<'a>(&self,scene:&'a [CpuMesh])->Vec<(usize,&'a CpuMesh)>{vec![(FIRST_FRAME,&scene[self.slots[0]]),(0,&scene[self.deck_slot])]}
     pub(super) fn append_models(&self,models:&mut [Mat4;surface_fire::FRAMES]){
         for i in 0..2{models[FIRST_FRAME+i]=models[0]*Mat4::from_translation(path(i,self.state.fraction[i]));}}
-    pub(super) fn configure(&self,r:&mut Renderer){for &s in &self.slots{r.mark_temporal_dynamic(s);r.set_visible(s,true);}r.set_visible(self.tank_slot,true);r.set_visible(self.deck_slot,true);}
+    pub(super) fn configure(&self,r:&mut Renderer){for &s in &self.slots{r.mark_temporal_dynamic(s);r.set_visible(s,true);}r.set_visible(self.tank_slot,true);r.set_visible(self.deck_slot,true);
+        // The deck plate and the tank's neck are the hull's own source surfaces, drawn at its model:
+        // they take the vehicle surface model's finish (vehicle_surface.rs) like the hull.
+        r.mark_vsm_part(self.deck_slot,1,Vec3::ZERO);r.mark_vsm_part(self.tank_slot,1,Vec3::ZERO);
+        // The deck carries the player's vehicle's snow, as the hull around it does.
+        r.mark_snow_vehicle(self.deck_slot);}
     pub(super) fn present(&self,r:&mut Renderer,hull:Mat4){
         for i in 0..2{r.set_model(self.slots[i],hull*Mat4::from_translation(path(i,self.state.fraction[i])));}r.set_model(self.tank_slot,hull);r.set_model(self.deck_slot,hull);}
     fn center(&self,index:usize)->Vec3{(self.caps[index].min+self.caps[index].max)*0.5+path(index,self.state.fraction[index])}

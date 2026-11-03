@@ -432,7 +432,7 @@ pub(crate) fn t34_paint_finish(_node: &str, material: Option<&str>) -> Option<cr
 }
 
 #[path = "tiger_exterior_finishes.rs"]
-mod exterior_finishes;
+pub(crate) mod exterior_finishes;
 
 /// Exact authored running-belt steel nodes, shared with the reviewed finishes. The ten
 /// Turret_* spare shoes are stored armor, not moving belts, and are excluded by source identity.

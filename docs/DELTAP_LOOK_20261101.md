@@ -145,3 +145,9 @@ deltap-pico8 / deltap-raw at the same frame), with the receipt in this document'
   coarser than the faint chroma of snow, road and stone, so it dithers into orange and green
   dots. Low-chroma scenes need either many chroma levels or a continuous chroma; the clean
   frames are the standard look's 32 levels and the 32,768 real form.
+- Inside the buttoned-up view the realism contrast eases back to 1 (by the eye's draw-in strength,
+  as the tinted look's palette pull does): measured on the interior fixture at noon, the eye's
+  exposure is the same under every look, and the cabin's median display code is 8 under the
+  standard look, 1 at contrast 1.35, 5 at 1.0. The cabin is dark because it is: daylight only
+  through the vision blocks and the hole, dim practicals, an eye adapted to a frame holding the
+  bright blocks; the draw-in lifts it and the realism slope must not undo that.

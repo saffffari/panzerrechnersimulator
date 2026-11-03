@@ -1691,6 +1691,9 @@ struct MeshGpu {
     instrument_cover: bool,
     /// The source model's default metal on this mesh is painted steel (`mark_painted_steel`).
     painted_steel: bool,
+    /// The player's vehicle surface model frame this mesh samples (`mark_vsm_frame`): 0 none, 1 the
+    /// hull, 2 the turret, 3 the gun (`vehicle_surface.rs`, rm_vsm.wgsl).
+    vsm_frame: u8,
     /// Left out of the sky-visibility atlas (`exclude_from_relay_visibility`).
     sky_visibility_excluded: bool,
     /// A small-arms muzzle flash (`mark_small_arms_flash`).
@@ -3180,6 +3183,10 @@ pub struct Renderer {
     atmo_enabled: bool, // spatial cabin medium exists independently of the current camera
     atmo_haze: f32,     // 0..1 interior hazy-atmosphere density (0 = pass skips it)
     atmo_soot: f32,     // 0..1 a fire's soot load in the cabin air (dark, absorbing)
+    /// The vehicle surface model's review view (`KESSEL_VSM_VIEW`, `vehicle_surface::VIEWS`; 0 off)
+    /// and its layer switches (`KESSEL_VSM_LAYERS`, a bit mask; 0 all on).
+    pub(crate) vsm_view: u32,
+    pub(crate) vsm_layers: u32,
     atmo_dust: f32,     // 0..1 dust-mote sparkle inside the cabin haze
     atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame with a slow cabin-local drift
     smoke_buf: wgpu::Buffer,
@@ -3824,6 +3831,7 @@ fn make_mesh_gpu(
         vehicle_finish: [0.0; 4],
         instrument_cover: false,
         painted_steel: false,
+        vsm_frame: 0,
         sky_visibility_excluded: false,
         small_arms_flash: false,
         legacy_small_arms_fx: false,
@@ -6380,6 +6388,8 @@ impl Renderer {
             atmo_enabled: false,
             atmo_haze: 0.0,
             atmo_soot: 0.0,
+            vsm_view: crate::vehicle_surface::view_from_env(),
+            vsm_layers: std::env::var("KESSEL_VSM_LAYERS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0),
             atmo_dust: 0.0,
             atmo_origin: glam::Vec3::ZERO,
             smoke_buf,
@@ -7034,6 +7044,32 @@ impl Renderer {
             g.painted_steel = true;
         }
     }
+    /// Mesh `idx` samples the player's vehicle surface model in `frame` (1 hull, 2 turret, 3 gun;
+    /// `vehicle_surface.rs`). The raymarch backend installs the field once its bake is ready.
+    pub fn mark_vsm_frame(&mut self, idx: usize, frame: u8) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.vsm_frame = frame.min(3);
+        }
+    }
+    /// A separate part of the player's vehicle (a hatch lid, the visor holder) samples the surface
+    /// model in `frame` at its own vertices plus `rest_offset` (the frame's units): the part's
+    /// paint moves with it when it opens. The offset rides the push's vehicle lane, unused on the
+    /// player's meshes.
+    pub fn mark_vsm_part(&mut self, idx: usize, frame: u8, rest_offset: glam::Vec3) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.vsm_frame = frame.min(3);
+            g.vehicle_finish = [rest_offset.x, rest_offset.y, rest_offset.z, 0.0];
+        }
+    }
+    /// The vehicle surface model's review view (`vehicle_surface::VIEWS`; 0 off).
+    pub fn set_vsm_view(&mut self, view: u32) { self.vsm_view = view; }
+    /// Review aid: the visible meshes whose bounds contain `p` (index, triangles, vsm frame, flags).
+    pub fn debug_meshes_at(&self, p: glam::Vec3) -> Vec<String> {
+        self.meshes.iter().enumerate().filter(|(_, m)| m.visible && p.cmpge(m.world_min - glam::Vec3::splat(0.05)).all() && p.cmple(m.world_max + glam::Vec3::splat(0.05)).all())
+            .map(|(i, m)| format!("mesh {i}: tris {} vsm {} painted {} snow_vehicle {} emissive {:.2} raster_only {} bounds {:.2?}..{:.2?}",
+                m.index_count / 3, m.vsm_frame, m.painted_steel, m.snow_vehicle, m.emissive, m.raster_only, m.world_min, m.world_max)).collect()
+    }
+    pub fn set_vsm_layers(&mut self, layers: u32) { self.vsm_layers = layers; }
     /// On the raymarch backend the sky-visibility atlas serves only the periscope relays' views of
     /// the outside: leave the player's own tank out of it, so its turret and hull moving do not
     /// force the atlas's whole static layer (66 tiles of the scene, 88 ms) to be redrawn every

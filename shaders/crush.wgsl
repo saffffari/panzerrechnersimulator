@@ -184,7 +184,11 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
         // the trim), the film-gamma kind of contrast, before the sigmoid keeps its roll-off at both
         // ends. A reproduction choice: it changes no light.
         let pivot = (log2(0.18 * 1.3) - min_ev) / (max_ev - min_ev);
-        v = clamp((v - vec3(pivot)) * cr.real.x + vec3(pivot), vec3(0.0), vec3(1.0));
+        // Inside the buttoned-up view (cr.eye_range_strength) the slope eases back to AgX's own:
+        // there the eye's draw-in lifts a dark cabin beside bright ports, and a steeper slope
+        // pushed it back to black (median code 8 under the standard look, 1 at 1.35; 2 November 2026).
+        let contrast = mix(cr.real.x, 1.0, clamp(cr.eye_range_strength, 0.0, 1.0));
+        v = clamp((v - vec3(pivot)) * contrast + vec3(pivot), vec3(0.0), vec3(1.0));
     }
     let v2 = v * v;
     let v4 = v2 * v2;

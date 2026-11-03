@@ -223,6 +223,15 @@ fn scar_planck(kelvin: f32) -> vec3<f32> {
     return ratio * ratio * ratio * ratio * ratio * reference / (exp(vec3(c2) / (lambda * kelvin)) - vec3(1.0)) * 4.725;
 }
 
+/// The temperature a hot wound is drawn at: 1.7 times its own from 750 K up, easing in from
+/// 600 K (`HOT_PAGE_DRAWN_OVER_BAND` in game.rs, the chips' display choice), so the bore's
+/// 1,350-1,800 K reads white-yellow and the falloff runs through orange, red and deep red to raw
+/// steel (the owner, 2 November 2026). A display choice on the Planck law; the temperatures
+/// themselves are the lattice's or the rim estimate's.
+fn scar_drawn_kelvin(kelvin: f32) -> f32 {
+    return kelvin * mix(1.0, 1.7, smoothstep(600.0, 750.0, kelvin));
+}
+
 /// Evenly spaced 0..1 samples, 5 bits each from bit 0, at position `x` in 0..1 (linear).
 fn scar_shape_sample(bits: u32, count: u32, x: f32) -> f32 {
     let f = clamp(x, 0.0, 1.0) * f32(count - 1u);
@@ -312,19 +321,22 @@ fn scar_steel(s: Scar, u: f32, v: f32, w: f32, facing_up: f32, bore: bool) -> Sc
     // brightest on the bore wall and the crater's rim.
     // Where the plate work went: the floor of a crater, the thin ring at a hole's edge (the
     // rim-heat estimate's ring is ~0.1 calibre wide) and the bore wall.
-    var glow_shape = 1.0 - smoothstep(0.2, 0.75, rho);
-    if (bore) { glow_shape = 1.0; }
-    if (scar_open(s) && !bore) {
-        let ring = 0.2 * s.d.x / max(s.a.w, 1e-4);
-        glow_shape = 1.0 - smoothstep(scar_aperture_rho(s), scar_aperture_rho(s) + ring, rho);
+    // A wound the lattice did not solve: the rim's temperature at the bore, falling outward as
+    // heat conducted from the worked steel (an exponential over a third of the hole's radius for
+    // a hole, from the crater's centre over 0.3 R for a dent; named), so the colour runs from the
+    // bore's through the Planck law to raw steel instead of one flat colour (the owner, 2 November
+    // 2026: "just kind of yellow").
+    var local = scar_local_kelvin(s, rho, w, bore);
+    if (local < 0.0) {
+        var share = exp(-rho / 0.3);
+        if (bore) { share = 1.0; }
+        else if (scar_open(s)) {
+            let ap = scar_aperture_rho(s);
+            share = exp(-max(rho - ap, 0.0) / max(0.33 * ap, 0.05));
+        }
+        local = SCAR_AMBIENT_K + max(s.f.w - SCAR_AMBIENT_K, 0.0) * share;
     }
-    mat.emission = s.f.rgb * glow_shape * (1.0 - mat.cover);
-    // A wound the lattice solved glows at its own local temperature instead of the rim's
-    // temperature over an authored shape.
-    let local = scar_local_kelvin(s, rho, w, bore);
-    if (local > 0.0) {
-        mat.emission = scar_planck(local) * (1.0 - mat.cover);
-    }
+    mat.emission = scar_planck(scar_drawn_kelvin(local)) * (1.0 - mat.cover);
     return mat;
 }
 

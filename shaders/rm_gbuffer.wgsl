@@ -63,12 +63,12 @@ fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(c0 * inv_det, c1 * inv_det, c2 * inv_det);
 }
 
-fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, local: vec3<f32>, gear: vec3<f32>) -> VsOut {
+fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, local: vec3<f32>, gear: vec3<f32>, snow_catch: f32) -> VsOut {
     let linear = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
     let n = normalize(inverse_transpose_3x3(linear) * normal);
     // Lying snow's relief and the running gear's crust (rm_snow_lift.wgsl): the face is raised
     // along its normal by the snow's thickness; the depth pre-pass lifts it the same.
-    let world = (model * vec4(pos, 1.0)).xyz + n * rm_snow_lift(local, n, clamp(pc.extra.x, 0.0, 1.0), gear);
+    let world = (model * vec4(pos, 1.0)).xyz + n * rm_snow_lift(local, n, clamp(pc.extra.x, 0.0, 1.0), gear, snow_catch);
     let t = normalize(linear * tangent.xyz);
     var out: VsOut;
     out.relative = world - fr.cam_pos.xyz;
@@ -84,7 +84,9 @@ fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>,
 fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
       @location(3) tangent: vec4<f32>) -> VsOut {
     let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
-    return project(pc.model, pos, normal, uv, tangent, pos * metric, snow_gear_unpack(pc.scars.w));
+    let frame_id = (u32(pc.extra.z + 0.5) >> 1u) & 3u;
+    return project(pc.model, pos, normal, uv, tangent, pos * metric, snow_gear_unpack(pc.scars.w),
+        vsm_snow_catch(frame_id, pos + pc.vehicle.xyz, normalize(normal)));
 }
 
 @vertex
@@ -106,7 +108,7 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
         n.y -= dot(derivative, n) / max(1.0 + derivative.y, 0.1);
         t += derivative * t.y;
     }
-    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz, vec3(0.0));
+    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz, vec3(0.0), 1.0);
 }
 
 // Surface wear on the player's vehicle (surface_wear.rs): scratches where boots, cases and tools
@@ -150,7 +152,7 @@ struct Worn { albedo: vec3<f32>, roughness: f32, metal: f32 };
 const RM_SOURCE_METAL: vec3<f32> = vec3<f32>(0.09, 0.09, 0.09);
 const RM_INTERIOR_PAINT: vec3<f32> = vec3<f32>(0.6105, 0.4910, 0.2462);
 fn paint_source_metal(albedo: vec3<f32>, metallic: f32, world: vec3<f32>, face: vec3<f32>) -> vec4<f32> {
-    if (pc.extra.z < 0.5 || metallic < 0.5 || any(abs(albedo - RM_SOURCE_METAL) > vec3(0.012))) { return vec4(albedo, -1.0); }
+    if ((u32(pc.extra.z + 0.5) & 1u) == 0u || metallic < 0.5 || any(abs(albedo - RM_SOURCE_METAL) > vec3(0.012))) { return vec4(albedo, -1.0); }
     let inside = gb_in_cabin;
     return vec4(select(RM_TIGER_PAINT, RM_INTERIOR_PAINT, inside), select(0.75, 0.70, inside));
 }
@@ -414,7 +416,22 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     var n = normalize(in.normal);
     let view = normalize(-in.relative);
     if (dot(n, view) < 0.0) { n = -n; }
+    let face_n = n;
     gb_in_cabin = gb_cabin_air(in.relative + fr.cam_pos.xyz + n * 0.03);
+    // The vehicle surface model's review view (KESSEL_VSM_VIEW): a measured channel as unlit false
+    // colour on the player's hull, turret and gun, for checking placement before materials.
+    let vsm_frame = (u32(pc.extra.z + 0.5) >> 1u) & 3u;
+    let vsm_view = u32(fr.vsm[6].z + 0.5);
+    if (vsm_frame > 0u && ((vsm_view > 0u && vsm_view < 10u) || vsm_view >= 14u) && kind < 0.5) {
+        let linear = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
+        let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+        let colour = vsm_view_colour(vsm_view, vsm_frame - 1u, in.local / metric + pc.vehicle.xyz,
+            normalize(transpose(linear) * face_n));
+        out.g0 = vec4(0.0, 0.0, 0.0, 9.0);
+        out.g1 = vec4(n, 1.0);
+        out.g2 = vec4(colour * fr.vsm[7].x, 0.0);
+        return out;
+    }
     let x = pc.params.x;
     var housing = false;
     if (x > 0.0) {
@@ -459,6 +476,13 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     // running gear's packed crust is a matte, slightly grey snow whatever the face's slope.
     let gear = snow_gear_unpack(pc.scars.w);
     let snow_load = clamp(pc.extra.x, 0.0, 1.0);
+    // The vehicle surface model's snow catch at this point (1 off the player's marked meshes).
+    var snow_catch = 1.0;
+    if (vsm_frame > 0u) {
+        let metric_c = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+        let linear_c = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
+        snow_catch = vsm_snow_catch(vsm_frame, in.local / metric_c + pc.vehicle.xyz, normalize(transpose(linear_c) * normalize(in.normal)));
+    }
     var crust = 0.0;
     if (kind < 2.5 && pc.params.w < 2.5 && (snow_load > 0.001 || gear.x > 0.001)) {
         let n0 = normalize(in.normal);
@@ -470,9 +494,9 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         let tl = (transpose(linear) * tw) / max(metric * metric, vec3(1e-6)) * metric;
         let bl = (transpose(linear) * bw) / max(metric * metric, vec3(1e-6)) * metric;
         let e = 0.03;
-        let l0 = rm_snow_lift(in.local, n0, snow_load, gear);
-        let lt = rm_snow_lift(in.local + tl * e, n0, snow_load, gear);
-        let lb = rm_snow_lift(in.local + bl * e, n0, snow_load, gear);
+        let l0 = rm_snow_lift(in.local, n0, snow_load, gear, snow_catch);
+        let lt = rm_snow_lift(in.local + tl * e, n0, snow_load, gear, snow_catch);
+        let lb = rm_snow_lift(in.local + bl * e, n0, snow_load, gear, snow_catch);
         n = normalize(n - tw * ((lt - l0) / e) - bw * ((lb - l0) / e));
         crust = snow_gear_crust(in.local, gear);
     }
@@ -517,14 +541,49 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
             n = normalize(n + vec3(gx, 0.0, gz) * 1.2);
         }
     }
-    if (kind < 0.5 && gb_in_cabin && all(abs(albedo - RM_TIGER_PAINT) < vec3(0.006))) {
+    // The player's Tiger with its vehicle surface model installed (rm_vsm.wgsl): every layer from
+    // its cause in the field, in place of the noise layers below (paint_source_metal,
+    // apply_whitewash, apply_wear, cabin_grime) and the shade pass's screen-space worn edges.
+    var vsm_used = false;
+    if (vsm_frame > 0u && fr.vsm[6].y > 0.5 && fr.vsm[6].w < 254.5 && kind < 0.5 && !housing) {
+        let linear = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
+        let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+        let to_local = transpose(linear);
+        // A separate part (a hatch lid, the visor holder) carries its rest offset into the frame in
+        // the vehicle lane (`Renderer::mark_vsm_part`); the hull, turret and gun carry zero.
+        let p_local = in.local / metric + pc.vehicle.xyz;
+        let s = vsm_sample(vsm_frame - 1u, p_local, normalize(to_local * face_n));
+        if (s.found > 0.0) {
+            let fin = vsm_finish(vsm_frame - 1u, s, p_local, normalize(to_local * face_n), normalize(to_local * vec3(0.0, 1.0, 0.0)),
+                gb_in_cabin, albedo, roughness, metallic, u32(fr.vsm[6].w + 0.5));
+            if (vsm_view >= 10u && vsm_view < 14u) {
+                out.g0 = vec4(0.0, 0.0, 0.0, 9.0);
+                out.g1 = vec4(n, 1.0);
+                out.g2 = vec4(vsm_finish_view(vsm_view, fin) * fr.vsm[7].x, 0.0);
+                return out;
+            }
+            albedo = fin.albedo;
+            roughness = fin.roughness;
+            metallic = fin.metallic;
+            if (fin.bend > 0.0) {
+                let t = normalize(linear * fin.bend_dir);
+                n = normalize(n * cos(fin.bend) + t * sin(fin.bend));
+            }
+            if (fin.bend2 > 0.0) {
+                let t = normalize(linear * fin.bend2_dir);
+                n = normalize(n * cos(fin.bend2) + t * sin(fin.bend2));
+            }
+            vsm_used = true;
+        }
+    }
+    if (!vsm_used && kind < 0.5 && gb_in_cabin && all(abs(albedo - RM_TIGER_PAINT) < vec3(0.006))) {
         // The exterior's Panzergrau carried onto the cabin's side of an exterior-painted part (the
         // cupola's ring, the hatches): that side was ivory like the rest of the compartment.
         albedo = RM_INTERIOR_PAINT;
         roughness = 0.70;
         metallic = 0.0;
     }
-    if (kind < 0.5 && pc.extra.y > 0.5) {
+    if (!vsm_used && kind < 0.5 && pc.extra.y > 0.5) {
         let painted = paint_source_metal(albedo, metallic, in.relative + fr.cam_pos.xyz, normalize(in.normal));
         if (painted.w >= 0.0) {
             albedo = painted.rgb;
@@ -546,7 +605,7 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
             metallic = dirty.metal;
         }
     }
-    if (kind < 0.5 && pc.extra.y < 0.5 && pc.vehicle.x > 0.5) {
+    if (kind < 0.5 && pc.extra.y < 0.5 && vsm_frame == 0u && pc.vehicle.x > 0.5) {
         let finished = vehicle_finish(albedo, roughness, metallic, in.relative + fr.cam_pos.xyz, n, in.local);
         albedo = finished.albedo;
         roughness = finished.roughness;
@@ -562,7 +621,7 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     }
     // Ordinary surfaces carry the share of the face lying snow can cover in g0.a (0..0.9);
     // kinds 3+ keep their code.
-    let lying = rm_snow_lying(in.local, normalize(in.normal), clamp(pc.extra.x, 0.0, 1.0));
+    let lying = rm_snow_lying(in.local, normalize(in.normal), clamp(pc.extra.x, 0.0, 1.0)) * snow_catch;
     out.g0 = vec4(albedo, select(lying * 0.9, kind, kind > 2.5));
     out.g1 = vec4(n, roughness);
     out.g2 = vec4(0.0, 0.0, 0.0, metallic);

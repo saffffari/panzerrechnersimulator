@@ -453,6 +453,16 @@ impl Effects {
             "tracer_policy":"MG: every fifth round per emitter; rifle/P08 ball unlit; shared family drag estimate",
             "burst_pool_replacements":self.replaced_bursts,"tracer_exposure_s":self.bullet_exposure_s,"tracer_exposure_max_s":MAX_BULLET_EXPOSURE_S,"visibility":"submitted geometry only; no pixel visibility assertion"})
     }
+    /// Sparks thrown into the compartment from the inside of a perforation (the owner, 2 November
+    /// 2026: sparks flying out of the impact site inside): incandescent plate dust leaving the
+    /// back face along `inward`, from `energy_j` of the plate's work (the exterior strike's share).
+    pub(super) fn interior_spall_sparks(&mut self,point:Vec3,inward:Vec3,energy_j:f32,weapon:Weapon) {
+        let n=inward.normalize_or_zero();
+        if !point.is_finite() || n.length_squared()<0.5 || !(energy_j>=1.0) {return;}
+        self.burst(point+n*ARMOR_RICOCHET_OFFSET_M,n,0.02,0.45,BurstKind::BulletArmor{normal:n,energy_j,cosine:1.0},weapon);
+    }
+    /// The simulation clock the segments are timed on.
+    pub(super) fn now(&self)->f32 {self.now_s}
     pub(super) fn bullet_armor_sparks(&mut self,id:u64,point:Vec3,incoming:Vec3,normal:Vec3,mass:f32,weapon:Weapon) {
         if !incoming.is_finite() || !normal.is_finite() || !mass.is_finite() || mass<=0.0 {return;}
         let normal=normal.normalize_or_zero();let incident=incoming.normalize_or_zero();
