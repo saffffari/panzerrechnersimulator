@@ -337,6 +337,9 @@ impl Grass {
             return serde_json::json!({"spring_meadow": true, "tread_pages": m.mirror.slots.len(),
                 "tread_pages_dropped": m.mirror.dropped, "butterflies": m.butterflies.alive.len(),
                 "fireflies_lit": m.fireflies.len(),
+                "nearest_butterfly_m": m.butterflies.alive.iter().map(|b| b.pos.distance(m.eye)).fold(f32::INFINITY, f32::min),
+                "nearest_butterfly": m.butterflies.alive.iter().min_by(|a, b| a.pos.distance(m.eye).total_cmp(&b.pos.distance(m.eye))).map(|b| b.pos.to_array()),
+                "butterflies_flying": m.butterflies.alive.iter().filter(|b| !b.perched()).count(),
                 "fireflies_lit_within_30_m": m.fireflies.iter().filter(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye) < 30.0).count(),
                 "nearest_lit_firefly_m": m.fireflies.iter().map(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye)).fold(f32::INFINITY, f32::min), "sun_altitude_deg": m.sun_altitude_deg,
                 "near_density_per_m2": crate::meadow::NEAR_DENSITY, "draw_radius_m": crate::meadow::FAR_RADIUS_M,
@@ -668,6 +671,12 @@ impl Grass {
             let mut wings: Vec<Vec<Mat4>> = vec![Vec::new(); m.wing_batches.len()];
             for b in &m.butterflies.alive {
                 if let Some(list) = wings.get_mut(b.species) { list.extend(b.wing_models()); }
+            }
+            // Debug only: a wing pair held 1.5 m before the eye (the draw check).
+            if std::env::var("KESSEL_BUTTERFLY_PROBE").as_deref() == Ok("1") && !wings.is_empty() {
+                let p = r.camera.pos + r.camera.forward() * 1.5;
+                wings[0].push(Mat4::from_scale_rotation_translation(Vec3::splat(3.0), Quat::IDENTITY, p));
+                wings[0].push(Mat4::from_scale_rotation_translation(Vec3::new(-3.0, 3.0, 3.0), Quat::IDENTITY, p));
             }
             for (batch, mats) in m.wing_batches.iter().zip(&wings) {
                 let n = mats.len().min(2 * 96);

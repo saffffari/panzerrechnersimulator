@@ -380,7 +380,7 @@ impl Butterflies {
             self.cells.insert(cell);
             let centre = (Vec2::new(cell.0 as f32, cell.1 as f32) + Vec2::splat(0.5)) * BUTTERFLY_CELL_M;
             let flowers: f32 = (0..meadow::SPECIES.len()).map(|s| meadow::SPECIES[s].peak * meadow::bed(s, centre.x, centre.y)).sum::<f32>() * grass(centre);
-            let count = (unit(hash2(cell.0, cell.1, SALT_BUTTERFLY ^ 0xc0)) * (0.6 + flowers / 2.5)).floor().min(4.0) as u32;
+            let count = (unit(hash2(cell.0, cell.1, SALT_BUTTERFLY ^ 0xc0)) * (1.2 + flowers / 1.5)).floor().min(6.0) as u32;
             for i in 0..count {
                 if let Some(b) = Butterfly::spawn(cell, i, grass, ground) { self.alive.push(b); }
             }
@@ -402,7 +402,8 @@ pub fn wing_mesh(species: usize) -> crate::gltf_load::CpuMesh {
         for p in fan {
             vertices.push(Vertex { pos: p.to_array(), normal: [0.0, 1.0, 0.0], uv: [(p.x / 0.027).clamp(0.0, 1.0), 0.5], tangent: [1.0, 0.0, 0.0, 1.0] });
         }
-        for k in 1..fan.len() as u32 - 1 { indices.extend([base, base + k, base + k + 1]); }
+        // Both faces: a wing is seen from above and below, and the mirrored wing flips winding.
+        for k in 1..fan.len() as u32 - 1 { indices.extend([base, base + k, base + k + 1, base, base + k + 1, base + k]); }
     }
     let sp = &BUTTERFLIES[species];
     let texels = [sp.base, sp.base, sp.base, sp.tip].iter().flat_map(|c| [c[0], c[1], c[2], 255]).collect();
