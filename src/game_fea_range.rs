@@ -1425,8 +1425,12 @@ impl Range {
                 if !keep_dir {
                     // A new aim starts the shot square to the surface (along its inward normal),
                     // not along the camera's ray (owner, 2026-11-03).
+                    // Always from outside in, also when the surface is picked from inside the tank
+                    // (owner): the normal is turned to point toward the hull's centre.
                     let n = contact.normal.normalize_or_zero();
-                    let incoming = if n.length_squared() < 0.5 { dir } else if n.dot(dir) > 0.0 { n } else { -n };
+                    let centre = self.g.player.hull_model().transform_point3(SECTION_PIVOT);
+                    let inward = if n.dot(centre - hit) > 0.0 { n } else { -n };
+                    let incoming = if n.length_squared() < 0.5 { dir } else { inward };
                     self.shot.set_dir_hull(hull_inv.transform_vector3(incoming));
                 }
                 self.status = format!("AIM: picked at {:.2?} (hull frame)", hull_inv.transform_point3(hit).to_array());
