@@ -12904,6 +12904,12 @@ impl Game {
         // The hull and turret were painted steel inside and out; the gun's machined parts stay bare.
         renderer.mark_painted_steel(slots.tiger[0]);
         renderer.mark_painted_steel(slots.tiger[1]);
+        // The vehicle surface model (vehicle_surface.rs): the three frames sample its field, baked
+        // on a worker (a minute and a half the first time, the cache after) and installed when ready.
+        if renderer.meadow_supported() {
+            for (frame, slot) in slots.tiger.iter().enumerate() { renderer.mark_vsm_frame(*slot, frame as u8 + 1); }
+            crate::vehicle_surface::prefetch();
+        }
         for (prototype, kind) in prototypes.iter().zip([
             EnemyKind::T34, EnemyKind::Su100, EnemyKind::Kv2,
             EnemyKind::Isu152, EnemyKind::Is2, EnemyKind::Is3,

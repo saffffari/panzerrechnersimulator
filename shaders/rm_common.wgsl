@@ -69,6 +69,10 @@ struct Frame {
     air_spectrum: vec4<f32>,
     // A fire's soot in the cabin air: x its extinction /m (Renderer::set_interior_soot).
     soot: vec4<f32>,
+    // The player's vehicle surface model (rm_vsm.wgsl, vehicle_surface.rs): per frame the brick
+    // grid's origin xyz and cell edge w (0-2), its dims xyz and first brick w (3-5); the mask base,
+    // cell count, review view and layer switches (6); x the review view's gain (7).
+    vsm: array<vec4<f32>, 8>,
 };
 // True where a camera pass must leave `world` out: beyond the film's section plane.
 fn rm_beyond_section(world: vec3<f32>) -> bool {

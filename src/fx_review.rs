@@ -22,7 +22,7 @@ use crate::{
     graphics, world,
 };
 use anyhow::Context;
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use std::fs;
 
 const TIGER: Vec2 = Vec2::new(-450.0, -410.0);
@@ -731,6 +731,54 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             }
         }
         stills.shots.push(serde_json::json!({"name": "turret_interior_strike", "strike": strike, "effects": g.debug_fea_effects_receipt()}));
+    }
+    // Part 13 (`materials`): the vehicle surface model's measured field (vehicle_surface.rs,
+    // docs/VEHICLE_SURFACE_MODEL_20261102.md), each channel as false colour on the player's Tiger
+    // from three outside views and three crew stations, beside the current look, at noon. A review
+    // view (KESSEL_VSM_VIEW's lanes, set between stills): it draws placement, not the finish.
+    if part("materials") {
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
+        g.debug_place_tiger(tiger, 0.0);
+        let field = crate::vehicle_surface::load()?;
+        println!("[fx-review] materials: field of {} cells", field.cells.len());
+        step(&mut g, &mut r, 60, &idle);
+        let hull = g.player.hull_model();
+        let turret = g.player.turret_model();
+        let at = |m: Mat4, p: [f32; 3]| m.transform_point3(Vec3::from(p));
+        // (name, inside, eye, target, fov, note)
+        let views = [
+            ("ext_front", false, at(hull, [-5.6, 2.9, 8.4]), at(hull, [0.0, 1.3, 0.4]), 50.0f32, "front left quarter, 9 m"),
+            ("ext_rear", false, at(hull, [5.8, 3.4, -8.0]), at(hull, [0.0, 1.4, -0.6]), 50.0, "rear right quarter: the engine deck and exhausts"),
+            ("ext_close", false, at(hull, [-2.3, 2.6, 4.6]), at(hull, [-0.7, 1.7, 2.6]), 45.0, "close on the front plate, the driver's visor and the left track guard"),
+            ("int_commander", true, at(turret, g.player.parts.commander_eye.to_array()), at(turret, [0.0, 1.75, 1.7]), 100.0, "the commander's seat, forward over the breech"),
+            ("int_loader", true, at(turret, [-0.45, 2.15, -0.25]), at(turret, [-1.15, 1.55, 0.7]), 90.0, "the loader's side: turret wall, ring and floor"),
+            ("int_driver", true, at(hull, [0.52, 1.72, 1.15]), at(hull, [0.45, 1.25, 2.5]), 90.0, "the driver's station: front plate, visor, controls"),
+        ];
+        let only = std::env::var("KESSEL_VSM_REVIEW_VIEWS").ok();
+        let channels = std::env::var("KESSEL_VSM_REVIEW_CHANNELS").ok();
+        for (name, inside, eye, target, fov, note) in views {
+            if only.as_deref().is_some_and(|o| !o.split(',').any(|n| n.trim() == name)) { continue; }
+            if inside {
+                g.station = Station::Commander;
+                g.commander_outside = false;
+            }
+            step(&mut g, &mut r, 2, &idle);
+            for (view, channel) in crate::vehicle_surface::VIEWS.iter().enumerate() {
+                if channels.as_deref().is_some_and(|c| !c.split(',').any(|n| n.trim() == *channel)) { continue; }
+                r.set_vsm_view(view as u32);
+                if inside {
+                    r.camera.pos = eye; r.camera.set_forward(target - eye); r.camera.fov_y = fov.to_radians();
+                    r.concussion = 0.0;
+                } else {
+                    observe(&mut r, eye, target, fov);
+                }
+                let what = if view == 0 { "the current finish".to_owned() } else { format!("vehicle surface model, {channel}") };
+                stills.still(&mut r, &format!("materials_{name}_{view}{channel}"), &format!("{note}: {what}"))?;
+            }
+            r.set_vsm_view(0);
+        }
+        stills.shots.push(serde_json::json!({"name": "materials_receipt", "cells": field.cells.len(), "bytes": field.bytes(),
+            "views": crate::vehicle_surface::VIEWS, "gain": std::env::var("KESSEL_VSM_VIEW_GAIN").ok()}));
     }
     // Part 12 (`look_matrix`): the display look's colour count, for the owner to flip through.
     // From the map's own editor home view (`manifest_edits.json` `editor_home`; run it with

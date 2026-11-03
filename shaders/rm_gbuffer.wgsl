@@ -150,7 +150,7 @@ struct Worn { albedo: vec3<f32>, roughness: f32, metal: f32 };
 const RM_SOURCE_METAL: vec3<f32> = vec3<f32>(0.09, 0.09, 0.09);
 const RM_INTERIOR_PAINT: vec3<f32> = vec3<f32>(0.6105, 0.4910, 0.2462);
 fn paint_source_metal(albedo: vec3<f32>, metallic: f32, world: vec3<f32>, face: vec3<f32>) -> vec4<f32> {
-    if (pc.extra.z < 0.5 || metallic < 0.5 || any(abs(albedo - RM_SOURCE_METAL) > vec3(0.012))) { return vec4(albedo, -1.0); }
+    if ((u32(pc.extra.z + 0.5) & 1u) == 0u || metallic < 0.5 || any(abs(albedo - RM_SOURCE_METAL) > vec3(0.012))) { return vec4(albedo, -1.0); }
     let inside = gb_in_cabin;
     return vec4(select(RM_TIGER_PAINT, RM_INTERIOR_PAINT, inside), select(0.75, 0.70, inside));
 }
@@ -414,7 +414,21 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     var n = normalize(in.normal);
     let view = normalize(-in.relative);
     if (dot(n, view) < 0.0) { n = -n; }
+    let face_n = n;
     gb_in_cabin = gb_cabin_air(in.relative + fr.cam_pos.xyz + n * 0.03);
+    // The vehicle surface model's review view (KESSEL_VSM_VIEW): a measured channel as unlit false
+    // colour on the player's hull, turret and gun, for checking placement before materials.
+    let vsm_frame = (u32(pc.extra.z + 0.5) >> 1u) & 3u;
+    if (vsm_frame > 0u && fr.vsm[6].z > 0.5 && kind < 0.5) {
+        let linear = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
+        let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+        let colour = vsm_view_colour(u32(fr.vsm[6].z + 0.5), vsm_frame - 1u, in.local / metric,
+            normalize(transpose(linear) * face_n));
+        out.g0 = vec4(0.0, 0.0, 0.0, 9.0);
+        out.g1 = vec4(n, 1.0);
+        out.g2 = vec4(colour * fr.vsm[7].x, 0.0);
+        return out;
+    }
     let x = pc.params.x;
     var housing = false;
     if (x > 0.0) {
