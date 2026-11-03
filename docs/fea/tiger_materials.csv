@@ -1,21 +1,21 @@
-phys_material,density_kg_m3,E_GPa,poisson,yield_MPa,uts_MPa,hardness,source_status
-armour_rolled_homogeneous,7850,207,0.29,780,950,BHN ~255-300 (to source: Allied examinations of Tiger plate),nominal
-steel_structural_plate,7850,200,0.29,250,410,,nominal (mild steel plate)
-steel_structural,7850,200,0.29,250,410,,nominal (mild steel)
-steel_cast,7850,200,0.29,400,600,,nominal (cast steel)
-steel_track_cast,7900,200,0.29,380,800,as-cast ~200 BHN,nominal (manganese cast steel)
-steel_roadwheel_rubber_tyred,7200,200,0.29,300,450,,composite: steel disc + rubber tyre; split before FEA
-steel_gun,7850,207,0.29,900,1100,,nominal (gun steel)
-iron_cast_machinery,7200,110,0.26,,250,,nominal (grey cast iron)
-radiator_copper_brass,8500,110,0.34,100,300,,nominal (copper/brass core)
-steel_sheet_tank,7850,200,0.29,220,340,,nominal (sheet steel; contents not modelled)
-steel_exhaust,7850,200,0.29,250,410,,nominal
-ammunition_88mm,3000,,,,,,"composite: brass case, propellant, projectile; bulk density estimate"
-glass_laminated,2500,70,0.22,,50,,nominal (laminated vision block)
-copper_cable,6000,,,,,,composite: copper + insulation
-seat_steel_leather,1500,,,,,,composite
-tool_steel_wood,3000,,,,,,composite: steel head + wood haft
-hydraulic_steel_oil,5000,,,,,,composite
-lamp_steel_glass,4000,,,,,,composite
-steel_spring,7850,200,0.29,1100,1400,,nominal (spring steel)
-instrument,3000,,,,,,composite
+phys_material,density_kg_m3,E_GPa,poisson,yield_MPa,uts_MPa,hardness,source_status,visual_rule,visual_materials,engine_texture
+armour_rolled_homogeneous,7850,207,0.29,780,950,BHN ~255-300 (to source: Allied examinations of Tiger plate),nominal,PAINT,TG_paint_dunkelgrau_ral7021;TG_paint_dunkelgelb_ral7028;TG_paint_elfenbein_ral1001;TG_primer_red_oxide_ral8012;TG_armour_steel_worn;TG_armour_steel_bare,proposed swatch 20 (engine bay interior);proposed swatch 21 (damage/penetration faces); rm_gbuffer worn chips;rm_gbuffer vehicle_finish worn chips (no swatch);swatch 0 (Material.001 painted nodes) + rm_gbuffer vehicle_finish wear;swatch 0 alternative (spring 1943 scheme; not in the engine);swatch 1 (Interior Paint)
+steel_structural_plate,7850,200,0.29,250,410,,nominal (mild steel plate),PAINT,TG_paint_dunkelgrau_ral7021;TG_paint_elfenbein_ral1001;TG_primer_red_oxide_ral8012,proposed swatch 20 (engine bay interior);swatch 0 (Material.001 painted nodes) + rm_gbuffer vehicle_finish wear;swatch 1 (Interior Paint)
+steel_structural,7850,200,0.29,250,410,,nominal (mild steel),PAINT,TG_paint_dunkelgrau_ral7021;TG_paint_elfenbein_ral1001;TG_primer_red_oxide_ral8012,proposed swatch 20 (engine bay interior);swatch 0 (Material.001 painted nodes) + rm_gbuffer vehicle_finish wear;swatch 1 (Interior Paint)
+steel_cast,7850,200,0.29,400,600,,nominal (cast steel),SPROCKET,TG_cast_steel;TG_paint_dunkelgrau_ral7021,proposed swatch 22;swatch 0 (Material.001 painted nodes) + rm_gbuffer vehicle_finish wear
+steel_track_cast,7900,200,0.29,380,800,as-cast ~200 BHN,nominal (manganese cast steel),TRACK,TG_track_manganese_cast;TG_track_pin,swatch 3 (TRACK_STEEL);swatch 3 (TRACK_STEEL) or proposed 23
+steel_roadwheel_rubber_tyred,7200,200,0.29,300,450,,composite: steel disc + rubber tyre; split before FEA,ROADWHEEL,TG_roadwheel_rubber;TG_roadwheel_disc_ral7021,proposed swatch 24;swatch 0 (painted) or proposed 25
+steel_gun,7850,207,0.29,900,1100,,nominal (gun steel),GUN,TG_gun_steel_painted;TG_gun_steel_blued,"proposed swatch 26 (breech, MG 34);swatch 0"
+iron_cast_machinery,7200,110,0.26,,250,,nominal (grey cast iron),WHOLE,TG_engine_cast_aluminium;TG_machinery_cast_iron,proposed swatch 42;proposed swatch 43
+radiator_copper_brass,8500,110,0.34,100,300,,nominal (copper/brass core),RADIATOR,TG_radiator_copper_core;TG_radiator_brass,proposed swatch 39;proposed swatch 40
+steel_sheet_tank,7850,200,0.29,220,340,,nominal (sheet steel; contents not modelled),WHOLE,TG_fuel_tank_sheet,proposed swatch 41
+steel_exhaust,7850,200,0.29,250,410,,nominal,WHOLE,TG_exhaust_tempered,"swatch 4 (CABLE_EXHAUST_STEEL, engine 73/72/68 metallic 0.60)"
+ammunition_88mm,3000,,,,,,"composite: brass case, propellant, projectile; bulk density estimate",AMMO,TG_brass_cartridge;TG_projectile_pzgr39_black;TG_projectile_cap_white;TG_projectile_sprgr_olive;TG_case_steel_lacquered,proposed swatch 27;proposed swatch 27 alternative;proposed swatch 28;proposed swatch 29;proposed swatch 30
+glass_laminated,2500,70,0.22,,50,,nominal (laminated vision block),GLASS,TG_glass_vision_block;PAINT,proposed swatch 32 (engine: periscope glass)
+copper_cable,6000,,,,,,composite: copper + insulation,CABLE,TG_wire_rope_steel;TG_cable_insulation;TG_copper_conductor;PAINT,proposed swatch 34;swatch 4 (CABLE_EXHAUST_STEEL);swatch 4 (cable) or proposed 35
+seat_steel_leather,1500,,,,,,composite,SEAT,TG_seat_leather;TG_seat_steel,proposed swatch 36 (engine: seats_black);swatch 1 (Interior Paint)
+tool_steel_wood,3000,,,,,,composite: steel head + wood haft,TOOL,TG_wood_haft;TG_tool_steel_head,proposed swatch 37;proposed swatch 38
+hydraulic_steel_oil,5000,,,,,,composite,WHOLE,TG_hydraulic_steel,proposed swatch 44
+lamp_steel_glass,4000,,,,,,composite,LAMP,TG_glass_lamp;PAINT,proposed swatch 33
+steel_spring,7850,200,0.29,1100,1400,,nominal (spring steel),WHOLE,TG_spring_steel,proposed swatch 45
+instrument,3000,,,,,,composite,WHOLE,TG_instrument_face,swatch 5 (Illuminated Dial)
