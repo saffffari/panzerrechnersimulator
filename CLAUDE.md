@@ -135,6 +135,13 @@ cargo run -- edit 2                                 # live WORLDBUILDER on act 2
                                                     #   manifest_edits.json (engine + blender both
                                                     #   apply), F10 play-hop into the act at the
                                                     #   camera, auto-reloads on regeneration
+cargo run --release -- fea-range                    # FEA RANGE (window): the Tiger + solo crew on the snow
+                                                    #   field; fly (RMB look, WASD/QE), LMB aim on the tank,
+                                                    #   shell/range/velocity panel, Enter run -> timeline
+                                                    #   (1/480 s span then real time), L live at a frame,
+                                                    #   C/V/Alt-drag camera-only section, sky clock, tissue
+                                                    #   knobs (review override, P prints); H for help.
+                                                    #   `fea-range --shots PREFIX`: headless stills + check
 ```
 
 World → Blender authoring (the homeland acts are built as a Blender collaboration — procedural

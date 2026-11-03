@@ -4271,7 +4271,7 @@ mod terrain_shader_tests {
 mod film_section_tests {
     use super::*;
 
-    /// The film section view is the film harness's alone: the G-buffer's section bit is zero in
+    /// The film section view is the film harness's and the review range's alone: the G-buffer's section bit is zero in
     /// every shadow pass and on every frame without a plane, and no play path opens one.
     #[test]
     fn the_film_section_is_a_harness_view_never_opened_in_play() {
@@ -4294,7 +4294,9 @@ mod film_section_tests {
                 }
             }
         }
-        assert_eq!(openers, vec!["game_fea_film.rs".to_string()], "only the film harness opens a section");
+        openers.sort();
+        assert_eq!(openers, vec!["game_fea_film.rs".to_string(), "game_fea_range.rs".to_string()],
+            "only the film harness and the review range (`fea-range`) open a section");
         // The windowed cutaway is the death replay's alone (a presentation view of a replay).
         let mut cutaways = Vec::new();
         let needle = [".set_replay_cutaway", "(Some"].concat();

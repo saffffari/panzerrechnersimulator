@@ -818,9 +818,10 @@ const MENU_RIGHT_SHIFT: f32 = 3.7; // world metres along the camera's right → 
 /// flashes and fire glow are the working set; cheap at internal resolution.
 pub const N_LIGHTS: usize = 32;
 
-/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources
-/// and one optional work lamp. This is not the active packed-light budget or a shader array size.
-pub const CABIN_LIGHT_REGISTRATIONS: usize = 22;
+/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources,
+/// one optional work lamp and the radio sets' and driver's eleven panel lamps (`cabin_panels`).
+/// This is not the active packed-light budget or a shader array size.
+pub const CABIN_LIGHT_REGISTRATIONS: usize = 33;
 
 /// A modeled compact spherical emitter. `source_radius` is the physical luminous radius in metres,
 /// used only to regularize the near field of the inverse-square law; it is never an illumination
@@ -7039,6 +7040,18 @@ impl Renderer {
             && !(m.emissive > 0.0 && !m.emissive_own && !m.emissive_win)
             && m.world_min.cmpge(lo).all() && m.world_max.cmple(hi).all()).map(|(i, _)| i).collect()
     }
+    /// Every scene mesh whose bounds' middle lies inside `lo..hi` and which is smaller than
+    /// `max_extent_m` across: a vehicle's whole content for the review range's section (glass
+    /// panes, periscope screens, lamp lenses, crew and effects with it), terrain and large world
+    /// pages left out. `solid_meshes_within` is the film's narrower set (solid parts only).
+    pub fn meshes_centred_within(&self, lo: glam::Vec3, hi: glam::Vec3, max_extent_m: f32) -> Vec<usize> {
+        self.meshes.iter().enumerate().filter(|(_, m)| {
+            let centre = (m.world_min + m.world_max) * 0.5;
+            !m.track_recv && centre.cmpge(lo).all() && centre.cmple(hi).all()
+                && (m.world_max - m.world_min).max_element() < max_extent_m
+        }).map(|(i, _)| i).collect()
+    }
+
     /// Mesh `idx` is a hull with running gear in its frame's envelope |x| >= `inner_m`, y <=
     /// `top_m`: `pack` (0..1) of the gear is crusted with the snow it ran through
     /// (`snow_cover::step_pack`; rm_snow_lift.wgsl `snow_gear_crust`).

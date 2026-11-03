@@ -17459,6 +17459,17 @@ fn main() -> anyhow::Result<()> {
         // GPU: video clips of the layered damage model in play (KESSEL_RENDERER=raymarch).
         return game::game_fea_film::run(&capture_arg(&args, 2, "fea_film"));
     }
+    if args.len() >= 2 && args[1] == "fea-range" {
+        // GPU window: the owner's FEA range (shot, run and timeline, section, sky, tissue knobs);
+        // `fea-range --shots PREFIX` renders it headless with its agreement check.
+        let shots = (args.get(2).map(String::as_str) == Some("--shots")).then(|| capture_arg(&args, 3, "fea_range"));
+        return game::game_fea_range::run(shots.as_deref());
+    }
+    if args.len() >= 2 && args[1] == "cabin-panels" {
+        // GPU: the radio operator's sets and the driver's panel at dusk, cabin lamps on
+        // (KESSEL_RENDERER=raymarch; KESSEL_CABIN_SHOTS / KESSEL_CABIN_CLOCK / KESSEL_CABIN_LAMPS).
+        return game::game_cabin_panels_review::run(&capture_arg(&args, 2, "cabin_panels"));
+    }
     if args.len() >= 2 && args[1] == "fea-play" {
         // GPU: the layered damage model in play (KESSEL_RENDERER=raymarch): lodged rounds, the
         // loader's hands, the field repair and an interior burst, with stills and a receipt.

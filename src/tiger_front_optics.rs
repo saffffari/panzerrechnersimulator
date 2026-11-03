@@ -136,8 +136,13 @@ fn spec(entry: &CpuMesh, mesh: usize, objective: Vec3, objective_outward: Vec3) 
     }
     let corners = [(min.x,min.y),(max.x,min.y),(max.x,max.y),(min.x,max.y)]
         .map(|(x,y)| center + right*x + up*y);
+    // Every triangle of the planar entrance: the roof panes are one quad, the bow MG's eyepiece
+    // (Hull_0241) a 24-triangle disc. Until 3 November 2026 `0..6` drew its first two triangles,
+    // two rim slivers (0.9 % of its area), and the rest of the lens showed the dark tube.
+    anyhow::ensure!(entry.indices.chunks_exact(3).all(|t| normal(triangle(entry, t)).dot(-entry_outward) > 0.999),
+        "optical entrance is not planar");
     Ok(RasterOpticSpec {mesh,
-        entry_indices: 0..6,
+        entry_indices: 0..entry.indices.len() as u32,
         entry_corners:corners,entry_outward,objective,objective_outward,
         preserve_ray_direction:false,eyepiece:None,relay_stops:Vec::new(),window_thickness_m:0.0})
 }

@@ -79,6 +79,50 @@ stop chains):
   front block; the right side slit held and 50 degrees off; by day and at night with the cabin
   lamps on).
 
+Updated: 2026-11-03 (the radio sets' and driver's Braun-style panels: eleven finite panel lamps on the cabin light list, drawn-only slab fronts, glass panes; the radio operator seated on his cushion; the bow MG eyepiece relayed over its whole lens); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+not "physical," "path traced," or "authoritative" until the shipping code computes it and the
+listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## The radio sets' and the driver's panels, 2026-11-03 (`src/cabin_panels.rs`, `cabin-panels`)
+
+- **What it is:** the owner's design (a 1960s Braun audio set): brushed-silver fronts, black knobs,
+  glass panes over the radio's tuning scales and the driver's two dials and fuel counter, amber
+  pilot lamps and 8 mm red, green and turquoise indicators. Not a reconstruction of the FuG 5 sets
+  or the Tiger's driver's instruments.
+- **Light:** eleven finite cube lenses (`cabin_panels::LAMPS`: four amber pilot lamps, seven
+  indicators) are cabin light registrations 22-32 (`CABIN_LIGHT_REGISTRATIONS` 22 to 33), sampled
+  through `FiniteCubeLamp` like every cabin fixture (visible radiance and transported power from
+  the same lens area; isotropic point approximation conserving power), switched by
+  `set_cabin_lights` (`practical_gain`), shadowed by the scene (raymarch: one any-hit ray per
+  lamp; shader backend: the packed cube maps with the lens excluded as its own emitter). Power is
+  an appearance calibration in the cabin's scale, not a measured bulb: an amber lens emits
+  `PANEL_AMBER` (85, 14 mm; the driver's 12 mm) against the dome lamp's 42 at 28 mm, about half the
+  dome lamp's power each. The indicators' states come from the simulation (engine speed for the
+  driver's oil and charging lamps, coolant at 100 C for the oil lamp); the radio transmitter's red
+  lamp burns at 0.45 on standby with no transmit state wired yet.
+- **Drawn-only geometry (named bound):** each front is a closed slab standing on its source box
+  (`Hull_0355` radio rack, `Hull_0240` driver's panel), 20 mm (supply box), 24 mm (sets) and 32 mm
+  (driver) deep, with knobs, keys and lamps up to a further 20 mm; collision, the damage model and
+  the crew's reach still use the source boxes, so a fragment or ray crosses at most 52 mm of drawn
+  panel before it meets the source face. The source's own relief (knob stubs to 20 mm) lies inside
+  the slabs.
+- **Instruments:** the driver's tachometer (0-3000 rpm) and coolant needle (40-120 C) read
+  `player_powertrain.rpm` and `workshop_coolant_temperature`; the three amber drums read
+  `tank_fuel_liters` as an odometer (each drum carries through the last unit of the one below).
+  The radio's tuning needle and frequency knob are groundwork: `CabinPanels::set_radio_tuning`
+  sets them; nothing in play tunes yet. The digital FUEL/L readout (`driver_panel.rs`, an
+  own-emissive raster-only print with no light registration) is removed.
+- **The radio operator's seat:** `crew_live_model` placed the AI radio operator at the pre-fit
+  (-0.66, 0.38, 1.42): his boots through the belly plate, his seat 0.24 m inside the pedestal,
+  the backrest through his neck. Now (-0.635, 0.635, 1.58), pelvis on the cushion, back on the
+  backrest, eye 1.59 (the player's at that post 1.58). His shins still pass the pedestal's box at
+  this scale, as the driver's do (open).
+- **Bow MG eyepiece:** its relay painted the first two of the lens's 24 triangles (0.9 % of its
+  area). It now paints the whole planar lens. The eyepiece is still a vision-block relay (its
+  field visible from anywhere in front of it), not an `Eyepiece` with an exit pupil as the
+  gunner's sight; as for the TZF, a telescope's eyepiece is no cabin aperture, and no daylight
+  enters through it (named, open).
+
 ## The player's own body seen from his own eyes, 2026-11-02 (`src/first_person_arms.rs`, `fp-body-review`)
 
 The owner's report: looking down, his body was "orange pointy things". Cause, measured: the
@@ -1234,6 +1278,43 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   whole vehicle), unlabelled in play (it is the replay's view, not a claim about the vehicle).
   The plate's thickness is measured along the shot through the tank's own source triangles (0.1 m
   if they are not met; named).
+- **FEA range** (`fea-range`, the owner's review editor, `src/game_fea_range.rs`, 2026-11-03): a
+  window on the snow field (Canyon v2 winter workshop, act 1) with the player's Tiger and its solo
+  crew, the shipping raymarch renderer and the game's own update. Its shots are real rounds through
+  `Game::debug_launch_round` (9 m short of the first source surface on the chosen line, so the
+  round meets every surface on it; impact velocity is the shell's own `v0·e^(−kx)` at the chosen
+  range, a chosen velocity sets that range). Disclosed review actions, as in `fea-film`: the Tiger
+  is placed and reset by state, enemies are banished and hold fire, the racks may be emptied, the
+  cabin lamps switched, the sky clock is held at the chosen date and time, the eye's exposure may
+  be held (a camera setting), and the section is the film section above (camera only, labelled on
+  screen). Recorded frames are the renderer's own frames read back; "live here" re-runs the same
+  shot step for step on a fresh Tiger. Measured (`fea-range --shots`, 2026-11-03): the game does
+  not repeat bit for bit (the chain and scars agreed; the crew's tissue and the surface blood
+  differed between the recording and the re-run, and between two re-runs), so "live here" is a
+  sibling outcome, not a copy, and says so on screen. Cause not found (reset state or iteration
+  order are candidates).
+  **Tissue knobs** (`crew_tissue::TissueTuning`): a review-only override of the crew lattice's
+  authored constants (tear energies, critical stretches, momentum shares, active reach, the piece
+  landing-breakup factor), set only by `fea-range` while it differs from the authored values; with
+  no override (both shipping presets, every play path) `tissue_tuning()` is exactly the constants
+  (`crew_tissue` test `the_tissue_tuning_is_authored_unless_the_review_range_sets_it`, which also
+  pins the only setter to `game_fea_range.rs`). Bonds keep the law `k = 2E/(ε_c·r)²`; a tuned class
+  scales its bonds' stiffness and critical stretch at solve time instead of rebuilding the model.
+  **Lamp power** (2026-11-03, the owner: a cut-open interior too dark to read): a review-only
+  factor on the cabin lamps' radiant power (`game_fea_range::review_lamp_gain`, the dome, TPZ
+  illuminator and ignition lamps' light and their glowing bulbs alike, through the one
+  `practical_gain` the lamp switch sets), shown on the sidebar as "LAMP POWER xN * (REVIEW)". It is a
+  brighter real emitter, not fill light: the lamps' light is still occluded and shadowed by the
+  closed tank. 1 in every other path (test `the_lamp_power_is_one_unless_the_range_sets_it`). The
+  range's LOOK dials are the display reproduction (look mode, exposure compensation, saturation,
+  warmth, gamma, dither, palette, retro strength, white balance), not light; its fog dial sets the
+  physical medium's density. Its focal length is a 35 mm-format field of view. Impact smoke (2026-11-03,
+  the owner: it hid the strike): `weapon_vfx::impact_smoke_build`, an authored envelope for the
+  `Impact`, `ArmorImpact` and `PenetrationSmoke` bursts in every path: none for 0.12 s, a smooth
+  build over 0.5 s, 0.4 of the earlier density (earlier: full within 0.08 s). Authored, not
+  combustion or dust modelling. The range's EFFECTS dials scale it (review-only; test pins the
+  setter). No depth of field:
+  the renderer has no lens model, and a screen-space blur would not be one.
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
   game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
   SVG/PNG frames about 1/1000 of real time apart, with a contact sheet and a 12 fps clip per case.
@@ -1569,7 +1650,7 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   shipping presets keep the constants above.
 - **The round as a deformable body** (2026-11-03, `fea_damage::shot`, review film
   `fea-shot-film`; the owner: shells must squash, bend, ricochet and spin off the armour and break
-  into shrapnel, each by its kind). Status: joined to play for perforations only. The round of a
+  into shrapnel, each by its kind). Status: joined to play for perforations and ricochets. The round of a
   perforation is solved at 8 cells across (`game_fea::SHOT_CELLS_ACROSS`, every preset; 0.1-0.4 s
   on a worker beside the plate's lattice, the tick waiting for both) over one crossing time; the
   chain carries its residual mass past the plate (`chain::run_with_residual`: capability at the
@@ -1578,8 +1659,17 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   that mass, the pieces it shed through the plate join the interior's hot fragments at their solved
   motion, spin and heat (placed where each one's path crosses the back face, a piece still in the
   cavity going on unresisted; slower than 20 m/s it stays; filler pieces are the burst's), and a
-  bursting round breaks only the steel it kept. Ricochets, stops and lodged rounds still use the
-  rigid round in play (drawn undeformed: named). The review film solves at 12 across. Each kinetic round is a
+  bursting round breaks only the steel it kept. A ricochet off any vehicle's armour is solved the
+  same way on a worker and joined at that round's next contact (so the result never depends on when
+  the worker ends): from then on the round carries its residual mass share into crew, infantry and
+  gun contacts, and meets the next plate at the speed giving its lighter body the same DeMarre
+  capability. The ricochet's outgoing velocity stays the authored `ricochet::response` (the solve's
+  own exit speed is within a few per cent of it in the film's cases; named), the pieces it sheds
+  outside the vehicle are not followed (named), a round saved mid-solve keeps its whole mass
+  (named), and a second ricochet re-solves the intact round's build at its lighter share (named).
+  Stops and lodged rounds still use the rigid round in play (drawn undeformed: named); flying
+  rounds are drawn as tracer streaks, so the deformed shape shows in the review film and the range
+  editor only. The review film solves at 12 across. Each kinetic round is a
   voxel lattice, 12 cells across its calibre, built from its kind: a hardened nose, a body, a soft
   base, a piercing cap (APCBC), a sheet-steel ballistic cap (2.5 mm, carried at its sheet's share of
   a cell), the filler in its cavity, or a tungsten-carbide core in a soft-steel carrier (APCR), its

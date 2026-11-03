@@ -66,8 +66,12 @@ mod game_fea_effects;
 pub(crate) mod game_fea_section;
 #[path = "game_fea_review.rs"]
 pub(crate) mod game_fea_review;
+#[path = "game_cabin_panels_review.rs"]
+pub(crate) mod game_cabin_panels_review;
 #[path = "game_fea_film.rs"]
 pub(crate) mod game_fea_film;
+#[path = "game_fea_range.rs"]
+pub(crate) mod game_fea_range;
 #[path = "game_ai_film.rs"]
 pub(crate) mod game_ai_film;
 #[path = "crew_skeleton.rs"]
@@ -195,6 +199,8 @@ mod recovery_threat;
 mod soldier_life;
 #[path = "driver_panel.rs"]
 mod driver_panel;
+#[path = "cabin_panels.rs"]
+mod cabin_panels;
 #[path = "tank_editor_play.rs"]
 mod tank_editor_play;
 #[path = "surface_blood.rs"]
@@ -3290,6 +3296,10 @@ impl ProjectileShooter {
     }
 }
 
+fn full_mass_fraction() -> f32 {
+    1.0
+}
+
 /// One live shell. `pos`, `velocity`, `distance_m` and `seed` are the authoritative modeled state;
 /// no target or terminal result exists until a swept segment actually reaches physical geometry.
 #[derive(Clone, Debug)]
@@ -3315,6 +3325,10 @@ struct AuthoritativeProjectile {
     /// Gravity/wind restart at a resolved deflection; total lifetime and range never reset.
     flight_epoch_s:f32,
     ricochet_count:u8,
+    /// The share of its mass the round still has after its ricochets (its own solve,
+    /// `fea_damage::shot`); 1 for a round that has struck nothing.
+    #[serde(default = "full_mass_fraction")]
+    mass_fraction:f32,
     muzzle_cleared:bool,
     passed_at_gun_part:Option<(usize,u8)>,
     ignored_structure: Option<usize>,
@@ -3360,6 +3374,7 @@ impl AuthoritativeProjectile {
             retained_speed:1.0,
             flight_epoch_s:0.0,
             ricochet_count:0,
+            mass_fraction:1.0,
             muzzle_cleared:false,
             passed_at_gun_part:None,
             ignored_structure: None,
@@ -3780,8 +3795,12 @@ fn crew_live_model(player: &Tank, post: crate::lan::LanRole) -> Mat4 {
         crate::lan::LanRole::Driver => {
             (player.hull_model(), Vec3::new(0.535, 0.675745, 1.777748), 0.0, 0.80)
         }
+        // The seated figure (contact ~0.40, back ~-0.10 mesh units) on the radio seat's cushion
+        // (Hull_0394, top y 0.92-0.96, z 1.55-1.91), back to its backrest plate (Hull_0414, front
+        // face z 1.501); eye ~1.59, the player's at this post 1.58. Until 3 November 2026 the
+        // pre-fit (-0.66, 0.38, 1.42): boots through the belly plate, seat 0.24 m inside the pedestal.
         crate::lan::LanRole::Radio => {
-            (player.hull_model(), Vec3::new(-0.66, 0.38, 1.42), 0.0, 0.80)
+            (player.hull_model(), Vec3::new(-0.635, 0.635, 1.58), 0.0, 0.80)
         }
         crate::lan::LanRole::Gunner => (
             player.turret_model(),
@@ -9840,7 +9859,8 @@ pub struct Game {
     roof_hatches: tiger_hatches::RoofHatches, // lid motion, independent of head-out exposure
     driver_visor_lean: f32, // local seated aim phase; never grants roof exposure or repair access
     driver_shutters: tiger_driver_shutters::Shutters,
-    driver_fuel_panel: driver_panel::FuelPanel,
+    tpz_cover: driver_panel::TpzCover,
+    cabin_panels: cabin_panels::CabinPanels,
     driver_look: glam::Vec2, // seated glance, independent of other crew posts
     radio_look: glam::Vec2, // retained full-circle look at the bow MG/radio post
     cupola_focus: tiger_periscopes::FocusState,
@@ -12229,7 +12249,8 @@ impl Game {
             "assets/tanks/tiger/baked/tiger_part_tpz.glb",
             [200, 40, 30],
         ));
-        let driver_fuel_panel = driver_panel::FuelPanel::append(&mut scene, tpz_needle);
+        let tpz_cover = driver_panel::TpzCover::append(&mut scene, tpz_needle);
+        let cabin_panels = cabin_panels::CabinPanels::append(&mut scene);
         // Project-authored low-poly 88 mm rounds: no imported-ordnance fallback or runtime payload.
         let ap_round = round_88_mesh(false);
         let he_round = round_88_mesh(true);
@@ -13018,6 +13039,7 @@ impl Game {
         let mut renderer =
             Renderer::new_with_raster_only(device, queue, &scene, &crew_raster_only_slots);
         crew_status_panel.configure(&mut renderer);
+        cabin_panels.configure(&mut renderer);
         crew_body_recovery.initialize_aid(&mut renderer);
         if let Some(transport)=&mut halftrack_runtime {
             transport.initialize(&mut renderer)?;
@@ -14435,7 +14457,8 @@ impl Game {
             roof_hatches: tiger_hatches::RoofHatches::default(),
             driver_visor_lean: 0.0,
             driver_shutters: tiger_driver_shutters::Shutters::default(),
-            driver_fuel_panel,
+            tpz_cover,
+            cabin_panels,
             driver_look: glam::Vec2::ZERO,
             radio_look: glam::Vec2::ZERO,
             cupola_focus: tiger_periscopes::FocusState::default(),
@@ -19886,9 +19909,7 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         let yaw = self.player.turret_yaw;
-        let fuel_liters = self.tank_fuel_liters();
-        let coolant=self.workshop_coolant_temperature();
-        self.driver_fuel_panel.drive(fuel_liters,coolant,r.time,hm,tm,r);
+        self.tpz_cover.drive(tm, r);
         let enigma_model = self.enigma_dressing.as_ref()
             .map(|prop| prop.visual_world_model(&self.player))
             .unwrap_or_else(|| enigma_radio_model(hm));
@@ -20433,7 +20454,8 @@ impl Game {
             // The cabin lights' switch (`set_cabin_lights`): off, every lamp is an unlit cube and
             // its light is zero.
             let power = if self.cabin_lights { 1.0 } else { 0.0 };
-            let practical_gain = power;
+            // `game_fea_range::review_lamp_gain` is 1 outside the review range's LAMP POWER knob.
+            let practical_gain = power * game_fea_range::review_lamp_gain();
             let hm = self.player.hull_model();
             let tm = self.player.turret_model();
             let gm = self.player.visual_gun_model();
@@ -20556,6 +20578,19 @@ impl Game {
                 emitting_meshes.push(emitter);
             }
             append_optional_cabin_fixture(&mut lights, &mut shadowed_cabin_lights, &mut emitting_meshes, self.workshop_light());
+            // The radio sets' and the driver's panel lamps (`cabin_panels`): amber pilot lamps
+            // and indicators, finite lenses on the same switch.
+            let panel_state = cabin_panels::PanelState {
+                engine_rpm: self.player_powertrain.rpm,
+                coolant_c: self.workshop_coolant_temperature(),
+                fuel_liters: self.tank_fuel_liters(),
+                radio_transmitting: false,
+            };
+            for (light, emitter) in self.cabin_panels.drive(r, hm, practical_gain, &panel_state) {
+                if light.radiant_intensity > 0.0 { lights.push(light); }
+                shadowed_cabin_lights.push(light);
+                emitting_meshes.push(emitter);
+            }
             debug_assert_eq!(shadowed_cabin_lights.len(), crate::renderer::CABIN_LIGHT_REGISTRATIONS);
             debug_assert_eq!(shadowed_cabin_lights.len(), emitting_meshes.len());
             r.set_cabin_light_frame(Quat::from_mat4(&self.player.turret_model()));
@@ -26676,6 +26711,14 @@ impl Game {
                 };
                 self.enemy_report_audit.clock_s=flight_at+step_dt*fraction;
                 projectile.commit_fraction(step, fraction, contact.pos);
+                // A ricochet's own solve takes effect at the round's next contact.
+                if let Some(handle) = self.fea.ricochet_solves.remove(&projectile.id) {
+                    if let Ok(Some(solved)) = handle.join() {
+                        projectile.mass_fraction *= solved.residual_fraction;
+                        println!("[fea] ricochet solve for round {}: {:.0} % of its mass left, {} pieces, tumble {:.0} rad/s, hottest {:.0} K ({:.0} ms on a worker)",
+                            projectile.id, solved.residual_fraction * 100.0, solved.pieces, solved.tumble_rad_s, solved.peak_temp_k, solved.wall_ms);
+                    }
+                }
                 if let Some(bullet) = projectile.small_arm {
                     self.present_source_ground_impact(&projectile,contact,r);
                     self.finish_small_arm(&projectile,contact,bullet, &r.camera);
@@ -26701,7 +26744,7 @@ impl Game {
                     {
                         self.explode_at_gun(hit.index,contact.pos,armor_incident_velocity,projectile.shell.name);
                         if hit.steel {
-                            let deposited=0.5*projectile.shell.mass_kg
+                            let deposited=0.5*projectile.shell.mass_kg*projectile.mass_fraction
                                 *(armor_incident_velocity.length_squared()-projectile.velocity.length_squared()).max(0.0);
                             self.weapon_vfx.set_ground_hint(Some(self.hf.height_at(contact.pos.x,contact.pos.z)));
                             self.weapon_vfx.steel_perforation_spray(contact.pos,armor_incident_velocity,hit.normal,
@@ -26822,6 +26865,8 @@ impl Game {
             }
             drop(initial);
             active.append(&mut self.projectiles);
+            // A retired round's ricochet solve is let go (its worker ends on its own).
+            self.fea.ricochet_solves.retain(|id, _| active.iter().any(|p| p.id == *id) || pending.iter().any(|(p, _, _)| p.id == *id));
             self.finish_shell_flight_step(flight_start, &active);
             self.projectiles = active;
             self.projectile_scratch = flying;
@@ -27083,7 +27128,9 @@ impl Game {
                 projectile.seed ^ self.armor_tick,
                 projectile.penalty_mm,
                 projectile.disruption,
-                projectile.velocity.length(),
+                // A round lightened by an earlier ricochet meets the plate at the speed that gives
+                // its lighter body the same DeMarre capability (`chain::run_with_residual`).
+                projectile.velocity.length() * projectile.mass_fraction.sqrt(),
             );
             event.flight_time=projectile.age_s;
             // Preserve the existing non-kinetic terminal policy pending its separate audit.
@@ -27096,6 +27143,13 @@ impl Game {
             }
             ricochet=crate::ballistics::ricochet::response(&event,projectile.velocity,
                 armor.world_normal,projectile.ricochet_count);
+            if ricochet.is_some() {
+                // The round's own solve of the glancing strike: its mass and tumble (joined at its
+                // next contact).
+                if let Some(handle) = game_fea::RicochetShot::spawn(&event, projectile.seed ^ self.armor_tick ^ 0x5407_0000) {
+                    self.fea.ricochet_solves.insert(projectile.id, handle);
+                }
+            }
             if let Some(response)=ricochet {
                 event.terminal=crate::ballistics::Terminal::Ricochet;
                 event.residual_v=response.velocity.length();event.behind_armor=0.0;
@@ -27163,13 +27217,13 @@ impl Game {
                 );
             }
             ProjectileContactKind::FieldPerson(person,part)=>{
-                let energy=0.5*projectile.shell.mass_kg*projectile.velocity.length_squared();
+                let energy=0.5*projectile.shell.mass_kg*projectile.mass_fraction*projectile.velocity.length_squared();
                 let impact=CrewRagdollImpact{hit_part:part,point_world:contact.pos,velocity_world:projectile.velocity,energy_j:energy,
                     blast_origin_world:contact.pos,explosive_energy_j:0.,behind_armor:0.,blast_proximity_m:0.};
                 if let Ok(actor)=self.retain_struck_field_person(person,impact){self.injure_field_actor(actor,part,contact.pos,projectile.velocity,energy,0.,0.,projectile.id);}
             }
             ProjectileContactKind::ExposedCrew(actor,part)=>{
-                let energy=0.5*projectile.shell.mass_kg*projectile.velocity.length_squared();
+                let energy=0.5*projectile.shell.mass_kg*projectile.mass_fraction*projectile.velocity.length_squared();
                 self.injure_field_actor(actor,part,contact.pos,projectile.velocity,energy,0.,0.,projectile.id);
             }
             ProjectileContactKind::Foot => {
@@ -27191,7 +27245,7 @@ impl Game {
             ProjectileContactKind::Infantry(index) => {
                 // A direct cannon strike is lethal to an exposed body for AP and HE alike.
                 // HE already ran the existing blast above; shared casualty handling is idempotent.
-                self.infantry_contact(index,contact.pos,projectile.velocity,projectile.shell.mass_kg,0.0,false,projectile.shell.name);
+                self.infantry_contact(index,contact.pos,projectile.velocity,projectile.shell.mass_kg*projectile.mass_fraction,0.0,false,projectile.shell.name);
                 self.schedule_sound_from(crate::audio::Sfx::ImpactGround,contact.pos);
             }
             ProjectileContactKind::Structure(index) => {
@@ -34927,7 +34981,8 @@ mod tests {
             + crate::interior_rig::ANNUNCIATOR_FIXTURES.len() + crate::lamp_mounts::BREECH.len();
         let sight_count = crate::lamp_mounts::SIGHT.iter().map(|station|station.len()).sum::<usize>();
         let panel_count = crew_status_panel::SHADOW_REGISTRATIONS;
-        assert_eq!(base_count+sight_count+panel_count+1, crate::renderer::CABIN_LIGHT_REGISTRATIONS);
+        let cluster_count = cabin_panels::SHADOW_REGISTRATIONS;
+        assert_eq!(base_count+sight_count+panel_count+1+cluster_count, crate::renderer::CABIN_LIGHT_REGISTRATIONS);
         let light = |i:usize| PointLight {pos:Vec3::new(i as f32, 1.0, 0.0), source_radius:0.01,
             color:Vec3::ONE, radiant_intensity:0.001};
         for work_installed in [false,true] {
@@ -34948,6 +35003,10 @@ mod tests {
             let before_work = active.len();
             append_optional_cabin_fixture(&mut active,&mut named,&mut emitters,
                 work_installed.then(||(light(21),900)));
+            // The panel lamps follow the work lamp; every identity is kept, dark ones too.
+            for i in 0..cluster_count {
+                named.push(light(22+i)); emitters.push(Some(600+i));
+            }
             assert_eq!(named.len(),crate::renderer::CABIN_LIGHT_REGISTRATIONS);
             assert_eq!(emitters.len(),named.len());
             assert_eq!(&emitters[9..13],&[Some(301),None,None,Some(404)]);

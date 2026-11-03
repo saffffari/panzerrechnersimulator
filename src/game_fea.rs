@@ -230,6 +230,34 @@ pub(super) struct FeaRuntime {
     lodged_draw: Vec<usize>,
     /// Lodged rounds over a pool's capacity, already reported.
     lodged_overflow_logged: bool,
+    /// The own solves of rounds that ricocheted (any vehicle's armour), by projectile id; each is
+    /// joined at that round's next contact, so its result never depends on when the worker ends.
+    pub(super) ricochet_solves: std::collections::BTreeMap<u64, std::thread::JoinHandle<Option<RicochetShot>>>,
+}
+
+/// What a ricochet's own solve left of the round.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RicochetShot {
+    pub(super) residual_fraction: f32,
+    pub(super) tumble_rad_s: f32,
+    pub(super) pieces: usize,
+    pub(super) peak_temp_k: f32,
+    pub(super) wall_ms: f32,
+}
+
+impl RicochetShot {
+    /// Start a ricocheting round's solve on a worker (`None` for rounds without a kinetic body).
+    pub(super) fn spawn(event: &crate::ballistics::ImpactEvent, seed: u32) -> Option<std::thread::JoinHandle<Option<Self>>> {
+        let impact = crate::fea_damage::shot::impact_of(event, seed)?;
+        Some(std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let out = crate::fea_damage::shot::Shot::with_cells(impact, SHOT_CELLS_ACROSS)
+                .solve_for(crate::fea_damage::shot::GAME_HORIZON);
+            Some(Self { residual_fraction: (out.residual_kg / out.mass_kg.max(1e-6)).clamp(0.05, 1.0),
+                tumble_rad_s: out.tumble_rad_s, pieces: out.pieces.len(), peak_temp_k: out.peak_temp_k,
+                wall_ms: started.elapsed().as_secs_f32() * 1000.0 })
+        }))
+    }
 }
 
 impl FeaRuntime {
@@ -1757,5 +1785,28 @@ mod ignition_tests {
             result.fire
         }).count();
         assert_eq!(cold, 0);
+    }
+}
+
+#[cfg(test)]
+mod round_solve_tests {
+    use super::*;
+    use crate::ballistics::{self, ArmorMaterial, Plate, Terminal};
+
+    fn plate(mm: f32) -> Plate {
+        Plate { name: "test plate", thickness_mm: mm, slope_deg: 0.0, material: ArmorMaterial::Rha }
+    }
+
+    #[test]
+    fn a_glancing_round_is_solved_tumbling_and_a_perforating_one_sheds_into_the_vehicle() {
+        let glance = ballistics::resolve(&ballistics::BR_471, 500.0, plate(100.0), 72.0, 5);
+        assert_eq!(glance.terminal, Terminal::Bounce);
+        let solved = RicochetShot::spawn(&glance, 9).unwrap().join().unwrap().unwrap();
+        assert!(solved.tumble_rad_s > 20.0 && solved.residual_fraction > 0.5 && solved.residual_fraction <= 1.0, "{solved:?}");
+        let through = ballistics::resolve(&ballistics::PZGR_39, 300.0, plate(80.0), 30.0, 5);
+        assert_eq!(through.terminal, Terminal::Penetration);
+        let shot = ShotStrike::solve(&through, 9).unwrap();
+        assert!(shot.residual_fraction() < 1.0 && !shot.shrapnel.is_empty(), "{} kg, {} shrapnel", shot.residual_kg, shot.shrapnel.len());
+        assert!(ShotStrike::solve(&glance, 9).is_none(), "only a perforation's round is solved for the chain");
     }
 }

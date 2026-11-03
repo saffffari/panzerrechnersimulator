@@ -330,7 +330,8 @@ impl TissueDraw {
                             let mass: f32 = piece.cells.iter().map(|&c| model.mass(c as usize)).sum();
                             piece.vel = (piece.vel - normal * vn) * crew_tissue::PIECE_TANGENT_KEEP
                                 - normal * (vn * crew_tissue::PIECE_RESTITUTION);
-                            if piece.cells.len() > 1 && 0.5 * mass * vn * vn > piece.cohesion_j * crew_tissue::tune().grain {
+                            if piece.cells.len() > 1
+                                && 0.5 * mass * vn * vn > piece.cohesion_j * crew_tissue::tune().grain * crew_tissue::tissue_tuning().landing_breakup {
                                 broken.push(n);
                                 break;
                             }
