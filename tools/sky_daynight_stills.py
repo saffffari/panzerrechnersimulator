@@ -170,6 +170,9 @@ def wait_for_gpu():
         time.sleep(5)
 
 
+LOOK_ENV = {}
+
+
 def shoot(mp, tag, set_name, label, utc, eye, yaw, pitch, aim=None, fov=None, extra=None):
     # The capture router puts the checkout's name in front (sky-daynight-..., sky-daynight-base-...).
     out = f'{tag}_{mp.name}_{set_name}_{label}.png'
@@ -182,6 +185,7 @@ def shoot(mp, tag, set_name, label, utc, eye, yaw, pitch, aim=None, fov=None, ex
         env['KESSEL_SHOT_AIM'] = aim
     if fov:
         env['KESSEL_SHOT_FOV'] = str(fov)
+    env.update(LOOK_ENV)
     env.update(extra or {})
     ex, ey, ez = eye
     cmd = [str(ROOT / 'target/release/panzerrechnersystem'), 'screenshot', out,
@@ -213,10 +217,13 @@ def main():
     ap.add_argument('tag')
     ap.add_argument('--only')
     ap.add_argument('--map', default='both')
+    ap.add_argument('--look', default=None, help='KESSEL_SKY_LOOK for these stills (full: the parts held for the owner)')
     ap.add_argument('--checkout', default=None, help='the checkout whose release binary renders (a baseline worktree for the before stills)')
     a = ap.parse_args()
     ROOT = Path(a.checkout).resolve() if a.checkout else ROOT
-    sets = set(a.only.split(',')) if a.only else {'day', 'sunset', 'sunrise', 'shadow', 'night', 'moon'}
+    if a.look:
+        LOOK_ENV['KESSEL_SKY_LOOK'] = a.look
+    sets = set(a.only.split(',')) if a.only else {'day', 'sunset', 'sunrise', 'shadow', 'night', 'moon', 'daymoon'}
     maps = []
     if a.map in ('both', 'canyon'):
         maps.append(Map('canyon', 'gaea-canyon-run-v2', dt.datetime(1943, 1, 20, tzinfo=dt.timezone.utc)))
@@ -249,6 +256,16 @@ def main():
             t = when_sun_at(mp.date, -18) + dt.timedelta(minutes=50)
             for label, yaw in [('north', 0.0), ('south', 180.0)]:
                 records.append(shoot(mp, a.tag, 'night', label, iso(t), eye, yaw, 50.0))
+        if 'daymoon' in sets:
+            # The Moon by day: an afternoon of the map's month with the Sun and the Moon both well up.
+            for day in range(0, 30):
+                base = mp.date.replace(day=1) + dt.timedelta(days=day)
+                hits = [base + dt.timedelta(minutes=m) for m in range(0, 24 * 60, 10)
+                        if sun_altaz(base + dt.timedelta(minutes=m))[0] > 15 and moon_altaz(base + dt.timedelta(minutes=m))[0] > 20]
+                if hits:
+                    t = hits[len(hits) // 2]
+                    records.append(shoot(mp, a.tag, 'daymoon', f'{t:%m%d}_lit{int(round(moon_altaz(t)[2] * 100)):03d}', iso(t), eye, 0, 0, aim='moon:6'))
+                    break
         if 'moon' in sets:
             # The Moon through its month: a dark-sky instant with the Moon well up on each of a run
             # of nights (the real month of May 1943; the ten-day month of play draws by the same law).

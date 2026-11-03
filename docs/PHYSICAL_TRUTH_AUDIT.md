@@ -4430,6 +4430,15 @@ The owner's direction of 2 November carried on: the sky and environment lighting
 night cycle, the sunrise and sunset transitions; more and brighter stars at one pixel each;
 bigger discs; the Moon's phases over a ten-day month.
 
+**Held behind `KESSEL_SKY_LOOK=full`** (`celestial_sky::sky_look_full`; the owner's rule of
+3 November 2026: a change to how the picture reads goes behind a setting and comes to him as
+before-and-after stills, the default only on his yes): the twilight's higher orders under the
+spherical cosine (`AtmosphereParameters::spherical_higher_orders`, the GPU flag in
+`secondary_direction.w`), the earthshine, and the Moon's disc by day. Unset, those three are the
+former sky: the plain cosine (the Earth's shadow black, as the fault below), no earthshine, no
+Moon while the Sun keys. The parts he asked for by name are on either way: the stars, the discs'
+size, the Moon's phase and terminator, and the clock's pace.
+
 - **Twilight's higher orders in a spherical atmosphere** (`physical_environment::spherical_cosine`,
   `chapman`; `shaders/physical_environment.wgsl` `physical_spherical_cosine`, `physical_chapman`).
   A named approximation in place of a fault. The multiple-scattering field (the two-stream

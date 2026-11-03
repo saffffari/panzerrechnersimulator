@@ -46,6 +46,13 @@ ledger entries are in `docs/PHYSICAL_TRUTH_AUDIT.md`, "The sky through the day".
 - **The clock's pace** blends in its logarithm over 2 deg either side of each phase edge.
 - **Far banks** take the depth cascades' shadow as far as the far cascade reaches (about 700 m).
 
+## What is on and what waits for the owner
+
+On by default (he asked for them by name, so his request is the yes): the stars to 7.5 with their
+brighter single pixels, the 2.1x discs, the Moon's phase and terminator, the clock's smooth pace,
+the far banks' shadow. Held behind `KESSEL_SKY_LOOK=full` until he approves the stills: the
+twilight's higher orders (the Earth's shadow), the earthshine, the Moon by day.
+
 ## Stills
 
 `tools/sky_daynight_stills.py TAG` renders, in the locked look (deltap-real, 15,15,7, 1024x576),

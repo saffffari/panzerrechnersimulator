@@ -873,7 +873,9 @@ fn physical_chapman(radius_m: f32, scale_m: f32, mu: f32) -> f32 {
 // about 1/35, not zero; 6 deg down about 1/5,000; 18 deg down nothing. The twilight sky's
 // higher orders and the Earth's shadow's blue come from here (3 November 2026: the plain cosine
 // cut them off the moment the Sun set, and the shadow rendered black).
+// Off (secondary_direction.w 0, KESSEL_SKY_LOOK not `full`): the plain cosine, the former sky.
 fn physical_spherical_cosine(environment: PhysicalEnvironment, altitude_m: f32, mu: f32) -> f32 {
+    if (environment.secondary_direction.w < 0.5) { return max(mu, 0.0); }
     let scale = max(environment.atmosphere_cloud_bottom.y, 1.0);
     return 1.0 / max(physical_chapman(environment.planet_center_radius.w + max(altitude_m, 0.0), scale, mu), 1.0);
 }

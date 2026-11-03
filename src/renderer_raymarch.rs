@@ -2165,7 +2165,9 @@ impl Backend {
         let moon = {
             let disc = r.celestial().moon_disc(AtmosphereParameters::default().solar_irradiance);
             let dir = disc.direction.normalize_or_zero();
-            if dir.y > -0.02 && dir.length_squared() > 0.5 && disc.irradiance.max_element() > 0.0 {
+            // By day (neither slot) only under KESSEL_SKY_LOOK=full, held for the owner's yes.
+            let shown = disc.is_key || disc.is_secondary || crate::celestial_sky::sky_look_full();
+            if shown && dir.y > -0.02 && dir.length_squared() > 0.5 && disc.irradiance.max_element() > 0.0 {
                 let through = physical_environment::solar_transmittance_at(&atmosphere, origin, dir, quality.source_steps.max(4));
                 let lit = disc.irradiance * through;
                 let shine = disc.earthshine * through;

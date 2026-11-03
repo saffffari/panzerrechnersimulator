@@ -48,6 +48,18 @@ pub fn moon_cycle_days() -> f64 {
 /// `KESSEL_DISC_SCALE` overrides; 1 is the real sky. A presentation choice named in
 /// docs/PHYSICAL_TRUTH_AUDIT.md.
 pub const DISC_DISPLAY_SCALE: f64 = 2.1;
+/// `KESSEL_SKY_LOOK=full` turns on the parts of the 3 November sky the owner did not ask for by
+/// name and that change how the picture reads, held for his yes on before-and-after stills (his
+/// rule of 3 November 2026: such a change goes behind a setting first): the twilight's higher
+/// orders under a spherical atmosphere (`physical_environment::spherical_cosine`, the Earth's
+/// shadow and the sky after sunset), the earthshine on the Moon's night side, and the Moon's
+/// disc by day. Unset or anything else keeps the former sky for those three; the stars, the
+/// discs' size and the Moon's phase he asked for are on either way.
+pub fn sky_look_full() -> bool {
+    static FULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FULL.get_or_init(|| std::env::var("KESSEL_SKY_LOOK").is_ok_and(|v| v.trim().eq_ignore_ascii_case("full")))
+}
+
 /// The Earth's geometric albedo in the visual (Allen's Astrophysical Quantities, 0.367): the
 /// earthshine on the Moon's night side is the Sun's light the Earth returns, so the ashen disc
 /// beside a crescent is the full Moon's radiance times p (R_earth / d)^2 times the Earth's phase.
@@ -152,6 +164,11 @@ impl CelestialLighting {
     /// The Moon's disc for the sky's drawing, above the horizon or not (the caller culls).
     /// `solar_toa_at_1au` as `at`.
     pub fn moon_disc(&self, solar_toa_at_1au: DVec3) -> MoonDisc {
+        self.moon_disc_look(solar_toa_at_1au, sky_look_full())
+    }
+
+    /// As `moon_disc`, with the earthshine drawn (`full_look`, `sky_look_full`) or not.
+    pub fn moon_disc_look(&self, solar_toa_at_1au: DVec3, full_look: bool) -> MoonDisc {
         let state = &self.state;
         let mut full = *state;
         full.moon_phase.elongation_rad = std::f64::consts::PI;
@@ -163,7 +180,7 @@ impl CelestialLighting {
             direction: state.moon.engine_direction(),
             angular_radius_rad: state.moon_angular_radius_rad() * disc_display_scale(),
             irradiance: state.moon_toa_spectral_irradiance(solar_toa_at_1au),
-            earthshine: full_moon * (EARTH_GEOMETRIC_ALBEDO * earth_solid * earth_phase),
+            earthshine: if full_look { full_moon * (EARTH_GEOMETRIC_ALBEDO * earth_solid * earth_phase) } else { DVec3::ZERO },
             sun_direction: state.sun.engine_direction(),
             is_key: self.key.body == Body::Moon,
             is_secondary: self.secondary.map(|s| s.body) == Some(Body::Moon),
@@ -622,7 +639,8 @@ mod tests {
         for quarter_day in 0..40 {
             clock.elapsed_s = quarter_day as f64 * 21_600.0;
             let lighting = CelestialLighting::for_clock(&clock, toa);
-            let disc = lighting.moon_disc(toa);
+            let disc = lighting.moon_disc_look(toa, true);
+            assert_eq!(lighting.moon_disc_look(toa, false).earthshine, DVec3::ZERO, "earthshine only in the full look");
             let phase = lighting.state.moon_phase;
             // The shader's lit share, from the two directions alone.
             let share = 0.5 * (1.0 - disc.direction.dot(disc.sun_direction));
@@ -663,6 +681,7 @@ mod tests {
             while CelestialState::at(base.plus_seconds(minute as f64 * 60.0), STALINGRAD).sun.altitude_deg > target { minute += 1; }
             let instant = base.plus_seconds(minute as f64 * 60.0);
             let mut atmosphere = AtmosphereParameters::default();
+            atmosphere.spherical_higher_orders = true;
             let lighting = CelestialLighting::at(instant, STALINGRAD, atmosphere.solar_irradiance);
             lighting.apply_to(&mut atmosphere);
             atmosphere.cloud.coverage = 0.0;

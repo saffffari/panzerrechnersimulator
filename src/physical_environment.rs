@@ -53,6 +53,10 @@ pub struct AtmosphereParameters {
     pub secondary_irradiance: DVec3,
     pub secondary_direction: DVec3,
     pub secondary_angular_radius_rad: f64,
+    /// The diffuse field's higher orders take Chapman's effective cosine (`spherical_cosine`):
+    /// they outlast the body's setting. Off, the plain cosine cuts them at the local horizon (the
+    /// former sky). `celestial_sky::sky_look_full`, held for the owner's yes.
+    pub spherical_higher_orders: bool,
 
     /// Night-sky emission (airglow, zodiacal light and integrated faint starlight) as a thin
     /// emitting layer above the air: its spectral radiance toward the zenith before extinction,
@@ -231,6 +235,7 @@ impl Default for AtmosphereParameters {
             secondary_irradiance: DVec3::ZERO,
             secondary_direction: DVec3::Y,
             secondary_angular_radius_rad: 0.259_f64.to_radians(),
+            spherical_higher_orders: crate::celestial_sky::sky_look_full(),
             airglow_zenith_radiance: NIGHT_SKY_ZENITH_RADIANCE,
             airglow_layer_altitude_m: AIRGLOW_LAYER_ALTITUDE_M,
             cloud_offset_m: DVec3::ZERO, cloud_evolution_s: 0.0, star_frame:[0.0;4],
@@ -1029,6 +1034,7 @@ pub fn chapman(radius_m: f64, scale_m: f64, mu: f64) -> f64 {
 /// docs/PHYSICAL_TRUTH_AUDIT.md (3 November 2026: the plain cosine cut the twilight sky's higher
 /// orders off the moment the Sun set, and the Earth's shadow rendered black).
 pub fn spherical_cosine(atmosphere: &AtmosphereParameters, altitude_m: f64, mu: f64) -> f64 {
+    if !atmosphere.spherical_higher_orders { return mu.max(0.0); }
     1.0 / chapman(atmosphere.planet_radius_m + altitude_m.max(0.0), atmosphere.rayleigh_scale_height_m, mu).max(1.0)
 }
 
@@ -1540,7 +1546,8 @@ pub struct GpuPhysicalEnvironment {
     pub integration: [u32; 4],
     /// Secondary body: top-of-atmosphere spectral irradiance (xyz, zero = none), disc radius (w).
     pub secondary_irradiance_angle: [f32; 4],
-    /// Secondary body: unit direction toward it (xyz); w unused.
+    /// Secondary body: unit direction toward it (xyz); w 1 when the higher orders take the
+    /// spherical cosine (`AtmosphereParameters::spherical_higher_orders`), 0 the plain one.
     pub secondary_direction: [f32; 4],
     /// Night-sky layer: zenith spectral radiance before extinction (xyz), layer altitude m (w).
     pub airglow_zenith_altitude: [f32; 4],
@@ -1622,8 +1629,9 @@ impl GpuPhysicalEnvironment {
                 atmosphere.secondary_angular_radius_rad as f32,
             ],
             secondary_direction: {
+                // w: the higher orders' spherical cosine on (1) or the plain cosine (0).
                 let d = atmosphere.secondary_direction.normalize_or_zero();
-                [d.x as f32, d.y as f32, d.z as f32, 0.0]
+                [d.x as f32, d.y as f32, d.z as f32, if atmosphere.spherical_higher_orders { 1.0 } else { 0.0 }]
             },
             cloud_motion:[atmosphere.cloud_offset_m.x as f32,atmosphere.cloud_offset_m.y as f32,atmosphere.cloud_offset_m.z as f32,atmosphere.cloud_evolution_s as f32],
             star_frame:atmosphere.star_frame.map(|v|v as f32),
@@ -2107,11 +2115,18 @@ mod tests {
         // through the twilights and is nothing once the Sun is far below the lit air.
         let field = |depression_deg: f64| {
             let mut sky = a;
+            sky.spherical_higher_orders = true;
             let d = (-depression_deg).to_radians();
             sky.sun_direction = DVec3::new(-d.cos(), d.sin(), 0.0);
             multiple_scattering_radiance(&sky, origin, IntegrationQuality::REFERENCE).y
         };
         let (day, horizon, civil, nautical, night) = (field(-22.0), field(0.0), field(6.0), field(12.0), field(30.0));
+        // The former sky (KESSEL_SKY_LOOK unset): the plain cosine, nothing once the Sun is down.
+        let mut former = a;
+        former.spherical_higher_orders = false;
+        let d = (-6.0f64).to_radians();
+        former.sun_direction = DVec3::new(-d.cos(), d.sin(), 0.0);
+        assert_eq!(multiple_scattering_radiance(&former, origin, IntegrationQuality::REFERENCE), DVec3::ZERO);
         assert!(horizon > 1e-3 * day && horizon < day, "sunset {horizon:e} against the day's {day:e}");
         assert!(civil < 0.02 * horizon && civil > 0.0, "civil dusk {civil:e} against sunset {horizon:e}");
         assert!(nautical < 1e-3 * civil, "nautical dusk {nautical:e}");
