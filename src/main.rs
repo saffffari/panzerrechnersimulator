@@ -5409,6 +5409,19 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
         r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
         println!("[replay-demo] wrote {prefix}_{name}.png (phase {t:.2})");
     }
+    // The penetration death's first shot (`Game::render_replay_impact`): the round coming in, the
+    // plate breaking, the armour cut away round the shot's line through the plate's thickness and
+    // the fragments inside.
+    if g.replay_has_impact() {
+        for (t, name) in [(0.12f32, "impact_incoming"), (0.24, "impact_strike"), (0.42, "impact_cut_opening"),
+            (0.52, "impact_cut_half"), (0.68, "impact_cut_open"), (0.95, "impact_cut_end")] {
+            g.render_replay_impact(t, &mut r);
+            converge_headless_screenshot(&mut r, &device, &queue, 16)?;
+            r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
+            println!("[replay-demo] wrote {prefix}_{name}.png (impact phase {t:.2})");
+        }
+        g.end_replay_cutaway(&mut r);
+    }
     if g.debug_patch_first_armor_hole() {
         g.render_replay(0.49, &mut r);
         r.render_to_png(&device, &queue, &format!("{prefix}_patched.png"), cw, ch)?;
@@ -11616,7 +11629,7 @@ mod close_request_tests {
 }
 
 // Interior aftermath replay: the recorded casualty runs in slow motion from the turret witness.
-const REPLAY_DUR: f32 = 8.0;
+pub(crate) const REPLAY_DUR: f32 = 8.0;
 const KIA_BLACK_SECONDS: f32 = 2.0;
 
 // Main-menu turntable spin rate (radians per rendered frame). Slow + continuous — a full revolution
@@ -11633,11 +11646,33 @@ const DEATH_FADE: f32 = 1.5; // picture and sound fade to nothing over this
 const DEATH_BLACK_SECONDS: f32 = 2.0;
 const DEATH_CARD_SECONDS: f32 = 5.0;
 /// After the card: the fixed aerial shot of the round coming in, then the interior aftermath.
-const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
+pub(crate) const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
 
 /// What the death sequence shows `t` seconds after the fatal frame, with a silent card.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Throw(f32), Crew(f32), Done }
+enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Impact(f32), Throw(f32), Crew(f32), Done }
+
+/// A death by a round through the armour (the owner, 2026-11-02): after the fade and a short
+/// black, the struck surface from outside, the round arriving and the plate breaking in slow
+/// motion and the armour cut away round the shot to show the fragments inside
+/// (`Game::render_replay_impact`); then the turret's rear upper corner toward the breech, the
+/// whole aftermath replayed; then the aerial shot of where the round came from; then the card.
+pub(crate) const IMPACT_BLACK_S: f32 = 1.5;
+pub(crate) const IMPACT_SECONDS: f32 = 9.0;
+fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + IMPACT_SECONDS + REPLAY_DUR + DEATH_EXTERIOR_SECONDS }
+fn penetration_shot(card: death_card::Presentation, t: f32) -> DeathShot {
+    let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
+    let impact = DEATH_FADE + IMPACT_BLACK_S;
+    let interior = impact + IMPACT_SECONDS;
+    let exterior = interior + REPLAY_DUR;
+    if t < DEATH_FADE { DeathShot::Fade }
+    else if t < impact { DeathShot::Black }
+    else if t < interior { DeathShot::Impact((t - impact) / IMPACT_SECONDS) }
+    else if t < exterior { DeathShot::Interior((t - interior) / REPLAY_DUR) }
+    else if t < card.reveal_at_s() { DeathShot::Exterior((t - exterior) / DEATH_EXTERIOR_SECONDS) }
+    else if t < card_end { DeathShot::Card }
+    else { DeathShot::Done }
+}
 
 /// A death in the stowage's cook-off (`Game::cookoff_death`; the owner, 2026-11-02): black at once
 /// from the bang while it rings (the world held), then the tank from outside as the rest of the
@@ -11652,9 +11687,10 @@ fn cookoff_shot(card: death_card::Presentation, t: f32) -> DeathShot {
     else if t < card_end { DeathShot::Card }
     else { DeathShot::Done }
 }
-/// The death's shot: the cook-off's order when the man died in it, else the ordinary one.
-fn death_shot_for(cookoff: bool, card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
-    if cookoff { cookoff_shot(card, t) } else { death_shot(card, t, has_replay) }
+/// The death's shot: the cook-off's order when the man died in it, the penetration replay's when a
+/// round through the armour killed him, else the ordinary one.
+fn death_shot_for(cookoff: bool, impact: bool, card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
+    if cookoff { cookoff_shot(card, t) } else if impact { penetration_shot(card, t) } else { death_shot(card, t, has_replay) }
 }
 fn death_shot(card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
@@ -11784,7 +11820,21 @@ mod local_presentation_tests {
         assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + COOKOFF_THROW_S + 0.01), DeathShot::Crew(p) if p < 0.01));
         assert_eq!(cookoff_shot(card, reveal + 0.01), DeathShot::Card);
         assert_eq!(cookoff_shot(card, reveal + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
-        assert_eq!(death_shot_for(false, card, 0.5, true), DeathShot::Fade, "other deaths keep their fade");
+        assert_eq!(death_shot_for(false, false, card, 0.5, true), DeathShot::Fade, "other deaths keep their fade");
+    }
+
+    #[test]
+    fn a_penetration_death_shows_the_impact_then_the_interior_then_where_it_came_from_then_the_card() {
+        let card = death_card::Presentation::silent(1, 1943, penetration_reveal_s(), DEATH_CARD_SECONDS);
+        assert_eq!(penetration_shot(card, 0.5), DeathShot::Fade);
+        assert_eq!(penetration_shot(card, DEATH_FADE + 0.1), DeathShot::Black, "a second or two of black");
+        let impact = DEATH_FADE + IMPACT_BLACK_S;
+        assert!(matches!(penetration_shot(card, impact + 0.01), DeathShot::Impact(p) if p < 0.01));
+        assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + 0.01), DeathShot::Interior(p) if p < 0.01));
+        assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + REPLAY_DUR + 0.01), DeathShot::Exterior(p) if p < 0.01));
+        assert_eq!(penetration_shot(card, penetration_reveal_s() + 0.01), DeathShot::Card);
+        assert_eq!(penetration_shot(card, penetration_reveal_s() + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
+        assert_eq!(death_shot_for(false, true, card, impact + 0.5, true), penetration_shot(card, impact + 0.5));
     }
 
     #[test]
@@ -13694,6 +13744,7 @@ impl WindowState {
             // five, and the run ends. No score plays over it.
             println!("[panzerrechnersystem] killed: {over_cause:?}");
             let reveal = if self.game.cookoff_death() { COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S }
+                else if self.game.replay_has_impact() { penetration_reveal_s() }
                 else { DEATH_FADE + DEATH_BLACK_SECONDS };
             let card = Some(death_card::Presentation::silent(self.game.death_card_seed(),
                 self.game.death_year(), reveal, DEATH_CARD_SECONDS));
@@ -14848,9 +14899,39 @@ impl WindowState {
                 _ => {}
             }
         }
+        // A round through the armour: the impact shot, the interior and the aerial shot, then the card.
+        if let Some(card) = card.filter(|card| card.is_silent() && !cookoff && self.game.replay_has_impact()) {
+            match penetration_shot(card, t) {
+                DeathShot::Impact(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.render_replay_impact(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                DeathShot::Interior(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.end_replay_exterior(&mut self.renderer);
+                    self.game.render_replay(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                DeathShot::Exterior(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.end_replay_cutaway(&mut self.renderer);
+                    self.game.render_replay_exterior(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                DeathShot::Card | DeathShot::Done => self.game.end_replay_cutaway(&mut self.renderer),
+                _ => {}
+            }
+        }
         // The silent card is followed by two replay shots: the round coming in, seen from behind
         // and above, and then what it did inside.
-        if let Some(card) = card.filter(|card| card.is_silent() && !cookoff) {
+        if let Some(card) = card.filter(|card| card.is_silent() && !cookoff && !self.game.replay_has_impact()) {
             match death_shot(card, t, self.game.last_fatal.is_some()) {
                 DeathShot::Exterior(phase) => {
                     let Some((frame, view)) = self.acquire() else { return; };
@@ -15604,8 +15685,14 @@ impl ApplicationHandler for App {
                         if matches!(code, KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape) {
                             let has_replay = state.game.last_fatal.is_some();
                             let card_end = card.card_end_s().unwrap_or(t);
-                            match death_shot_for(state.game.cookoff_death(), card, t, has_replay) {
+                            let impact = state.game.replay_has_impact();
+                            match death_shot_for(state.game.cookoff_death(), impact, card, t, has_replay) {
                                 DeathShot::Card => state.state = AppState::Death { t: card_end, card: Some(card) },
+                                // The penetration replay's shots give way to the card.
+                                DeathShot::Impact(_) | DeathShot::Interior(_) | DeathShot::Exterior(_) if impact => {
+                                    state.game.end_replay_cutaway(&mut state.renderer);
+                                    state.state = AppState::Death { t: card.reveal_at_s(), card: Some(card) };
+                                }
                                 DeathShot::Exterior(_) | DeathShot::Interior(_) => state.state = AppState::Death {
                                     t: card_end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR, card: Some(card) },
                                 // The cook-off's shots give way to the card.
@@ -16931,7 +17018,7 @@ impl ApplicationHandler for App {
                             state.game.update_realtime(&TankInput::default(), dt, &mut state.renderer);
                         }
                         let finished = card.map_or(nt >= DEATH_END, |card| if card.is_silent() {
-                            death_shot_for(cookoff, card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
+                            death_shot_for(cookoff, state.game.replay_has_impact(), card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
                         } else {
                             card.phase(nt, state.game.death_score_elapsed(),
                                 state.game.death_score_finished()) == death_card::Phase::Finished

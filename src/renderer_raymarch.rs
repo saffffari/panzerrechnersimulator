@@ -165,6 +165,13 @@ fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
     }
 }
 
+/// How much longer an event lives than `EVENT_LIFE_S`: a scaled detonation (a cook-off's
+/// fireball) evolves over the fourth root of its scale (its fireball lasting about as the fireball
+/// correlations' lifetime grows; authored).
+fn event_time_scale(e: &Event) -> f32 {
+    if e.kind == EVENT_DETONATION { e.strength.max(1.0).powf(0.25) } else { 1.0 }
+}
+
 /// Shared authored cooling envelope for the same HE detonation, whether the local VDB atlas
 /// is installed or not. This is presentation timing, not a calibrated radiometric source law.
 /// The detonation's own light over its age: the flash (60 ms decay) and, under it, the
@@ -261,6 +268,8 @@ struct FrameUniform {
     /// A fire's soot in the cabin air (`Renderer::set_interior_soot`): x its extinction /m (the
     /// light gun-fume haze is `cabin.w`); rm_medium.wgsl gives it soot's low albedo.
     soot: [f32; 4],
+    /// The section's window (`Renderer::set_replay_cutaway`): centre xyz, radius w (0: none).
+    section_window: [f32; 4],
 }
 
 /// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
@@ -2304,6 +2313,7 @@ impl Backend {
                 [band.x as f32, band.y as f32, band.z as f32, (atmosphere.planet_center_m.y + atmosphere.planet_radius_m) as f32]
             },
             soot: [if r.atmo_enabled { r.atmo_soot * SOOT_EXTINCTION_PER_M } else { 0.0 }, 0.0, 0.0, 0.0],
+            section_window: r.section_window(),
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -2757,17 +2767,30 @@ impl Backend {
     fn track_events(&mut self, r: &Renderer) {
         use renderer_weapon_particles::math as wm;
         let now = r.time;
-        self.events.retain(|e| now - e.born < EVENT_LIFE_S && now + 0.5 >= e.born);
+        self.events.retain(|e| now - e.born < EVENT_LIFE_S * event_time_scale(e) && now + 0.5 >= e.born);
         if self.debug_skip & 2048 != 0 { self.events.clear(); self.stats.events = 0; return; }
         let grounds: Vec<(Vec3, f32)> = r.weapon_particles.bursts.iter()
             .filter(|b| b.active() && b.meta[3] == wm::GROUND)
             .map(|b| (b.origin(), b.parameters[2].clamp(0.0, 1.0))).collect();
-        for burst in r.weapon_particles.bursts.iter().filter(|b| b.active()) {
+        // A cook-off's fireball (a scaled detonation) is taken first, and when the list is full
+        // it takes the oldest ordinary event's place: the vents and pops of the same moment must
+        // not crowd it out.
+        let scaled = |b: &renderer_weapon_particles::Record| b.meta[3] == wm::BLAST && b.parameters[1] > 1.0;
+        let mut active: Vec<&renderer_weapon_particles::Record> = r.weapon_particles.bursts.iter().filter(|b| b.active()).collect();
+        active.sort_by_key(|b| !scaled(b));
+        for burst in active {
             let origin = burst.origin();
             let Some(event_kind) = source_event_kind(burst) else { continue };
             let seed = burst.meta[0];
             if self.events.iter().any(|e| e.seed == seed && e.kind == event_kind) { continue; }
-            if self.events.len() >= MAX_EVENTS { break; }
+            if self.events.len() >= MAX_EVENTS {
+                let oldest = self.events.iter().enumerate().filter(|(_, e)| !(e.kind == EVENT_DETONATION && e.strength > 1.0))
+                    .min_by(|a, b| a.1.born.total_cmp(&b.1.born)).map(|(i, _)| i);
+                match oldest.filter(|_| event_kind == EVENT_DETONATION && scaled(burst)) {
+                    Some(i) => { self.events.remove(i); }
+                    None => break,
+                }
+            }
             let dir = Vec3::from_array([burst.direction_life[0], burst.direction_life[1], burst.direction_life[2]]).normalize_or_zero();
             let n = Vec3::from_array([burst.normal_offset[0], burst.normal_offset[1], burst.normal_offset[2]]);
             let normal = if n.length_squared() > 0.5 { n.normalize() } else { Vec3::Y };
@@ -2778,7 +2801,11 @@ impl Backend {
             // A vent's strength is the pressure behind it; a penetration's is the scale of its smoke
             // from the plate work (its record carries 0.6 % of that work: `weapon_vfx`).
             let strength = if event_kind == EVENT_VENT { burst.parameters[0].clamp(0.0, 1.0) }
-                else if event_kind == EVENT_PENETRATION { penetration_smoke_scale(burst.parameters[0] / 0.006) } else { 1.0 };
+                else if event_kind == EVENT_PENETRATION { penetration_smoke_scale(burst.parameters[0] / 0.006) }
+                // A cook-off's fireball carries its size against the 88 mm burst's
+                // (`weapon_vfx::cookoff_fireball`); every other blast carries none.
+                else if event_kind == EVENT_DETONATION && burst.parameters[1] > 0.0 { burst.parameters[1].clamp(1.0, 24.0) }
+                else { 1.0 };
             self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, ground_snow, strength,
                 born: now - burst.origin_age[3].max(0.0) });
         }
@@ -2840,6 +2867,35 @@ impl Backend {
             };
             match e.kind {
                 EVENT_DETONATION => {
+                    // A cook-off's fireball (`weapon_vfx::cookoff_fireball`) is this envelope
+                    // scaled: its lengths by `s` (its diameter against the 88 mm burst's), its time
+                    // by the fourth root of s (`event_time_scale`), its emission and extinction per
+                    // metre kept (the same burning gas and soot, so an optically thick fireball's
+                    // surface shines as the 88 mm's does and its smoke's optical depth across grows
+                    // with s); above a scale of 4 a stem of smoke stands from the ground to the cloud
+                    // (the mushroom of a mass detonation). Named presentation scaling; s is 1 for
+                    // every ordinary burst, which is unchanged.
+                    let s = e.strength.max(1.0);
+                    let t = t / event_time_scale(&e);
+                    let pivot = e.ground_y.map_or(o - Vec3::Y * 1.5, |gy| Vec3::new(o.x, gy, o.z));
+                    if s > 4.0 && t > 0.15 && t < 14.0 {
+                        let u = (t / 13.9).min(1.0);
+                        let top = (1.5 * (1.0 - (-t / 0.3).exp()) + 7.0 * u.powf(1.1)) * s;
+                        for k in 0..5u32 {
+                            let f = (k as f32 + 0.5) / 5.0;
+                            let centre = pivot + Vec3::Y * (top * 0.8 * f) + wind * (t * 0.6 * f);
+                            let radius = (0.12 + 0.1 * f) * (1.0 + 2.0 * u.sqrt()) * s;
+                            let density = (1.0 - u).powf(1.2) * 1.4 * smooth(0.15, 0.8, t);
+                            push(centre, radius, [0.30, 0.28, 0.26], PARCEL_SMOKE, 0.0, density / radius, h(180 + k) * 100.0, 0.0);
+                        }
+                    }
+                    let mut push = |center: Vec3, radius: f32, colour: [f32; 3], kind: f32, emission: f32, extinction: f32, noise: f32, age: f32| {
+                        push(o + (center - o) * s, radius * s, colour, kind, emission, extinction, noise, age)
+                    };
+                    let mut volume = |role: crate::explosion_volumes::Role, pick: f32, yaw: f32, size: f32, base: Vec3,
+                                      colour: [f32; 3], emission: f32, extinction: f32, temperature: f32| {
+                        volume(role, pick, yaw, size * s, pivot + (base - pivot) * s, colour, emission, extinction, temperature)
+                    };
                     // Detonation products: a white-hot core for the first frames growing out of
                     // the contact along the struck surface's normal, then the cloud below.
                     // A burst against a plate (or a wall) is not the ground-burst shapes of the
@@ -3558,7 +3614,11 @@ impl Backend {
                 // A pane of a sectioned vehicle beyond the film's plane goes with its frame.
                 if let (Some(plane), true) = (r.film_section(), m.section_cut) {
                     let centre = (m.world_min + m.world_max) * 0.5;
-                    if centre.dot(Vec3::new(plane[0], plane[1], plane[2])) > plane[3] { continue; }
+                    let normal = Vec3::new(plane[0], plane[1], plane[2]);
+                    let [wx, wy, wz, radius] = r.section_window();
+                    let off = centre - Vec3::new(wx, wy, wz);
+                    let inside = radius <= 0.0 || (off - normal * off.dot(normal)).length() < radius;
+                    if centre.dot(normal) > plane[3] && inside { continue; }
                 }
                 // The slab thickness is the pane's thinnest local extent (port glass ~9 cm,
                 // sight glass millimetres).
@@ -4089,6 +4149,16 @@ mod film_section_tests {
             }
         }
         assert_eq!(openers, vec!["game_fea_film.rs".to_string()], "only the film harness opens a section");
+        // The windowed cutaway is the death replay's alone (a presentation view of a replay).
+        let mut cutaways = Vec::new();
+        let needle = [".set_replay_cutaway", "(Some"].concat();
+        for entry in std::fs::read_dir("src").unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "rs") && std::fs::read_to_string(&path).unwrap().contains(&needle) {
+                cutaways.push(path.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+        assert_eq!(cutaways, vec!["death_replay.rs".to_string()], "only the death replay opens a cutaway");
     }
 }
 

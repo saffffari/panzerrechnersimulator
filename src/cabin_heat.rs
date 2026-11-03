@@ -23,6 +23,10 @@
 //!   areal heat capacity, and by its own burning charge) reaches `FILLER_COOKOFF_K`: its energy
 //!   goes into the gas at once and its own charge is lit. An armour-piercing round's small
 //!   bursting charge (under `HE_MIN_FILLER_KG`) is not counted (named).
+//! - The owner's rule (2026-11-02): one round going inside sets off the rest. Once any round
+//!   ignites or detonates, every other live round goes within `MASS_SPREAD_S` (each at its own
+//!   hashed moment: a crackle, not a single instant), an HE shell by detonating. The heat and jet
+//!   chain below still decides when the first goes (and, with the rule off, how the rest follow).
 //! - The turret sits on its ring under its weight (no hold-down modelled): the gauge pressure on
 //!   the ring's area lifts it; once its skirt has cleared the ring's lip (`RING_OVERLAP_M`) the gap
 //!   round the ring vents the gas as it rises, and once that gap is as large as the ring itself (a
@@ -39,7 +43,6 @@ use std::collections::BTreeMap;
 
 const CV: f32 = R_AIR / (GAMMA - 1.0);
 const CP: f32 = CV * GAMMA;
-const VOLUME_M3: f32 = compartment::TIGER_CREW_AIR_M3;
 /// Heat lost to the hull's steel per kelvin of gas above ambient (W/K): about 15 W/m²·K of mixed
 /// convection over about 40 m² of interior steel held at ambient by its mass (authored).
 const WALL_CONDUCTANCE_W_K: f32 = 600.0;
@@ -88,6 +91,8 @@ const SHELL_J_M2K: f32 = 36_000.0;
 /// (authored).
 const RING_OVERLAP_M: f32 = 0.06;
 const GRAVITY: f32 = 9.81;
+/// Under the owner's whole-load rule, the rest of the load goes within this (s; authored).
+pub const MASS_SPREAD_S: f32 = 0.1;
 
 /// A live round as the caller has it now: its identity, centre (one frame for all), propellant,
 /// and its shell's high-explosive filler (kg; TNT equivalent).
@@ -152,6 +157,8 @@ struct Round {
     /// Share of its propellant burnt, once it has ignited.
     burnt: Option<f32>,
     detonated: bool,
+    /// When the whole-load rule sets it off (the model's clock, s).
+    react_at: Option<f32>,
 }
 
 impl Round {
@@ -183,17 +190,29 @@ pub struct CabinHeat {
     peak_gauge_pa: f32,
     /// Openings (by index) whose latches the pressure has beaten.
     blown: std::collections::BTreeSet<usize>,
+    /// The compartments' free air (m³): the Tiger's by default (`compartment::TIGER_CREW_AIR_M3`).
+    volume_m3: f32,
     /// The thrown turret's height above its ring while it is still over it (the caller's).
     thrown_height_m: Option<f32>,
     /// Momentum the leaving gas has given the thrown turret since it was last taken (N·s).
     jet_impulse_ns: f32,
+    /// The owner's rule: one round going sets off the whole load (on unless a caller turns it off).
+    whole_load: bool,
+    /// Seconds the model has run.
+    clock_s: f32,
 }
 
 impl CabinHeat {
     pub fn new(ambient_k: f32) -> Self {
-        let mass_kg = P_ATM * VOLUME_M3 / (R_AIR * ambient_k);
+        Self::with_volume(ambient_k, compartment::TIGER_CREW_AIR_M3)
+    }
+
+    /// Another vehicle's compartments: `volume_m3` of free air.
+    pub fn with_volume(ambient_k: f32, volume_m3: f32) -> Self {
+        let volume_m3 = volume_m3.max(0.5);
+        let mass_kg = P_ATM * volume_m3 / (R_AIR * ambient_k);
         Self { mass_kg, energy_j: mass_kg * CV * ambient_k, rounds: BTreeMap::new(), lift: Lift::default(), peak_gauge_pa: 0.0,
-            blown: Default::default(), thrown_height_m: None, jet_impulse_ns: 0.0 }
+            blown: Default::default(), volume_m3, thrown_height_m: None, jet_impulse_ns: 0.0, whole_load: true, clock_s: 0.0 }
     }
 
     pub fn gas_k(&self) -> f32 {
@@ -201,7 +220,7 @@ impl CabinHeat {
     }
 
     pub fn gauge_pa(&self) -> f32 {
-        self.mass_kg * R_AIR * self.gas_k() / VOLUME_M3 - P_ATM
+        self.mass_kg * R_AIR * self.gas_k() / self.volume_m3 - P_ATM
     }
 
     #[cfg(test)]
@@ -212,6 +231,12 @@ impl CabinHeat {
     #[cfg(test)]
     pub fn lift(&self) -> Lift {
         self.lift
+    }
+
+    /// Turn the owner's whole-load rule on or off (on by default; off leaves the heat and jet
+    /// chain to decide how the rest of the load follows).
+    pub fn set_whole_load(&mut self, on: bool) {
+        self.whole_load = on;
     }
 
     /// The thrown turret's height above its ring while it is over it (`None` once it is clear).
@@ -269,7 +294,22 @@ impl CabinHeat {
             }
         }
         self.detonate(detonate, Cause::Struck, &mut events);
+        self.set_off_the_rest(&events);
         events
+    }
+
+    /// Under the whole-load rule, the first reaction schedules every round not yet going.
+    fn set_off_the_rest(&mut self, events: &[Event]) {
+        if !self.whole_load || !events.iter().any(|e| matches!(e, Event::Ignited { .. } | Event::Detonated { .. })) {
+            return;
+        }
+        let now = self.clock_s;
+        for (id, round) in self.rounds.iter_mut() {
+            if round.react_at.is_none() && round.burnt.is_none() && !round.detonated {
+                let hash = (id.wrapping_mul(2_654_435_761) ^ 0x5bd1_e995).wrapping_mul(2_246_822_519) >> 8;
+                round.react_at = Some(now + MASS_SPREAD_S * hash as f32 / (1u32 << 24) as f32);
+            }
+        }
     }
 
     /// Detonate these HE shells and every HE shell within `SYMPATHETIC_M` of one that goes: each
@@ -303,7 +343,7 @@ impl CabinHeat {
         for (i, live) in env.rounds.iter().enumerate() {
             let flux = env.flame_flux_w_m2.get(i).copied().unwrap_or(0.0).max(0.0);
             let round = self.rounds.entry(live.id).or_insert(Round { center: live.center, propellant_kg: live.propellant_kg,
-                filler_kg: live.filler_kg, wall_k: start, shell_k: start, flame_flux: 0.0, burnt: None, detonated: false });
+                filler_kg: live.filler_kg, wall_k: start, shell_k: start, flame_flux: 0.0, burnt: None, detonated: false, react_at: None });
             round.center = live.center;
             round.propellant_kg = live.propellant_kg;
             round.filler_kg = live.filler_kg;
@@ -330,9 +370,28 @@ impl CabinHeat {
     }
 
     fn step(&mut self, h: f32, env: &Env, open: &mut [bool], events: &mut Vec<Event>) {
+        self.clock_s += h;
+        let first_event = events.len();
+        // The whole-load rule's rounds whose moment has come.
+        let now = self.clock_s;
+        let due: Vec<u32> = self.rounds.iter().filter(|(_, r)| r.react_at.is_some_and(|at| at <= now) && r.burnt.is_none() && !r.detonated)
+            .map(|(id, _)| *id).collect();
+        let mut detonate_due = Vec::new();
+        for id in due {
+            let round = self.rounds.get_mut(&id).expect("due round");
+            if round.high_explosive() {
+                detonate_due.push(id);
+            } else {
+                round.burnt = Some(0.0);
+                events.push(Event::Ignited { id, center: round.center, cause: Cause::Jet });
+            }
+        }
+        if !detonate_due.is_empty() {
+            self.detonate(detonate_due, Cause::Jet, events);
+        }
         let ambient = env.ambient_k;
         let t = self.gas_k();
-        let p = self.mass_kg * R_AIR * t / VOLUME_M3;
+        let p = self.mass_kg * R_AIR * t / self.volume_m3;
         let gauge = p - P_ATM;
         self.peak_gauge_pa = self.peak_gauge_pa.max(gauge);
         for (i, o) in env.openings.iter().enumerate() {
@@ -430,6 +489,8 @@ impl CabinHeat {
         if !cooked.is_empty() {
             self.detonate(cooked, Cause::Heat, events);
         }
+        let new = events[first_event..].to_vec();
+        self.set_off_the_rest(&new);
     }
 
     pub fn receipt(&self) -> serde_json::Value {
@@ -503,6 +564,37 @@ mod tests {
         }
     }
 
+    /// The whole load set off at once (the owner's rule for a cook-off), for the Tiger and a
+    /// T-34/76: the throw and the height it reaches.
+    #[test]
+    #[ignore]
+    fn print_whole_load_throws() {
+        let tiger: Vec<LiveRound> = racks().into_iter().map(|r| LiveRound { filler_kg: if r.id % 5 == 0 { 0.9 } else { 0.059 }, ..r }).collect();
+        // A T-34/76: 77 rounds of 1.08 kg propellant in the floor bins (a 7 x 11 grid, 0.1 m), two
+        // thirds of them OF-350 HE (0.71 kg), the rest BR-350 (0.15 kg).
+        let t34: Vec<LiveRound> = (0..77u32).map(|i| LiveRound { id: i, center: Vec3::new(-0.6 + (i % 11) as f32 * 0.11, 0.3, -0.3 + (i / 11) as f32 * 0.1),
+            propellant_kg: 1.08, filler_kg: if i % 3 != 0 { 0.71 } else { 0.15 } }).collect();
+        let t34_hatches: Vec<Opening> = ["driver's hatch", "turret hatch left", "turret hatch right"].iter()
+            .map(|&name| Opening { name, area_m2: 0.15, open: false, hatch: true }).collect();
+        for (name, rounds, openings, turret, volume) in [
+            ("Tiger I", tiger, hatches(false), TIGER, compartment::TIGER_CREW_AIR_M3),
+            ("T-34/76", t34, t34_hatches, Turret { mass_kg: 4_000.0, ring_diameter_m: 1.42 }, 5.0),
+        ] {
+            let mut heat = CabinHeat::with_volume(AMBIENT, volume);
+            let flux = vec![0.0; rounds.len()];
+            let env = Env { ambient_k: AMBIENT, fire_w: 0.0, soot: 0.0, openings: &openings, rounds: &rounds, flame_flux_w_m2: &flux, turret: Some(turret) };
+            heat.advance(1.0 / 60.0, &env);
+            let ids: Vec<u32> = rounds.iter().map(|r| r.id).collect();
+            heat.strike(&ids);
+            let log = run(&mut heat, 2.0, &env);
+            let launch = log.iter().find_map(|(t, e)| match e { Event::TurretLaunched { speed_mps, .. } => Some((*t, *speed_mps)), _ => None });
+            let energy: f32 = rounds.iter().map(|r| r.propellant_kg * PROPELLANT_J_PER_KG + r.filler_kg * compartment::TNT_J_PER_KG).sum();
+            println!("{name}: {} rounds, {:.0} MJ; peak {:.1} MPa; launch {:?}; height {:.0} m; all-energy height {:.0} m",
+                rounds.len(), energy / 1.0e6, heat.peak_gauge_pa() / 1.0e6, launch,
+                launch.map_or(0.0, |(_, v)| v * v / (2.0 * GRAVITY)), energy / (turret.mass_kg * GRAVITY));
+        }
+    }
+
     #[test]
     fn without_fire_nothing_changes() {
         let mut heat = CabinHeat::new(AMBIENT);
@@ -518,6 +610,7 @@ mod tests {
     #[test]
     fn a_fire_heats_the_air_over_tens_of_seconds_a_round_in_its_flames_cooks_off_and_its_group_follows() {
         let mut heat = CabinHeat::new(AMBIENT);
+        heat.set_whole_load(false);
         let rounds = racks();
         // The first round of the first group sits in a flame (60 kW/m²), the rest see none.
         let mut flux = vec![0.0; rounds.len()];
@@ -546,6 +639,7 @@ mod tests {
     fn a_struck_rack_goes_at_once_and_throws_the_turret() {
         for open_hatches in [false, true] {
             let mut heat = CabinHeat::new(AMBIENT);
+            heat.set_whole_load(false);
             let rounds = racks();
             let flux = vec![0.0; rounds.len()];
             let openings = hatches(open_hatches);
@@ -567,6 +661,7 @@ mod tests {
     #[test]
     fn a_struck_he_shell_detonates_its_neighbours_and_throws_the_turret_hard() {
         let mut heat = CabinHeat::new(AMBIENT);
+        heat.set_whole_load(false);
         // The first group's rounds alternate PzGr (59 g filler: not counted) and SprGr (0.9 kg).
         let rounds: Vec<LiveRound> = racks().into_iter().map(|r| LiveRound { filler_kg: if r.id % 2 == 0 { 0.9 } else { 0.059 }, ..r }).collect();
         let flux = vec![0.0; rounds.len()];
@@ -584,6 +679,25 @@ mod tests {
         let mut heat = CabinHeat::new(AMBIENT);
         heat.advance(1.0 / 60.0, &env);
         assert!(heat.strike(&[1]).iter().all(|e| matches!(e, Event::Ignited { .. })));
+    }
+
+    #[test]
+    fn under_the_owners_rule_one_round_sets_off_the_whole_load_and_throws_the_turret_high() {
+        let mut heat = CabinHeat::new(AMBIENT);
+        let rounds = racks();
+        let mut flux = vec![0.0; rounds.len()];
+        flux[0] = 60_000.0;
+        let openings = hatches(false);
+        let env = Env { ambient_k: AMBIENT, fire_w: 300_000.0, soot: 0.5, openings: &openings, rounds: &rounds, flame_flux_w_m2: &flux, turret: Some(TIGER) };
+        let log = run(&mut heat, 120.0, &env);
+        let times: Vec<f32> = log.iter().filter_map(|(t, e)| matches!(e, Event::Ignited { .. } | Event::Detonated { .. }).then_some(*t)).collect();
+        assert_eq!(times.len(), rounds.len(), "every round goes");
+        let first = times[0];
+        assert!(times.iter().all(|t| t - first <= MASS_SPREAD_S + 0.02), "within the spread: last after {} s", times.iter().fold(0.0f32, |a, t| a.max(t - first)));
+        assert!(times.iter().filter(|t| (**t - first) > 0.02).count() > 10, "a crackle, not a single instant");
+        let (at, speed) = log.iter().find_map(|(t, e)| match e { Event::TurretLaunched { speed_mps, .. } => Some((*t, *speed_mps)), _ => None })
+            .expect("the turret goes");
+        assert!(at - first < 0.25 && speed > 20.0, "near instant and high: {} s, {speed} m/s", at - first);
     }
 
     #[test]

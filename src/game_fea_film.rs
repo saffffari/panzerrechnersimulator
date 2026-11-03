@@ -547,6 +547,211 @@ fn cookoff_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, na
     Ok(receipt)
 }
 
+/// The whole-load cook-off of a T-34 (see the clip list, 18). Disclosed: a live T-34 stands 60 m
+/// off and is killed through its ammunition by state (`debug_catastrophic_kill`, the route a
+/// penetration takes, with the breach authored); everything after (the whole load's fireball and
+/// front, the throw at the compartment's speed, the flight, the fall, the plume) is the game's own.
+/// Watched from the ground 200 m off, the frame fixed and sized for the throw's height without
+/// drag (v²/2g of the solved launch speed).
+fn t34_cookoff_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, name: &str,
+    idle_input: &dyn Fn(u32) -> TankInput) -> anyhow::Result<serde_json::Value> {
+    let stills = std::env::var("KESSEL_FEA_FILM_STILLS").as_deref() == Ok("1");
+    let day_clock = ctx.clock;
+    ctx.clock = ephemeris::UtcInstant::parse_iso("1942-12-21T09:30:00Z")?;
+    fresh_tiger(ctx, g, r, 0x7340_C00C, true)?;
+    let forward = g.player.forward();
+    let right = Vec3::new(-forward.z, 0.0, forward.x);
+    let at = g.player.pos + forward * 60.0 + right * 10.0;
+    let live = g.debug_stage_live_t34(at.x, at.z, 1.2).ok_or_else(|| anyhow::anyhow!("the film needs a live T-34"))?;
+    g.debug_hold_enemy_fire();
+    ctx.run(g, r, 1.0, TICK)?;
+    let centre = g.enemies[live].center();
+    let stand = centre - right * 190.0 - forward * 60.0;
+    let eye = Vec3::new(stand.x, g.hf.height_at(stand.x, stand.z) + 1.7, stand.z);
+    let distance = eye.distance(centre);
+    let speed = game_cookoff::enemy_cookoff_throw(crate::tank::EnemyKind::T34).map_or(20.0, |(v, _, _)| v);
+    let half = 0.5 * (speed * speed / 19.62) + 15.0;
+    let fixed = View::Outside(eye, centre + Vec3::Y * (half - 12.0), (2.0 * (half / distance).atan()).to_degrees().clamp(12.0, 75.0));
+    let view = |_: &Game| fixed;
+    let mut apex = 0.0f32;
+    let still = |ctx: &mut Ctx, g: &Game, r: &mut Renderer, view: View, tag: &str| -> anyhow::Result<()> {
+        let rgba = ctx.shoot(g, r, view, None)?;
+        let path = format!("{prefix}_{name}_{tag}.png");
+        save_still(&path, &rgba)?;
+        println!("[fea-film] wrote {path}");
+        Ok(())
+    };
+    ctx.banner = Some("THE WHOLE LOAD: A T-34 KILLED THROUGH ITS AMMUNITION, WATCHED FROM 200 M".into());
+    let mut film = if stills { None } else { Some(Clip::start(prefix, name)?) };
+    ctx.cut(g, r, view(g))?;
+    match film.as_mut() {
+        Some(clip) => { clip.mark("the T-34", "real time"); clip.real_time(ctx, g, r, 1.0, idle_input, &|g, _| view(g))?; }
+        None => still(ctx, g, r, view(g), "before")?,
+    }
+    let ring = g.enemies[live].center() + Vec3::Y * 0.9;
+    anyhow::ensure!(g.debug_catastrophic_kill(live, ring - forward * 1.2, -forward), "the kill did not take");
+    if let Some(clip) = film.as_mut() { clip.mark("the whole load goes; the turret is thrown", "real time"); }
+    let mut track = Vec::new();
+    let mut landed_s = None;
+    let mut written = std::collections::BTreeSet::new();
+    let frames = 24 * FPS;
+    for f in 0..frames {
+        let s = f as f32 / FPS as f32;
+        let mut sound = Vec::with_capacity(FRAME_SAMPLES);
+        for k in 0..2 {
+            sound.extend(ctx.update(g, r, &idle_input(2 * f + k), TICK)?);
+        }
+        let turret = g.debug_enemy_turret_pop_position(live).unwrap_or(centre);
+        let was = apex;
+        apex = apex.max(turret.y - centre.y);
+        if f % 15 == 0 { track.push(json!({"s": s, "height_m": turret.y - centre.y, "from_ring_m": (turret - centre).length()})); }
+        let settled = g.debug_thrown_turrets().iter().any(|&(i, settled, _, _)| i == live && settled);
+        if settled && landed_s.is_none() { landed_s = Some(s); }
+        let moment = [(0.2f32, "fireball"), (1.0, "1s"), (3.0, "3s")].iter()
+            .find(|(at, tag)| s >= *at && !written.contains(*tag)).map(|(_, tag)| *tag)
+            .or_else(|| (apex > 5.0 && apex == was && !written.contains("apex")).then_some("apex"))
+            .or_else(|| (landed_s.is_some() && !written.contains("landed")).then_some("landed"))
+            .or_else(|| (s >= 23.0 && !written.contains("23s")).then_some("23s"));
+        match film.as_mut() {
+            Some(clip) => {
+                let rgba = ctx.shoot(g, r, view(g), None)?;
+                clip.push(&rgba, Some(&sound))?;
+            }
+            None => if let Some(tag) = moment {
+                ctx.cut(g, r, view(g))?;
+                still(ctx, g, r, view(g), tag)?;
+            },
+        }
+        if let Some(tag) = moment { written.insert(tag); }
+    }
+    println!("[fea-film] {name}: apex {apex:.1} m above the ring, landed at {landed_s:?} s");
+    ctx.banner = None;
+    ctx.clock = day_clock;
+    let mut receipt = match film {
+        Some(clip) => clip.finish()?,
+        None => json!({"clip": name, "stills": true}),
+    };
+    receipt["apex_m"] = json!(apex);
+    receipt["landed_s"] = json!(landed_s);
+    receipt["throw"] = json!(game_cookoff::enemy_cookoff_throw(crate::tank::EnemyKind::T34)
+        .map(|(speed, fuel, tnt)| json!({"speed_mps": speed, "fuel_kg": fuel, "tnt_kg": tnt, "fireball": game_cookoff::fireball(fuel)})));
+    receipt["turret"] = json!(g.debug_enemy_turret_dynamics(live));
+    receipt["track"] = json!(track);
+    Ok(receipt)
+}
+
+/// The penetration death as the player sees it (see the clip list, 19). Disclosed: a 122 mm BR-471
+/// is launched at the commander's chest through the turret side on his side, 500 m, the player at
+/// his post, the racks emptied (so no cook-off). After the death, the death's shots at their phases
+/// as the app plays them (`main::penetration_shot`): black, the impact shot with the armour cut away
+/// (`Game::render_replay_impact`), the interior (`Game::render_replay`), the aerial shot
+/// (`Game::render_replay_exterior`); silent, as in the app.
+fn penetration_death_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, name: &str,
+    idle_input: &dyn Fn(u32) -> TankInput) -> anyhow::Result<serde_json::Value> {
+    let stills = std::env::var("KESSEL_FEA_FILM_STILLS").as_deref() == Ok("1");
+    let day_clock = ctx.clock;
+    ctx.clock = ephemeris::UtcInstant::parse_iso("1942-12-21T09:30:00Z")?;
+    g.enable_singleplayer_crew();
+    fresh_tiger(ctx, g, r, 0x5EC7_DEAD, false)?;
+    g.set_cabin_lights(true);
+    g.jump_station(Station::Commander);
+    ctx.run(g, r, 1.0, TICK)?;
+    let turret = g.player.turret_model();
+    let man = turret.inverse().transform_point3(g.crew_solo_man_point(CrewRole::Commander));
+    let side = man.x.signum();
+    let entry = Vec3::new(1.19 * side, man.y + 0.04, man.z);
+    let dir = turret.transform_vector3((man - entry).normalize());
+    let outside = View::Outside(turret.transform_point3(entry + Vec3::new(4.0 * side, 0.8, -2.0)), turret.transform_point3(entry), 50.0);
+    let still = |ctx: &mut Ctx, g: &Game, r: &mut Renderer, view: View, tag: &str| -> anyhow::Result<()> {
+        let rgba = ctx.shoot(g, r, view, None)?;
+        let path = format!("{prefix}_{name}_{tag}.png");
+        save_still(&path, &rgba)?;
+        println!("[fea-film] wrote {path}");
+        Ok(())
+    };
+    ctx.banner = Some("THE PENETRATION DEATH: A 122 MM BR-471 AT THE COMMANDER THROUGH THE TURRET SIDE, 500 M".into());
+    let mut film = if stills { None } else { Some(Clip::start(prefix, name)?) };
+    ctx.cut(g, r, outside)?;
+    match film.as_mut() {
+        Some(clip) => { clip.mark("the Tiger", "real time"); clip.real_time(ctx, g, r, 1.0, idle_input, &|_, _| outside)?; }
+        None => still(ctx, g, r, outside, "before")?,
+    }
+    g.debug_launch_round(&crate::ballistics::BR_471, false, turret.transform_point3(entry), dir, 500.0, 0x5EC7_DEA1);
+    let mut steps = 0u32;
+    while g.game_over().is_none() && steps < 120 {
+        ctx.update(g, r, &TankInput::default(), TICK)?;
+        steps += 1;
+    }
+    let died = g.game_over().map(|cause| format!("{cause:?}"));
+    println!("[fea-film] {name}: {died:?} after {steps} updates; replay opens on the impact: {}", g.replay_has_impact());
+    let mut shots = Vec::new();
+    if died.is_some() && g.replay_has_impact() {
+        let (w, h) = frame();
+        if let Some(clip) = film.as_mut() {
+            clip.mark("black", "real time, silent");
+            let black = vec![0u8; (w * h * 4) as usize];
+            for _ in 0..(crate::IMPACT_BLACK_S * FPS as f32).round() as u32 {
+                clip.push(&black, None)?;
+            }
+        }
+        let banner = ctx.banner.clone();
+        let mut elapsed = 0.0f32;
+        // The replay's shots: impact, interior, aerial, each at its phases; a still at the given ones.
+        for (shot, seconds, label, moments) in [
+            (0u8, crate::IMPACT_SECONDS, "the impact: the round arrives, the armour cut away round its line", &[(0.12f32, "impact_incoming"), (0.24, "impact_strike"), (0.42, "impact_cut_opening"), (0.52, "impact_cut_half"), (0.68, "impact_cut_open"), (0.95, "impact_end")][..]),
+            (1, crate::REPLAY_DUR, "the interior, from the turret's rear corner", &[(0.2, "interior_early"), (0.5, "interior_mid"), (0.9, "interior_late")][..]),
+            (2, crate::DEATH_EXTERIOR_SECONDS, "where the round came from", &[(0.5, "exterior")][..]),
+        ] {
+            if let Some(clip) = film.as_mut() { clip.mark(label, "slow motion, silent"); }
+            let frames = (seconds * FPS as f32).round() as u32;
+            let mut written = std::collections::BTreeSet::new();
+            for f in 0..frames {
+                let phase = f as f32 / frames as f32;
+                let moment = moments.iter().find(|(at, tag)| phase >= *at && !written.contains(tag)).map(|(_, tag)| *tag);
+                if film.is_none() && moment.is_none() { continue; }
+                match shot {
+                    0 => g.render_replay_impact(phase, r),
+                    1 => { g.end_replay_cutaway(r); g.render_replay(phase, r); }
+                    _ => { g.end_replay_exterior(r); g.render_replay_exterior(phase, r); }
+                }
+                elapsed += 1.0 / FPS as f32;
+                let settle = if film.is_some() { MOVING_CAMERA_SETTLE } else { 48 };
+                for _ in 0..settle {
+                    r.render_replay_offscreen(ctx.device, ctx.queue, elapsed, crate::renderer::ReplayCapturePolicy::Current);
+                }
+                r.ui_reset();
+                if let Some(banner) = &banner {
+                    r.fill_rect(0.015, 0.026, 0.0105 * banner.len() as f32 + 0.03, 0.048, [0.0, 0.0, 0.0, 0.62]);
+                    r.draw_text(banner, 0.026, 0.050, 0.020, [0.88, 0.86, 0.80, 1.0], crate::ui::Align::Left);
+                }
+                let rgba = r.render_to_rgba_with_hud(ctx.device, ctx.queue, w, h)?;
+                if let Some(clip) = film.as_mut() { clip.push(&rgba, None)?; }
+                if let Some(tag) = moment {
+                    let path = format!("{prefix}_{name}_{tag}.png");
+                    save_still(&path, &rgba)?;
+                    println!("[fea-film] wrote {path}");
+                    written.insert(tag);
+                    shots.push(json!({"still": tag, "shot": shot, "phase": phase, "eye": r.camera.pos.to_array(),
+                        "section_window": r.section_window()}));
+                }
+            }
+        }
+        g.end_replay_cutaway(r);
+        g.end_replay_exterior(r);
+    }
+    ctx.banner = None;
+    ctx.clock = day_clock;
+    let mut receipt = match film {
+        Some(clip) => clip.finish()?,
+        None => json!({"clip": name, "stills": true}),
+    };
+    receipt["outcome"] = strike_outcome(g);
+    receipt["died"] = json!(died);
+    receipt["fatal"] = json!(g.last_fatal.as_ref().map(|f| json!({"entry": f.entry_point.to_array(), "shell_dir": f.shell_dir.to_array(), "struck_at_s": f.struck_at_s})));
+    receipt["shots"] = json!(shots);
+    Ok(receipt)
+}
+
 /// The fallen man's head (world), from his body's head segment.
 fn head_point(g: &Game, role: CrewRole) -> Option<Vec3> {
     let actor = g.singleplayer_casualty_identity(role).peer_id;
@@ -1620,6 +1825,18 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         if wanted(name) {
             clips.push(cookoff_study(&mut ctx, &mut g, &mut r, prefix, name, struck, &idle_input)?);
         }
+    }
+
+    // ── 18. A T-34's whole load (`game_cookoff::enemy_cookoff_throw`): killed through its
+    // ammunition 60 m off; watched from 250 m, wide enough for the turret's flight.
+    if wanted("cookoff_t34") {
+        clips.push(t34_cookoff_study(&mut ctx, &mut g, &mut r, prefix, "cookoff_t34", &idle_input)?);
+    }
+
+    // ── 19. The penetration death (`death_replay::render_replay_impact`): the commander killed by a
+    // 122 mm round through the turret side, then the death's shots as the app plays them.
+    if wanted("penetration_death") {
+        clips.push(penetration_death_study(&mut ctx, &mut g, &mut r, prefix, "penetration_death", &idle_input)?);
     }
 
     let receipt = json!({

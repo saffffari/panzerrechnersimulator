@@ -578,9 +578,35 @@ throw in the frame; then what the cook-off left of the crew.
   load threw its turret roof about 30 m in 1944 Soviet tests; Tiger wrecks show their turrets
   beside the hull.
 - **The death** (`main.rs` `cookoff_shot`): black from the bang for 3.5 s with the world held and
-  the bang ringing at full level; then 7 s outside (wide, 24 m off, the frame reaching 13 m above
-  the ring) with the world running on, silent; then 8 s on the dead from the first eye with a
+  the bang ringing at full level; then 7 s outside (wide, at least 24 m off and clear of the
+  whole load's fireball, 24 m plus one and a half diameters: about 66 m for the Tiger's racks,
+  the frame drawing back to the turret's apex) with the world running on, silent; then 8 s on the dead from the first eye with a
   clear line to them (above the open ring, above an opening, or inside the hull); then the card.
-- **Not yet**: the penetration replay the owner asked for (the impact in slow motion outside, a
-  section cut along the shot, the interior from the turret's rear corner); the heat and the
-  thrown turret are not saved.
+- **The whole load** (the owner, later the same night: any cook-off sets off every round inside
+  at once, the toss near instant, a T-34's turret hundreds of feet up under a mushroom cloud
+  taller than the throw): once one round goes, every other goes within 0.1 s
+  (`cabin_heat::MASS_SPREAD_S`), an HE shell by detonating. The Tiger's racked load throws its
+  turret at about 41 m/s (some 87 m up); a T-34/76's at 53 m/s in play: filmed from 200 m
+  (`fea-film` `cookoff_t34`), its turret's centre rose 135 m (about 440 ft) and landed 130 m
+  from the ring 15 s later. Each turreted enemy kind's load is solved once in its own
+  compartment (`game_cookoff::enemy_cookoff_throw`; T-34, KV-2, IS-2/3; authored loads), and a
+  catastrophic kill throws at that speed on the next wreck update (the former 1.4 s burn
+  before the launch is gone). Putting the whole energy into the turret's rise, as the owner
+  asked to compare, would send it 6 km (Tiger) and 12 km (T-34); the gas leaves round the ring
+  instead.
+- **The fireball** (`game_cookoff::fireball`): D = 5.8·M^(1/3), t = 0.45·M^(1/3) of the load that
+  went (29 m and 2.3 s for a T-34's 129 kg); the raymarch draws the 88 mm burst's envelope scaled
+  by D / 1.5 m (its clock by the fourth root, emission and extinction per metre kept), with a
+  smoke stem from the ground to the cloud: a burning burst some 50 m across in the first second
+  (about twice the correlation; named), then a dark cap that stands 100 m tall by four seconds
+  and rises past the throw.
+- **The penetration death** (`death_replay::render_replay_impact`, `main.rs`
+  `penetration_shot`): after the fade, 1.5 s of black; then 9 s at the struck surface from
+  outside, 3.2 m back along the shot: the round arriving in slow motion, the flash and the plate
+  breaking, then the struck part (with what is stowed on it) cut away round the shot's line from
+  the outer face in through the plate (a camera-only window, 0.15 m opening to 0.9 m; the
+  hull or the turret left whole as the other part) while the eye closes in on the fragments
+  replayed slowly inside; then the 8 s interior from the turret's rear corner; then the aerial
+  shot of where the round came from; then the card. Filmed in `fea-film` `penetration_death`
+  (a 122 mm round at the commander through the turret side).
+- **Not yet**: the heat and the thrown turret are not saved.

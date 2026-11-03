@@ -405,7 +405,11 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   so a rim grain's projected area is capped at one pixel in both spark shaders (the other kinds
   keep 6 px). A first cut held the bound at 1600 K and dimmed the ring the owner wants kept.
   The 1.5 % share and the rim's geometry remain estimates.
-- The ammunition burnout before a turret goes (`game.rs` `drive_cookoff_build`,
+- (Retired 2026-11-02 by the owner's whole-load rule below: one round going inside sets off the
+  rest and the turret goes near instantly. A catastrophic kill now launches on its next wreck
+  update at the speed its own compartment solves, `game_cookoff::enemy_cookoff_throw`;
+  `drive_cookoff_build` and its constants are deleted. The vent event remains for the breach's
+  pressure vent.) The ammunition burnout before a turret goes (`game.rs` `drive_cookoff_build`,
   `COOKOFF_VENT_BUILD_S` 1.4 s): a catastrophic kill no longer launches the turret on the next
   step. The stowage burns first: for 1.4 s the compartment's pressure climbs and its gas and
   flame leave through every real opening, the terminal breach and each open hole in the hull
@@ -1073,7 +1077,16 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   the closed tank's own light: a lamp-lit interior is dark beside daylit snow, as it is. It is a
   view, labelled on every frame, never a change to the scene; play never sets it (the plane is a
   private renderer field, set only by `set_film_section`, None in both shipping presets; the
-  G-buffer's section bit is zero in shadow passes and without a plane: `section_bit`).
+  G-buffer's section bit is zero in shadow passes and without a plane: `section_bit`). One
+  exception since 2026-11-02, the penetration death's replay (`Renderer::set_replay_cutaway`, only
+  from `death_replay::render_replay_impact`, guarded by a source test): after the player is dead,
+  the impact shot cuts the struck part (the turret with its gun, or the hull, by the fatal
+  record's fragment frame) within a window round the shot's line (a cylinder 0.15 m growing to
+  0.9 m) from the outer face in through the plate's thickness plus 3 cm, so the fragments inside
+  are seen; the same camera-only rule (shadows, lights, queries and every simulation see the
+  whole vehicle), unlabelled in play (it is the replay's view, not a claim about the vehicle).
+  The plate's thickness is measured along the shot through the tank's own source triangles (0.1 m
+  if they are not met; named).
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
   game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
   SVG/PNG frames about 1/1000 of real time apart, with a contact sheet and a 12 fps clip per case.
@@ -1320,6 +1333,58 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   show turrets beside the hull; a 122 mm hit in a Soviet trial moved a Tiger's turret 0.5 m. Not
   saved: the compartment's heat and the thrown turret (a restored tank is cold, its turret on its
   ring; named).
+  - **The owner's whole-load rule** (2026-11-02, the owner: one shell going off inside sets off
+    the rest; the toss near instant; a T-34's turret hundreds of feet up under a mushroom cloud
+    taller than the throw). Once any round ignites or detonates, every other live round goes
+    within 0.1 s (`cabin_heat::MASS_SPREAD_S`, each at its own hashed moment; authored), an HE
+    shell by detonating; the heat and jet chain above decides only when the first goes. This is
+    the owner's rule, not a solved propagation from round to round (named; the measured
+    timelines above are with the rule off). The owner also asked how high the turret would go
+    with the whole load's energy put into its rise: about 6 km (Tiger) and 12 km (T-34); not
+    used, since the gas leaves round the ring once the skirt clears it and the turret only
+    takes the pressure on the ring's area while it is over it (named). Measured with the rule
+    (`cabin_heat` test `print_whole_load_throws`, every round struck at once): the Tiger's 64
+    racked rounds (654 MJ with the HE fillers) peak at 11.5 MPa and throw its 11 t turret at
+    41 m/s (about 87 m without drag); a T-34/76's 77 rounds (476 MJ) in 5 m³ of free air under a
+    4 t turret on a 1.42 m ring, at 15.9 MPa and 62 m/s (about 194 m).
+  - **The enemies' whole load** (`game_cookoff::enemy_cookoff_throw`): a turreted enemy's
+    catastrophic kill (its ammunition struck) is solved once per kind in its own compartment
+    (`cabin_heat`, one round struck, the rest under the rule, three closed 0.15 m² hatches) and
+    kept: the launch speed, the burning mass for the fireball and the TNT equivalent for the
+    front. The loads are authored estimates, named, not measured vehicles (full loads; the
+    vehicle's own firing is not counted): T-34/76 77 rounds of 1.08 kg charges, two thirds
+    OF-350 (0.71 kg), the rest 0.15 kg, a 4 t turret on a 1.42 m ring, 5 m³; KV-2 36 rounds of
+    152 mm with about 2.5 kg charges, 80 % OF-530 (5.9 kg), 12 t on 1.535 m, 9 m³; IS-2 and IS-3
+    28 rounds of 122 mm with 3.6 kg charges, 60 % OF-471 (3.6 kg), 9 t on 1.8 m, 8 m³; the
+    casemates throw nothing. The thrown turret leaves along its own up axis leaning 0.18 of its
+    speed away from the breach (authored) and spinning 0.9 rad/s; the rigid body flies it.
+    Filmed (`fea-film` `cookoff_t34`, a T-34 killed through its ammunition by state, watched
+    from 200 m): launched at 53 m/s, its centre rose 135 m (about 440 ft) and it came to rest
+    130 m from the ring 15 s later. The first-shot blast and debris at the kill stay; the whole
+    load's fireball, light and front follow on the next wreck update.
+  - **The fireball and its cloud** (`game_cookoff::fireball`, `weapon_vfx::cookoff_fireball`,
+    `renderer_raymarch` `EVENT_DETONATION`): the fireball of the load that went (propellant, and
+    the fillers at their energy in propellant) by the published fuel-fireball correlations
+    D = 5.8·M^(1/3), t = 0.45·M^(1/3) (Roberts 1982; CCPS), taken for a propellant fireball
+    (named: they are fits to hydrocarbon fireballs): 129 kg, 29 m and 2.3 s for a T-34. The
+    raymarch draws it as the 88 mm burst's authored envelope scaled: lengths by s = D / 1.5 m
+    (the 88 mm's fireball taken as about 1.5 m; clamped 1-24), its clock slowed by s^(1/4), the
+    emission and extinction per metre kept (the same burning gas and soot: an optically thick
+    fireball's surface shines as the 88 mm's, its smoke's depth across grows with s), and above
+    s = 4 a stem of five smoke parcels from the ground to the cloud. All of this is presentation
+    scaling of an authored envelope, not a fireball or plume solve (named). Measured in the
+    film: the glowing burst is some 50 m across in its first second, about twice the
+    correlation's 29 m, because the 88 mm envelope's own glow is larger than the 1.5 m taken for
+    it (named); the cloud stands about 100 m tall by four seconds and its cap rises past 130 m,
+    as the owner asked (taller than the throw). The light is the blast light at half the
+    diameter's radius for the fireball's life; the front is the load's TNT equivalent (71 kg for
+    a T-34). The player's Tiger uses the same fireball for what actually went. Each round keeps
+    its own report, but the compartment's flash and each opening's jet are issued at most every
+    0.12 s (`game_cookoff::POP_INTERVAL_S`; authored): under the rule the load's pops come within
+    a tenth of a second, and a flash and a vent per round per opening had filled the effect pool
+    (48 bursts) and the raymarch's event list (96), crowding the fireball out. The fireball is
+    kept in the pool like the plume and the vents, and the raymarch takes a scaled detonation
+    first, in place of the oldest ordinary event when its list is full.
 - **Blood droplets and film** (2026-11-02, `surface_blood`; the owner: droplets too large, and
   blood should form a continuous film where enough lands). A droplet's edge comes from its seed,
   1.5–6 mm with most under 3 mm (an authored distribution, not a measured spatter one), and the

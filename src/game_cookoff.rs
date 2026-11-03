@@ -1,10 +1,12 @@
 //! The Tiger's cook-off in play (2026-11-02, the owner; `crate::cabin_heat`). The compartment's
 //! heat is fed by the burning surfaces and the live rounds; the first round to ignite is the first
-//! bang (the crew inside die in its flame); the rest go one by one, each its own bang and flash
-//! and a flame from every opening; the pressure blows the latched hatches and throws the turret as
-//! a rigid body (`wreck_turret::Body`), carrying everything authored in its frame with it
+//! bang (the crew inside die in its flame); under the owner's whole-load rule the rest follow
+//! within a tenth of a second (`cabin_heat::MASS_SPREAD_S`), each its own bang and flash and a
+//! flame from every opening; the pressure blows the latched hatches and throws the turret as a
+//! rigid body (`wreck_turret::Body`), carrying everything authored in its frame with it
 //! (`Tank::turret_thrown`); the dead in the turret are left to fall into the hull. A direct hit on
-//! the stowage sets the rounds it crossed off at once.
+//! the stowage sets the rounds it crossed off at once. The turreted enemies' whole loads are
+//! solved once per kind (`enemy_cookoff_throw`).
 use super::*;
 use crate::cabin_heat::{self, CabinHeat, Event as HeatEvent};
 
@@ -30,6 +32,10 @@ const THROW_SPIN_PER_M: f32 = 0.9;
 pub(super) const COOKOFF_OUTSIDE_FOV: f32 = 42.0;
 /// Seconds of the thrown turret's path kept for the death replay.
 const PATH_KEEP_S: f32 = 15.0;
+/// The whole load's rounds go within a tenth of a second: the compartment's flash and each
+/// opening's jet are one through them, issued at most this often (s; every round keeps its own
+/// report).
+const POP_INTERVAL_S: f32 = 0.12;
 
 /// A cook-off death's shots (seconds; the owner, 2026-11-02): black from the bang while it rings,
 /// the tank from outside as the stowage goes and the turret is thrown, the dead from above.
@@ -61,12 +67,23 @@ pub(super) struct Cookoff {
     pub holes_m2: f32,
     pub ignitions: u32,
     pub detonations: u32,
+    /// What has gone so far: burning mass for the fireball (kg; filler at its energy in
+    /// propellant) and the TNT equivalent for the pressure front (kg).
+    pub fuel_kg: f32,
+    pub tnt_kg: f32,
+    /// The burning mass of the whole load aboard (what has gone and what is still live): what
+    /// goes under the owner's rule once one round does, so the outside shot stands clear of its
+    /// fireball from its first frame.
+    pub load_fuel_kg: f32,
     /// The height above the ring the outside shot frames (eased toward the thrown turret's).
     framed_apex_m: std::cell::Cell<(f32, f32)>,
     /// The death's last shot's camera, chosen once (eye, target, field of view).
     crew_camera: std::cell::Cell<Option<(Vec3, Vec3, f32)>>,
     /// The player's Tiger at real size for the thrown body (built once, on a worker at start).
     pub source: Option<PendingSource>,
+    /// When the compartment last flashed and each opening last vented (the five hatches, then
+    /// the open ring), on the cook-off clock (`POP_INTERVAL_S`).
+    popped_s: [Option<f32>; 7],
 }
 
 /// The thrown turret's source, filled by a worker thread at start (it takes about two seconds).
@@ -93,6 +110,15 @@ impl Cookoff {
         *self = Self { source, ..Self::default() };
     }
 
+    /// Whether the flash (slot 0) or an opening's jet (1-5 the hatches, 6 the ring) is due on a
+    /// pop now; marks it issued if so.
+    fn pop_due(&mut self, slot: usize) -> bool {
+        let now = self.clock_s;
+        let due = self.popped_s[slot].is_none_or(|last| now - last >= POP_INTERVAL_S);
+        if due { self.popped_s[slot] = Some(now); }
+        due
+    }
+
     /// A cartridge moved between inventory locations keeps its heat.
     pub(super) fn transfer(&mut self, old: u32, new: u32) {
         if let Some(heat) = self.heat.as_mut() {
@@ -109,6 +135,100 @@ impl Cookoff {
                 .zip(self.path.first().map(|(_, m)| m.w_axis.y)).map(|(top, start)| top - start),
         })
     }
+}
+
+/// A turreted enemy's stowage and turret for its whole-load cook-off (authored estimates, named:
+/// not measured vehicles): the turret with its gun (kg), its ring (m), the compartments' free air
+/// (m³), the rounds aboard (a full load; its own firing is not counted, named), each round's
+/// propellant (kg), the share that are HE and their filler (kg), the other rounds' filler (kg).
+#[derive(Clone, Copy, Debug)]
+struct EnemyLoad {
+    turret_kg: f32,
+    ring_m: f32,
+    air_m3: f32,
+    rounds: u32,
+    propellant_kg: f32,
+    he_share: f32,
+    he_filler_kg: f32,
+    other_filler_kg: f32,
+}
+
+fn enemy_load(kind: EnemyKind) -> Option<EnemyLoad> {
+    match kind {
+        // T-34/76: 77 rounds of 76.2 mm, 1.08 kg charges, two thirds OF-350 (0.71 kg).
+        EnemyKind::T34 => Some(EnemyLoad { turret_kg: 4_000.0, ring_m: 1.42, air_m3: 5.0, rounds: 77, propellant_kg: 1.08,
+            he_share: 0.67, he_filler_kg: 0.71, other_filler_kg: 0.15 }),
+        // KV-2: 36 rounds of 152 mm with separate charges of about 2.5 kg, OF-530 (5.9 kg).
+        EnemyKind::Kv2 => Some(EnemyLoad { turret_kg: 12_000.0, ring_m: 1.535, air_m3: 9.0, rounds: 36, propellant_kg: 2.5,
+            he_share: 0.8, he_filler_kg: 5.9, other_filler_kg: 0.2 }),
+        // IS-2 and IS-3: 28 rounds of 122 mm with separate charges of about 3.6 kg, OF-471 (3.6 kg).
+        EnemyKind::Is2 | EnemyKind::Is3 => Some(EnemyLoad { turret_kg: 9_000.0, ring_m: 1.8, air_m3: 8.0, rounds: 28,
+            propellant_kg: 3.6, he_share: 0.6, he_filler_kg: 3.6, other_filler_kg: 0.16 }),
+        // The casemates have no turret to throw.
+        EnemyKind::Su100 | EnemyKind::Isu152 => None,
+    }
+}
+
+/// The fireball's diameter (m) and lifetime (s) for `fuel_kg` of burning propellant (and filler at
+/// its energy in propellant): the published fireball correlations D = 5.8·M^(1/3), t = 0.45·M^(1/3)
+/// (Roberts 1982; CCPS), taken for a propellant fireball (named: they are fuel-fireball fits).
+pub(super) fn fireball(fuel_kg: f32) -> (f32, f32) {
+    let m = fuel_kg.max(0.0).cbrt();
+    (5.8 * m, 0.45 * m)
+}
+
+/// Its diameter against the 88 mm burst's authored fireball (about 1.5 m): the raymarch's scale.
+pub(super) fn fireball_scale(fuel_kg: f32) -> f32 {
+    (fireball(fuel_kg).0 / 1.5).max(1.0)
+}
+
+/// The whole load set off at once in `kind`'s own compartment (`cabin_heat`, every round within
+/// `MASS_SPREAD_S`): the speed its turret leaves at, the fireball's burning mass (kg) and the
+/// load's TNT equivalent for the blast front (kg; fillers and 0.36 a kilogram of propellant).
+/// Solved once per kind and kept.
+pub(super) fn enemy_cookoff_throw(kind: EnemyKind) -> Option<(f32, f32, f32)> {
+    static SOLVED: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<u8, Option<(f32, f32, f32)>>>> = std::sync::OnceLock::new();
+    let key = kind as u8;
+    let cache = SOLVED.get_or_init(Default::default);
+    if let Some(known) = cache.lock().ok().and_then(|c| c.get(&key).copied()) {
+        return known;
+    }
+    let solved = enemy_load(kind).map(|load| {
+        let ambient = crate::fea_damage::materials::AMBIENT_K;
+        let mut heat = CabinHeat::with_volume(ambient, load.air_m3);
+        let rounds: Vec<cabin_heat::LiveRound> = (0..load.rounds).map(|i| {
+            let he = ((i as f32 + 0.5) / load.rounds as f32) < load.he_share;
+            cabin_heat::LiveRound { id: i, center: Vec3::new((i % 11) as f32 * 0.11, 0.3, (i / 11) as f32 * 0.1),
+                propellant_kg: load.propellant_kg, filler_kg: if he { load.he_filler_kg } else { load.other_filler_kg } }
+        }).collect();
+        let openings: Vec<crate::fea_damage::compartment::Opening> = ["driver's hatch", "turret hatch", "second hatch"].iter()
+            .map(|&name| crate::fea_damage::compartment::Opening { name, area_m2: 0.15, open: false, hatch: true }).collect();
+        let flux = vec![0.0; rounds.len()];
+        let env = cabin_heat::Env { ambient_k: ambient, fire_w: 0.0, soot: 0.0, openings: &openings, rounds: &rounds,
+            flame_flux_w_m2: &flux, turret: Some(cabin_heat::Turret { mass_kg: load.turret_kg, ring_diameter_m: load.ring_m }) };
+        heat.advance(1.0e-4, &env);
+        heat.strike(&[0]);
+        let mut speed = 0.0;
+        for _ in 0..480 {
+            if let Some(v) = heat.advance(1.0 / 240.0, &env).iter().find_map(|e| match e {
+                HeatEvent::TurretLaunched { speed_mps, .. } => Some(*speed_mps), _ => None }) {
+                speed = v;
+                break;
+            }
+        }
+        let he = (load.rounds as f32 * load.he_share).round();
+        let fillers = he * load.he_filler_kg + (load.rounds as f32 - he) * load.other_filler_kg;
+        let propellant = load.rounds as f32 * load.propellant_kg;
+        let fuel = propellant + fillers * crate::fea_damage::compartment::TNT_J_PER_KG / cabin_heat::PROPELLANT_J_PER_KG;
+        let tnt = fillers + crate::sound_levels::TNT_PER_KG_PROPELLANT * propellant;
+        println!("[cookoff] {}: the whole load ({} rounds) throws its {:.0} t turret at {speed:.1} m/s (about {:.0} m up); fireball {:.0} m",
+            kind.name(), load.rounds, load.turret_kg / 1000.0, speed * speed / 19.62, fireball(fuel).0);
+        (speed, fuel, tnt)
+    });
+    if let Ok(mut c) = cache.lock() {
+        c.insert(key, solved);
+    }
+    solved
 }
 
 /// The player's Tiger meshes (hull, turret, gun) at real size for the thrown turret, prepared on a
@@ -176,6 +296,8 @@ impl Game {
         let live: Vec<cabin_heat::LiveRound> = rounds.iter()
             .map(|r| cabin_heat::LiveRound { id: r.stable_id, center: r.center, propellant_kg: charge_kg(),
                 filler_kg: r.explosive_energy_j / crate::fea_damage::compartment::TNT_J_PER_KG }).collect();
+        self.cookoff.load_fuel_kg = self.cookoff.fuel_kg + live.iter().map(|r| r.propellant_kg
+            + r.filler_kg * crate::fea_damage::compartment::TNT_J_PER_KG / cabin_heat::PROPELLANT_J_PER_KG).sum::<f32>();
         let flux: Vec<f32> = self.cookoff.flux.iter().map(|(_, f)| *f).collect();
         let openings = self.fea_crew_openings(self.cookoff.holes_m2);
         let ambient = crate::fea_damage::materials::AMBIENT_K;
@@ -233,6 +355,8 @@ impl Game {
                 HeatEvent::Ignited { id, center, cause } => {
                     let at = hull.transform_point3(center);
                     self.cookoff.ignitions += 1;
+                    self.cookoff.fuel_kg += charge_kg();
+                    self.cookoff.tnt_kg += crate::sound_levels::TNT_PER_KG_PROPELLANT * charge_kg();
                     self.consume_live_round(id);
                     let tnt_kg = crate::sound_levels::TNT_PER_KG_PROPELLANT * charge_kg();
                     if self.cookoff.first_s.is_none() {
@@ -249,6 +373,8 @@ impl Game {
                     let at = hull.transform_point3(center);
                     self.cookoff.ignitions += 1;
                     self.cookoff.detonations += 1;
+                    self.cookoff.fuel_kg += charge_kg() + filler_kg * crate::fea_damage::compartment::TNT_J_PER_KG / cabin_heat::PROPELLANT_J_PER_KG;
+                    self.cookoff.tnt_kg += filler_kg + crate::sound_levels::TNT_PER_KG_PROPELLANT * charge_kg();
                     self.consume_live_round(id);
                     println!("[cookoff] an HE shell ({id:#x}, {cause:?}) detonates at {:.2} s: {:.2} kg filler, gas {:.0} K, {:.0} kPa",
                         self.cookoff.clock_s, filler_kg, self.cookoff.heat.as_ref().map_or(0.0, CabinHeat::gas_k),
@@ -309,6 +435,7 @@ impl Game {
             fragment_frame: BloodFrame::Hull,
             fragments: Vec::new(),
             fragment_contacts: Vec::new(),
+            struck_at_s: None,
         });
         // The man inside: black the instant the bang reaches him (the presentation reads this).
         if inside {
@@ -321,10 +448,15 @@ impl Game {
     /// every opening.
     fn cookoff_pop(&mut self, at: Vec3, tnt_kg: f32, detonation: bool) {
         self.schedule_cookoff_bang(if detonation { crate::audio::Sfx::KillExplosion } else { crate::audio::Sfx::CookOff }, at, tnt_kg);
-        if detonation { self.spawn_interior_blast(at, 0.65, 3.0, 0.11); } else { self.spawn_interior_blast(at, 0.45, 2.0, 0.08); }
+        if self.cookoff.pop_due(0) {
+            if detonation { self.spawn_interior_blast(at, 0.65, 3.0, 0.11); } else { self.spawn_interior_blast(at, 0.45, 2.0, 0.08); }
+        }
         let strength = self.cookoff.heat.as_ref().map_or(0.5, |h| (h.gauge_pa() / 100_000.0).clamp(0.3, 1.0));
         for index in 0..5 {
             if !self.access_hatch_open(index) && !(index < 4 && self.roof_hatches.open[index]) && !(index == 4 && self.hatch_open) {
+                continue;
+            }
+            if !self.cookoff.pop_due(1 + index) {
                 continue;
             }
             let frame = self.access_hatch_frame(index);
@@ -335,7 +467,7 @@ impl Game {
         if let Some(launched) = self.cookoff.launched_s.filter(|_| self.cookoff.turret.is_some()) {
             // Through the open ring once the turret has gone.
             let ring = self.player.hull_model().transform_point3(self.player.parts.turret_pivot);
-            if self.cookoff.clock_s - launched < 30.0 {
+            if self.cookoff.clock_s - launched < 30.0 && self.cookoff.pop_due(6) {
                 self.weapon_vfx.pressure_vent(ring, self.player.hull_model().transform_vector3(Vec3::Y).normalize(), strength);
             }
         }
@@ -400,12 +532,19 @@ impl Game {
         self.cookoff.path.clear();
         self.cookoff.path.push((0.0, self.player.turret_model()));
         let seed = self.kill_tick.wrapping_mul(0x9E37_79B9) ^ 0x7055;
-        self.spawn_blast(ring_at, 9.0, 26.0, 0.85);
+        // The fireball of everything that has gone, out of the open ring (`fireball`), its light
+        // the fireball's size, and the pressure front of its TNT equivalent.
+        let fuel = self.cookoff.fuel_kg.max(charge_kg());
+        let (diameter, life) = fireball(fuel);
+        self.weapon_vfx.cookoff_fireball(ring_at + up * 0.5, up, fireball_scale(fuel));
+        self.spawn_blast_light(ring_at + up * (0.25 * diameter), 0.5 * diameter / 0.28, 26.0, life);
         self.weapon_vfx.full_cookoff_plume(ring_at, up);
-        self.spawn_debris(ring_at, 11, 15.0, seed);
+        self.spawn_debris(ring_at, 40, 25.0, seed);
         self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring_at);
         self.schedule_sound_from(crate::audio::Sfx::TurretRip, ring_at);
-        self.queue_blast_front(0x5401_0000 | u64::from(seed), ring_at, crate::sound_levels::AMMUNITION_DETONATION_TNT_KG, true);
+        let tnt = self.cookoff.tnt_kg.max(crate::sound_levels::AMMUNITION_DETONATION_TNT_KG);
+        self.queue_blast_front(0x5401_0000 | u64::from(seed), ring_at, tnt, true);
+        println!("[cookoff] fireball {diameter:.0} m for {life:.1} s ({fuel:.0} kg gone, {tnt:.0} kg TNT equivalent)");
     }
 
     fn advance_thrown_turret(&mut self, dt: f32) {
@@ -489,10 +628,12 @@ impl Game {
         let framed = if bound > framed { framed + (bound - framed) * (1.0 - (-4.0 * dt).exp()) } else { framed }.max(6.0);
         self.cookoff.framed_apex_m.set((framed, self.cookoff.clock_s));
         // The frame spans from 3 m below the ring to 6 m above the apex (the turret and its gun
-        // reach about 3 m round its ring).
+        // reach about 3 m round its ring); the eye stands clear of the whole load's fireball as
+        // drawn (about twice the correlation's diameter across: `fireball`).
         let span = framed + 9.0;
         let half = (0.5 * COOKOFF_OUTSIDE_FOV).to_radians().tan();
-        let distance = (0.5 * span / half).max(24.0);
+        let clear_of_fire = 24.0 + 1.5 * fireball(self.cookoff.load_fuel_kg.max(self.cookoff.fuel_kg)).0;
+        let distance = (0.5 * span / half).max(clear_of_fire);
         let target = ring + Vec3::Y * (0.5 * span - 3.0);
         let x = hull.transform_vector3(Vec3::X).normalize();
         let z = hull.transform_vector3(Vec3::Z).normalize();
