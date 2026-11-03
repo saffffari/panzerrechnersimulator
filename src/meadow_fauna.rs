@@ -9,13 +9,14 @@
 //! hashed amount every quarter second) and landing on the nearest flower head of the meadow's own
 //! placement (`meadow::flower_at`) to feed for 3-15 s. A behavioural model, not aerodynamics.
 //!
-//! Fireflies: tiny modeled emitters. Spectrum: the in-vivo emission of Photinus pyralis peaks at
-//! 562 nm (Seliger & McElroy 1964, PNAS 52:75; firefly emission maxima span 552-582 nm), here an
-//! asymmetric Gaussian of 22 / 30 nm half-widths (about 61 nm full width at half maximum, an
-//! estimate of the published curves' shape). Power: 1e10 photons per flash, inside the 1e8-1e11
-//! that Silver (2026, "How bright is a firefly? Resolving a century of overestimation", Am. J.
-//! Phys., doi:10.1119/5.0325834) finds after correcting Coblentz's 1912 1/50-1/400 candle, emitted
-//! isotropically over a 0.12 s sin^2 pulse. Flash pattern: Photinus carolinus, the measured
+//! Fireflies: tiny modeled emitters. Spectrum: firefly emission maxima span 552-582 nm (Seliger &
+//! McElroy 1964, PNAS 52:75; Photinus pyralis in vivo near 560-562 nm), here a Gaussian peaking at
+//! 560 nm with 22 / 24 nm half-widths (about 54 nm full width at half maximum, an estimate of the
+//! published curves' shape). Power: 1e11 photons per flash, the top of the 1e8-1e11 that Silver
+//! (2026, "How bright is a firefly? Resolving a century of overestimation", Am. J. Phys.,
+//! doi:10.1119/5.0325834) finds after correcting Coblentz's 1912 1/50-1/400 candle (his stated
+//! ceiling: every luciferase turning over once with unit yield), emitted isotropically over a
+//! 0.12 s sin^2 pulse: about 3e-5 cd at the peak. Flash pattern: Photinus carolinus, the measured
 //! clustered flasher: in a group of more than 15 males, synchronous flashes every 0.55 s in bursts,
 //! the bursts repeating about every 12 s, the flashes of the swarm within a few tens of ms
 //! (Sarfati, Hayes, Peleg 2020 J. R. Soc. Interface 17:20200179; 2021 Sci. Adv. 7:eabg9259);
@@ -29,10 +30,10 @@ use crate::meadow::{self, hash, hash2, unit, value_noise};
 
 // ── Firefly light ────────────────────────────────────────────────────────────────────────────
 
-pub const FIREFLY_PEAK_NM: f64 = 562.0;
+pub const FIREFLY_PEAK_NM: f64 = 560.0;
 pub const FIREFLY_SIGMA_SHORT_NM: f64 = 22.0;
-pub const FIREFLY_SIGMA_LONG_NM: f64 = 30.0;
-pub const PHOTONS_PER_FLASH: f64 = 1.0e10;
+pub const FIREFLY_SIGMA_LONG_NM: f64 = 24.0;
+pub const PHOTONS_PER_FLASH: f64 = 1.0e11;
 pub const FLASH_S: f32 = 0.12;
 pub const SYNC_FLASH_PERIOD_S: f32 = 0.55;
 pub const BURST_PERIOD_S: f32 = 12.0;
@@ -56,7 +57,7 @@ pub fn cie_xyz(l: f64) -> [f64; 3] {
 pub fn firefly_spectrum(l: f64) -> f64 { lobe(l, FIREFLY_PEAK_NM, FIREFLY_SIGMA_SHORT_NM, FIREFLY_SIGMA_LONG_NM) }
 
 /// The lantern's light in the renderer's three lanes: (colour with its largest lane 1, lane
-/// intensity per W/sr of radiant intensity, photons per joule). The narrow 562 nm emission
+/// intensity per W/sr of radiant intensity, photons per joule). The narrow 560 nm emission
 /// enters as its display-equivalent triplet (CIE XYZ to linear sRGB primaries, the small negative
 /// blue clipped) scaled so its photopic luminance (observer::PHOTOPIC_WEIGHTS) equals the
 /// spectrum's own: point samples at 680/550/440 nm would put it on the 550 lane alone and show a
@@ -379,7 +380,7 @@ impl Butterflies {
             self.cells.insert(cell);
             let centre = (Vec2::new(cell.0 as f32, cell.1 as f32) + Vec2::splat(0.5)) * BUTTERFLY_CELL_M;
             let flowers: f32 = (0..meadow::SPECIES.len()).map(|s| meadow::SPECIES[s].peak * meadow::bed(s, centre.x, centre.y)).sum::<f32>() * grass(centre);
-            let count = (unit(hash2(cell.0, cell.1, SALT_BUTTERFLY ^ 0xc0)) * (0.6 + flowers / 2.5)).floor().min(4.0) as u32;
+            let count = (unit(hash2(cell.0, cell.1, SALT_BUTTERFLY ^ 0xc0)) * (1.2 + flowers / 1.5)).floor().min(6.0) as u32;
             for i in 0..count {
                 if let Some(b) = Butterfly::spawn(cell, i, grass, ground) { self.alive.push(b); }
             }
@@ -401,7 +402,8 @@ pub fn wing_mesh(species: usize) -> crate::gltf_load::CpuMesh {
         for p in fan {
             vertices.push(Vertex { pos: p.to_array(), normal: [0.0, 1.0, 0.0], uv: [(p.x / 0.027).clamp(0.0, 1.0), 0.5], tangent: [1.0, 0.0, 0.0, 1.0] });
         }
-        for k in 1..fan.len() as u32 - 1 { indices.extend([base, base + k, base + k + 1]); }
+        // Both faces: a wing is seen from above and below, and the mirrored wing flips winding.
+        for k in 1..fan.len() as u32 - 1 { indices.extend([base, base + k, base + k + 1, base, base + k + 1, base + k]); }
     }
     let sp = &BUTTERFLIES[species];
     let texels = [sp.base, sp.base, sp.base, sp.tip].iter().flat_map(|c| [c[0], c[1], c[2], 255]).collect();
@@ -418,15 +420,15 @@ mod tests {
     fn the_lantern_is_yellow_green_and_its_power_is_silvers_count() {
         let (colour, per_watt, photons_per_joule) = firefly_lanes();
         assert_eq!(colour[1], 1.0, "{colour:?}");
-        assert!(colour[0] > 0.3 && colour[0] < 0.95, "green-yellow wants a red share: {colour:?}");
+        assert!(colour[0] > 0.4 && colour[0] < 0.7, "green-yellow wants a red share under green: {colour:?}");
         assert!(colour[2] < 0.05, "{colour:?}");
-        // 562 nm photons carry 3.5e-19 J.
-        assert!((1.0 / photons_per_joule - 3.53e-19).abs() < 0.05e-19, "{}", 1.0 / photons_per_joule);
-        // The flash's peak luminous intensity is micro-candela: 1e10 photons in ~60 ms.
+        // 560 nm photons carry 3.55e-19 J.
+        assert!((1.0 / photons_per_joule - 3.55e-19).abs() < 0.05e-19, "{}", 1.0 / photons_per_joule);
+        // The peak luminous intensity is tens of micro-candela: 1e11 photons in ~60 ms.
         let (_, _, _) = firefly_lanes();
         let lane = flash_peak_radiant_intensity() * per_watt;
         let candela: f64 = (0..3).map(|i| colour[i] as f64 * crate::observer::PHOTOPIC_WEIGHTS[i]).sum::<f64>() * lane;
-        assert!(candela > 1e-6 && candela < 1e-5, "{candela} cd");
+        assert!(candela > 1e-5 && candela < 1e-4, "{candela} cd");
         // Integrating the pulse returns the flash's photon count.
         let steps = 10_000;
         let dt = FLASH_S as f64 / steps as f64;

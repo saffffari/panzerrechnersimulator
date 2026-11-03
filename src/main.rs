@@ -150,6 +150,7 @@ mod graphics;
 mod grass;
 mod meadow;
 mod meadow_fauna;
+mod leaf_optics;
 mod infantry;
 mod infantry_combat;
 mod interior_rig;
@@ -677,10 +678,16 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     if let Some(sim_s) = std::env::var("KESSEL_SHOT_SIM_S").ok().and_then(|v| v.parse::<f32>().ok()).filter(|s| *s > 0.0) {
         let steps = (sim_s * 60.0).round() as u32;
         println!("[sim] stepping {steps} frames ({sim_s:.2} s) before the capture");
+        // KESSEL_SHOT_DRIVE=1: the Tiger drives ahead at full throttle through those steps (its
+        // treads lay the grass flat; the meadow review).
+        let input = if std::env::var("KESSEL_SHOT_DRIVE").as_deref() == Ok("1") {
+            TankInput { drive: 1.0, ..Default::default() }
+        } else { TankInput::default() };
         for i in 0..steps {
-            g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+            g.update(&input, 1.0 / 60.0, &mut r);
             if i % 15 == 14 { r.render_offscreen(&device, &queue); }
         }
+        println!("[sim] player at {:?}, speed {:.1} m/s", g.player.pos, g.player.speed);
     }
     if let Some(c) = cam {
         r.camera.pos = Vec3::new(c[0], c[1], c[2]);

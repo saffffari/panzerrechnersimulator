@@ -443,6 +443,13 @@ fn fs(in: VsOut) -> ShadeOut {
         }
         let terrain = g0.a > 2.5 && g0.a < 3.5;
         let grass = g0.a > 3.5 && g0.a < 4.5;
+        // A living leaf (the spring meadow, rm_meadow.wgsl): a bi-Lambertian sheet with a cuticle
+        // specular, its transmittance in g2.rgb and the leaf area above it in g2.w.
+        let leaf = g0.a > 4.5 && g0.a < 5.5;
+        let thin = grass || leaf;
+        let leaf_tau = select(vec3(0.0), g2.rgb, leaf);
+        let lai_above = select(0.0, g2.w, leaf);
+        if (leaf) { metallic = 0.0; }
         let motion = rm_surface_motion(world, n);
         let fresh_gather = screen_gather(pixel, rel, n, jitter, motion);
         let history = shade_history(world, motion);
@@ -461,12 +468,12 @@ fn fs(in: VsOut) -> ShadeOut {
         // The player's vehicle (pixels within 4.5 m of its compartment's centre that are not the
         // ground; fr.vehicle): paint worn through on its edges, grime gathered in its corners. Edges are the
         // creases between neighbouring pixels' normals; corners are the near-field occlusion.
-        var vehicle = select(0.0, 1.0, !terrain && !grass && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5);
+        var vehicle = select(0.0, 1.0, !terrain && !thin && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5);
         var mech = clamp(fr.wear.w, 0.0, 1.0);
         var outside_grime = clamp(fr.wear.y, 0.0, 1.0);
         // Other vehicles (vehicle_finish.rs; Renderer::set_worn_vehicles): the same worn edges and
         // corners at each one's own loads, for pixels within its reach that are not the ground.
-        if (vehicle == 0.0 && !terrain && !grass) {
+        if (vehicle == 0.0 && !terrain && !thin) {
             let count = min(u32(fr.worn_count.x), 16u);
             for (var k = 0u; k < count; k += 1u) {
                 let centre = fr.worn[2u * k];
@@ -506,10 +513,25 @@ fn fs(in: VsOut) -> ShadeOut {
             albedo *= 1.0 - 0.6 * corner * grime;
         }
         let v = -ray;
-        let f0 = mix(vec3(0.04), albedo, metallic);
+        // A leaf's cuticle wax (n ~ 1.47): f0 0.036 (leaf_optics::cuticle_f0).
+        let f0 = select(mix(vec3(0.04), albedo, metallic), vec3(RM_LEAF_F0), leaf);
         let diffuse = albedo * (1.0 - metallic) / RM_PI;
         // Key beam.
-        if (fr.sun_radiance.w > 0.5) {
+        if (fr.sun_radiance.w > 0.5 && leaf) {
+            // The beam lights the face it falls on (reflectance rho, cuticle specular) or passes
+            // through the blade to the other face (transmittance tau), both through the sun's
+            // visibility. Within the near cascade the drawn blades shadow each other; beyond it a
+            // uniform turbid canopy does (Beer-Lambert, spherical leaf angles G = 0.5, the leaf area
+            // above the point along the beam).
+            let ndl = dot(n, fr.sun_dir.xyz);
+            let canopy = exp(-RM_LEAF_G * lai_above / max(fr.sun_dir.y, 0.05));
+            let beyond = smoothstep(RM_MEADOW_SHADOW_RADIUS * 0.8, RM_MEADOW_SHADOW_RADIUS, length(rel.xz));
+            let vis = rm_sun_visibility(world, 0.12) * mix(1.0, canopy, beyond);
+            if (vis > 0.001) {
+                color += (albedo * max(ndl, 0.0) + leaf_tau * max(-ndl, 0.0)) / RM_PI * fr.sun_radiance.rgb * vis;
+                if (ndl > 0.0) { color += rm_ggx_specular(n, v, fr.sun_dir.xyz, roughness, f0) * fr.sun_radiance.rgb * ndl * vis; }
+            }
+        } else if (fr.sun_radiance.w > 0.5) {
             // Grass is dead straw: thin, two-sided, lit through; the beam wraps round a blade
             // instead of leaving its back black (named approximation, no transmission solve).
             let ndl = select(dot(n, fr.sun_dir.xyz), max(dot(n, fr.sun_dir.xyz), 0.35 * abs(dot(n, fr.sun_dir.xyz)) + 0.15), grass);
@@ -541,11 +563,23 @@ fn fs(in: VsOut) -> ShadeOut {
         var ao = gather.ao;
         var open = gather.open;
         if (grass) { ao = mix(ao, 1.0, 0.7); open = mix(open, 1.0, 0.7); }
+        // A leaf inside the meadow sees the sky through the leaf area above it: the uniform turbid
+        // canopy's diffuse gap fraction 2 E3(G L) (an isotropic sky; the screen gather of a
+        // blade among blades is not used).
+        if (leaf) {
+            var gap = 0.0;
+            for (var k = 0; k < 8; k += 1) {
+                let mu = (f32(k) + 0.5) / 8.0;
+                gap += exp(-RM_LEAF_G * lai_above / mu) * mu;
+            }
+            ao = gap * 2.0 / 8.0;
+            open = 1.0;
+        }
         // With ray queries the rays' open share replaces the screen's where they find more cover
         // (and the near-field contact term, which they include); the difference is cover the
         // frame does not show (`hidden_cover`).
         var hidden_cover = 0.0;
-        let rays_used = RM_RAY_QUERIES && !grass && fr.debug.w < 0.5;
+        let rays_used = RM_RAY_QUERIES && !thin && fr.debug.w < 0.5;
         let receiver_in_cabin = rm_cabin_domain(world + n * 0.03) >= 0;
         if (rays_used) {
             // In the crew compartment the panes are cover to these rays: their daylight is the
@@ -559,7 +593,7 @@ fn fs(in: VsOut) -> ShadeOut {
         }
         // Grass blades ask the cover map from above their own canopy (they stand in it); without
         // ray queries the crew compartment asks it from inside (rm_cabin_sky_visibility).
-        var sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, grass));
+        var sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, thin));
         if (receiver_in_cabin && !rays_used) { sky_vis = rm_cabin_sky_visibility(world, n); }
         let up = clamp(n.y, -1.0, 1.0);
         let sky_band = mix(fr.sky_horizon.rgb, fr.sky_zenith.rgb, clamp(up, 0.0, 1.0));
@@ -583,9 +617,10 @@ fn fs(in: VsOut) -> ShadeOut {
             // standing for a whole covered hemisphere.
             var hidden = vec3(0.0);
             if (hidden_cover > 0.0) { hidden = previous_radiance(world, motion).rgb; }
-            env = env * open + gather.irradiance * select(1.0, 0.6, grass) / RM_PI + hidden * hidden_cover;
+            env = env * open + gather.irradiance * select(1.0, 0.6, thin) / RM_PI + hidden * hidden_cover;
         }
-        color += diffuse * RM_PI * env;
+        // A leaf in diffuse light: both faces lit alike, the far face's light transmitted.
+        color += (diffuse + leaf_tau / RM_PI) * RM_PI * env;
         // The marched reflection's share (rm_reflect.wgsl's `gloss`): the rest is this term's.
         let gloss = (1.0 - smoothstep(0.2, 0.5, roughness)) * mix(0.35, 1.0, metallic);
         color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss);
@@ -601,7 +636,9 @@ fn fs(in: VsOut) -> ShadeOut {
             let index = light_cell_items[i];
             if (!receiver_in_cabin && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }
             let s = rm_light_sample(index, world);
-            let ndl = dot(n, s.dir);
+            let ndl_raw = dot(n, s.dir);
+            // A leaf takes a lamp on either face (transmitted from behind).
+            let ndl = select(ndl_raw, abs(ndl_raw), leaf);
             if (ndl <= 0.0 || max(s.e.r, max(s.e.g, s.e.b)) <= 0.0) { continue; }
             var vis = rm_light_visibility(index, world, 0.02 + 0.03 * (1.0 - ndl));
             if (vis <= 0.001) { continue; }
@@ -614,7 +651,11 @@ fn fs(in: VsOut) -> ShadeOut {
                 vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, still));
             }
             let tau = lamp_tau(world, lights[index].a.xyz, 4u);
-            color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
+            if (leaf && ndl_raw < 0.0) {
+                color += leaf_tau / RM_PI * s.e * ndl * vis * exp(-tau);
+            } else {
+                color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
+            }
         }
         // Daylight through the panes (2 November 2026, "light still doesn't seem to make it into
         // the interior from the side vision port"): a surface of the crew compartment takes each
@@ -645,7 +686,7 @@ fn fs(in: VsOut) -> ShadeOut {
                 color += (diffuse + env_brdf(f0, roughness, ndv) / RM_PI) * radiance * omega;
             }
         }
-        color += g2.rgb;
+        if (!leaf) { color += g2.rgb; }
     }
     let fog = fog_to(in.uv, ray, dist);
     return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), shares_out, bounce_out);

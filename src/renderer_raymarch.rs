@@ -775,6 +775,13 @@ fn rm_source(name: &str) -> String {
         let c = crate::meadow_fauna::firefly_lanes().0;
         return format!("const RM_FIREFLY_LANES: vec3<f32> = vec3({:?}, {:?}, {:?});\n{text}", c[0], c[1], c[2]);
     }
+    if name == "rm_shade.wgsl" {
+        // The meadow's leaves (leaf_optics.rs, meadow.rs): cuticle f0, the canopy's leaf angle
+        // projection G (spherical distribution), the radius within which blades cast into the
+        // near cascade.
+        return format!("const RM_LEAF_F0: f32 = {:?};\nconst RM_LEAF_G: f32 = 0.5;\nconst RM_MEADOW_SHADOW_RADIUS: f32 = {:?};\n{text}",
+            crate::leaf_optics::cuticle_f0(1.47) as f32, crate::meadow::SHADOW_RADIUS_M);
+    }
     text
 }
 
