@@ -1385,6 +1385,30 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     (48 bursts) and the raymarch's event list (96), crowding the fireball out. The fireball is
     kept in the pool like the plume and the vents, and the raymarch takes a scaled detonation
     first, in place of the oldest ordinary event when its list is full.
+- **The crew's anatomical tissue** (2026-11-02, preliminary; `crew_anatomy`, `crew_tissue`; the
+  owner: build the crew's voxels from the character model with the skeleton and organs inside,
+  each tissue with its physical properties). When an anatomical volume is present (the asset
+  path, or `KESSEL_CREW_ANATOMY` for a preliminary one), the casualties' cells are its voxels:
+  1 cm, in the relaxed figure's frame, labelled by the tissue table
+  (`catalog/crew_anatomy_tissues.v1.json`: densities from the IT'IS Foundation database, blood
+  fractions from ICRP 89, built by `tools/anatomy/build_anatomy.py`). Each cell's mass is its
+  tissue's density. Its bonds come from its strength class:
+  - skin, muscle and bone keep the existing authored energies, as densities (50, 125 and
+    400 kJ/m³: at 2 cm the old 0.4, 1.0 and 3.2 J);
+  - a bond takes the weaker cell's hold;
+  - fat, brain, lung and the solid organs are skin-class, and hollow organs and cartilage are
+    muscle-class (the table's authored mapping);
+  - fluids (blood, CSF, gut contents, urine) are held by a quarter of skin's hold with a stretch
+    of 1.0, so they stay until struck and then spill as pieces; the blood system's flow is not
+    joined (named);
+  - airway air is no cell.
+
+  The outer shell takes the figure's colours at its nearest surface point, and every other
+  tissue its table colour. The rig binding in the volume is not used: cells take the figure's
+  part classification, and a joint's blend reaches 3.5 cells (3.5 cm at 1 cm; named). Without a
+  volume the figure-and-skeleton build stands. Cost at 1 cm: 55,790 cells, a body built in about
+  130 ms, and a killing strike's lattice solve in 0.4-0.65 s (about 25 ms at 2 cm). The solve
+  holds the tick as the plate's lattice does; a worker solve is open.
 - **A fire lit by the strike** (2026-11-02, `fea_damage::ignition`, `SpallResult::ignite`; the
   owner: a spark or a fragment meeting what burns may start a fire inside the tank, each material
   at its own chance, some never, as often as fires started in the war). It replaces the rule that

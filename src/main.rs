@@ -136,6 +136,7 @@ mod observer;
 mod exposure_meter_review;
 mod foot;
 mod first_aid;
+mod crew_anatomy;
 mod crew_solo_capture;
 mod foot_ai;
 mod astra_capture;

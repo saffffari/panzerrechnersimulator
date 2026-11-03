@@ -16,8 +16,9 @@ const APPEARANCES: usize = 5;
 const PARTS: usize = crew_physics::CREW_BODY_PART_COUNT;
 /// Cubes per colour page; more are dropped with one report (a named bound).
 const CUBES_PER_LABEL: usize = 8_192;
-/// Cells in pieces kept at once; past it the oldest pieces at rest go (a named bound).
-const CHUNK_CELLS: usize = 4_096;
+/// Cells in pieces kept at once; past it the oldest pieces at rest go (a named bound; 1 cm
+/// anatomical cells are eight to a 2 cm cell).
+const CHUNK_CELLS: usize = 32_768;
 /// Muscle albedo (sRGB) and roughness: two shades of dark red, authored game-level colours (not
 /// measured), wet enough to take a highlight.
 const MUSCLE: [[u8; 3]; 2] = [[118, 26, 22], [96, 18, 16]];
@@ -113,7 +114,7 @@ impl TissueDraw {
             .map(|f| f.texture.as_ref().ok_or_else(|| anyhow::anyhow!("relaxed face without atlas")))
             .collect::<anyhow::Result<_>>()?;
         // The skin cells' colours, from each face's atlas at the cell's nearest skin point.
-        let skin = |c: &&crew_tissue::Cell| c.tissue == crew_tissue::Tissue::Skin;
+        let skin = |c: &&crew_tissue::Cell| c.outer();
         let samples: Vec<[u8; 3]> = atlases.iter()
             .flat_map(|atlas| model.cells.iter().filter(skin).map(|c| texel(atlas, c.uv)))
             .collect();
@@ -138,24 +139,33 @@ impl TissueDraw {
             if count > 0.0 { sum.map(|s| (s / count) as u8) } else { [178, 171, 145] }
         };
         let bone_roughness = bones.iter().flatten().next().map_or(0.72, |page| page.roughness_factor);
-        let mut cube_pages = [0usize; crew_tissue::LABELS];
+        // A page per colour: the figure's, muscle's two, bone's, and each other anatomical tissue's
+        // table colour (wet tissue's roughness; authored), only for the tissues the body holds.
+        let mut cube_pages = [usize::MAX; crew_tissue::LABELS];
         for (index, page) in cube_pages.iter_mut().enumerate() {
             let label = index as u8 + 1;
             let (colour, roughness) = if label <= crew_tissue::SKIN_LABELS {
                 (colours[index].map(|c| c.round().clamp(0.0, 255.0) as u8), figures[0].roughness_factor)
             } else if label == crew_tissue::BONE_LABEL {
                 (bone_colour, bone_roughness)
-            } else {
+            } else if label < crew_tissue::BONE_LABEL {
                 (MUSCLE[(label - crew_tissue::MUSCLE_LABELS[0]) as usize], MUSCLE_ROUGHNESS)
+            } else {
+                match model.tissue_colours.iter().find(|(id, _)| *id == label - crew_tissue::BONE_LABEL) {
+                    Some(&(_, colour)) => (colour, MUSCLE_ROUGHNESS),
+                    None => continue,
+                }
             };
             let prototype = r.register_instanced_prototype(device, queue, &cell_cube(colour, roughness));
             *page = r.add_moving_instanced_pool(device, prototype, CUBES_PER_LABEL)
                 .ok_or_else(|| anyhow::anyhow!("tissue cube page"))?;
         }
         let count = |t| model.cells.iter().filter(|c| c.tissue == t).count();
-        println!("[crew] voxel bodies: {} cells of {:.0} mm (skin {}, muscle {}, bone {} from the skeleton's triangles) in {cells_ms:.0} ms; {} pages; the helmet a rigid body",
-            model.cell_count(), crew_tissue::CELL_M * 1000.0, count(crew_tissue::Tissue::Skin), count(crew_tissue::Tissue::Muscle),
-            count(crew_tissue::Tissue::Bone), cube_pages.len());
+        println!("[crew] voxel bodies: {} cells of {:.0} mm (skin-class {}, muscle-class {}, bone {}, fluid {}; {}) in {cells_ms:.0} ms; {} pages; the helmet a rigid body",
+            model.cell_count(), model.cell * 1000.0, count(crew_tissue::Tissue::Skin), count(crew_tissue::Tissue::Muscle),
+            count(crew_tissue::Tissue::Bone), count(crew_tissue::Tissue::Fluid),
+            model.anatomy.as_deref().map_or("the figure and its fitted skeleton".to_string(), |a| format!("anatomy {a}")),
+            cube_pages.iter().filter(|p| **p != usize::MAX).count());
         Ok(Self { model, helmet: HelmetShape::new(helmet), cube_pages, skin_labels, actors: Vec::new(), pieces: Vec::new(),
             cube_lists: std::array::from_fn(|_| Vec::new()), overflow_reported: false })
     }
@@ -256,7 +266,7 @@ impl TissueDraw {
             let m = piece.local_model();
             for &c in &piece.cells {
                 let p = m.transform_point3(model.cells[c as usize].at);
-                resting.entry(key(piece.frame, p)).or_default().push((p, 0.5 * crew_tissue::CELL_M * piece.scale));
+                resting.entry(key(piece.frame, p)).or_default().push((p, 0.5 * model.cell * piece.scale));
             }
         }
         let mut born: Vec<ChunkBody> = Vec::new();
@@ -357,7 +367,7 @@ impl TissueDraw {
                         rot: piece.rot,
                         vel: piece.vel + piece.spin.cross(pos - piece.pos) + scatter,
                         spin: scatter * 20.0,
-                        radius: 0.5 * crew_tissue::CELL_M * 3f32.sqrt() * piece.scale,
+                        radius: 0.5 * model.cell * 3f32.sqrt() * piece.scale,
                         cohesion_j: 0.0,
                         bounces: piece.bounces,
                         settled: false,
@@ -422,7 +432,7 @@ impl TissueDraw {
                         r = rot.slerp(poses[other.index()].1, w);
                     }
                 }
-                self.push(label, Mat4::from_scale_rotation_translation(Vec3::splat(crew_tissue::CELL_M * scale.x), r, p));
+                self.push(label, Mat4::from_scale_rotation_translation(Vec3::splat(model.cell * scale.x), r, p));
             }
         }
         self.actors[index].cache = Some((revision, face, lists));
@@ -438,7 +448,7 @@ impl TissueDraw {
             for &c in &piece.cells {
                 let cell = &model.cells[c as usize];
                 let label = crew_tissue::label(cell, self.skin_labels[face][c as usize]);
-                self.push(label, m * Mat4::from_scale_rotation_translation(Vec3::splat(crew_tissue::CELL_M), Quat::IDENTITY, cell.at));
+                self.push(label, m * Mat4::from_scale_rotation_translation(Vec3::splat(model.cell), Quat::IDENTITY, cell.at));
             }
         }
         self.pieces = pieces;
@@ -448,20 +458,20 @@ impl TissueDraw {
         // Debug only (KESSEL_TISSUE_DEBUG=hide): no cells drawn, so what is not cells (the
         // helmet) can be checked where it sits. Never set by a shipping preset.
         let hide = std::env::var("KESSEL_TISSUE_DEBUG").as_deref() == Ok("hide");
-        for (page, list) in self.cube_pages.iter().zip(&self.cube_lists) {
+        for (page, list) in self.cube_pages.iter().zip(&self.cube_lists).filter(|(p, _)| **p != usize::MAX) {
             r.set_moving_instanced_mats(*page, if hide { &[] } else { list });
         }
     }
 
     pub(super) fn hide(&self, r: &mut Renderer) {
-        for &page in &self.cube_pages {
+        for &page in self.cube_pages.iter().filter(|p| **p != usize::MAX) {
             r.set_moving_instanced_mats(page, &[]);
         }
     }
 
     pub(super) fn receipt(&self) -> serde_json::Value {
         serde_json::json!({
-            "cells": self.model.cell_count(), "cell_m": crew_tissue::CELL_M,
+            "cells": self.model.cell_count(), "cell_m": self.model.cell, "anatomy": self.model.anatomy,
             "bodies": self.actors.iter().map(|a| serde_json::json!({
                 "actor_id": a.peer,
                 "cells_gone": crew_physics::CrewBodyPart::ALL.iter().map(|p|
