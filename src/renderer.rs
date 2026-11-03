@@ -12665,7 +12665,7 @@ mod atmosphere_tests {
         assert_eq!(ranks.iter().map(|r|(r+0.5)/16.0-0.5).sum::<f32>(),0.0);
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 160); // the look lane at 128, the loupe lane at 144
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 176); // the look lane at 128, the loupe at 144, the realism lane at 160
         assert_eq!(std::mem::offset_of!(CrushUniform, look), 128);
         assert_eq!(std::mem::offset_of!(CrushUniform, loupe), 144);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
@@ -13454,7 +13454,8 @@ mod atmosphere_tests {
         }
         // The crush applies the eye's two channels and nothing else before ACES.
         let crush = include_str!("../shaders/crush.wgsl");
-        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
+        // The eye takes the frame and the sub-pixel emitters' point layer (fireflies; `observer.rs`).
+        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion));"));
         assert!(crush.contains("let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));"));
         assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
             "owner-directed cabin reproduction still acts only on the display rod term");
