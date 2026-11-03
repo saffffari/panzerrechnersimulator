@@ -104,7 +104,10 @@ fn impact_smoke_build(age: f32) -> f32 {
 }
 
 impl BurstKind {
-    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet{..} | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
+    /// A hit that does not go through armour gives no smoke (the owner, 2026-11-03: "the non
+    /// penetrating smoke should not really be white"): its sparks, flash and hot steel only.
+    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet{..} | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}
+        | Self::ArmorImpact(_)) }
 }
 #[derive(Clone,Copy)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -356,8 +359,11 @@ impl Effects {
                 self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,normal,0.02,0.45,
                     BurstKind::BulletArmor{normal,energy_j:deposited*0.006,cosine:(-incident.dot(normal)).clamp(0.0,1.0)},weapon);
                 self.stamp_newest(at,None);
-                self.burst(point,normal,(event.shell.caliber_mm*0.00065).clamp(0.025,0.15),0.9,
-                    BurstKind::PenetrationSmoke(normal),weapon);self.stamp_newest(at,None);
+                // Smoke only where the round went through: a shattered round leaves the plate whole.
+                if event.terminal==Terminal::Penetration {
+                    self.burst(point,normal,(event.shell.caliber_mm*0.00065).clamp(0.025,0.15),0.9,
+                        BurstKind::PenetrationSmoke(normal),weapon);self.stamp_newest(at,None);
+                }
                 // The hole's rim (a perforation) or the shattered round's crater (`rim_heat`):
                 // the plate's own steel at the strike, heated by the work left in it.
                 if let Some(heat)=gpu_weapon::rim_heat(event.shell.caliber_mm,event.plate.thickness_mm,deposited) {
@@ -1026,7 +1032,8 @@ mod tests {
             let has=|pred:fn(BurstKind)->bool|fx.bursts.iter().flatten().any(|b|pred(b.kind));
             assert_eq!(has(|k|matches!(k,BurstKind::Ricochet{..})),terminal==Terminal::Ricochet);
             assert_eq!(has(|k|matches!(k,BurstKind::HotRim{..})),matches!(terminal,Terminal::Penetration|Terminal::Shatter|Terminal::Ricochet));
-            assert_eq!(has(|k|matches!(k,BurstKind::PenetrationSmoke(_))),matches!(terminal,Terminal::Penetration|Terminal::Shatter));
+            assert_eq!(has(|k|matches!(k,BurstKind::PenetrationSmoke(_))),terminal==Terminal::Penetration,
+                "smoke only where the round went through");
             assert_eq!(has(|k|matches!(k,BurstKind::Blast)),terminal==Terminal::HeBlast);
             assert!(!has(|k|matches!(k,BurstKind::ArmorImpact(_)|BurstKind::Impact|BurstKind::InteriorBlast)));
             if terminal==Terminal::Penetration {assert!(fx.mats.iter().all(Vec::is_empty),"no generic exterior flame parcels");}
@@ -1035,6 +1042,25 @@ mod tests {
         let mut fx=Effects::default();fx.armor_terminal(8,0.0,point,incoming,normal,event,anchor,None);
         assert!(fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Blast)),"real HE breach retains its chemical detonation");
         assert!(!fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::HotRim{..}|BurstKind::Ricochet{..})));
+    }
+    /// A hit that does not go through armour (bounce, ricochet, shatter, a cannon round's armour
+    /// sparks) gives no smoke at all.
+    #[test] fn a_hit_that_does_not_go_through_gives_no_smoke() {
+        use crate::ballistics::{ArmorScheme,Facing,Terminal};
+        let point=Vec3::new(21.0,4.0,-61.0);let normal=Vec3::NEG_Z;
+        let mut event=crate::ballistics::resolve(&crate::ballistics::PZGR_39,100.0,
+            ArmorScheme::T34_76.plate(Facing::HullSide),0.0,7);
+        let anchor=SurfaceAnchor::new(ProjectileVehicle::Player,ArmorPart::Hull,Mat4::IDENTITY,point,normal);
+        for terminal in [Terminal::Bounce,Terminal::Ricochet,Terminal::Shatter] {
+            event.terminal=terminal;event.residual_v=0.0;
+            let mut fx=Effects::default();
+            fx.armor_terminal(9,0.0,point,Vec3::Z*760.0,normal,event,anchor,
+                (terminal==Terminal::Ricochet).then_some(Vec3::new(100.0,200.0,0.0)));
+            assert!(!fx.bursts.iter().flatten().any(|b|b.kind.emits_smoke()),"{terminal:?} smoked");
+        }
+        let mut fx=Effects::default();
+        fx.armor_sparks(point,-normal*760.0,normal,Weapon::Cannon(76));
+        assert!(!fx.bursts.iter().flatten().any(|b|b.kind.emits_smoke()),"armour sparks smoked");
     }
     #[test] fn entry_rim_follows_the_exact_source_frame_and_outward_normal() {
         let original=Mat4::from_rotation_translation(Quat::from_rotation_y(0.8),Vec3::new(10.0,4.0,-17.0));
