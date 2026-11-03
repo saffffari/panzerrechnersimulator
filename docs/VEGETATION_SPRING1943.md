@@ -83,7 +83,7 @@ the generated files at scale 1 (m); `spring1943.catalog.json` is the authoritati
 | `tree_chestnut_a/b` | tree | h 17.5 / 12.4, candles | 3,350-4,050 |
 | `tree_oak_a/b/c` | tree | h 20.4 / 15.1 / 19.4, crown 19-24 | 3,850-4,300 |
 | `tree_pear_a/b` | tree | h 7.8 / 8.4 | 2,850-3,250 |
-| `tree_apple_a/b/c` | tree | h 5-6.7, late blossom | 2,550-3,300 |
+| `tree_apple_a/b/c` | tree | h 6.3 / 5.0 / 6.3, crown 5.8-7.7, late blossom | 2,550-3,300 |
 | `tree_cherry_a/b` | tree | h 7.8 / 7.0 | 2,500-3,100 |
 | `tree_{birch,poplar,oak}_burnt_{a,b}`, `tree_{willow,linden,apple,cherry}_burnt_a` | tree | as the species; charred to 35-75 % of height, 60-85 % of clumps bare | 1,350-2,500 |
 | `tree_{birch,poplar,linden,oak}_shattered_{a,b}`, `tree_{willow,chestnut,pear}_shattered_a` | tree | snapped at 3.5-12 m, splintered top, broken limbs | 200-380 |

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Engine stills of the spring 1943 vegetation on the spring-bridge-trees-test workshop: the
-lineup rows (every asset) and views over the town, the river and the woods, with the same views on
-the source workshop for comparison. Real renders through the locked look (deltap-real, 1024x576,
-raymarch); one GPU process at a time, and none while the owner's demo build is running.
+lineup rows (every asset) and views over the town, the river and the woods. Real renders through
+the locked look (deltap-real, 1024x576, raymarch); one GPU process at a time, and none while the
+owner's demo build or another agent's engine process is running.
 
-    python3 tools/vegetation/capture_trees_test.py [lineup|map|compare|all] [ROW,...]
+    python3 tools/vegetation/capture_trees_test.py [lineup|map|all] [ROW,...]
 """
 import json
 import math
@@ -19,7 +19,6 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 ASSET_ROOT = Path(os.environ.get('KESSEL_ASSET_ROOT', '/windows/shop/panzerrechnersystem'))
 TEST = ASSET_ROOT / 'assets/worldgen/workshops/spring-bridge-trees-test'
-SOURCE = ASSET_ROOT / 'assets/worldgen/workshops/spring-bridge-v2'
 BIN = ROOT / 'target/release/panzerrechnersystem'
 STAMP = time.strftime('%Y%m%d')
 
@@ -73,18 +72,36 @@ def shoot(world, name, pos, target, fog=0.0008):
     return 0 if wrote else 1
 
 
+def densest(world, prefix, cell=120.0):
+    """Centre of the cell holding the most placements of spring1943 assets starting with `prefix`."""
+    m = json.loads((world / 'manifest.v1.json').read_text())
+    ids = {i for i, a in enumerate(m['assets']) if '/spring1943/' in a and Path(a).stem.startswith(prefix)}
+    pts = np.array([[p[1], p[3]] for p in m['placements'] if p[0] in ids and p[1] > -700])
+    keys, counts = np.unique(np.floor(pts / cell).astype(int), axis=0, return_counts=True)
+    k = keys[np.argmax(counts)]
+    inside = pts[np.all(np.floor(pts / cell).astype(int) == k, axis=1)]
+    return inside.mean(axis=0)
+
+
 def map_views(world):
     g = ground_fn(world)
     v = []
 
     def at(name, x, z, up, tx, tz, tup):
         v.append((name, [x, g(x, z) + up, z], [tx, g(tx, tz) + tup, tz]))
-    at('map_start_east', -420, -8, 3.0, -150, -10, 6.0)          # the commander's first look at the town
+    at('map_start_east', -395, -8, 6.0, -150, -10, 6.0)          # ahead of the Tiger at the start, toward the town
     at('map_westbank_bridge', -75, 60, 3.0, 2, -1, 4.0)          # down to the bridge and the river trees
     at('map_riverbank_north', 60, 260, 3.0, 0, 60, 4.0)          # along the east bank, willows and poplars
     at('map_town_aerial', -320, 180, 0.0, 0, -10, 0.0)
     v[-1][1][1] = 120.0
-    at('map_wood_edge', -600, 300, 2.5, -700, 420, 6.0)
+    def toward_centre(c, d):
+        return c - c / max(np.linalg.norm(c), 1.0) * d   # the camera on the map's side of the subject
+    w = densest(world, 'tree_oak')
+    cam = toward_centre(w, 160.0)
+    at('map_wood_edge', cam[0], cam[1], 2.5, w[0], w[1], 6.0)    # the densest oak wood, from 160 m off
+    d = densest(world, 'tree_linden_shattered')
+    cam = toward_centre(d, 100.0)
+    at('map_damaged', cam[0], cam[1], 3.0, d[0], d[1], 5.0)      # where the shattered limes stand
     return v
 
 
@@ -101,9 +118,6 @@ def main(argv):
     if what in ('map', 'all'):
         for name, pos, target in map_views(TEST):
             fails += bool(shoot(TEST, name, pos, target))
-    if what in ('compare', 'all'):
-        for name, pos, target in map_views(SOURCE)[:3]:
-            fails += bool(shoot(SOURCE, 'before_' + name, pos, target))
     sys.exit(1 if fails else 0)
 
 

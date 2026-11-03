@@ -680,7 +680,7 @@ def build_shrub(name, species, scale=1.0, burnt=False):
         mat = ('charcoal' if rng.random() < 0.7 else 'bark_scorched') if burnt else sp['bark']
         m.tube([base, mid, tip], [r0, r0 * 0.6, 0.006], 3, mat, rng=rng)
         for k in range(sp['clumps']):
-            f = rng.uniform(0.45, 1.0)
+            f = rng.uniform(0.15, 1.0)   # leafy down to the ground
             c = base + (mid - base) * (f * 2) if f < 0.5 else mid + (tip - mid) * ((f - 0.5) * 2)
             if burnt and rng.random() < 0.6:
                 continue
@@ -693,7 +693,7 @@ def build_shrub(name, species, scale=1.0, burnt=False):
                 if burnt:
                     mt = ('scorched', 0) if rng.random() < 0.7 else ('wilted', 0)
                 m.spray(p, nrm, np.array([rng.uniform(-1, 1), 0.2, rng.uniform(-1, 1)]),
-                        sp['spray'] * scale * rng.uniform(0.8, 1.2), sp['elong'], mt, rng)
+                        1.55 * sp['spray'] * scale * rng.uniform(0.8, 1.2), sp['elong'], mt, rng)
             if not burnt and 'blossom' in sp and rng.random() < sp['blossom'][1] * 2:
                 for _ in range(rng.randint(1, 3)):
                     p = c + out * 0.2 + np.array([rng.gauss(0, .3), 0.15 + rng.gauss(0, .2), rng.gauss(0, .3)]) * sp['spray'] * 1.5

@@ -146,16 +146,18 @@ def main(src, dst):
                 out.append([asset(sn), round(sx, 3), round(ground(sx, sz) - 0.05, 3), round(sz, 3),
                             round(h01(k, 16 + j) * 360, 1), round(0.85 + 0.3 * h01(k, 18 + j), 3)])
                 added['shrub_willowscrub'] += 1
-    # The lineup: every asset in rows of eight in a cleared field west of the start.
+    # The lineup: every asset in rows of eight, the rows on a 3-column grid in a cleared field
+    # west of the start, far enough apart that no row stands between another and its camera.
     rows = [names[i:i + 8] for i in range(0, len(names), 8)]
     by_name = {a['name']: a for a in catalog['assets']}
-    x0, z0, dz = -980.0, -560.0, 70.0
-    lo = np.array([x0 - 30, z0 - 40])
-    hi = np.array([x0 + 200, z0 + dz * len(rows) + 20])
+    xs, z0, dx, dz = -1180.0, -560.0, 250.0, 170.0
+    lo = np.array([xs - 30, z0 - 150])
+    hi = np.array([xs + 2 * dx + 230, z0 + dz * ((len(rows) - 1) // 3) + 30])
     out = [p for p in out if not (lo[0] < p[1] < hi[0] and lo[1] < p[3] < hi[1])]
     lineup = []
     for r, row in enumerate(rows):
-        z = z0 + dz * r
+        x0 = xs + dx * (r % 3)
+        z = z0 + dz * (r // 3)
         x = x0
         placed = []
         for n in row:
@@ -168,7 +170,7 @@ def main(src, dst):
         width = x - x0
         tall = max(by_name[n]['bounds_max'][1] for n in row)
         cx = x0 + width / 2
-        dist = max(width * 0.62, tall * 1.6, 25.0)
+        dist = min(max(width * 0.62, tall * 1.6, 25.0), 140.0)
         cam = [cx, ground(cx, z - dist) + max(2.0, tall * 0.35), z - dist]
         target = [cx, ground(cx, z) + tall * 0.42, z]
         lineup.append(dict(row=r, assets=placed, camera=cam, target=target))
