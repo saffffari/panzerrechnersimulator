@@ -60,6 +60,10 @@ const MAX_STEPS: u64 = 20_000;
 pub const WINDSHIELD_SHEET_M: f32 = 0.0025;
 /// Least share of the calibrated mean pressure left static (authored).
 pub const STATIC_SHARE: f32 = 0.25;
+/// A shed piece moving into the vehicle slower than this stays in the plate's cavity (authored).
+pub const SHRAPNEL_MIN_MPS: f32 = 20.0;
+/// In play: the span over which a perforating round clears the plate (crossing times).
+pub const GAME_HORIZON: f32 = 1.0;
 /// The solve's span in crossing times (see `Shot::solve`).
 pub const HORIZON: f32 = 2.5;
 
@@ -595,8 +599,13 @@ fn voxelise(d: &Design, body_m: f32, h: f32) -> Vec<(Vec3, Zone)> {
 
 impl Shot {
     pub fn new(impact: ShotImpact) -> Self {
+        Self::with_cells(impact, CELLS_ACROSS)
+    }
+
+    /// The round at `cells_across` cells across its calibre.
+    pub fn with_cells(impact: ShotImpact, cells_across: f32) -> Self {
         let d = impact.design;
-        let h = d.calibre_m / CELLS_ACROSS;
+        let h = d.calibre_m / cells_across;
         // The body length that gives the round its mass (cells at their materials' densities),
         // then each cell's mass scaled so the total is exact.
         let fill = |z: Zone| if z == Zone::Windshield { (WINDSHIELD_SHEET_M / h).min(1.0) } else { 1.0 };
@@ -926,8 +935,13 @@ impl Shot {
     /// length and a calibre at its striking speed, two and a half times over (a fixed span, so the
     /// solve's length never depends on how its debris settles).
     pub fn solve(&mut self) -> ShotOutcome {
+        self.solve_for(HORIZON)
+    }
+
+    /// The strike over `crossings` crossing times (see `solve`).
+    pub fn solve_for(&mut self, crossings: f32) -> ShotOutcome {
         let kinetic_in = self.kinetic();
-        let horizon = HORIZON * (self.length_m + 2.0 * self.impact.thickness_m + self.impact.design.calibre_m) / self.impact.v_in.max(100.0);
+        let horizon = crossings * (self.length_m + 2.0 * self.impact.thickness_m + self.impact.design.calibre_m) / self.impact.v_in.max(100.0);
         let steps_total = ((horizon / self.dt) as u64).clamp(1, MAX_STEPS);
         let every = (steps_total / FRAMES as u64).max(1);
         let mut deepest = f32::MIN;
@@ -1071,6 +1085,33 @@ impl Shot {
     }
 }
 
+/// A piece of the round that went through the plate, as it left the back face (plate frame).
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct Shrapnel {
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub spin: Vec3,
+    pub size_m: f32,
+    pub mass_kg: f32,
+    pub temperature_k: f32,
+}
+
+impl ShotOutcome {
+    /// The pieces of the round other than its residual that are in or behind the plate and moving
+    /// on into the vehicle faster than `SHRAPNEL_MIN_MPS` (filler left out: it is the burst's),
+    /// each placed where its path crosses the back face (a piece still in the cavity goes on along
+    /// it unresisted: named).
+    pub fn shrapnel(&self, thickness_m: f32) -> Vec<Shrapnel> {
+        self.pieces.iter().skip(1).filter(|p| p.zone != Zone::Filler && p.velocity.z > SHRAPNEL_MIN_MPS && p.centre.z > 0.0)
+            .map(|p| {
+                let back = (p.centre.z - thickness_m) / p.velocity.z;
+                let mut pos = p.centre - p.velocity * back;
+                pos.z = thickness_m + 0.5 * p.size_m;
+                Shrapnel { pos, vel: p.velocity, spin: p.spin, size_m: p.size_m, mass_kg: p.mass_kg, temperature_k: p.temperature_k }
+            }).collect()
+    }
+}
+
 fn outer(r: Vec3) -> Mat3 {
     Mat3::from_cols(r * r.x, r * r.y, r * r.z)
 }
@@ -1193,12 +1234,41 @@ mod tests {
     }
 
     #[test]
+    fn a_capped_round_through_the_plate_sends_pieces_of_itself_in() {
+        let impact = strike(&PZGR_39, 770.0, 30.0, 100.0);
+        let out = Shot::with_cells(impact, 8.0).solve_for(GAME_HORIZON);
+        let shrapnel = out.shrapnel(impact.thickness_m);
+        assert!(!shrapnel.is_empty(), "{} pieces, residual {:.2} kg", out.pieces.len(), out.residual_kg);
+        for s in &shrapnel {
+            assert!((s.pos.z - impact.thickness_m).abs() < s.size_m + 1e-3 && s.vel.z > SHRAPNEL_MIN_MPS);
+        }
+        let shed: f32 = shrapnel.iter().map(|s| s.mass_kg).sum();
+        assert!(out.residual_kg + shed <= out.mass_kg + 1e-3);
+    }
+
+    #[test]
     fn the_solve_is_repeatable() {
         let a = Shot::new(strike(&BR_471, 650.0, 40.0, 80.0)).solve();
         let b = Shot::new(strike(&BR_471, 650.0, 40.0, 80.0)).solve();
         assert_eq!(a.steps, b.steps);
         assert_eq!(a.broken_bonds, b.broken_bonds);
         assert_eq!(a.residual_kg.to_bits(), b.residual_kg.to_bits());
+    }
+
+    #[test]
+    #[ignore]
+    fn print_game_costs() {
+        for cells in [8.0, 10.0, 12.0] {
+            for (shell, v, angle, plate) in [(&BR_471, 780.0, 0.0, 100.0), (&PZGR_39, 770.0, 30.0, 100.0), (&BR_354P, 950.0, 0.0, 60.0)] {
+                let started = std::time::Instant::now();
+                let mut shot = Shot::with_cells(strike(shell, v, angle, plate), cells);
+                let n = shot.len();
+                let out = shot.solve_for(GAME_HORIZON);
+                println!("{cells} across {}: {n} cells {} steps {:.0} ms; residual {:.2}/{:.2} kg at {:.0} m/s, {} pieces",
+                    shell.name, out.steps, started.elapsed().as_secs_f32() * 1000.0, out.residual_kg, out.mass_kg,
+                    out.residual_velocity.length(), out.pieces.len());
+            }
+        }
     }
 
     #[test]

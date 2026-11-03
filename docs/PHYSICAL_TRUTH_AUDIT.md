@@ -1422,8 +1422,17 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   shipping presets keep the constants above.
 - **The round as a deformable body** (2026-11-03, `fea_damage::shot`, review film
   `fea-shot-film`; the owner: shells must squash, bend, ricochet and spin off the armour and break
-  into shrapnel, each by its kind). Status: solved and filmed on its own; **not yet joined to play**
-  (the game's strike still uses the rigid round of `chain` and `lattice`). Each kinetic round is a
+  into shrapnel, each by its kind). Status: joined to play for perforations only. The round of a
+  perforation is solved at 8 cells across (`game_fea::SHOT_CELLS_ACROSS`, every preset; 0.1-0.4 s
+  on a worker beside the plate's lattice, the tick waiting for both) over one crossing time; the
+  chain carries its residual mass past the plate (`chain::run_with_residual`: capability at the
+  speed giving the lighter body the same DeMarre penetration, drag and plug shares at its mass, its
+  shape the intact round's for the law: named), the residual's contacts with crew and modules take
+  that mass, the pieces it shed through the plate join the interior's hot fragments at their solved
+  motion, spin and heat (placed where each one's path crosses the back face, a piece still in the
+  cavity going on unresisted; slower than 20 m/s it stays; filler pieces are the burst's), and a
+  bursting round breaks only the steel it kept. Ricochets, stops and lodged rounds still use the
+  rigid round in play (drawn undeformed: named). The review film solves at 12 across. Each kinetic round is a
   voxel lattice, 12 cells across its calibre, built from its kind: a hardened nose, a body, a soft
   base, a piercing cap (APCBC), a sheet-steel ballistic cap (2.5 mm, carried at its sheet's share of
   a cell), the filler in its cavity, or a tungsten-carbide core in a soft-steel carrier (APCR), its
