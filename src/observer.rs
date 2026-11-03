@@ -38,6 +38,32 @@ pub const SCOTOPIC_WEIGHTS: [f64; 3] = [2_322.5, 89_437.1, 73_261.6];
 /// A spectrally flat radiance of one renderer unit has this luminance (the photopic sum).
 pub const LUMINANCE_PER_UNIT_RADIANCE: f64 = 72_983.3;
 
+/// Rods pool light over a far larger retinal area than foveal cones: complete spatial summation
+/// for dark-adapted rods out to about half a degree (Ricco's area; Barlow 1958, J. Physiol.
+/// 141:337), while foveal cone summation is a few arcminutes, under a 1280x720 pixel at 55 deg
+/// (4.6'). A sub-pixel emitter's rod signal is therefore its pixel's scotopic luminance times the
+/// pixel's share of this disc (`crush.wgsl` `eye_response`); its cones take it whole. Extended
+/// fields (everything else, the stars included) are unchanged.
+pub const ROD_SUMMATION_DIAMETER_DEG: f64 = 0.5;
+/// The share of a sub-pixel emitter's scotopic luminance its own pixel's rods see (crush.wgsl).
+pub fn rod_point_share(pixel_deg: f64) -> f64 {
+    (pixel_deg * pixel_deg / (std::f64::consts::PI * 0.25 * ROD_SUMMATION_DIAMETER_DEG * ROD_SUMMATION_DIAMETER_DEG)).clamp(0.0, 1.0)
+}
+#[cfg(test)]
+mod rod_pooling_tests {
+    #[test]
+    fn a_lantern_s_rods_see_a_few_percent_and_extended_fields_are_unchanged() {
+        // 1280x720 at 55 deg: a 4.6 arcmin pixel, 3 % of the half-degree disc.
+        let share = super::rod_point_share(55.0 / 720.0);
+        assert!((share - 0.0297).abs() < 0.001, "{share}");
+        // A pixel as large as the disc pools nothing away.
+        assert_eq!(super::rod_point_share(1.0), 1.0);
+        // The shader carries the same law; stars are not in the point layer.
+        let crush = include_str!("../shaders/crush.wgsl");
+        assert!(crush.contains("let rod_seen = max(radiance - point * (1.0 - share), vec3(0.0));"));
+        assert!(!include_str!("../shaders/rm_shade.wgsl").contains("point_layer"));
+    }
+}
 pub const METER_MIN_CD_M2: f64 = 1.0e-7;
 pub const METER_MAX_CD_M2: f64 = 1.0e7;
 pub const METER_FOVEA_RADIUS_DEG: f64 = 1.0;
@@ -575,6 +601,7 @@ pub fn wgsl_constants() -> String {
     push("OBS_SCOTOPIC_G", SCOTOPIC_WEIGHTS[1]);
     push("OBS_SCOTOPIC_B", SCOTOPIC_WEIGHTS[2]);
     push("OBS_LUMINANCE_PER_UNIT_RADIANCE", LUMINANCE_PER_UNIT_RADIANCE);
+    push("OBS_ROD_SUMMATION_DEG", ROD_SUMMATION_DIAMETER_DEG);
     push("OBS_METER_MIN", METER_MIN_CD_M2);
     push("OBS_METER_MAX", METER_MAX_CD_M2);
     push("OBS_FOVEA_RADIUS_DEG", METER_FOVEA_RADIUS_DEG);

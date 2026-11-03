@@ -662,6 +662,8 @@ pub(super) struct Backend {
     reflect_pipe: wgpu::RenderPipeline,
     lens_pipe: wgpu::RenderPipeline,
     points_pipe: wgpu::RenderPipeline,
+    /// Firefly lanterns into the point layer (crush.wgsl rod pooling).
+    point_layer_pipe: wgpu::RenderPipeline,
     sparks_pipe: wgpu::RenderPipeline,
     tracers_pipe: wgpu::RenderPipeline,
     binds: Option<Binds>,
@@ -809,8 +811,28 @@ fn rm_source(name: &str) -> String {
         // The meadow's leaves (leaf_optics.rs, meadow.rs): cuticle f0, the canopy's leaf angle
         // projection G (spherical distribution), the radius within which blades cast into the
         // near cascade.
-        return format!("const RM_LEAF_F0: f32 = {:?};\nconst RM_LEAF_G: f32 = 0.5;\nconst RM_MEADOW_SHADOW_RADIUS: f32 = {:?};\n{text}",
-            crate::leaf_optics::cuticle_f0(1.47) as f32, crate::meadow::SHADOW_RADIUS_M);
+        let (gr, gt) = crate::leaf_optics::gamma_tables();
+        let list = |g: [f32; crate::leaf_optics::GAMMA_STEPS]| g.iter().map(|v| format!("{v:?}")).collect::<Vec<_>>().join(", ");
+        let n = crate::leaf_optics::GAMMA_STEPS;
+        return format!("const RM_LEAF_F0: f32 = {:?};\nconst RM_LEAF_G: f32 = 0.5;\nconst RM_MEADOW_SHADOW_RADIUS: f32 = {:?};\n\
+            const RM_HOTSPOT: f32 = {:?};\nconst RM_SOIL_ALBEDO: f32 = {:?};\n\
+            var<private> RM_GAMMA_R: array<f32, {n}> = array<f32, {n}>({});\n\
+            var<private> RM_GAMMA_T: array<f32, {n}> = array<f32, {n}>({});\n\
+            fn rm_slab_gamma(beta: f32, which: u32) -> f32 {{\n\
+                let x = clamp(beta / 3.14159265, 0.0, 1.0) * f32({n} - 1);\n\
+                let i = min(u32(x), {n}u - 2u);\n\
+                let t = x - f32(i);\n\
+                if (which == 0u) {{ return mix(RM_GAMMA_R[i], RM_GAMMA_R[i + 1u], t); }}\n\
+                return mix(RM_GAMMA_T[i], RM_GAMMA_T[i + 1u], t);\n\
+            }}\n\
+            fn rm_km_reflectance(rho: vec3<f32>, tau: vec3<f32>) -> vec3<f32> {{\n\
+                let omega = max(rho + tau, vec3(1e-6));\n\
+                let s = (vec3(0.5) + (rho - tau) / (6.0 * omega)) * omega;\n\
+                let q = (vec3(1.0) - omega) / max(s, vec3(1e-9));\n\
+                return vec3(1.0) + q - sqrt(q * q + 2.0 * q);\n\
+            }}\n{text}",
+            crate::leaf_optics::cuticle_f0(1.47) as f32, crate::meadow::SHADOW_RADIUS_M,
+            crate::leaf_optics::HOTSPOT, crate::leaf_optics::SOIL_ALBEDO, list(gr), list(gt));
     }
     text
 }
@@ -1518,6 +1540,17 @@ impl Backend {
             fragment: Some(wgpu::FragmentState { module: &points_shader, entry_point: Some("fs"), targets: std::slice::from_ref(&premultiplied), compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
+        let point_layer_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-point-layer"), layout: Some(&points_pl),
+            vertex: wgpu::VertexState { module: &points_shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout {
+                array_stride: 16, step_mode: wgpu::VertexStepMode::Instance, attributes: &POINT_ATTRS }] },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() }, depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &points_shader, entry_point: Some("fs_layer"), targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba16Float, blend: Some(wgpu::BlendState { color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add }, alpha: wgpu::BlendComponent::OVER }),
+                write_mask: wgpu::ColorWrites::ALL })], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
         let sparks_shader = rm_shader(device, "rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]);
         const WEAPON_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4, 4 => Uint32x4];
         let weapon_pipeline = |label: &str, entry: &str| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1545,7 +1578,7 @@ impl Backend {
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
-            points_pipe, sparks_pipe, tracers_pipe,
+            points_pipe, point_layer_pipe, sparks_pipe, tracers_pipe,
             binds: None, history_valid: false,
             glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             whitewash: std::env::var("KESSEL_WHITEWASH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
@@ -3475,6 +3508,22 @@ impl Backend {
                     pass.draw(0..count * 6, first..first + 1);
                     work.scene_instanced_draws += 1;
                 }
+            }
+        }
+        // 7b. The point layer: the firefly lanterns' radiance alone, for the eye's rod pooling
+        // (crush.wgsl). Cleared every frame so a frame without lanterns leaves none behind.
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-point-layer"),
+                color_attachments: &[Some(attachment(&r.point_view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)))],
+                depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None,
+            });
+            if embers > 0 && !r.fireflies.is_empty() {
+                pass.set_bind_group(0, &binds.points, &[]);
+                pass.set_bind_group(1, &binds.visibility, &[]);
+                pass.set_pipeline(&self.point_layer_pipe);
+                pass.set_vertex_buffer(0, self.ember_buf.slice(..));
+                pass.draw(0..6, 0..embers);
             }
         }
         // 8. The eyepiece glass: refraction, dispersion and the lens edge of the TZF/binoculars.

@@ -236,7 +236,7 @@ fn vs_blade(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsO
     var fade = 1.0 - smoothstep(radius * 0.85, radius, d);
     if (mv.lod.z > 0.5) {
         let band = smoothstep(MD_NEAR_RADIUS - MD_BAND, MD_NEAR_RADIUS, d);
-        fade = select(1.0 - band, band * (1.0 - smoothstep(MD_FAR_RADIUS * 0.8, MD_FAR_RADIUS, d)), far);
+        fade = select(1.0 - band, band * (1.0 - smoothstep(MD_NEAR_RADIUS, MD_FAR_RADIUS, d)), far);
     }
     let width = md_width(d);
     let count = MD_NEAR_DENSITY * MD_BLADE_WIDTH / width * tile_m * tile_m * cv.x;
@@ -383,6 +383,47 @@ fn vs_flower(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> Vs
     let a1 = a0 + MD_TAU / 6.0;
     let n = normalize(cross(top + (e1 * cos(a1) + e2 * sin(a1)) * head - centre, top + (e1 * cos(a0) + e2 * sin(a0)) * head - centre));
     return md_emit(rim, select(n, -n, dot(n, up) < 0.0), MD_SP_P[s], MD_SP_P[s] * 0.4, md_lai_above(md_canopy(cv), rim.y - root.y));
+}
+
+// The far meadow's canopy slab (meadow.rs SLAB_*; shaded as kind 6 by rm_shade.wgsl): a shell at
+// the canopy's top over the drawn ground, rising over the band where the blades fade, carrying
+// the stand's leaf optics and leaf area index. tile.z 0: a 32 m tile of 8 x 8 quads, 1: 128 m of 16 x 16.
+@vertex
+fn vs_slab(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsOut {
+    let far = tile.z == 1;
+    let tile_m = select(MD_SLAB_TILE, MD_SLAB_TILE_FAR, far);
+    let q = select(8u, 16u, far);
+    let quad = vi / 6u;
+    let c = vi % 6u;
+    var corner = array<vec2<u32>, 6>(vec2(0u, 0u), vec2(1u, 0u), vec2(0u, 1u), vec2(0u, 1u), vec2(1u, 0u), vec2(1u, 1u));
+    let g = vec2(quad % q, quad / q) + corner[c];
+    let p = vec2(f32(tile.x), f32(tile.y)) * tile_m + vec2<f32>(g) * (tile_m / f32(q));
+    let cv = md_cover(p);
+    let canopy = md_canopy(cv);
+    let ground = md_ground(p);
+    let d = distance(vec3(p.x, ground, p.y), mv.eye.xyz);
+    let rise = smoothstep(MD_SLAB_START, MD_SLAB_FULL, d);
+    let e = mv.map.x;
+    let normal = normalize(vec3(md_ground(p - vec2(e, 0.0)) - md_ground(p + vec2(e, 0.0)), 2.0 * e,
+        md_ground(p - vec2(0.0, e)) - md_ground(p + vec2(0.0, e))));
+    let field = md_noise(p.x / 31.0, p.y / 31.0, 0x600du) * 0.75 + md_noise(p.x / 9.0, p.y / 9.0, 0x601du) * 0.25;
+    let pale = smoothstep(0.30, 0.75, field) * 0.7;
+    let dry = smoothstep(0.95, 0.60, cv.x) * 0.75 + 0.03;
+    let rho = mix(mix(MD_LEAF_RHO_FRESH, MD_LEAF_RHO_PALE, pale), MD_LEAF_RHO_DRY, dry);
+    let tau = mix(mix(MD_LEAF_TAU_FRESH, MD_LEAF_TAU_PALE, pale), MD_LEAF_TAU_DRY, dry);
+    let world = vec3(p.x, ground + canopy.x * rise, p.y);
+    return md_emit(world, normal, rho, tau, canopy.y * rise);
+}
+
+@fragment
+fn fs_slab(in: VsOut) -> GOut {
+    // Bare ground (roads, soil, water) and the foot of the band carry no canopy: the terrain shows.
+    if (in.lai_above < 0.1) { discard; }
+    var out: GOut;
+    out.g0 = vec4(in.albedo, 6.0);
+    out.g1 = vec4(normalize(in.normal), 1.0);
+    out.g2 = vec4(in.tau, in.lai_above);
+    return out;
 }
 
 struct GOut {

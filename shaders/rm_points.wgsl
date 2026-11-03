@@ -31,8 +31,18 @@ fn vs(@builtin(vertex_index) vertex: u32, @location(0) world: vec3<f32>, @locati
     return out;
 }
 
+// The point layer (crush.wgsl rod pooling): a firefly lantern's own radiance at its pixel, the
+// same value fs adds to the frame; every other kind writes nothing here.
 @fragment
-fn fs(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_layer(in: VsOut) -> @location(0) vec4<f32> {
+    if ((in.packed & 0xFu) != 3u) { discard; return vec4(0.0); }
+    return rm_point_shade(in);
+}
+
+@fragment
+fn fs(in: VsOut) -> @location(0) vec4<f32> { return rm_point_shade(in); }
+
+fn rm_point_shade(in: VsOut) -> vec4<f32> {
     let dims = vec2<i32>(textureDimensions(depth_tex));
     let pixel = vec2<i32>(in.position.xy);
     if (any(pixel < vec2(0)) || any(pixel >= dims) || in.position.z >= textureLoad(depth_tex, pixel, 0)) { discard; }

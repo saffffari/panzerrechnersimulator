@@ -506,10 +506,13 @@ fn fs(in: VsOut) -> ShadeOut {
         // A living leaf (the spring meadow, rm_meadow.wgsl): a bi-Lambertian sheet with a cuticle
         // specular, its transmittance in g2.rgb and the leaf area above it in g2.w.
         let leaf = g0.a > 4.5 && g0.a < 5.5;
-        let thin = grass || leaf;
-        let leaf_tau = select(vec3(0.0), g2.rgb, leaf);
-        let lai_above = select(0.0, g2.w, leaf);
-        if (leaf) { metallic = 0.0; }
+        // The far meadow's canopy slab (kind 6): its top surface, carrying the stand's leaf optics
+        // (rho in g0, tau in g2.rgb) and leaf area index (g2.w); lit as a turbid slab below.
+        let slab = g0.a > 5.5 && g0.a < 6.5;
+        let thin = grass || leaf || slab;
+        let leaf_tau = select(vec3(0.0), g2.rgb, leaf || slab);
+        let lai_above = select(0.0, g2.w, leaf || slab);
+        if (leaf || slab) { metallic = 0.0; }
         let motion = rm_surface_motion(world, n);
         let fresh_gather = screen_gather(pixel, rel, n, jitter, motion);
         let history = shade_history(world, motion);
@@ -580,7 +583,38 @@ fn fs(in: VsOut) -> ShadeOut {
         // through a hatch crossed a bank too) and the banks' diffuse light outside.
         let tau_low = rm_low_tau(world);
         // Key beam.
-        if (fr.sun_radiance.w > 0.5 && leaf) {
+        if (fr.sun_radiance.w > 0.5 && slab) {
+            // A homogeneous turbid canopy of spherical bi-Lambertian leaves over soil (SAIL-type):
+            // single scattering of the beam, with Kuusk's hotspot joint gap probability, by the
+            // area scattering phase function Gamma (leaf_optics::gamma_tables), integrated down
+            // the canopy's leaf area in eight steps; the soil seen through both gaps.
+            let mu_s = dot(n, fr.sun_dir.xyz);
+            let mu_v = max(dot(n, v), 0.02);
+            if (mu_s > 0.01) {
+                let ks = RM_LEAF_G / mu_s;
+                let kv = RM_LEAF_G / mu_v;
+                let ts = (fr.sun_dir.xyz - n * mu_s) / mu_s;
+                let tv = (v - n * mu_v) / mu_v;
+                let alpha = length(ts - tv);
+                var gap = 0.0;
+                let dl = lai_above / 8.0;
+                for (var k = 0; k < 8; k += 1) {
+                    let l = (f32(k) + 0.5) * dl;
+                    var shared_gap = sqrt(ks * kv) * l;
+                    if (alpha > 1e-4) { shared_gap = sqrt(ks * kv) * RM_HOTSPOT / alpha * (1.0 - exp(-alpha * l / RM_HOTSPOT)); }
+                    gap += exp(-(ks + kv) * l + shared_gap) * dl;
+                }
+                let beta = acos(clamp(dot(-fr.sun_dir.xyz, v), -1.0, 1.0));
+                let gamma = albedo * rm_slab_gamma(beta, 0u) + leaf_tau * rm_slab_gamma(beta, 1u);
+                let vis = rm_sun_visibility(world, 0.3);
+                color += fr.sun_radiance.rgb * vis * (gamma / RM_PI * gap / mu_v
+                    + RM_SOIL_ALBEDO / RM_PI * mu_s * exp(-(ks + kv) * lai_above));
+                // Light scattered more than once: the deep canopy's two-stream reflectance less
+                // the share of a first scattering (an estimate), lit by the beam's flux.
+                let r_inf = rm_km_reflectance(albedo, leaf_tau);
+                color += fr.sun_radiance.rgb * vis * mu_s * max(r_inf - (albedo + leaf_tau) * 0.25, vec3(0.0)) / RM_PI;
+            }
+        } else if (fr.sun_radiance.w > 0.5 && leaf) {
             // The beam lights the face it falls on (reflectance rho, cuticle specular) or passes
             // through the blade to the other face (transmittance tau), both through the sun's
             // visibility. Within the near cascade the drawn blades shadow each other; beyond it a
@@ -629,6 +663,7 @@ fn fs(in: VsOut) -> ShadeOut {
         // A leaf inside the meadow sees the sky through the leaf area above it: the uniform turbid
         // canopy's diffuse gap fraction 2 E3(G L) (an isotropic sky; the screen gather of a
         // blade among blades is not used).
+        if (slab) { ao = 1.0; open = 1.0; }
         if (leaf) {
             var gap = 0.0;
             for (var k = 0; k < 8; k += 1) {
@@ -688,11 +723,16 @@ fn fs(in: VsOut) -> ShadeOut {
             if (hidden_cover > 0.0) { hidden = previous_radiance(world, motion).rgb; }
             env = env * open + gather.irradiance * select(1.0, 0.6, thin) / RM_PI + hidden * hidden_cover;
         }
-        // A leaf in diffuse light: both faces lit alike, the far face's light transmitted.
-        color += (diffuse + leaf_tau / RM_PI) * RM_PI * env;
+        // A leaf in diffuse light: both faces lit alike, the far face's light transmitted. The
+        // canopy slab returns the diffuse sky by its two-stream reflectance.
+        if (slab) {
+            color += rm_km_reflectance(albedo, leaf_tau) * env;
+        } else {
+            color += (diffuse + leaf_tau / RM_PI) * RM_PI * env;
+        }
         // The marched reflection's share (rm_reflect.wgsl's `gloss`): the rest is this term's.
         let gloss = (1.0 - smoothstep(0.2, 0.5, roughness)) * mix(0.35, 1.0, metallic);
-        color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss);
+        if (!slab) { color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss); }
         // Lamps, fires, flashes: the lights binned into this pixel's cell. A lamp in the crew
         // compartment lights only surfaces facing the compartment's air: the armour is opaque
         // whatever the lamp's shadow cube holds (its housing, which the turret and gun meshes
@@ -703,6 +743,7 @@ fn fs(in: VsOut) -> ShadeOut {
         let lend = light_cell_start[cell + 1u];
         for (var i = lstart; i < lend; i += 1u) {
             let index = light_cell_items[i];
+            if (slab) { break; }
             if (!receiver_in_cabin && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }
             let s = rm_light_sample(index, world);
             let ndl_raw = dot(n, s.dir);
