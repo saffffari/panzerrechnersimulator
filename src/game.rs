@@ -21846,10 +21846,16 @@ impl Game {
             !previously_airborne && !self.foot.airborne,
             input.drive.abs()+input.steer.abs()>0.01,self.foot.crouch_t,false,self.foot.pos);
 
-        // Camera at human eye height, look driven directly from accumulated mouse deltas.
-        r.camera.pos = self.foot.eye();
+        // Camera at human eye height, look driven directly from accumulated mouse deltas; the
+        // gait bob moves the view only (the man's eye for sight and collision stays put).
         r.camera.yaw = self.foot.yaw;
         r.camera.pitch = self.foot.pitch;
+        {
+            let (bob_v, bob_l) = self.foot.gait_bob();
+            let quiet = if self.foot.aiming { 0.35 } else { 1.0 };
+            let right = r.camera.forward().cross(Vec3::Y).normalize_or_zero();
+            r.camera.pos = self.foot.eye() + Vec3::Y * bob_v * quiet + right * bob_l * quiet;
+        }
         if self.update_exterior_ammunition(input, dt, r) { return; }
         self.foot.aiming = input.aim && !input.binoculars && self.held_item.is_none() && !self.compass_equipped && !self.personal_hand_item_active() && !self.field_aid_in_hands() && !self.carrying_track_kit; // RMB raises the selected weapon
                                                                                        // BINOCULARS (Left Shift toggle, the Last Tiger scan): service-glass zoom to search
@@ -22102,6 +22108,14 @@ impl Game {
         if self.foot.recoil > 0.0 {
             pistol_pos -= f * 0.045 * self.foot.recoil;
             pistol_rot = Quat::from_axis_angle(rt, -0.22 * self.foot.recoil) * pistol_rot;
+        }
+        {
+            // The pistol rides the step a little behind the eye: a small sway and roll, less
+            // when aimed (presentation only).
+            let quiet = if self.foot.aiming { 0.3 } else { 1.0 };
+            let (bob_v, bob_l) = self.foot.gait_bob();
+            pistol_pos += (up * bob_v * 0.6 + rt * bob_l * 1.4) * quiet;
+            pistol_rot = Quat::from_axis_angle(f, 0.035 * self.foot.gait_amount * self.foot.gait_phase.sin() * quiet) * pistol_rot;
         }
 
         if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)

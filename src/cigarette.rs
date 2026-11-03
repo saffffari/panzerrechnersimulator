@@ -32,6 +32,9 @@ const ASH_READY_SECONDS:f64=6.0;
 pub const INVERTED_SLOT:u8=9;
 const FULL_PACK:u32=(1<<PACK_SIZE)-1;
 
+/// The smoked boost's on-foot speed factor (the owner's choice, 2 November 2026; a game effect).
+pub const BOOST_FOOT_SPEED: f32 = 1.5;
+
 #[derive(Clone,Copy,Debug,Default,PartialEq)]
 pub struct View {
     /// The packet is out in the hand, open, for a cigarette to be chosen.

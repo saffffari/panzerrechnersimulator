@@ -609,6 +609,8 @@ fn day_night_cycle_enabled() -> bool {
 /// Exposure and saturation of the display grade at full boost.
 pub const VISION_BOOST_EXPOSURE: f32 = 1.9;
 pub const VISION_BOOST_SATURATION: f32 = 1.18;
+/// The smoked boost's factor on the rods' gain at full boost (night vision).
+const VISION_BOOST_NIGHT: f32 = 2.0;
 fn boosted_display_grade(grade: [f32; 4], boost: f32) -> [f32; 4] {
     let boost = if boost.is_finite() { boost.clamp(0.0, 1.0) } else { 0.0 };
     [grade[0] * (1.0 + (VISION_BOOST_EXPOSURE - 1.0) * boost),
@@ -8695,7 +8697,10 @@ impl Renderer {
             // The Strichbild is drawn by the blit at the output's resolution (`blit_reticle`).
             reticle: 0.0,
             frame: (self.frame & 0xFFFF) as f32,
-            rod_exposure: if self.exposure_override.is_some() { 0.0 } else { unmetered.rod_exposure as f32 },
+            // The smoked boost also lifts the rods' gain (night vision; owner-directed, ledger),
+            // still capped at the display's key in crush.wgsl.
+            rod_exposure: if self.exposure_override.is_some() { 0.0 } else {
+                unmetered.rod_exposure as f32 * (1.0 + (VISION_BOOST_NIGHT - 1.0) * self.vision_boost.clamp(0.0, 1.0)) },
             rod_inverse_saturation: unmetered.rod_inverse_saturation as f32,
             ambient_white_balance: self.display_tuning
                 .filter(|p| p.ambient_white_balance)

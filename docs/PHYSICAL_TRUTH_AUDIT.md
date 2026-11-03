@@ -4,6 +4,21 @@ Updated: 2026-11-02 (the spring meadow: GPU blades over every green ground, flow
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
+## Owner-directed effects of the cigarette, and the walking bob, 2026-11-02 (`src/cigarette.rs`, `src/hand_items.rs`, `src/foot.rs`, `src/renderer.rs`)
+
+These are game effects the owner chose, not physiological models, named so they are never read as
+simulation:
+
+- While a smoked boost lasts (`cigarette::State`, seconds per toke) the man on foot moves 1.5 times as
+  fast (`cigarette::BOOST_FOOT_SPEED`, `FootSoldier::speed_scale`); the tank is unaffected.
+- The same boost already raised the display's exposure (x1.9) and saturation (x1.18)
+  (`boosted_display_grade`); it now also doubles the rods' gain (`VISION_BOOST_NIGHT`), so it is felt as
+  better night vision. The rod signal stays capped at the display's key in `crush.wgsl`.
+- Walking and running move the camera and the held Luger with a gait bob (about 1 cm walking, 2.5 cm
+  running, a sway once per stride pair, a third of it when aiming), from a gait clock advanced by the
+  distance actually walked (`FootSoldier::gait_bob`). Presentation only: the man's eye for sight, the
+  stealth model and collision use the unbobbed eye.
+
 ## Spring meadow, butterflies and fireflies, 2026-11-02 (`src/meadow.rs`, `src/meadow_fauna.rs`, `src/renderer_meadow.rs`, `shaders/rm_meadow.wgsl`)
 
 On a map whose terrain block says `grass_season: "spring"` and on the raymarch backend, the three
