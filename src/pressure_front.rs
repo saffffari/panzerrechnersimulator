@@ -181,6 +181,9 @@ pub struct Arrival {
 pub struct Fronts {
     events: VecDeque<Front>,
     recent: VecDeque<u64>,
+    /// This frame's hot-object plumes (set each frame; presentation state, not saved).
+    #[serde(skip)]
+    plumes: Vec<HeatPlume>,
 }
 impl Fronts {
     /// A duplicate impact cannot schedule a second pressure sound or camera response. Evicting an
@@ -206,6 +209,24 @@ impl Fronts {
     pub fn clear(&mut self) {
         self.events.clear();
         self.recent.clear();
+        self.plumes.clear();
+    }
+    /// This frame's hot objects (the hottest `MAX_PLUMES` by heat release are drawn).
+    pub fn set_plumes(&mut self, mut plumes: Vec<HeatPlume>) {
+        plumes.retain(|p| p.base.is_finite() && p.heat_w > 0.0 && p.excess_k > 0.5);
+        plumes.sort_by(|a, b| b.heat_w.total_cmp(&a.heat_w));
+        plumes.truncate(MAX_PLUMES);
+        self.plumes = plumes;
+    }
+    fn plume_samples(&self) -> ([PlumeGpu; MAX_PLUMES], usize) {
+        let mut out = [PlumeGpu::default(); MAX_PLUMES];
+        if !physical_refraction() {
+            return (out, 0);
+        }
+        for (o, p) in out.iter_mut().zip(&self.plumes) {
+            *o = PlumeGpu { base_heat: p.base.extend(p.heat_w).to_array(), shape: [p.excess_k, p.radius_m, p.reach_m(), p.seed] };
+        }
+        (out, self.plumes.len().min(MAX_PLUMES))
     }
     /// The fronts still travelling at `now` (within their reach, a tenth of a second's grace):
     /// what the men, the trees and the grass are swept against each update.
@@ -215,6 +236,9 @@ impl Fronts {
             .collect()
     }
     fn samples(&self, now: f32, shutter_s: f32, listener: Vec3) -> [FrontGpu; MAX_FRONTS] {
+        if physical_refraction() {
+            return self.physical_samples(now);
+        }
         let mut samples = [FrontGpu::default(); MAX_FRONTS];
         for (output, front) in samples.iter_mut().zip(self.events.iter().rev()) {
             let age1 = now - front.emitted_at;
@@ -240,6 +264,135 @@ impl Fronts {
         samples
     }
 }
+/// The physical refraction (2026-11-03, the owner: the air visibly bent by a blast's pressure, as
+/// strongly as the physics gives and no more). Behind the setting `KESSEL_REFRACTION=physical`
+/// until the owner approves it from stills: the look is locked. Without it the pass draws the
+/// representative authored cap above, unchanged.
+pub fn physical_refraction() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KESSEL_REFRACTION").is_ok_and(|v| v.trim().eq_ignore_ascii_case("physical")))
+}
+
+impl Fronts {
+    /// Each front's state at `now` from the blast model (`fea_damage::blast`): its shock radius
+    /// (the Rankine-Hugoniot arrival, not the acoustic speed), the length of its positive phase
+    /// behind the front, and the air's refractivity jump at the front (Gladstone-Dale on the
+    /// Rankine-Hugoniot density). A front from a surface (cap_cosine >= 0) is a surface burst.
+    /// optical = [1 (physical), profile length m, refractivity jump, 0].
+    fn physical_samples(&self, now: f32) -> [FrontGpu; MAX_FRONTS] {
+        use crate::fea_damage::blast;
+        let mut samples = [FrontGpu::default(); MAX_FRONTS];
+        for (output, front) in samples.iter_mut().zip(self.events.iter().rev()) {
+            let age = now - front.emitted_at;
+            if age <= 0.0 || front.tnt_kg <= 0.0 {
+                continue;
+            }
+            let charge = blast::Charge { at: front.origin, tnt_kg: front.tnt_kg, t0_s: 0.0, surface: front.cap_cosine >= 0.0 };
+            let radius = front_radius(charge.effective_kg(), age).min(front.max_radius);
+            if radius >= front.max_radius {
+                continue;
+            }
+            let wave = charge.wave(radius);
+            let jump = blast::refractivity(blast::shock_density_ratio(wave.peak_pa)) - blast::refractivity(1.0);
+            // The positive phase's length in space: the air behind the front moves with it.
+            let length = (blast::C0 * wave.duration_s).clamp(0.01, radius);
+            *output = FrontGpu {
+                origin_radius: front.origin.extend(radius).to_array(),
+                direction_cap: front.direction.extend(front.cap_cosine).to_array(),
+                optical: [1.0, length, jump, 0.0],
+            };
+        }
+        samples
+    }
+}
+
+/// The radius a free-air burst of `w` kg's front has reached `age` s after it (the arrival law
+/// `fea_damage::blast::arrival_after_s` inverted by bisection).
+pub fn front_radius(w: f32, age: f32) -> f32 {
+    let (mut lo, mut hi) = (0.0f32, 2_000.0f32);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if crate::fea_damage::blast::arrival_after_s(w, mid) < age { lo = mid; } else { hi = mid; }
+    }
+    0.5 * (lo + hi)
+}
+
+/// A hot object's plume of warm air (2026-11-03, the owner: the air should refract around really hot
+/// objects - glowing metal, shells, the barrel, fires). Heskestad's point-source plume (SFPE
+/// Handbook, "Fire Plumes"): the centreline temperature excess 9.1 (T/(g c_p² ρ²))^1/3 Q^2/3 z^-5/3,
+/// its Gaussian half-width 0.12 z, the centreline rise 3.4 (g Q/(c_p ρ T))^1/3 z^-1/3, z from the
+/// source (the virtual origin taken at the source: named). The excess is capped at the source's own
+/// (no plume is hotter than what heats it). Its turbulence is a statistical field: temperature
+/// fluctuating at 0.38 of the local excess (George, Alpert & Tamanini 1977, on the axis of a
+/// buoyant plume), in hashed gradient noise of half the plume's width, carried up at the rise speed
+/// (named: the noise stands in for the turbulent field, with its measured intensity and scale).
+#[derive(Clone, Copy, Debug)]
+pub struct HeatPlume {
+    pub base: Vec3,
+    /// Convective heat release into the air, W.
+    pub heat_w: f32,
+    /// The hot surface's temperature excess over the air, K.
+    pub excess_k: f32,
+    /// The source's own size, m.
+    pub radius_m: f32,
+    pub seed: f32,
+}
+
+pub const MAX_PLUMES: usize = 16;
+/// Ambient air for the plumes: the winter acts' -20 C (`AIR_DENSITY_KG_M3`).
+pub const PLUME_AIR_K: f32 = 253.0;
+const CP_AIR: f32 = 1005.0;
+const G: f32 = 9.81;
+/// Turbulent temperature intensity on a plume's axis (George, Alpert & Tamanini 1977).
+pub const PLUME_FLUCTUATION: f32 = 0.38;
+/// Natural-convection coefficient for a hot body's heat into still air, W/m²K (named: the order of
+/// laminar and turbulent free convection, 5-25).
+pub const FREE_CONVECTION_W_M2K: f32 = 10.0;
+
+impl HeatPlume {
+    /// The plume of a hot body of surface `area_m2` at `excess_k` over the air.
+    pub fn of_body(base: Vec3, area_m2: f32, excess_k: f32, radius_m: f32, seed: f32) -> Self {
+        Self { base, heat_w: FREE_CONVECTION_W_M2K * area_m2 * excess_k.max(0.0), excess_k, radius_m, seed }
+    }
+    /// Centreline temperature excess (K) `z` m above the source.
+    pub fn centre_excess_k(&self, z: f32) -> f32 {
+        let rho = AIR_DENSITY_KG_M3;
+        let k = 9.1 * (PLUME_AIR_K / (G * CP_AIR * CP_AIR * rho * rho)).cbrt();
+        let z = z.max(self.radius_m.max(0.005));
+        (k * self.heat_w.max(0.0).powf(2.0 / 3.0) * z.powf(-5.0 / 3.0)).min(self.excess_k)
+    }
+    pub fn half_width_m(&self, z: f32) -> f32 {
+        (0.12 * z).max(self.radius_m.max(0.005))
+    }
+    /// Centreline rise speed (m/s) at `z`.
+    pub fn rise_m_s(&self, z: f32) -> f32 {
+        3.4 * (G * self.heat_w.max(0.0) / (CP_AIR * AIR_DENSITY_KG_M3 * PLUME_AIR_K)).cbrt() * z.max(0.05).powf(-1.0 / 3.0)
+    }
+    /// How high the plume is followed: until its centreline excess falls under 0.5 K.
+    pub fn reach_m(&self) -> f32 {
+        let (mut lo, mut hi) = (0.0f32, 30.0f32);
+        for _ in 0..30 {
+            let mid = 0.5 * (lo + hi);
+            if self.centre_excess_k(mid) > 0.5 { lo = mid; } else { hi = mid; }
+        }
+        0.5 * (lo + hi)
+    }
+}
+
+/// Refractivity of air at `kelvin`, from its value at the plume air's temperature (density 1/T).
+pub fn air_refractivity_at(kelvin: f32) -> f32 {
+    crate::fea_damage::blast::GLADSTONE_DALE * AIR_DENSITY_KG_M3 * PLUME_AIR_K / kelvin.max(1.0)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+struct PlumeGpu {
+    /// base xyz, heat W
+    base_heat: [f32; 4],
+    /// source excess K, source radius m, reach m, seed
+    shape: [f32; 4],
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct FrontGpu {
@@ -253,8 +406,10 @@ struct Uniform {
     inverse_view_projection: [[f32; 4]; 4],
     view_projection: [[f32; 4]; 4],
     camera: [f32; 4],
+    /// width, height, plume count, time s
     viewport: [f32; 4],
     fronts: [FrontGpu; MAX_FRONTS],
+    plumes: [PlumeGpu; MAX_PLUMES],
 }
 
 /// Dedicated transient pass, deliberately outside surface/volume temporal histories and bloom.
@@ -444,15 +599,17 @@ impl Gpu {
             dt
         };
         let samples = fronts.samples(now, shutter, camera);
-        if samples.iter().all(|sample| sample.optical[0] <= 0.0) {
+        let (plumes, plume_count) = fronts.plume_samples();
+        if samples.iter().all(|sample| sample.optical[0] <= 0.0) && plume_count == 0 {
             return false;
         }
         let u = Uniform {
             inverse_view_projection: relative_view_projection.inverse().to_cols_array_2d(),
             view_projection: relative_view_projection.to_cols_array_2d(),
             camera: camera.extend(0.0).to_array(),
-            viewport: [self.width as f32, self.height as f32, 0.0, 0.0],
+            viewport: [self.width as f32, self.height as f32, plume_count as f32, now],
             fronts: samples,
+            plumes,
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         encoder.copy_texture_to_texture(
@@ -490,6 +647,62 @@ impl Gpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The mean bending (rad) of a horizontal ray passing `height` m above a plume's source through
+    /// its axis: the transverse gradient of its mean refractivity integrated along the ray.
+    fn plume_mean_bend(p: &HeatPlume, height: f32) -> f32 {
+        let n = |x: f32, z: f32| {
+            let h = p.centre_excess_k(z);
+            let w = p.half_width_m(z);
+            let t = h * (-(x * x) / (w * w)).exp();
+            air_refractivity_at(PLUME_AIR_K + t) - air_refractivity_at(PLUME_AIR_K)
+        };
+        // Vertical gradient (the ray is bent up or down), across the plume.
+        let (dz, ds) = (1.0e-3, 1.0e-3);
+        let w = p.half_width_m(height) * 4.0;
+        let mut bend = 0.0;
+        let mut x = -w;
+        while x < w {
+            bend += (n(x, height + dz) - n(x, height - dz)) / (2.0 * dz) * ds;
+            x += ds;
+        }
+        bend.abs()
+    }
+
+    #[test]
+    fn a_plume_cools_and_widens_as_it_rises_and_bends_light_by_its_heat() {
+        // A fire patch: about 20 kW into the air.
+        let fire = HeatPlume { base: Vec3::ZERO, heat_w: 20_000.0, excess_k: 850.0, radius_m: 0.15, seed: 1.0 };
+        assert!(fire.centre_excess_k(0.5) > fire.centre_excess_k(1.0) && fire.centre_excess_k(2.0) > 0.0);
+        assert!(fire.half_width_m(2.0) > fire.half_width_m(1.0));
+        assert!(fire.rise_m_s(1.0) > 1.0 && fire.rise_m_s(1.0) < 10.0, "{}", fire.rise_m_s(1.0));
+        // Nothing is hotter than its source.
+        let chip = HeatPlume::of_body(Vec3::ZERO, 6.0 * 0.01 * 0.01, 600.0, 0.005, 2.0);
+        assert!(chip.centre_excess_k(0.001) <= 600.0);
+        assert!(plume_mean_bend(&fire, 1.0) > plume_mean_bend(&chip, 0.05));
+        // The air is less dense where it is hot.
+        assert!(air_refractivity_at(500.0) < air_refractivity_at(PLUME_AIR_K));
+    }
+
+    #[test]
+    #[ignore]
+    fn print_plume_bending() {
+        let px = 60f32.to_radians() / 1024.0;
+        for (name, p, heights) in [
+            ("fire patch 20 kW", HeatPlume { base: Vec3::ZERO, heat_w: 20_000.0, excess_k: 850.0, radius_m: 0.15, seed: 1.0 }, [0.3, 1.0, 2.0]),
+            ("glowing rim 0.03 m² at 900 K", HeatPlume::of_body(Vec3::ZERO, 0.03, 650.0, 0.1, 1.0), [0.05, 0.2, 0.5]),
+            ("1 cm chip at 900 K", HeatPlume::of_body(Vec3::ZERO, 6.0e-4, 650.0, 0.005, 1.0), [0.01, 0.05, 0.2]),
+            ("spent case 0.2 m² at 423 K", HeatPlume::of_body(Vec3::ZERO, 0.2, 170.0, 0.06, 1.0), [0.1, 0.3, 1.0]),
+            ("barrel 1.5 m² at 400 K", HeatPlume::of_body(Vec3::ZERO, 1.5, 147.0, 0.1, 1.0), [0.1, 0.3, 1.0]),
+        ] {
+            for h in heights {
+                let b = plume_mean_bend(&p, h);
+                println!("{name}: {:.0} W, at {h} m excess {:.1} K, width {:.3} m, reach {:.2} m; mean bend {:.2e} rad = {:.3} px (turbulence about 0.38 of it in fluctuation)",
+                    p.heat_w, p.centre_excess_k(h), p.half_width_m(h), p.reach_m(), b, b / px);
+            }
+        }
+    }
+
     fn front(id: u64) -> Front {
         Front {
             id,

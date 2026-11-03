@@ -3333,6 +3333,10 @@ fn full_mass_fraction() -> f32 {
     1.0
 }
 
+/// The Tiger's gun mantlet: its node in the gun's baked mesh (gun frame).
+pub(crate) const TIGER_MANTLET_GLB: &str = "assets/tanks/tiger/baked/tiger_gun.glb";
+pub(crate) const TIGER_MANTLET_NODE: &str = "Gun_0008";
+
 /// One live shell. `pos`, `velocity`, `distance_m` and `seed` are the authoritative modeled state;
 /// no target or terminal result exists until a swept segment actually reaches physical geometry.
 #[derive(Clone, Debug)]
@@ -13143,12 +13147,21 @@ impl Game {
         fire_surfaces.extend([(1, &wheel1_source), (1, &wheel2_source), (1, &tpz_needle_source), (0, &enigma_source),
             (0, &scene[slots.driver_controls[0]]), (0, &scene[slots.driver_controls[1]]),
             (1, &scene[slots.order_printer_head])]);
+        // The gun's mantlet is armour on the gun's own frame (2026-11-03, the owner: the mantlet
+        // was not met at all; shells passed through it to the turret face behind). Only its node
+        // is armour, not the barrel or the breech.
+        let mantlet_source = crate::gltf_load::load_glb_partitioned_subtrees(TIGER_MANTLET_GLB, &[TIGER_MANTLET_NODE])
+            .map_err(|e| eprintln!("[armor] the mantlet's source is unavailable: {e:#}")).ok()
+            .and_then(|mut pages| (pages.len() == 2).then(|| pages.remove(1)));
         // Armor-only source cache excludes cabin equipment, crew, ammunition and glass.
         let mut armor_surfaces=vec![(0,&scene[slots.tiger[0]]),(1,&scene[slots.tiger[1]]),
             (3,&scene[slots.roof_hatches[0]]),(4,&scene[slots.roof_hatches[1]]),
             (6,&scene[slots.hatch]),
             (14,&scene[slots.roof_hatches[2]]),(15,&scene[slots.roof_hatches[3]])];
         for (frame,slot) in tiger_driver_shutters::FRAMES.into_iter().zip(slots.driver_visor_moving) {armor_surfaces.push((frame,&scene[slot]));}
+        if let Some(mantlet) = &mantlet_source {
+            armor_surfaces.push((2, mantlet));
+        }
         armor_surfaces.extend(workshop.armor_surfaces(&scene));
         armor_surfaces.extend(tiger_refuel.armor_surfaces(&scene));
         let mut projectile_player_armor=surface_fire::CabinFire::new(&armor_surfaces);

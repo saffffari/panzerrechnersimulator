@@ -6,6 +6,7 @@
 
 #![allow(dead_code)] // stages land before every consumer is wired; tests exercise them
 
+pub mod blast;
 pub mod chain;
 pub mod components;
 pub mod compartment;
