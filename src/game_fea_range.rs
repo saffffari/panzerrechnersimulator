@@ -919,6 +919,10 @@ impl Range {
                 false
             }
         });
+        // Weapon smoke, flashes and the dust and snow puffs are presentation the checkpoint does not
+        // keep (`NOT_KEPT`), so a reset showed the last run's smoke drifting on (owner, 2026-11-03).
+        self.g.weapon_vfx = Default::default();
+        for puff in self.g.snow_puffs.iter_mut() { puff.t = 0.0; }
         if restored {
             // The checkpoint is the world save's state, which keeps no cook-off: a turret thrown in
             // an earlier run stayed thrown through every reset. A fresh Tiger has none.
