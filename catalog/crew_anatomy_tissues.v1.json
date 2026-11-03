@@ -1,0 +1,837 @@
+{
+ "schema": "kessel.crew-anatomy-tissues",
+ "version": 1,
+ "purpose": "One row per label of the crew anatomy voxel volume (tools/anatomy/build_anatomy.py; docs/CREW_ANATOMY_VOXELS.md). Label ids are permanent: append new labels, never renumber.",
+ "units": {
+  "density_kg_m3": "kg/m3",
+  "blood_volume_fraction": "volume of blood per volume of tissue in vivo (0..1)",
+  "tear_energy_density_j_m3": "J/m3",
+  "critical_stretch": "dimensionless strain at which a bond lets go"
+ },
+ "sources": {
+  "ICRP89": "ICRP Publication 89 (2002), Basic Anatomical and Physiological Data for Use in Radiological Protection: Reference Values. Adult male reference masses (Table 2.8) and regional blood volumes (Table 2.14, % of total blood volume, adult male).",
+  "ICRP110": "ICRP Publication 110 (2009), Adult Reference Computational Phantoms: organ media and densities of the adult male phantom.",
+  "ITIS41": "IT'IS Foundation Tissue Properties Database V4.1 (Hasgall et al., 2022): density, mean value.",
+  "AIR": "Dry air at 20 degC and 101.325 kPa (standard atmosphere), 1.204 kg/m3, rounded.",
+  "CREW_TISSUE": "src/crew_tissue.rs (branch claude/fea-damage-20261102, 2026-11-02): TEAR_J_M3 = [50000, 125000, 400000, 12500] J/m3 and CRITICAL_STRETCH = [0.6, 0.35, 0.05, 1.0] for skin, muscle, bone, fluid (0.4, 1.0, 3.2 and 0.1 J per 0.02 m cell). Authored game-level values in the owner's order, not measured tissue properties."
+ },
+ "transcription_note": "Reference values were transcribed offline from the cited publications as standard tabulated values; no network access was used in this session. Verify against the publications before citing them outside the project. No human-injury criteria or wound-ballistics thresholds are used anywhere in this table: the strength classes are the owner's authored game values.",
+ "blood": {
+  "reference_blood_volume_l": 5.3,
+  "reference_blood_mass_kg": 5.6,
+  "source": "ICRP89",
+  "formula": "blood_volume_fraction = (ICRP 89 regional share of total blood) x 5.3 L / (reference tissue mass / density)",
+  "unrepresented": "Large arteries (6%) and large veins (18%) are represented only by the explicit vessel_blood voxels; the rest of that 24% is not assigned to any label. Thyroid, lymph nodes, gonads, adrenals and 'all other tissues' (2.3% together) are not modelled.",
+  "coupling_note": "The crew blood-volume system authors 6 L per man; ICRP 89's reference is 5.3 L. Scale by the ratio if the two must agree."
+ },
+ "strength_classes": {
+  "skin": {
+   "game_tissue": "Tissue::Skin",
+   "tear_j_per_cell_0p02m": 0.4,
+   "critical_stretch": 0.6,
+   "tear_energy_density_j_m3": 50000,
+   "note": "Existing crew_tissue class, unchanged. Also the class assigned (authored) to the soft, weak tissues that have no class of their own yet: fat, marrow, brain, spinal cord, eye, lung and the solid abdominal organs. The owner may author a separate parenchyma class later."
+  },
+  "muscle": {
+   "game_tissue": "Tissue::Muscle",
+   "tear_j_per_cell_0p02m": 1.0,
+   "critical_stretch": 0.35,
+   "tear_energy_density_j_m3": 125000,
+   "note": "Existing crew_tissue class, unchanged. Also assigned (authored) to the heart wall, hollow muscular organs, oesophagus and cartilage."
+  },
+  "bone": {
+   "game_tissue": "Tissue::Bone",
+   "tear_j_per_cell_0p02m": 3.2,
+   "critical_stretch": 0.05,
+   "tear_energy_density_j_m3": 400000,
+   "note": "Existing crew_tissue class, unchanged. Assigned to cortical bone and to spongiosa (trabecular bone with red marrow)."
+  },
+  "fluid": {
+   "game_tissue": "fluid (crew_tissue's fourth class)",
+   "tear_j_per_cell_0p02m": 0.1,
+   "critical_stretch": 1.0,
+   "tear_energy_density_j_m3": 12500,
+   "note": "crew_tissue's own class (authored there): blood, CSF, urine and gut contents are held by a quarter of skin's tear energy, so they stay until struck and then spill; their flow belongs to the blood-volume system."
+  },
+  "gas": {
+   "game_tissue": null,
+   "tear_j_per_cell_0p02m": 0.0,
+   "critical_stretch": null,
+   "tear_energy_density_j_m3": 0,
+   "note": "Authored for this table: air (airway lumen, exterior). Not a lattice cell; its mass is negligible."
+  }
+ },
+ "labels": [
+  {
+   "id": 0,
+   "key": "exterior",
+   "name": "Exterior (air outside the body)",
+   "colour": "#000000",
+   "density_kg_m3": 1.2,
+   "density_source": "AIR",
+   "strength_class": "gas",
+   "blood_volume_fraction": 0.0,
+   "blood_derivation": {
+    "basis": "not body tissue"
+   },
+   "reference": null
+  },
+  {
+   "id": 1,
+   "key": "skin",
+   "name": "Skin (outer voxel shell)",
+   "colour": "#e0ac8a",
+   "density_kg_m3": 1109,
+   "density_source": "ITIS41: Skin",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.0534,
+   "blood_derivation": {
+    "icrp89_share_percent": 3.0,
+    "reference_mass_kg": 3.3,
+    "density_kg_m3": 1109,
+    "reference_volume_l": 2.9757,
+    "basis": "skin 3.0%"
+   },
+   "reference": {
+    "icrp89_kg": 3.3,
+    "what": "skin"
+   }
+  },
+  {
+   "id": 2,
+   "key": "subcutaneous_fat",
+   "name": "Subcutaneous fat",
+   "colour": "#f2d675",
+   "density_kg_m3": 911,
+   "density_source": "ITIS41: Fat",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.0133,
+   "blood_derivation": {
+    "icrp89_share_percent": 5.0,
+    "reference_mass_kg": 18.2,
+    "density_kg_m3": 911,
+    "reference_volume_l": 19.978,
+    "basis": "fat 5.0% over total adipose 18.2 kg"
+   },
+   "reference": {
+    "icrp89_kg": null,
+    "what": "compared together with visceral_fat against separable adipose (14.5 kg)"
+   }
+  },
+  {
+   "id": 3,
+   "key": "muscle",
+   "name": "Skeletal muscle (default fill)",
+   "colour": "#a8322d",
+   "density_kg_m3": 1090,
+   "density_source": "ITIS41: Muscle",
+   "strength_class": "muscle",
+   "blood_volume_fraction": 0.0279,
+   "blood_derivation": {
+    "icrp89_share_percent": 14.0,
+    "reference_mass_kg": 29.0,
+    "density_kg_m3": 1090,
+    "reference_volume_l": 26.6055,
+    "basis": "skeletal muscle 14.0%"
+   },
+   "reference": {
+    "icrp89_kg": 29.0,
+    "what": "skeletal muscle"
+   }
+  },
+  {
+   "id": 4,
+   "key": "cortical_bone",
+   "name": "Cortical bone",
+   "colour": "#f1ead2",
+   "density_kg_m3": 1908,
+   "density_source": "ITIS41: Bone (Cortical)",
+   "strength_class": "bone",
+   "blood_volume_fraction": 0.0184,
+   "blood_derivation": {
+    "icrp89_share_percent": 0.8,
+    "reference_mass_kg": 4.4,
+    "density_kg_m3": 1908,
+    "reference_volume_l": 2.3061,
+    "basis": "cortical bone 0.8%"
+   },
+   "reference": {
+    "icrp89_kg": 4.4,
+    "what": "cortical bone"
+   }
+  },
+  {
+   "id": 5,
+   "key": "spongiosa",
+   "name": "Spongiosa (trabecular bone with red marrow)",
+   "colour": "#d8b98a",
+   "density_kg_m3": 1178,
+   "density_source": "ITIS41: Bone (Cancellous)",
+   "strength_class": "bone",
+   "blood_volume_fraction": 0.1608,
+   "blood_derivation": {
+    "icrp89_share_percent": 5.2,
+    "reference_parts": [
+     {
+      "mass_kg": 1.1,
+      "density_kg_m3": 1908
+     },
+     {
+      "mass_kg": 1.17,
+      "density_kg_m3": 1029
+     }
+    ],
+    "reference_volume_l": 1.7135,
+    "basis": "trabecular bone 1.2% + red marrow 4.0% over trabecular bone 1.1 kg + red marrow 1.17 kg"
+   },
+   "reference": {
+    "icrp89_kg": 2.27,
+    "what": "trabecular bone 1.1 kg + red marrow 1.17 kg"
+   }
+  },
+  {
+   "id": 6,
+   "key": "yellow_marrow",
+   "name": "Yellow marrow (medullary cavity)",
+   "colour": "#e8c84a",
+   "density_kg_m3": 980,
+   "density_source": "ITIS41: Bone Marrow (Yellow)",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.0191,
+   "blood_derivation": {
+    "icrp89_share_percent": 1.0,
+    "reference_parts": [
+     {
+      "mass_kg": 2.48,
+      "density_kg_m3": 980
+     },
+     {
+      "mass_kg": 0.25,
+      "density_kg_m3": 1000
+     }
+    ],
+    "reference_volume_l": 2.7806,
+    "basis": "other skeleton 1.0% over yellow marrow 2.48 kg + miscellaneous 0.25 kg (cartilage is avascular)"
+   },
+   "reference": {
+    "icrp89_kg": 2.48,
+    "what": "yellow marrow"
+   }
+  },
+  {
+   "id": 7,
+   "key": "cartilage",
+   "name": "Cartilage (discs, costal and airway cartilage)",
+   "colour": "#9fd3d0",
+   "density_kg_m3": 1100,
+   "density_source": "ITIS41: Cartilage",
+   "strength_class": "muscle",
+   "blood_volume_fraction": 0.0,
+   "blood_derivation": {
+    "basis": "avascular"
+   },
+   "reference": {
+    "icrp89_kg": 1.1,
+    "what": "cartilage (all; the volume holds only discs, costal and tracheal cartilage)"
+   }
+  },
+  {
+   "id": 8,
+   "key": "brain",
+   "name": "Brain",
+   "colour": "#e9b7b2",
+   "density_kg_m3": 1045,
+   "density_source": "ITIS41: Brain (Grey Matter); white matter is 1041",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.0458,
+   "blood_derivation": {
+    "icrp89_share_percent": 1.2,
+    "reference_mass_kg": 1.45,
+    "density_kg_m3": 1045,
+    "reference_volume_l": 1.3876,
+    "basis": "brain 1.2%"
+   },
+   "reference": {
+    "icrp89_kg": 1.45,
+    "what": "brain"
+   }
+  },
+  {
+   "id": 9,
+   "key": "csf",
+   "name": "Cerebrospinal fluid",
+   "colour": "#7fc8f8",
+   "density_kg_m3": 1007,
+   "density_source": "ITIS41: Cerebrospinal Fluid",
+   "strength_class": "fluid",
+   "blood_volume_fraction": 0.0,
+   "blood_derivation": {
+    "basis": "fluid, not perfused"
+   },
+   "reference": null
+  },
+  {
+   "id": 10,
+   "key": "spinal_cord",
+   "name": "Spinal cord",
+   "colour": "#f5e6a8",
+   "density_kg_m3": 1075,
+   "density_source": "ITIS41: Spinal Cord",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.046,
+   "blood_derivation": {
+    "basis": "authored: brain's value (CNS); ICRP 89 holds the cord in 'all other tissues'"
+   },
+   "reference": {
+    "icrp89_kg": 0.03,
+    "what": "spinal cord"
+   }
+  },
+  {
+   "id": 11,
+   "key": "eye",
+   "name": "Eye (eyeball)",
+   "colour": "#8fb3cf",
+   "density_kg_m3": 1005,
+   "density_source": "ITIS41: Eye (Vitreous Humor)",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.01,
+   "blood_derivation": {
+    "basis": "authored: the vitreous is avascular; a small allowance for the choroid"
+   },
+   "reference": {
+    "icrp89_kg": 0.015,
+    "what": "eyeballs (both)"
+   }
+  },
+  {
+   "id": 12,
+   "key": "lung",
+   "name": "Lung (inflated)",
+   "colour": "#f3a6b6",
+   "density_kg_m3": 394,
+   "density_source": "ITIS41: Lung (Inflated); ICRP 110 uses 382",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.2175,
+   "blood_derivation": {
+    "icrp89_share_percent": 12.5,
+    "reference_mass_kg": 1.2,
+    "density_kg_m3": 394,
+    "reference_volume_l": 3.0457,
+    "basis": "pulmonary 10.5% + bronchial tissue 2.0% over lungs 1.2 kg"
+   },
+   "reference": {
+    "icrp89_kg": 1.2,
+    "what": "lungs (with blood)"
+   }
+  },
+  {
+   "id": 13,
+   "key": "airway",
+   "name": "Airway air (pharynx, larynx, trachea, bronchi, nasal cavity, sinuses)",
+   "colour": "#3a6fd8",
+   "density_kg_m3": 1.2,
+   "density_source": "AIR",
+   "strength_class": "gas",
+   "blood_volume_fraction": 0.0,
+   "blood_derivation": {
+    "basis": "air"
+   },
+   "reference": null
+  },
+  {
+   "id": 14,
+   "key": "heart_wall",
+   "name": "Heart wall (myocardium, septum)",
+   "colour": "#7e1f2d",
+   "density_kg_m3": 1081,
+   "density_source": "ITIS41: Heart Muscle",
+   "strength_class": "muscle",
+   "blood_volume_fraction": 0.1736,
+   "blood_derivation": {
+    "icrp89_share_percent": 1.0,
+    "reference_mass_kg": 0.33,
+    "density_kg_m3": 1081,
+    "reference_volume_l": 0.3053,
+    "basis": "coronary tissue 1.0%"
+   },
+   "reference": {
+    "icrp89_kg": 0.33,
+    "what": "heart wall"
+   }
+  },
+  {
+   "id": 15,
+   "key": "heart_blood",
+   "name": "Blood in the heart chambers",
+   "colour": "#c0182a",
+   "density_kg_m3": 1050,
+   "density_source": "ITIS41: Blood",
+   "strength_class": "fluid",
+   "blood_volume_fraction": 1.0,
+   "blood_derivation": {
+    "basis": "blood"
+   },
+   "reference": {
+    "icrp89_kg": 0.51,
+    "what": "heart contents (blood)"
+   }
+  },
+  {
+   "id": 16,
+   "key": "vessel_blood",
+   "name": "Blood in the great vessels and main trunks (walls unresolved)",
+   "colour": "#ff2a3d",
+   "density_kg_m3": 1050,
+   "density_source": "ITIS41: Blood",
+   "strength_class": "fluid",
+   "blood_volume_fraction": 1.0,
+   "blood_derivation": {
+    "basis": "blood"
+   },
+   "reference": {
+    "icrp89_kg": null,
+    "what": "part of the large arteries (6%) and large veins (18%) of 5.6 kg blood: at most 1.34 kg"
+   }
+  },
+  {
+   "id": 17,
+   "key": "liver",
+   "name": "Liver",
+   "colour": "#7a2e1d",
+   "density_kg_m3": 1079,
+   "density_source": "ITIS41: Liver",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.3177,
+   "blood_derivation": {
+    "icrp89_share_percent": 10.0,
+    "reference_mass_kg": 1.8,
+    "density_kg_m3": 1079,
+    "reference_volume_l": 1.6682,
+    "basis": "liver 10.0%"
+   },
+   "reference": {
+    "icrp89_kg": 1.8,
+    "what": "liver"
+   }
+  },
+  {
+   "id": 18,
+   "key": "kidney",
+   "name": "Kidney",
+   "colour": "#8e3b46",
+   "density_kg_m3": 1066,
+   "density_source": "ITIS41: Kidney",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.3645,
+   "blood_derivation": {
+    "icrp89_share_percent": 2.0,
+    "reference_mass_kg": 0.31,
+    "density_kg_m3": 1066,
+    "reference_volume_l": 0.2908,
+    "basis": "kidneys 2.0%"
+   },
+   "reference": {
+    "icrp89_kg": 0.31,
+    "what": "kidneys (both)"
+   }
+  },
+  {
+   "id": 19,
+   "key": "spleen",
+   "name": "Spleen",
+   "colour": "#6a2c5e",
+   "density_kg_m3": 1089,
+   "density_source": "ITIS41: Spleen",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.5387,
+   "blood_derivation": {
+    "icrp89_share_percent": 1.4,
+    "reference_mass_kg": 0.15,
+    "density_kg_m3": 1089,
+    "reference_volume_l": 0.1377,
+    "basis": "spleen 1.4%"
+   },
+   "reference": {
+    "icrp89_kg": 0.15,
+    "what": "spleen"
+   }
+  },
+  {
+   "id": 20,
+   "key": "pancreas",
+   "name": "Pancreas",
+   "colour": "#e8b07a",
+   "density_kg_m3": 1087,
+   "density_source": "ITIS41: Pancreas",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.2469,
+   "blood_derivation": {
+    "icrp89_share_percent": 0.6,
+    "reference_mass_kg": 0.14,
+    "density_kg_m3": 1087,
+    "reference_volume_l": 0.1288,
+    "basis": "pancreas 0.6%"
+   },
+   "reference": {
+    "icrp89_kg": 0.14,
+    "what": "pancreas"
+   }
+  },
+  {
+   "id": 21,
+   "key": "stomach_wall",
+   "name": "Stomach wall",
+   "colour": "#d77a8a",
+   "density_kg_m3": 1088,
+   "density_source": "ITIS41: Stomach",
+   "strength_class": "muscle",
+   "blood_volume_fraction": 0.3006,
+   "blood_derivation": {
+    "icrp89_share_percent": 1.0,
+    "reference_parts": [
+     {
+      "mass_kg": 0.15,
+      "density_kg_m3": 1088
+     },
+     {
+      "mass_kg": 0.04,
+      "density_kg_m3": 1040
+     }
+    ],
+    "reference_volume_l": 0.1763,
+    "basis": "stomach and oesophagus 1.0% over stomach wall 0.15 kg + oesophagus 0.04 kg"
+   },
+   "reference": {
+    "icrp89_kg": 0.15,
+    "what": "stomach wall"
+   }
+  },
+  {
+   "id": 22,
+   "key": "stomach_contents",
+   "name": "Stomach contents",
+   "colour": "#b9b06a",
+   "density_kg_m3": 1040,
+   "density_source": "ICRP110: alimentary tract contents, 1.04 g/cm3 (water-like)",
+   "strength_class": "fluid",
+   "blood_volume_fraction": 0.0,
+   "blood_derivation": {
+    "basis": "contents, not perfused"
+   },
+   "reference": {
+    "icrp89_kg": 0.25,
+    "what": "stomach contents"
+   }
+  },
+  {
+   "id": 23,
+   "key": "small_intestine",
+   "name": "Small intestine (wall and contents, loops unresolved)",
+   "colour": "#f0a080",
+   "density_kg_m3": 1033,
+   "density_source": "Mass-weighted mix: ITIS41 Small Intestine 1030 (wall 0.65 kg) and contents 1040 (0.35 kg)",
+   "strength_class": "muscle",
+   "blood_volume_fraction": 0.2081,
+   "blood_derivation": {
+    "icrp89_share_percent": 3.8,
+    "reference_parts": [
+     {
+      "mass_kg": 0.65,
+      "density_kg_m3": 1030
+     },
+     {
+      "mass_kg": 0.35,
+      "density_kg_m3": 1040
+     }
+    ],
+    "reference_volume_l": 0.9676,
+    "basis": "small intestine 3.8% over wall 0.65 kg + contents 0.35 kg"
+   },
+   "reference": {
+    "icrp89_kg": 1.0,
+    "what": "small intestine wall 0.65 kg + contents 0.35 kg"
+   }
+  },
+  {
+   "id": 24,
+   "key": "colon_wall",
+   "name": "Large intestine wall",
+   "colour": "#c87d5a",
+   "density_kg_m3": 1088,
+   "density_source": "ITIS41: Large Intestine",
+   "strength_class": "muscle",
+   "blood_volume_fraction": 0.3429,
+   "blood_derivation": {
+    "icrp89_share_percent": 2.2,
+    "reference_mass_kg": 0.37,
+    "density_kg_m3": 1088,
+    "reference_volume_l": 0.3401,
+    "basis": "large intestine 2.2%"
+   },
+   "reference": {
+    "icrp89_kg": 0.37,
+    "what": "colon wall (right, left, rectosigmoid)"
+   }
+  },
+  {
+   "id": 25,
+   "key": "colon_contents",
+   "name": "Large intestine contents",
+   "colour": "#6b4a2b",
+   "density_kg_m3": 1040,
+   "density_source": "ICRP110: alimentary tract contents, 1.04 g/cm3 (water-like)",
+   "strength_class": "fluid",
+   "blood_volume_fraction": 0.0,
+   "blood_derivation": {
+    "basis": "contents, not perfused"
+   },
+   "reference": {
+    "icrp89_kg": 0.3,
+    "what": "colon contents"
+   }
+  },
+  {
+   "id": 26,
+   "key": "bladder_wall",
+   "name": "Urinary bladder wall",
+   "colour": "#d9a3a0",
+   "density_kg_m3": 1086,
+   "density_source": "ITIS41: Bladder",
+   "strength_class": "muscle",
+   "blood_volume_fraction": 0.023,
+   "blood_derivation": {
+    "icrp89_share_percent": 0.02,
+    "reference_mass_kg": 0.05,
+    "density_kg_m3": 1086,
+    "reference_volume_l": 0.046,
+    "basis": "urinary bladder 0.02%"
+   },
+   "reference": {
+    "icrp89_kg": 0.05,
+    "what": "urinary bladder wall"
+   }
+  },
+  {
+   "id": 27,
+   "key": "urine",
+   "name": "Urine",
+   "colour": "#f2e85c",
+   "density_kg_m3": 1024,
+   "density_source": "ITIS41: Urine",
+   "strength_class": "fluid",
+   "blood_volume_fraction": 0.0,
+   "blood_derivation": {
+    "basis": "fluid, not perfused"
+   },
+   "reference": {
+    "icrp89_kg": 0.2,
+    "what": "urinary bladder contents"
+   }
+  },
+  {
+   "id": 28,
+   "key": "oesophagus",
+   "name": "Oesophagus",
+   "colour": "#c76f6f",
+   "density_kg_m3": 1040,
+   "density_source": "ITIS41: Esophagus",
+   "strength_class": "muscle",
+   "blood_volume_fraction": 0.3006,
+   "blood_derivation": {
+    "icrp89_share_percent": 1.0,
+    "reference_parts": [
+     {
+      "mass_kg": 0.15,
+      "density_kg_m3": 1088
+     },
+     {
+      "mass_kg": 0.04,
+      "density_kg_m3": 1040
+     }
+    ],
+    "reference_volume_l": 0.1763,
+    "basis": "stomach and oesophagus 1.0% over stomach wall 0.15 kg + oesophagus 0.04 kg"
+   },
+   "reference": {
+    "icrp89_kg": 0.04,
+    "what": "oesophagus"
+   }
+  },
+  {
+   "id": 29,
+   "key": "visceral_fat",
+   "name": "Visceral fat and connective tissue (mediastinum, mesentery, retroperitoneum)",
+   "colour": "#f7e7a1",
+   "density_kg_m3": 911,
+   "density_source": "ITIS41: Fat",
+   "strength_class": "skin",
+   "blood_volume_fraction": 0.0133,
+   "blood_derivation": {
+    "icrp89_share_percent": 5.0,
+    "reference_mass_kg": 18.2,
+    "density_kg_m3": 911,
+    "reference_volume_l": 19.978,
+    "basis": "fat 5.0% over total adipose 18.2 kg"
+   },
+   "reference": {
+    "icrp89_kg": null,
+    "what": "compared together with subcutaneous_fat against separable adipose (14.5 kg)"
+   }
+  }
+ ],
+ "reference_body": {
+  "source": "ICRP89 adult male: 73 kg, 1.76 m. Volume assembled from the reference masses and this table's densities (blood counted once; lung air at the ICRP 110 lung density).",
+  "mass_kg": 73.0,
+  "height_m": 1.76,
+  "components": [
+   {
+    "what": "separable adipose",
+    "mass_kg": 14.5,
+    "density_kg_m3": 911
+   },
+   {
+    "what": "skin",
+    "mass_kg": 3.3,
+    "density_kg_m3": 1109
+   },
+   {
+    "what": "skeletal muscle",
+    "mass_kg": 29.0,
+    "density_kg_m3": 1090
+   },
+   {
+    "what": "cortical bone",
+    "mass_kg": 4.4,
+    "density_kg_m3": 1908
+   },
+   {
+    "what": "trabecular bone",
+    "mass_kg": 1.1,
+    "density_kg_m3": 1908
+   },
+   {
+    "what": "red marrow",
+    "mass_kg": 1.17,
+    "density_kg_m3": 1029
+   },
+   {
+    "what": "yellow marrow",
+    "mass_kg": 2.48,
+    "density_kg_m3": 980
+   },
+   {
+    "what": "cartilage",
+    "mass_kg": 1.1,
+    "density_kg_m3": 1100
+   },
+   {
+    "what": "skeleton, miscellaneous",
+    "mass_kg": 0.25,
+    "density_kg_m3": 1000
+   },
+   {
+    "what": "blood (all)",
+    "mass_kg": 5.6,
+    "density_kg_m3": 1050
+   },
+   {
+    "what": "brain",
+    "mass_kg": 1.45,
+    "density_kg_m3": 1045
+   },
+   {
+    "what": "lungs without their blood, with air",
+    "mass_kg": 0.5,
+    "volume_l": 2.39
+   },
+   {
+    "what": "heart wall",
+    "mass_kg": 0.33,
+    "density_kg_m3": 1081
+   },
+   {
+    "what": "liver",
+    "mass_kg": 1.8,
+    "density_kg_m3": 1079
+   },
+   {
+    "what": "kidneys",
+    "mass_kg": 0.31,
+    "density_kg_m3": 1066
+   },
+   {
+    "what": "spleen",
+    "mass_kg": 0.15,
+    "density_kg_m3": 1089
+   },
+   {
+    "what": "pancreas",
+    "mass_kg": 0.14,
+    "density_kg_m3": 1087
+   },
+   {
+    "what": "stomach wall",
+    "mass_kg": 0.15,
+    "density_kg_m3": 1088
+   },
+   {
+    "what": "stomach contents",
+    "mass_kg": 0.25,
+    "density_kg_m3": 1040
+   },
+   {
+    "what": "small intestine wall and contents",
+    "mass_kg": 1.0,
+    "density_kg_m3": 1033
+   },
+   {
+    "what": "colon wall",
+    "mass_kg": 0.37,
+    "density_kg_m3": 1088
+   },
+   {
+    "what": "colon contents",
+    "mass_kg": 0.3,
+    "density_kg_m3": 1040
+   },
+   {
+    "what": "oesophagus",
+    "mass_kg": 0.04,
+    "density_kg_m3": 1040
+   },
+   {
+    "what": "urinary bladder wall",
+    "mass_kg": 0.05,
+    "density_kg_m3": 1086
+   },
+   {
+    "what": "urine",
+    "mass_kg": 0.2,
+    "density_kg_m3": 1024
+   },
+   {
+    "what": "spinal cord",
+    "mass_kg": 0.03,
+    "density_kg_m3": 1075
+   },
+   {
+    "what": "eyes",
+    "mass_kg": 0.015,
+    "density_kg_m3": 1005
+   },
+   {
+    "what": "cerebrospinal fluid",
+    "mass_kg": 0.12,
+    "density_kg_m3": 1007
+   },
+   {
+    "what": "other organs and residual tissue (balance to 73 kg)",
+    "mass_kg": 2.895,
+    "density_kg_m3": 1050
+   }
+  ],
+  "volume_l": 70.11,
+  "mean_density_kg_m3": 1041.2
+ }
+}
