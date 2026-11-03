@@ -2826,6 +2826,9 @@ pub struct Renderer {
     /// Fog banks in the world medium (raymarch backend): extinction inside a bank /m, coverage
     /// 0..1, depth m above the floor, the floor's altitude y. All zero: none.
     pub fog_bank: [f32; 4],
+    /// Authored low cloud and mist banks of the map (`low_clouds.rs`, raymarch backend); `None`:
+    /// none. Set by the game and the editor from the revision's `manifest_edits.json`.
+    pub low_clouds: Option<std::sync::Arc<crate::low_clouds::LowCloudField>>,
     /// Source-qualified admission for the observer's flash detector, never added light energy.
     pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
@@ -6233,6 +6236,7 @@ impl Renderer {
             worn_vehicles: Vec::new(),
             exhaust_puffs: Vec::new(),
             fog_bank: [0.0; 4],
+            low_clouds: None,
             frame: 0,
             hdr_view,
             hdr_tex,

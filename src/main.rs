@@ -127,6 +127,7 @@ mod editor_navigation;
 mod tank_editor_scene;
 mod tank_editor_acceptance;
 mod environment_authoring;
+mod low_clouds;
 mod ephemeris;
 mod celestial_sky;
 mod observer;
@@ -968,10 +969,10 @@ fn run_gfxbench(
     let act_n = if playtest {
         let path = act_manifest::playtest_manifest_path();
         act_manifest::select_runtime_manifest(Some(path))?.expect("selected Playtest manifest")
-    } else if let Some(path) = std::env::var_os("KESSEL_RECON_MANIFEST") {
-        // As `screenshot`: bench a workshop map (the spring bridge meadow) in its act's slot.
-        act_manifest::select_runtime_manifest(Some(std::path::PathBuf::from(path)))?
-            .ok_or_else(|| anyhow::anyhow!("recon manifest did not select a campaign act"))?
+    } else if let Some(path) = std::env::var_os("KESSEL_BENCH_MANIFEST").or_else(|| std::env::var_os("KESSEL_RECON_MANIFEST")) {
+        // Bench a workshop map (its edits included): `KESSEL_BENCH_MANIFEST`, or `KESSEL_RECON_MANIFEST`
+        // as `screenshot` takes it.
+        act_manifest::select_runtime_manifest(Some(std::path::PathBuf::from(path)))?.unwrap_or(act_n)
     } else { act_n };
     let (mut r, mut g) = if playtest {
         Game::build_playtest_act(&device, &queue, night, &world::act(act_n))?
@@ -997,7 +998,10 @@ fn run_gfxbench(
         Ok((v[0], v[1], v[2] as u32))
     }).transpose()?;
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
-    let center = r.camera.pos;
+    // `KESSEL_BENCH_ORBIT=x,y,z`: orbit that point instead of the player's eye.
+    let center = std::env::var("KESSEL_BENCH_ORBIT").ok()
+        .and_then(|v| { let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect(); (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2])) })
+        .unwrap_or(r.camera.pos);
     r.reticle = false;
     r.camera.fov_y = 55f32.to_radians();
 

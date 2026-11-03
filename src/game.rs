@@ -17211,6 +17211,7 @@ impl Game {
         }
         r.apply_authored_lighting(self.scene_environment.lighting,
             self.act.season == crate::world::Season::Winter);
+        r.low_clouds = self.scene_environment.low_clouds(&self.hf);
         if self.act.id == 1 && self.act.season == crate::world::Season::Winter
             && self.tank_editor_scene.is_none() {
             let base = if self.scene_environment.lighting.enabled {

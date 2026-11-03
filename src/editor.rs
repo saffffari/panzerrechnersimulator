@@ -2988,6 +2988,11 @@ fn build_world_renderer(
     // Use the exact campaign atmosphere path: Act 1 edits under active winter weather, while the
     // homeland acts keep their authored overcast profiles and remain precipitation-free.
     world.atmosphere.apply(&mut r);
+    // The map's low cloud and mist banks (`low_clouds.rs`): media of the raymarch backend, so the
+    // editor shows them when launched with KESSEL_RENDERER=raymarch (the game's backend).
+    if world.garage.is_none() && !world.is_asset_yard {
+        r.low_clouds = crate::low_clouds::for_manifest(&world.manifest_path, world.res, world.spacing, &world.heights);
+    }
     if world.garage.is_some() {
         r.fog_density = 0.0;
         r.storm = 0.0;
@@ -8603,6 +8608,13 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
             r.ui_reset();
             b.draw(&device, &queue, &mut r, w as f32 / h as f32, usize::MAX);
             return r.render_to_png_hud(&device, &queue, out, w, h);
+        }
+        // KESSEL_EDITOR_SHOT_FRAMES=n: render n frames first (the raymarch backend's sky cache
+        // and froxel histories converge over frames; one frame shows a sixteenth of the sky).
+        let settle: u32 = std::env::var("KESSEL_EDITOR_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        for _ in 0..settle.min(600) {
+            r.time += 1.0 / 60.0;
+            r.render_offscreen_frame(&device, &queue)?;
         }
         r.ui_reset();
         draw_editor_toolbar(&mut r, false, false);

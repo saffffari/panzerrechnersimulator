@@ -183,13 +183,16 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var inscatter = m.emission;
     if (any(m.sigma_s > vec3(0.0))) {
+        // The low cloud banks' optical depth toward the key body, shared by the beam (a beam into
+        // the cabin's air crossed a bank too) and the banks' diffuse light outside.
+        let tau_low = rm_low_tau(p);
         // Key beam: geometric visibility from the cascades, then the medium between here and
         // open sky marched through the same density field.
         if (fr.sun_radiance.w > 0.5 && fr.sun_dir.y > -0.05) {
-            let vis = rm_sun_visibility(p, 0.0);
+            let vis = rm_sun_visibility_tau(p, 0.0, tau_low.x);
             if (vis > 0.001) {
                 let reach = clamp((fr.medium.w - p.y) / max(fr.sun_dir.y, 0.08), 4.0, 60.0);
-                let tau = rm_march_tau(p, fr.sun_dir.xyz, reach, SUN_MARCH_STEPS, jitter.x);
+                let tau = rm_march_tau_local(p, fr.sun_dir.xyz, reach, SUN_MARCH_STEPS, jitter.x);
                 inscatter += m.sigma_s * fr.sun_radiance.rgb * vis * exp(-tau)
                     * rm_phase_dense(dot(ray, fr.sun_dir.xyz), m.g, m.sigma_t);
             }
@@ -198,7 +201,11 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
         // (the sky low on the horizon under eaves and trees); the cabin air only what the map
         // sees through an open hatch above it (light through the vision blocks is left out).
         let sky_vis = rm_sky_visibility(p, 0.0);
-        inscatter += m.sigma_s * rm_sky_isotropic() * mix(select(0.08, 0.0, cabin_domain >= 0), 1.0, sky_vis);
+        // Under and inside the low cloud banks the sky is the two-stream diffuse transmission,
+        // plus the key beam the banks have diffused (rm_low_cloud_diffuse; outside the cabin).
+        var low = vec4(1.0, 0.0, 0.0, 0.0);
+        if (cabin_domain < 0) { low = rm_low_cloud_diffuse(rm_cloud_shadow(p), tau_low); }
+        inscatter += m.sigma_s * (rm_sky_isotropic() * low.x + low.yzw) * mix(select(0.08, 0.0, cabin_domain >= 0), 1.0, sky_vis);
         // The cabin's air through the panes (rm_shade.wgsl's apertures): each pane's sky over
         // its solid angle from the cell, cut by the measured slot behind it, scattered toward
         // the eye by the medium's phase. The key beam through a slot is the cascades' term above.
