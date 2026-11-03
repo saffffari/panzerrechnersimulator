@@ -1090,6 +1090,81 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   only a pool full of it (768 bodies, named bound) gives up its oldest. The authored population
   still retires with its body's life. Resting steel draws in the fragment pages, which are
   raster-only: a cold chip casts no shadow in the ray tracing tier (named).
+- **The dead as voxel bodies, solved on their cells** (2026-11-02, `game::crew_tissue`,
+  `game::crew_corpse_tissue`, `game::crew_skeleton`). The skeleton is the owner's rigged
+  low-poly PSX skeleton (its asset folder is named licence-unconfirmed: licence and author are not
+  recorded, pending the owner), cut by its joints into the eleven body parts and fitted inside the
+  relaxed figure (per part a principal-axis turn, 0.78 of the length ratio, shrinks to 70 % while a
+  vertex lies outside by winding number, then each vertex still outside set 4–25 mm inside the
+  skin; measured: none more than 3 mm outside, the most moved 43 mm). A fitted, not anatomically
+  registered skeleton (named). The figure, the skeleton and the steel helmet share one grid of
+  2 cm cells (7,206; built in about 100 ms at start): skin within a cell of the figure's surface
+  (the clothing is this layer, named), muscle deeper (organs not told apart, named), bone where a
+  skeleton triangle passes through a cell (the skeleton is a surface: its quads are voxelised, so a
+  skull or ribcage is a shell), steel where the helmet's triangles pass through a cell outside
+  him. A man a strike kills is drawn as his cells only (equal runs merged into boxes, coloured from
+  the figure's atlas by a 12-colour palette over the five faces, two authored muscle shades, the
+  skeleton's and the helmet's mean albedo), never as the figure's triangles or the skeleton page.
+  The strike is solved on the cells as a bond-based lattice (peridynamic in form, not a
+  finite-element model): each cell a mass bonded to its 18 nearest neighbours by a spring that
+  fails past a critical stretch in tension or compression (crushing, named). A fragment contact is
+  a steel cube of its mass moving along its own path through the part's cells, slowed by the
+  tissue's resistance and Newtonian drag (Poncelet's form: R·A + ρ·Cd·A·v²/2, Cd 1, R the tissue's
+  tearing energy per volume; named); the momentum it loses goes to the cells within its half-size
+  plus half a cell of its path, 0.95 along the path and 0.3 outward (authored). A burst's pressure
+  work on a part (the existing crew model's) becomes kinetic energy of the part's surface cells
+  facing it, shared by how squarely they face it (authored mapping). The lattice then runs 8 ms
+  (symplectic Euler at a tenth of the stiffest moving cell's period, 0.1 % velocity damping per
+  step: named numerical damping); only cells within 12 cm of a fragment's path, or of a part a
+  burst works on, move, the rest of him holding them. Each struck part keeps its largest piece
+  still bonded; every other piece comes away with its mass-weighted velocity and spin. Bond
+  strengths are authored game-level values in the owner's order: tearing a cell free costs 0.4 J
+  (skin), 1 J (muscle), 3.2 J (bone), 40 J (helmet steel), at critical stretches 0.6 / 0.35 /
+  0.05 / 0.2; a bond takes its weaker cell's values (so a bone tears from the muscle before it
+  breaks, and the helmet comes off the head at skin strength). The scale makes tearing all of a
+  part's soft cells cost about its existing pulverizing work; not measured tissue strengths.
+  Measured on the figure: a 3.14 kg 57 mm shot at 377 m/s through the torso tears 265 cells
+  (a channel about 10 cm wide); a 20 g fragment at 700 m/s 27; a 2 g one at 400 m/s stops in him
+  after 2; about 10 ms a solve (40–70 ms for a man several fragments crossed). A fragment's energy
+  in the existing damage model (which decides death and the ragdoll's impulses) is unchanged. In
+  solo play a pulverizing outcome removes a part from the articulated simulation only when less
+  than 20 % of its soft cells remain; a part's mass is not reduced by the cells it loses, and the
+  cells of a removed part ride the nearest retained segment, with no mass (named). The pieces fly
+  under gravity and meet the vehicle's own surfaces (`FragmentWorld`) as a sphere of their
+  bounding radius about their centre (named: not their cells), with no rotational response to a
+  contact (named), restitution 0.25 and tangential keep 0.55 (authored: wet tissue), and rest on a
+  face turned up below 0.35 m/s or after ten bounces; at most 4,096 cells in pieces (the oldest at
+  rest go first). A piece that lands harder than its own bonds hold (half its mass times the
+  square of its speed into the surface, against the breaking energy of its intact bonds) breaks
+  into single grains, each leaving with the piece's motion at its place plus a hashed scatter of up
+  to 0.3 m/s (authored); a falling piece also meets the grains already at rest (each a sphere of
+  half a cell) and rests on them, so grains pile. Every visible cell is drawn as its own closed
+  cube of one colour (cells of one colour blend; only cells with a face open to air or to a wound
+  are submitted, about 3,600 for a whole man); cells within 3.5 cells of a joint are drawn
+  between the two segments' poses (linear blend skinning of the drawn cell only; the lattice and
+  the ragdoll do not see it; named), and only while that joint holds. All of it is ordinary moving
+  instanced geometry (one page per colour, 8,192 cubes each, allocated at start so a save's draw
+  layout keeps its shape): it casts shadows and is in the ray-traced scene, in both presets. The
+  old under-body pool slabs are not drawn for a solved body (its blood is the droplets' film). Limits (named): the parts are rigid segments, so at a
+  bent joint two parts' cells interpenetrate at an angle; a helmet cell is a 2 cm block standing
+  for a 1 mm shell (its mass is the helmet's, shared); cells finer than 2 cm (a small fragment's
+  track) are not resolved; only the strike that kills a man is solved on him; the living crew's
+  wounds keep the existing rules; the couch co-op renderer draws a part whole or as bone as before;
+  the solved state is not saved (a restored body is whole); dragging and picking a body still use
+  its whole flesh triangles.
+- **Blood droplets and film** (2026-11-02, `surface_blood`; the owner: droplets too large, and
+  blood should form a continuous film where enough lands). A droplet's edge comes from its seed,
+  1.5–6 mm with most under 3 mm (an authored distribution, not a measured spatter one), and the
+  film it leaves is its own volume over a fresh stain's thickness of 0.3 mm (authored): one 5 mm
+  cell for the smallest, about nine (1.5 cm) for a 4 mm one, at most about 29. Before, every
+  droplet grew a fixed 49-cell (3.5 cm) square. Film that lands on film joins it, so where enough
+  collects it is continuous. On a face steeper than about 45° a pool spreads downhill first (an
+  authored flow bias, not a fluid solve), so collected blood runs down a wall. The film now
+  carries over an edge onto a neighbouring face turned by less than 25° (a curved wall is flat
+  facets; the film used to stop at every facet edge, leaving lines of clean paint along the mesh):
+  that one cell stands on its own centre's probe and may overhang the edge by up to half a cell
+  (named). A flying droplet is still drawn at least 1.4 pixels across (the existing readable
+  minimum, now from its own size).
 - **Steel in hand** (`game_fea::fea_grab_fragment`): at the loader's station a resting fragment
   under the crosshair within 2.2 m can be taken with the left button when it is no hotter than
   343 K (a gloved hand, named) and, if embedded, when one man's 400 N pull beats its grip (the
@@ -2040,7 +2115,7 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | Exterior cannon flight | Authoritative projectile pool with fixed substeps, `ShellSpec` velocity loss/gravity and swept contacts is being integrated; focused moving-target/range/frame-schedule tests pass. | Unified game tests and a playable delayed-impact capture must pass after renderer integration. No trigger-time outcome or forced landing may remain. |
 | Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. Since 2026-11-02 a kinetic round on the player's Tiger is followed layer by layer behind the struck plate through the CAD-measured components (casing, interior, liquids, live rounds, far wall), each with a named law, and lodges where it stops (see "Layered damage model"). | P0: damage forecasts the fragment bodies immediately against frozen targets, while their later visible paths meet moving state. Interior fragments meet the vehicle's own source triangles since 2026-11-02 (no perforation of any surface by a fragment, named; see "Layered damage model"); scars weaken resistance; on the raymarch backend they are drawn as cut and displaced geometry (see "Armor scars, 2026-10-27") but the retained collision triangles are not perforated. The layered chain's laws behind the plate, the component casings and masses, and the stopped-round depth rule are named reduced models, not validated terminal ballistics. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. |
 | Vehicle loss | Module/fire states and crew bodies exist. | P0: enemy penetration currently collapses too readily to an instant kill; random turret-pop/cook-off decisions are not derived from ammo/fuel/module energy. Replace with the shared vehicle damage state. |
-| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. Since 2026-11-02 a residual penetrator's own path reaches crew through the same anatomical boxes as fragments, with its real mass and speed. | P0: crew bodies (ragdolls) still meet a proxy floor and compartment bounds rather than the visible interior, so a thrown body can pass through the gun; a body part's tissue is drawn whole or as bare bone, with no graded state; hot steel fragments meet the visible triangle interior since 2026-11-02; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations (the layered damage model did not change them). Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
+| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. Since 2026-11-02 a residual penetrator's own path reaches crew through the same anatomical boxes as fragments, with its real mass and speed. | P0: crew bodies (ragdolls) still meet a proxy floor and compartment bounds rather than the visible interior, so a thrown body can pass through the gun; since 2026-11-02 a casualty in solo play is drawn as voxel cells and the strike that killed him is solved on them as a bonded lattice (see "The dead as voxel bodies" under the layered damage model), while the living, the couch co-op renderer and a restored save still draw a part whole or as bare bone; hot steel fragments meet the visible triangle interior since 2026-11-02; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations (the layered damage model did not change them). Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
 | World collision/destruction | Tank/tank separation, trees, destructible structures, rubble and drive-over classes work; since 2026-09-29 the Tiger's contacts go through the push model (tank push row) and the manifest's walls, piers, doorways and sheds are destruction records. | P0: AABBs/yawed footprints, hard-coded infantry cover cylinders and several authored structure shapes are proxies. Replace them with source-derived triangle/convex data; no invisible blocker may contradict the rendered object. |
 | Campaign outcomes | Route, resources, AI navigation/combat and authoritative telemetry run headlessly. | P0: Act-III allied hits/kills and civilian/town loss counters include scripted scalars. Outcomes must come only from simulated entities/events. |
 | First level: campaign Act 1 on the urban district (2026-09-29, `docs/ACT1_FIRST_LEVEL.md`) | Campaign Act 1 plays the urban-intro workshop: the route starts at the district spawn (the level design's entry gate) and leaves by its west exit gate; the district's defenders (the winter session's street encounter: two T-34 platoons on street beats, two 45 mm guns sited by the field-of-fire probe) are fielded at the start and the director raises no route contact until their armour is destroyed or the Tiger has left the district (450 m from the spawn); survivors keep their slots and fight on under the ordinary campaign AI, and route contacts take the free slots. It is a gate on when contacts spawn; no outcome is scripted. | Named limits: (1) the breakout radius is a distance from the spawn, not the district's outline. (2) `campaign-ai-run`, which proves the level headlessly, plays with an omniscient scripted crewman (it knows where unseen crews are; it lays by setting the gunner's desired lay, the turret following at its real traverse rate), and its field track repair takes the kit and is set down at the break instead of walking there; the ritual itself is the player's. (3) `KESSEL_CAMPAIGN_AI_INVINCIBLE=1` is a named debug gate for traversal proofs: it suppresses every mutation of the Tiger by hits. None of these run in play. |

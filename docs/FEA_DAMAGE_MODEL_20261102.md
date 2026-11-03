@@ -513,3 +513,33 @@ lists every named approximation of this model.
   18:30 (after dusk at Stalingrad) with the cabin lamps on and the exposure held at five times the
   eye's metered value on the lamps. Every frame says it is a camera-only section; a test pins that
   only the film harness opens one.
+
+### The dead as voxel bodies, solved on their cells (landed, 2026-11-02 night)
+
+The owner saw a struck crewman become a bare skeleton at once and asked for the figures' insides
+to be muscle in voxels, the downloaded rigged PSX skeleton inside them (never poking through,
+drawn only once a man is damaged), skin giving way first, then muscle, and bone last, detaching and
+breaking into voxels itself under enough force. A first version kept the textured figure and opened
+skin patches onto cells; the owner: "these triangle planes look horrible", convert the base mesh
+and the skeleton to voxels on one grid and run the simulation on those voxels.
+
+- **Skeleton** (`crew_skeleton.rs`): the PSX skeleton's skinned vertices are cut by their joints
+  into the eleven body parts and fitted inside the relaxed figure; a test holds every part inside.
+- **One grid** (`crew_tissue.rs`): 2 cm cells fill the figure (skin, muscle); every cell a
+  skeleton triangle passes through is bone (the skeleton is a surface, so its quads are what is
+  voxelised); the helmet's triangles add steel cells over the head. 7,206 cells.
+- **Solved on the cells**: a bond-based lattice (each cell bonded to its 18 neighbours, a bond
+  failing past its critical stretch). Each fragment that crossed the man moves through the cells
+  as a steel cube of its own mass, slowed by Poncelet's resistance and drag, and pushes the cells
+  about its path; a burst's work pushes the cells facing it. After 8 ms of lattice time every
+  piece no longer bonded to its part's main body comes away and flies, bounces and lies on the
+  tank's own surfaces. A 57 mm shot through the torso tears a channel of about 265 cells; a small
+  fast fragment tears a few; a slow one stops in him. Bone holds unless the push is large.
+- **Drawn** (`crew_corpse_tissue.rs`): a dead man with a solved body is drawn only as his cells
+  (merged into boxes by colour), including the helmet; the pieces the same way where they are.
+  Every page is allocated at start, so a save's retained draw layout keeps its shape.
+- **The pink cabin** (same evening): the hot chips' light outshone the cabin lamps twelvefold
+  after a strike and the eye adapted to it. The main line's fix (the chips' light on their band's
+  Planck visible share, the drawn pages lifted at the owner's call) is the one kept.
+- **Not yet**: the living and the couch renderer keep the old rule; the solved state is not saved;
+  parts are rigid segments, so cells of two parts cut into each other at a bent joint.

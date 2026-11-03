@@ -7096,6 +7096,11 @@ impl Renderer {
         self.lights = select_point_lights(lights, self.camera.pos, N_LIGHTS);
     }
 
+    /// Every point light offered for the latest frame (bounded as the raymarch backend takes them).
+    pub fn offered_lights(&self) -> &[PointLight] {
+        &self.lights_full
+    }
+
     /// (point lights offered for the latest frame, admitted within the `N_LIGHTS` budget).
     pub fn light_budget_stats(&self) -> (usize, usize) {
         (self.lights_offered, self.lights.len())

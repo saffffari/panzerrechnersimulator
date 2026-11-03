@@ -724,7 +724,7 @@ fn linear_to_srgb_u8(v: f32) -> u8 {
     (encoded * 255.0 + 0.5) as u8
 }
 
-fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
+pub(crate) fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
     use gltf::image::Format;
     let (w, h) = (img.width, img.height);
     let px = &img.pixels;

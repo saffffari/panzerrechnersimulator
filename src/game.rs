@@ -68,6 +68,12 @@ pub(crate) mod game_fea_section;
 pub(crate) mod game_fea_review;
 #[path = "game_fea_film.rs"]
 pub(crate) mod game_fea_film;
+#[path = "crew_skeleton.rs"]
+mod crew_skeleton;
+#[path = "crew_tissue.rs"]
+mod crew_tissue;
+#[path = "crew_corpse_tissue.rs"]
+mod crew_corpse_tissue;
 #[path = "game_recorded_fx.rs"]
 mod game_recorded_fx;
 #[path = "main_gun_candidates.rs"]
@@ -8456,7 +8462,6 @@ const N_BLOOD_BATCHES: usize = 4;
 const BLOOD_GRAINS_PER_BATCH: usize = N_BLOOD_CUBES / N_BLOOD_BATCHES;
 /// Every transient blood body is the same sand-grain voxel. Severity changes only how many grains
 /// launch and how fast they travel; it never hides the effect inside a few oversized chunks.
-const BLOOD_GRAIN_SIZE: f32 = surface_blood::GRAIN_M;
 const N_BLOOD_STAINS: usize = surface_blood::MAX_CELLS;
 const BLOOD_STAINS_PER_BATCH: usize = N_BLOOD_STAINS.div_ceil(N_BLOOD_BATCHES);
 const TURRET_BLOOD_WALL_R: f32 = 1.04;
@@ -12218,8 +12223,24 @@ impl Game {
         // original 1,596 triangles are losslessly divided into the same eleven centroid pages as
         // the relaxed flesh. Five bounded pools cover the real solo roster; the couch authority
         // contract still allows only four distinct human casualties.
-        let skeleton_segments = load_reviewed_skeleton_mesh()
-            .and_then(|source| partition_reviewed_skeleton_mesh(&source));
+        // Since 2026-11-02 the owner's rigged PSX skeleton (`crew_skeleton`), cut by joint and
+        // fitted inside the relaxed figure so no bone pokes through; the reviewed Vinrax skeleton
+        // only when that asset cannot be loaded or fitted.
+        let psx_bones = load_full_crew_mesh(CREW_RELAXED_GLBS[0], "skeleton fit")
+            .and_then(|figure| match crew_skeleton::fitted_bone_pages(&figure) {
+                Ok((pages, fits)) => {
+                    let pulled: usize = fits.iter().flatten().map(|f| f.pulled).sum();
+                    let worst = fits.iter().flatten().map(|f| f.worst_pull_m).fold(0.0f32, f32::max);
+                    let outside: usize = fits.iter().flatten().map(|f| f.vertices_outside).sum();
+                    let scales: Vec<String> = fits.iter().flatten().map(|f| format!("{:.2}/{}", f.scale, f.shrinks)).collect();
+                    println!("[crew] PSX skeleton fitted inside the figure: {pulled} vertices set inside the skin, largest move {:.0} mm, {outside} outside; scale/shrinks by part {}",
+                        worst * 1000.0, scales.join(" "));
+                    Some(pages)
+                }
+                Err(error) => { eprintln!("[crew] PSX skeleton unavailable ({error:#}); the reviewed skeleton stands in"); None }
+            });
+        let skeleton_segments = psx_bones.clone()
+            .or_else(|| load_reviewed_skeleton_mesh().and_then(|source| partition_reviewed_skeleton_mesh(&source)));
         let couch_bones = std::array::from_fn(|_| {
             std::array::from_fn(|part_index| {
                 let part = crew_physics::CrewBodyPart::ALL[part_index];
@@ -14083,7 +14104,7 @@ impl Game {
         if let Some(arms)=&first_person {arms.mark(&mut renderer);}
         let infantry_casualties=infantry_casualties::Casualties::allocate(device,queue,&mut renderer);
         let living_wounds=living_crew_wounds::LivingWounds::allocate(device,queue,&mut renderer);
-        let crew_corpse_render=crew_corpse_render::Corpses::allocate(device,queue,&mut renderer)
+        let crew_corpse_render=crew_corpse_render::Corpses::allocate(device,queue,&mut renderer,psx_bones.as_ref())
             .map_err(|e|eprintln!("[crew] persistent corpse source unavailable: {e:#}")).ok();
         let enemy_crew = enemy_crew::Aftermath::allocate(device, queue, &mut renderer);
         let mut game = Game {
@@ -23921,6 +23942,9 @@ impl Game {
         self.living_wounds.reset();
         self.infantry_casualties.reset();
         self.couch_ragdolls.clear();
+        if let Some(corpses) = self.crew_corpse_render.get_mut().as_mut() {
+            corpses.reset_tissue();
+        }
         self.crew_body_recovery.reset_keep_aid_source();
         self.couch_last_casualty = None;
         self.couch_crew_frame = crate::lan::CrewFrame::default();
@@ -24382,7 +24406,7 @@ impl Game {
             "wall_cells": d.wall_cells, "render_runs": d.render_runs,
             "rejected_cells": d.rejected_cells, "capacity_rejections": d.capacity_rejections,
             "timed_out_airborne": d.timed_out_airborne,
-            "grain_m": surface_blood::GRAIN_M, "cell_m": surface_blood::CELL_M,
+            "droplet_m": [surface_blood::droplet_m(0), surface_blood::droplet_m(1)], "cell_m": surface_blood::CELL_M,
             "cell_capacity": surface_blood::MAX_CELLS
         })
     }
@@ -25060,9 +25084,15 @@ impl Game {
                             }
                         }
                     }
+                    let pressure: Vec<_> = plan.events.iter()
+                        .map(|event| (event.result.part, event.result.blast_work_j)).collect();
+                    let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll, contacts,
+                        &pressure, blast_origin_local);
+                    let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                        self.singleplayer_crew_active, ragdoll, &strikes);
                     let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
                         std::array::from_fn(|index| {
-                            plan.events.iter().any(|event| {
+                            !kept[index] && plan.events.iter().any(|event| {
                                 event.result.part.index() == index && event.result.hide_mesh_part
                             })
                         });
@@ -29565,9 +29595,17 @@ impl Game {
                                 }
                             }
                         }
+                        // The strikes open the body's tissue cell by cell; a part that keeps
+                        // enough of it stays in the articulated simulation (crew_tissue).
+                        let pressure: Vec<_> = damage_events.iter()
+                            .map(|event| (event.result.part, event.result.blast_work_j)).collect();
+                        let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll,
+                            &solution.contacts, &pressure, solution.entry);
+                        let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                            self.singleplayer_crew_active, ragdoll, &strikes);
                         let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
                             std::array::from_fn(|index| {
-                                damage_events.iter().any(|event| {
+                                !kept[index] && damage_events.iter().any(|event| {
                                     event.result.part.index() == index
                                         && event.result.hide_mesh_part
                                 })
@@ -32096,6 +32134,8 @@ impl Game {
                 );
             }
         }
+        // The pieces torn from the dead (`crew_tissue`) fly and lie on the same surfaces.
+        crew_tissue::integrate_chunks(&self.crew_corpse_render, &fragment_world, &self.player, dt);
         self.mark_fragment_strikes();
 
         let mut stage_mats: [Vec<Mat4>; N_HOT_FRAGMENT_BATCHES] =
@@ -32453,10 +32493,11 @@ impl Game {
         // Preserve tiny physical droplets but give their raster silhouette a readable minimum.
         // This changes only instance scale, never contact radii, particle count or simulation work.
         for mat in grain_mats.iter_mut().flatten() {
+            let own = mat.x_axis.truncate().length().max(1.0e-5);
             let distance = mat.transform_point3(Vec3::ZERO).distance(r.camera.pos);
             let pixel_m = 2.0 * distance * (r.camera.fov_y * 0.5).tan() / r.ih as f32;
-            let size = (pixel_m * 1.4).clamp(BLOOD_GRAIN_SIZE, 0.018);
-            *mat *= Mat4::from_scale(Vec3::splat(size / BLOOD_GRAIN_SIZE));
+            let size = (pixel_m * 1.4).clamp(own, 0.018).max(own);
+            *mat *= Mat4::from_scale(Vec3::splat(size / own));
         }
         for (batch, mats) in self.slots.blood_cube_batch.into_iter().zip(grain_mats.iter()) {
             assert!(mats.len() <= BLOOD_GRAINS_PER_BATCH);
@@ -37758,15 +37799,14 @@ mod tests {
         assert!(samples[2] > 12_000 && samples[3] > 25_000);
         assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
         assert_eq!(N_BLOOD_CUBES, N_BLOOD_BATCHES * BLOOD_GRAINS_PER_BATCH);
-        assert_eq!(BLOOD_GRAIN_SIZE, 0.004);
         let requests = [32, 128, 256, 640].map(visual_blood_request);
         assert_eq!(requests, [2048, 8192, 16384, 32768]);
         let allocation = allocate_blood_cube_budget(&requests, N_BLOOD_CUBES / 4);
         assert_eq!(allocation.iter().sum::<usize>(), N_BLOOD_CUBES / 4);
         assert_eq!(visual_blood_request(usize::MAX), N_BLOOD_CUBES);
         assert!(
-            BLOOD_GRAIN_SIZE <= 0.004,
-            "droplets must stay uniformly small"
+            (0..1000).all(|seed| surface_blood::droplet_m(seed) <= 0.006),
+            "droplets must stay small"
         );
         assert_eq!(
             N_BLOOD_STAINS,

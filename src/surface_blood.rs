@@ -5,15 +5,41 @@ use super::surface_fire::{Contact, FRAMES};
 use glam::{Mat4, Vec3};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-pub const GRAIN_M: f32 = 0.004;
 pub const CELL_M: f32 = 0.005;
 pub const MAX_GRAINS: usize = 32_768;
 pub const MAX_CELLS: usize = 262_144;
 const MAX_FRONTIER: usize = MAX_CELLS * 4;
-const FILM_CELLS_PER_CONTACT: u32 = 49;
+/// Droplet sizes (m): from the smallest to the largest, most of them small (2026-11-02, the
+/// owner: "the droplet size of the splatter is too large"; an authored distribution, not a
+/// measured spatter one).
+const DROPLET_MIN_M: f32 = 0.0015;
+const DROPLET_MAX_M: f32 = 0.006;
+/// A fresh stain's thickness (m): a droplet's volume covers its area at this (authored). A
+/// 1.5 mm droplet wets one 5 mm cell, a 4 mm one about nine (1.5 cm), a 6 mm one about 29.
+const FILM_THICKNESS_M: f32 = 0.0003;
+
+fn hash01(seed: u32) -> f32 {
+    let h = seed.wrapping_mul(2_654_435_761) ^ (seed >> 13).wrapping_mul(2_246_822_519);
+    (h >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// A droplet's edge (m) from its seed.
+pub fn droplet_m(seed: u32) -> f32 {
+    let u = hash01(seed ^ 0xD0_9E7);
+    DROPLET_MIN_M * (DROPLET_MAX_M / DROPLET_MIN_M).powf(u * u)
+}
+
+/// The film cells a droplet's volume covers at a fresh stain's thickness (at least one).
+pub fn film_cells(seed: u32) -> u32 {
+    (droplet_m(seed).powi(3) / (FILM_THICKNESS_M * CELL_M * CELL_M)).ceil().max(1.0) as u32
+}
 const MAX_CELLS_PER_STEP: usize = 1536;
 const FILM_CELLS_PER_SECOND: f32 = 48_000.0;
 const SURFACE_OFFSET: f32 = 0.00035;
+/// The film carries over an edge onto a neighbouring face turned by less than this (cos 25°): a
+/// curved wall is flat facets, and blood does not stop at their edges (2026-11-02, the owner: lines
+/// along the turret's mesh that blood never covered).
+const FACET_CARRY_COS: f32 = 0.906;
 
 /// The live implementation must use the existing source triangle bins. Sweeps are world-space;
 /// support spans are local to one explicitly named source frame, and require continuous triangle
@@ -315,8 +341,8 @@ impl SurfaceBlood {
         self.pools[pool].frontier.push_back(Candidate { key, from });
         self.schedule(pool);
     }
-    /// Only an actual sweep result may call this. Credits are an authored thin-film area quantum,
-    /// not a calibrated fluid volume or a new injury quantity.
+    /// Only an actual sweep result may call this. Credits are the droplet's own volume over a fresh
+    /// stain's thickness (`film_cells`), an authored film model, not a new injury quantity.
     pub fn record_contact(&mut self, hit: Contact, owner: u8, actor_id: u32, seed: u32) -> bool {
         let Some(key) = Key::at(hit) else {
             return false;
@@ -351,7 +377,7 @@ impl SurfaceBlood {
         };
         self.pools[pool].credits = self.pools[pool]
             .credits
-            .saturating_add(FILM_CELLS_PER_CONTACT)
+            .saturating_add(film_cells(seed))
             .min(MAX_CELLS as u32);
         self.pools[pool].owners |= 1 << owner;
         if self.pools[pool].sources.insert((actor_id, seed)) {
@@ -403,7 +429,7 @@ impl SurfaceBlood {
                 g.emission.rotation += g.emission.spin * h;
                 let from = models[frame].transform_point3(g.emission.position);
                 let to = models[frame].transform_point3(end);
-                let leading = to + (to - from).normalize_or_zero() * (GRAIN_M * 0.5);
+                let leading = to + (to - from).normalize_or_zero() * (droplet_m(g.emission.seed) * 0.5);
                 indices.push(i);
                 ends.push(end);
                 paths.push([from, leading]);
@@ -432,6 +458,9 @@ impl SurfaceBlood {
         self.rebuild_runs();
     }
     fn grow(&mut self, limit: usize, models: &[Mat4; FRAMES], source: &impl SourceQuery) {
+        // Down in each frame: on a steep face the film spreads downhill first, so blood that
+        // collects runs down the wall (authored flow bias, not a fluid solve).
+        let down: [Vec3; FRAMES] = std::array::from_fn(|f| models[f].inverse().transform_vector3(Vec3::NEG_Y).normalize_or_zero());
         for _ in 0..limit {
             if self.cells.len() >= self.cell_limit {
                 break;
@@ -468,28 +497,44 @@ impl SurfaceBlood {
                 }
                 continue;
             }
-            let key = candidate.key;
-            let frame = key.plane.frame as usize;
-            let (u, v, n) = key.plane.basis();
-            let center = key.center();
+            let frame = candidate.key.plane.frame as usize;
             let world = models[frame];
-            let probe = [[
-                world.transform_point3(center + n * 0.003),
-                world.transform_point3(center - n * 0.003),
-            ]];
-            let hit = source
-                .sweep_batch(&probe, models)
-                .into_iter()
-                .next()
-                .flatten();
-            let Some(hit) = hit.filter(|h| {
-                h.frame == frame && h.normal.dot(n) > 0.995 && (h.point - center).length() < 0.0002
-            }) else {
-                self.rejected.insert(key);
-                self.diagnostics.rejected_cells += 1;
-                self.schedule(id);
-                continue;
+            // The surface under a cell's centre, along its plane's normal, if it is that plane.
+            let probe_at = |key: Key| {
+                let (_, _, n) = key.plane.basis();
+                let center = key.center();
+                let probe = [[world.transform_point3(center + n * 0.003), world.transform_point3(center - n * 0.003)]];
+                source.sweep_batch(&probe, models).into_iter().next().flatten()
             };
+            let on_plane = |key: Key, h: &Contact| {
+                let (_, _, n) = key.plane.basis();
+                h.frame == frame && h.normal.dot(n) > 0.995 && (h.point - key.center()).length() < 0.0002
+            };
+            let found = probe_at(candidate.key);
+            let (key, hit, carried) = match found {
+                Some(h) if on_plane(candidate.key, &h) => (candidate.key, h, false),
+                // Off this face's edge onto a neighbouring face of the same surface: the cell is
+                // taken on that face's own plane, centred and probed again there.
+                Some(h) if h.frame == frame && h.normal.dot(candidate.key.plane.basis().2) > FACET_CARRY_COS
+                    && (h.point - candidate.key.center()).length() < 0.003 => {
+                    self.rejected.insert(candidate.key);
+                    match Key::at(h).and_then(|k| probe_at(k).filter(|h2| on_plane(k, h2)).map(|h2| (k, h2))) {
+                        Some((k, h2)) if !self.lookup.contains_key(&k) && !self.queued.contains_key(&k) && !self.rejected.contains(&k) => (k, h2, true),
+                        _ => {
+                            self.diagnostics.rejected_cells += 1;
+                            self.schedule(id);
+                            continue;
+                        }
+                    }
+                }
+                _ => {
+                    self.rejected.insert(candidate.key);
+                    self.diagnostics.rejected_cells += 1;
+                    self.schedule(id);
+                    continue;
+                }
+            };
+            let (u, v, n) = key.plane.basis();
             let half = CELL_M * 0.5;
             let corners = [
                 hit.point - u * half - v * half,
@@ -505,10 +550,13 @@ impl SurfaceBlood {
                 [corners[3], corners[0]],
                 [corners[0], corners[2]],
             ];
-            let support = source.supports_batch(frame, &spans);
+            // A cell carried over a facet edge stands on its own centre's probe: the coplanar span
+            // and area tests cannot cross the edge, and the cell may overhang it by up to half a
+            // cell (named).
+            let support = if carried { vec![true; spans.len()] } else { source.supports_batch(frame, &spans) };
             if support.len() != spans.len()
                 || support.iter().any(|v| !*v)
-                || !source.supports_cell(frame, &corners)
+                || (!carried && !source.supports_cell(frame, &corners))
             {
                 self.rejected.insert(key);
                 self.diagnostics.rejected_cells += 1;
@@ -530,7 +578,17 @@ impl SurfaceBlood {
                 key,
             });
             self.runs_dirty = true;
-            for neighbor in key.neighbors() {
+            let mut neighbors = key.neighbors();
+            if n.dot(down[frame]).abs() < 0.7 {
+                neighbors.sort_by(|a, b| b.center().dot(down[frame]).total_cmp(&a.center().dot(down[frame])));
+                let downhill = neighbors[0];
+                if !self.lookup.contains_key(&downhill) && !self.queued.contains_key(&downhill) && !self.rejected.contains(&downhill) {
+                    let root = self.root(pool);
+                    self.queued.insert(downhill, root);
+                    self.pools[root].frontier.push_front(Candidate { key: downhill, from: hit.point });
+                }
+            }
+            for neighbor in neighbors {
                 self.enqueue(pool, neighbor, hit.point);
             }
             self.schedule(pool);
@@ -591,7 +649,7 @@ impl SurfaceBlood {
             out[i % 4].push(
                 models[e.frame]
                     * Mat4::from_scale_rotation_translation(
-                        Vec3::splat(GRAIN_M),
+                        Vec3::splat(droplet_m(e.seed)),
                         rotation,
                         e.position,
                     ),
@@ -678,7 +736,7 @@ mod tests {
         assert_eq!(blood.diagnostics().emitted, 1);
         assert_eq!(blood.diagnostics().measured_contacts, 1);
         assert_eq!(blood.diagnostics().airborne, 0);
-        assert_eq!(blood.diagnostics().retained_cells, FILM_CELLS_PER_CONTACT as usize);
+        assert_eq!(blood.diagnostics().retained_cells, film_cells(819) as usize);
         assert!(blood
             .deposits()
             .all(|d| d.frame == 7 && d.point.y.abs() < 1e-6 && d.owner_mask == (1 << 2)));
@@ -716,7 +774,7 @@ mod tests {
             blood.record_contact(contact, 1, 202, seed);
         }
         grow(&mut blood, &source, 4);
-        assert_eq!(blood.diagnostics().retained_cells, 20 * FILM_CELLS_PER_CONTACT as usize);
+        assert_eq!(blood.diagnostics().retained_cells, (1..=20).map(|s| film_cells(s) as usize).sum::<usize>());
         assert_eq!(blood.contact_sources(0).unwrap().len(), 20);
         assert!(blood.contact_sources(0).unwrap().contains(&(101, 1)));
         assert!(blood.contact_sources(0).unwrap().contains(&(202, 20)));
@@ -757,7 +815,7 @@ mod tests {
             assert!(blood.record_contact(contact, 0, 42, seed));
         }
         grow(&mut blood, &source, 4);
-        assert_eq!(blood.diagnostics().retained_cells, 32 * FILM_CELLS_PER_CONTACT as usize);
+        assert_eq!(blood.diagnostics().retained_cells, (0..32).map(|s| film_cells(s) as usize).sum::<usize>());
         assert_eq!(blood.contact_sources(0).unwrap().len(), 32);
     }
     #[test]
@@ -767,8 +825,9 @@ mod tests {
         let mut blood = SurfaceBlood::new();
         blood.cell_limit = 17;
         let local = hit(&source, Vec3::new(-0.4, 0.0, 0.0), Vec3::Y);
-        blood.record_contact(local, 0, 10, 1);
-        blood.record_contact(local, 0, 10, 2);
+        for seed in 1..=40 {
+            blood.record_contact(local, 0, 10, seed);
+        }
         grow(&mut blood, &source, 3);
         assert_eq!(blood.cells.len(), 17);
         let before: Vec<_> = blood
@@ -776,7 +835,7 @@ mod tests {
             .map(|d| (d.frame, d.point, d.normal))
             .collect();
         let remote = hit(&source, Vec3::new(0.4, 0.0, 0.0), Vec3::Y);
-        assert!(!blood.record_contact(remote, 1, 20, 3));
+        assert!(!blood.record_contact(remote, 1, 20, 300));
         grow(&mut blood, &source, 3);
         assert_eq!(
             blood
@@ -786,7 +845,7 @@ mod tests {
             before
         );
         assert_eq!(blood.diagnostics().capacity_rejections, 1);
-        assert!(!blood.contact_sources(0).unwrap().contains(&(20, 3)));
+        assert!(!blood.contact_sources(0).unwrap().contains(&(20, 300)));
     }
     #[test]
     fn gaps_and_opposing_wall_faces_never_share_unproven_pool_area() {
@@ -842,8 +901,8 @@ mod tests {
             1,
         );
         grow(&mut blood, &source, 3);
-        assert_eq!(blood.diagnostics().retained_cells, 2 * FILM_CELLS_PER_CONTACT as usize);
-        assert_eq!(blood.diagnostics().wall_cells, 2 * FILM_CELLS_PER_CONTACT as usize);
+        assert_eq!(blood.diagnostics().retained_cells, 2 * film_cells(1) as usize);
+        assert_eq!(blood.diagnostics().wall_cells, 2 * film_cells(1) as usize);
         for d in blood.deposits() {
             assert_eq!(d.owner_mask, if d.normal.x < 0.0 { 1 } else { 2 });
         }
@@ -861,7 +920,7 @@ mod tests {
             blood.record_contact(actual, 0, 99, seed);
         }
         grow(&mut blood, &source, 4);
-        assert_eq!(blood.diagnostics().retained_cells, 12 * FILM_CELLS_PER_CONTACT as usize);
+        assert_eq!(blood.diagnostics().retained_cells, (0..12).map(|s| film_cells(s) as usize).sum::<usize>());
         assert!(blood
             .deposits()
             .all(|d| d.point.dot(n).abs() < 1e-4 && d.frame == 2));
@@ -919,7 +978,53 @@ mod tests {
         assert!(!query.supports_cell(0, &corners));
     }
     #[test]
-    fn four_millimeter_grains_preserve_input_motion_and_expiry_or_recycling_paints_nothing() {
+    fn droplets_are_mostly_small_and_wet_film_in_proportion_to_their_volume() {
+        let sizes: Vec<f32> = (0..2000).map(droplet_m).collect();
+        let small = sizes.iter().filter(|&&d| d < 0.003).count();
+        assert!(small > 1000, "most droplets are small: {small} of 2000 under 3 mm");
+        assert!(sizes.iter().all(|&d| (DROPLET_MIN_M..=DROPLET_MAX_M).contains(&d)));
+        let stain = |seed: u32| (film_cells(seed) as f32).sqrt() * CELL_M;
+        let largest = (0..2000).map(stain).fold(0.0f32, f32::max);
+        assert!(largest < 0.03, "no stain wider than 3 cm: {largest}");
+        assert!((0..2000).all(|s| film_cells(s) >= 1));
+    }
+    #[test]
+    fn film_carries_over_the_edge_between_two_facets() {
+        // A floor folded at x = 0 by 8 degrees: two flat facets of one surface.
+        let left = floor(-0.2, 0.0, -0.2, 0.2).transformed(Mat4::from_rotation_z(0.07));
+        let right = floor(0.0, 0.2, -0.2, 0.2).transformed(Mat4::from_rotation_z(-0.07));
+        let source = CabinFire::new(&[(0, &left), (0, &right)]);
+        let n_left = Mat4::from_rotation_z(0.07).transform_vector3(Vec3::Y);
+        let n_right = Mat4::from_rotation_z(-0.07).transform_vector3(Vec3::Y);
+        let point = Mat4::from_rotation_z(0.07).transform_point3(Vec3::new(-0.012, 0.0, 0.0));
+        let contact = hit(&source, point, n_left);
+        let mut blood = SurfaceBlood::new();
+        for seed in 0..60 {
+            blood.record_contact(contact, 0, 5, seed);
+        }
+        grow(&mut blood, &source, 10);
+        let on_right = blood.deposits().filter(|d| d.normal.dot(n_right) > 0.9999).count();
+        let on_left = blood.deposits().filter(|d| d.normal.dot(n_left) > 0.9999).count();
+        assert!(on_left > 0 && on_right > 0, "film on both facets: {on_left} left, {on_right} right");
+    }
+    #[test]
+    fn film_on_a_wall_runs_downhill_first() {
+        // A wall in the frame (normal +X): a big droplet's film reaches lower than higher.
+        let wall = crate::prims::box_mesh(Vec3::new(-0.05, -0.3, -0.3), Vec3::new(0.0, 0.3, 0.3), [80; 3]);
+        let source = CabinFire::new(&[(0, &wall)]);
+        let mut blood = SurfaceBlood::new();
+        let contact = hit(&source, Vec3::new(0.0, 0.0125, 0.0125), Vec3::X);
+        for seed in 0..12 {
+            blood.record_contact(contact, 0, 7, seed);
+        }
+        grow(&mut blood, &source, 6);
+        let ys: Vec<f32> = blood.deposits().map(|d| d.point.y).collect();
+        let below = ys.iter().filter(|&&y| y < 0.0).count();
+        let above = ys.iter().filter(|&&y| y > 0.025).count();
+        assert!(below > above, "{below} cells below, {above} above");
+    }
+    #[test]
+    fn droplets_of_their_own_size_preserve_input_motion_and_expiry_or_recycling_paints_nothing() {
         let source = CabinFire::new(&[]);
         let models = [Mat4::IDENTITY; FRAMES];
         let mut blood = SurfaceBlood::new();
@@ -929,10 +1034,12 @@ mod tests {
         assert_eq!(before.velocity, e.velocity);
         assert_eq!(before.actor_id, e.actor_id);
         assert_eq!(before.seed, e.seed);
+        let size = droplet_m(e.seed);
+        assert!((DROPLET_MIN_M..=DROPLET_MAX_M).contains(&size));
         for m in blood.wet_models(&models).into_iter().flatten() {
-            assert!((m.x_axis.truncate().length() - 0.004).abs() < 1e-7);
-            assert!((m.y_axis.truncate().length() - 0.004).abs() < 1e-7);
-            assert!((m.z_axis.truncate().length() - 0.004).abs() < 1e-7);
+            assert!((m.x_axis.truncate().length() - size).abs() < 1e-7);
+            assert!((m.y_axis.truncate().length() - size).abs() < 1e-7);
+            assert!((m.z_axis.truncate().length() - size).abs() < 1e-7);
         }
         // Expiry is tested with one airborne grain; replacement then separately proves boundedness.
         for _ in 0..100 {
