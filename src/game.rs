@@ -17459,6 +17459,12 @@ impl Game {
         }
         // Solid grass keeps its own persistent tread contacts separately from snow/soil material history.
         if let Some(g) = self.grass.as_mut() {
+            // Every hull in the meadow, moving or not, and every man on foot push the grass aside.
+            for t in std::iter::once(&self.player).chain(self.enemies.iter()).chain(self.allies.iter().map(|a| &a.tank)) {
+                g.press_hull(t.pos, t.heading, t.parts.hull_half_extents);
+            }
+            for soldier in self.soldiers.iter().filter(|s| s.alive) { g.press_walker(soldier.pos); }
+            if matches!(self.mode, Mode::Foot) { g.press_walker(self.foot.pos); }
             if self.player.alive && self.player.speed.abs() > 0.25 {
                 g.trample(self.player.pos, self.player.heading);
             }

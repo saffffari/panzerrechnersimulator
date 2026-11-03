@@ -18,7 +18,7 @@
 //!   widened and the density divided by the same factor, so blade area per ground area (the
 //!   canopy's leaf area, which decides how much ground shows through) is conserved. Past
 //!   `NEAR_RADIUS_M` the same rule runs on 8 m far tiles out to `FAR_RADIUS_M`, where the blades
-//!   sink into the ground and the authored green carries the horizon. A geometry LOD.
+//!   fade out while the turbid canopy slab (kind 6, to 3 km) rises over 90-140 m. A geometry LOD.
 //! - Ground cover: the authored ground material's green (the owner: "the entire map that's green
 //!   now should have grass"), less what lies under a river's water; the ground-class mask's red
 //!   channel sets how lush (tall) a stand is.
@@ -35,7 +35,7 @@ pub const BLADE_WIDTH_M: f32 = 0.007;
 /// Smallest drawn width in pixels (camera) or texels (shadow maps).
 pub const MIN_PIXELS: f32 = 1.5;
 /// Near 2 m tiles to this radius; 8 m far tiles (their own seeds) from the cross-fade band below
-/// it out to `FAR_RADIUS_M`, where the mat sinks into the ground's own green.
+/// it out to `FAR_RADIUS_M`, where the blades have faded into the canopy slab.
 pub const NEAR_RADIUS_M: f32 = 100.0;
 pub const BAND_M: f32 = 12.0;
 /// Far blade tiles fade out by this radius while the canopy slab rises over [SLAB_START_M, SLAB_FULL_M].
@@ -138,6 +138,45 @@ pub fn blade_root(tx: i32, tz: i32, j: u32) -> Vec2 {
     (Vec2::new(tx as f32, tz as f32) + r2_point(hash2(tx, tz, SALT_TILE), j)) * TILE_M
 }
 
+/// Tussocks (after Ghost of Tsushima's Voronoi clumps, Wohllaib GDC 2021): a world-fixed Voronoi
+/// tessellation of jittered seeds, `CLUMP_M` apart; each blade takes its clump's attributes
+/// (height, lean away from the clump's centre, leaf state) without moving its R2 root, and flowers
+/// favour the gaps between clumps. Attributes only: no root is re-placed.
+pub const CLUMP_M: f32 = 0.9;
+pub const SALT_CLUMP: u32 = 0x7475_7373;
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Clump {
+    pub centre: Vec2,
+    /// Distance to the nearest seed and to the second nearest.
+    pub f1: f32,
+    pub f2: f32,
+    pub seed: u32,
+}
+impl Clump {
+    /// 0 deep inside a tussock, 1 on the gap between two.
+    pub fn gap(&self) -> f32 { 1.0 - smoothstep(0.04, 0.30, self.f2 - self.f1) }
+}
+pub fn clump_at(p: Vec2) -> Clump {
+    let g = p / CLUMP_M;
+    let (ix, iz) = (g.x.floor() as i32, g.y.floor() as i32);
+    let mut best = Clump { centre: Vec2::ZERO, f1: f32::MAX, f2: f32::MAX, seed: 0 };
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let (cx, cz) = (ix + dx, iz + dz);
+            let h = hash2(cx, cz, SALT_CLUMP);
+            let c = (Vec2::new(cx as f32, cz as f32) + Vec2::splat(0.1) + Vec2::new(unit(h), unit(hash(h ^ 0x51))) * 0.8) * CLUMP_M;
+            let d = c.distance(p);
+            if d < best.f1 {
+                best.f2 = best.f1;
+                best = Clump { centre: c, f1: d, f2: best.f2, seed: h };
+            } else if d < best.f2 {
+                best.f2 = d;
+            }
+        }
+    }
+    best
+}
+
 /// One flower species: its clump field, its stem and head, and its display-equivalent linear
 /// albedo (centre, petals). Bright pigments, never emission.
 #[derive(Clone, Copy, Debug)]
@@ -193,6 +232,8 @@ pub fn flower_at(tx: i32, tz: i32, k: u32, cover: impl Fn(Vec2) -> f32) -> Optio
     let pick = unit(h) * FLOWER_CAP_PER_M2;
     let grass = cover(root);
     if grass <= 0.0 { return None; }
+    // Flowers stand in the gaps between tussocks: 0.45 of the rate inside one, 1.25 on a gap.
+    let grass = grass * (0.45 + 0.8 * clump_at(root).gap());
     let mut cumulative = 0.0;
     for s in 0..SPECIES.len() {
         cumulative += SPECIES[s].peak * bed(s, root.x, root.y) * grass;
@@ -211,12 +252,13 @@ pub fn wgsl_constants() -> String {
     f("MD_TILE", TILE_M); f("MD_NEAR_DENSITY", NEAR_DENSITY); f("MD_BLADE_WIDTH", BLADE_WIDTH_M);
     f("MD_MIN_PIXELS", MIN_PIXELS); f("MD_NEAR_RADIUS", NEAR_RADIUS_M); f("MD_BAND", BAND_M);
     f("MD_FAR_RADIUS", FAR_RADIUS_M); f("MD_FAR_TILE", FAR_TILE_M);
+    f("MD_CLUMP", CLUMP_M); f("MD_PUSH_CELL", PUSH_CELL_M); f("MD_PUSH_CELLS", PUSH_CELLS as f32);
     f("MD_SLAB_START", SLAB_START_M); f("MD_SLAB_FULL", SLAB_FULL_M); f("MD_SLAB_TILE", SLAB_TILE_M); f("MD_SLAB_TILE_FAR", SLAB_TILE_FAR_M);
     f("MD_SHADOW_RADIUS", SHADOW_RADIUS_M); f("MD_FLOWER_RADIUS", FLOWER_RADIUS_M); f("MD_FLOWER_CAP", FLOWER_CAP_PER_M2);
     f("MD_HEIGHT_MIN", HEIGHT_MIN_M); f("MD_HEIGHT_SPAN", HEIGHT_SPAN_M); f("MD_R2_A1", R2_A1); f("MD_R2_A2", R2_A2);
     f("MD_WIND_REFERENCE_HEIGHT", WIND_REFERENCE_HEIGHT_M); f("MD_TRACK_CELL", TRACK_CELL_M);
-    s.push_str(&format!("const MD_SALT_TILE: u32 = {}u;\nconst MD_SALT_FLOWER: u32 = {}u;\nconst MD_FLOWER_SLOTS: u32 = {}u;\nconst MD_SALT_FAR: u32 = {}u;\n",
-        SALT_TILE, SALT_FLOWER, FLOWER_SLOTS, SALT_FAR));
+    s.push_str(&format!("const MD_SALT_TILE: u32 = {}u;\nconst MD_SALT_FLOWER: u32 = {}u;\nconst MD_FLOWER_SLOTS: u32 = {}u;\nconst MD_SALT_FAR: u32 = {}u;\nconst MD_SALT_CLUMP: u32 = {}u;\n",
+        SALT_TILE, SALT_FLOWER, FLOWER_SLOTS, SALT_FAR, SALT_CLUMP));
     // Leaf states (leaf_optics.rs, PROSPECT-D at 680 / 550 / 440 nm).
     for (name, leaf) in [("FRESH", crate::leaf_optics::SPRING_GRASS), ("PALE", crate::leaf_optics::PALE_GRASS), ("DRY", crate::leaf_optics::DRY_GRASS)] {
         let (rho, tau) = crate::leaf_optics::lanes(leaf);
@@ -460,6 +502,105 @@ impl WindGrid {
     pub fn upload(&self) -> Vec<[f32; 2]> { self.disp.iter().map(|d| d.to_array()).collect() }
 }
 
+// ── Bodies pushing the grass aside, Hooke's-law recovery (Jahrmann & Wimmer 2017) ─────────────
+
+/// A grid of 0.5 m cells, 80 m across, round the eye: each cell's tip displacement (reference
+/// blade, metres) pressed by a hull or a walker and springing back by Hooke's law once free:
+/// a critically damped spring of 1.5 rad/s (back within about 3 s; an estimate for an unbroken
+/// stem; Jahrmann & Wimmer 2017, "Responsive real-time grass rendering for general 3D scenes",
+/// recover their bent blades the same way). Treads lodge blades for good (`TrackMemory`).
+pub const PUSH_CELL_M: f32 = 0.5;
+pub const PUSH_CELLS: usize = 160;
+pub const PUSH_MAX_M: f32 = 0.40;
+pub const PUSH_OMEGA: f32 = 1.5;
+pub struct PushGrid {
+    pub origin: (i32, i32),
+    pub disp: Vec<Vec2>,
+    vel: Vec<Vec2>,
+}
+impl Default for PushGrid {
+    fn default() -> Self {
+        Self { origin: (i32::MIN, i32::MIN), disp: vec![Vec2::ZERO; PUSH_CELLS * PUSH_CELLS], vel: vec![Vec2::ZERO; PUSH_CELLS * PUSH_CELLS] }
+    }
+}
+impl PushGrid {
+    pub fn origin_m(&self) -> Vec2 { Vec2::new(self.origin.0 as f32, self.origin.1 as f32) * PUSH_CELL_M }
+    pub fn recentre(&mut self, eye: Vec2) {
+        let half = PUSH_CELLS as i32 / 2;
+        let want = ((eye.x / PUSH_CELL_M).floor() as i32 - half, (eye.y / PUSH_CELL_M).floor() as i32 - half);
+        if want == self.origin { return; }
+        let n = PUSH_CELLS as i32;
+        let (old_d, old_v, old) = (self.disp.clone(), self.vel.clone(), self.origin);
+        for z in 0..n {
+            for x in 0..n {
+                let (ox, oz) = (x + want.0 - old.0, z + want.1 - old.1);
+                let i = (z * n + x) as usize;
+                let keep = old.0 != i32::MIN && (0..n).contains(&ox) && (0..n).contains(&oz);
+                self.disp[i] = if keep { old_d[(oz * n + ox) as usize] } else { Vec2::ZERO };
+                self.vel[i] = if keep { old_v[(oz * n + ox) as usize] } else { Vec2::ZERO };
+            }
+        }
+        self.origin = want;
+    }
+    fn cells_in(&self, lo: Vec2, hi: Vec2) -> impl Iterator<Item = (usize, Vec2)> + '_ {
+        let o = self.origin_m();
+        let n = PUSH_CELLS as i32;
+        let x0 = (((lo.x - o.x) / PUSH_CELL_M).floor() as i32).max(0);
+        let x1 = (((hi.x - o.x) / PUSH_CELL_M).ceil() as i32).min(n - 1);
+        let z0 = (((lo.y - o.y) / PUSH_CELL_M).floor() as i32).max(0);
+        let z1 = (((hi.y - o.y) / PUSH_CELL_M).ceil() as i32).min(n - 1);
+        (z0..=z1).flat_map(move |z| (x0..=x1).map(move |x| ((z * n + x) as usize, o + (Vec2::new(x as f32, z as f32) + Vec2::splat(0.5)) * PUSH_CELL_M)))
+    }
+    fn press(&mut self, i: usize, dir: Vec2, amount: f32) {
+        let want = dir * PUSH_MAX_M * amount.clamp(0.0, 1.0);
+        if want.length() >= self.disp[i].length() * 0.98 { self.disp[i] = want; self.vel[i] = Vec2::ZERO; }
+    }
+    /// A hull (centre, heading with forward (sin, cos), half width and half length): the blades
+    /// under it and within 0.35 m of its sides lie away from its nearest side.
+    pub fn press_box(&mut self, centre: Vec2, heading: f32, half: Vec2) {
+        if self.origin.0 == i32::MIN { return; }
+        let forward = Vec2::new(heading.sin(), heading.cos());
+        let right = Vec2::new(forward.y, -forward.x);
+        let margin = 0.35;
+        let reach = half.length() + margin;
+        let cells: Vec<_> = self.cells_in(centre - Vec2::splat(reach), centre + Vec2::splat(reach)).collect();
+        for (i, p) in cells {
+            let d = p - centre;
+            let (x, z) = (d.dot(right), d.dot(forward));
+            if x.abs() > half.x + margin || z.abs() > half.y + margin { continue; }
+            let side = if x.abs() / half.x > z.abs() / half.y { right * x.signum() } else { forward * z.signum() };
+            let outside = (x.abs() - half.x).max(z.abs() - half.y).max(0.0);
+            self.press(i, side, 1.0 - outside / margin);
+        }
+    }
+    /// A walker's legs: the blades within `radius` of the point lie away from it.
+    pub fn press_disc(&mut self, centre: Vec2, radius: f32) {
+        if self.origin.0 == i32::MIN { return; }
+        let cells: Vec<_> = self.cells_in(centre - Vec2::splat(radius), centre + Vec2::splat(radius)).collect();
+        for (i, p) in cells {
+            let d = p - centre;
+            let r = d.length();
+            if r > radius || r < 1e-4 { continue; }
+            self.press(i, d / r, 1.0 - 0.5 * r / radius);
+        }
+    }
+    /// Free blades spring back (critically damped).
+    pub fn relax(&mut self, dt: f32) {
+        let dt = dt.clamp(0.0, 0.1);
+        let steps = (dt / 0.02).ceil().max(1.0) as u32;
+        let h = dt / steps as f32;
+        for (d, v) in self.disp.iter_mut().zip(self.vel.iter_mut()) {
+            if *d == Vec2::ZERO && *v == Vec2::ZERO { continue; }
+            for _ in 0..steps {
+                *v += (-*d * PUSH_OMEGA * PUSH_OMEGA - *v * 2.0 * PUSH_OMEGA) * h;
+                *d += *v * h;
+            }
+            if d.length() < 1e-4 && v.length() < 1e-4 { *d = Vec2::ZERO; *v = Vec2::ZERO; }
+        }
+    }
+    pub fn upload(&self) -> Vec<[f32; 2]> { self.disp.iter().map(|d| d.to_array()).collect() }
+}
+
 // ── Tread contact pages mirrored to the GPU ──────────────────────────────────────────────────
 
 /// The grass contact memory's cell (`grass_filament::TRACK_CELL`) and page (cells per side).
@@ -495,11 +636,37 @@ impl TrackMirror {
 
 /// What the GPU meadow needs from the simulation this frame.
 pub struct Frame {
+    pub push_origin: Vec2,
+    pub push: Vec<[f32; 2]>,
     pub wind_origin: Vec2,
     pub wind: Vec<[f32; 2]>,
     pub mean_wind: Vec2,
     pub time: f32,
     pub track_pages: Vec<((i32, i32), u32, Vec<u8>)>,
+}
+
+/// The canopy as a medium for secondary rays (`renderer_raymarch`, `rm_canopy_transmittance`): per
+/// node of the terrain grid, the ground height, the stand's canopy height and its leaf area index
+/// (the mean over the node's cell of the cover map), and the grid's half extent.
+pub fn canopy_grid(heights: &[f32], res: usize, spacing: f32, cover: &CoverMap) -> Vec<[f32; 4]> {
+    let half = (res as f32 - 1.0) * 0.5;
+    let extent = half * spacing;
+    let mut out = Vec::with_capacity(res * res);
+    for j in 0..res {
+        for i in 0..res {
+            let (x, z) = ((i as f32 - half) * spacing, (j as f32 - half) * spacing);
+            let (mut h, mut lai) = (0.0f32, 0.0f32);
+            for (dx, dz) in [(-0.25f32, -0.25f32), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25), (0.0, 0.0)] {
+                let (px, pz) = (x + dx * spacing, z + dz * spacing);
+                let (presence, lush) = (cover.presence(px, pz), cover.lush(px, pz));
+                let height = (HEIGHT_MIN_M + HEIGHT_SPAN_M * lush) * (0.55 + 0.45 * presence);
+                h += height * (presence > 0.004) as u32 as f32;
+                lai += NEAR_DENSITY * BLADE_WIDTH_M * height * 0.75 * presence;
+            }
+            out.push([heights[j * res + i], h / 5.0, lai / 5.0, extent]);
+        }
+    }
+    out
 }
 
 /// The ground and cover the GPU meadow is built over (once per map).
@@ -660,6 +827,68 @@ mod tests {
         assert_eq!(m.pending.last().unwrap().2[0], 6);
         m.push((9999, 0), &[0u8; 1024]);
         assert_eq!(m.dropped, 1);
+    }
+
+    #[test]
+    fn the_canopy_grid_carries_the_stand_and_nothing_on_bare_ground() {
+        let mat: Vec<u8> = [84u8, 108, 36, 255].repeat(32 * 32);
+        let cover = build_cover(Some((&mat, 32)), None, 40.0, None, &|_, _| 0.0);
+        let grid = canopy_grid(&vec![1.5; 9 * 9], 9, 10.0, &cover);
+        let c = grid[4 * 9 + 4];
+        assert_eq!(c[0], 1.5);
+        assert!(c[1] > 0.15 && c[1] < 0.61, "{c:?}");
+        // Leaf area index: density x width x mean height, about 1.5-3 for a lush stand.
+        assert!(c[2] > 0.7 && c[2] < 3.5, "{c:?}");
+        assert_eq!(c[3], 40.0);
+        let bare = build_cover(Some((&[36u8, 36, 36, 255].repeat(32 * 32), 32)), None, 40.0, None, &|_, _| 0.0);
+        assert_eq!(canopy_grid(&vec![0.0; 81], 9, 10.0, &bare)[40][2], 0.0);
+    }
+
+    #[test]
+    fn tussocks_are_world_fixed_and_flowers_favour_their_gaps() {
+        let p = Vec2::new(12.3, -4.7);
+        assert_eq!(clump_at(p), clump_at(p));
+        let c = clump_at(p);
+        assert!(c.f1 <= c.f2 && c.f1 < CLUMP_M * 1.2);
+        // The mean gap over flower roots exceeds the mean over all ground.
+        let full = |_: Vec2| 1.0;
+        let (mut flower_gap, mut flowers) = (0.0f32, 0usize);
+        for tz in -20..20 {
+            for tx in -20..20 {
+                for k in 0..FLOWER_SLOTS {
+                    if let Some(f) = flower_at(tx, tz, k, full) { flower_gap += clump_at(f.root).gap(); flowers += 1; }
+                }
+            }
+        }
+        let mut ground_gap = 0.0f32;
+        for k in 0..20_000u32 {
+            ground_gap += clump_at(Vec2::new(unit(hash(k)) * 80.0 - 40.0, unit(hash(k ^ 0xabc)) * 80.0 - 40.0)).gap();
+        }
+        let (fg, gg) = (flower_gap / flowers as f32, ground_gap / 20_000.0);
+        assert!(fg > gg * 1.1, "flowers {fg} vs ground {gg}");
+    }
+
+    #[test]
+    fn a_hull_lays_the_grass_aside_and_it_springs_back() {
+        let mut g = PushGrid::default();
+        g.recentre(Vec2::ZERO);
+        g.press_box(Vec2::ZERO, 0.0, Vec2::new(1.9, 3.5));
+        let at = |g: &PushGrid, p: Vec2| { let o = g.origin_m(); let i = (((p.y - o.y) / PUSH_CELL_M) as usize) * PUSH_CELLS + ((p.x - o.x) / PUSH_CELL_M) as usize; g.disp[i] };
+        // Beside the right flank the blades lie to the right (+x for heading 0), fully pressed.
+        let side = at(&g, Vec2::new(1.8, 0.1));
+        assert!(side.x > 0.3 && side.y.abs() < 1e-3, "{side:?}");
+        // Ahead of the bow, forward.
+        assert!(at(&g, Vec2::new(0.1, 3.4)).y > 0.3);
+        // Far away, untouched.
+        assert_eq!(at(&g, Vec2::new(8.0, 8.0)), Vec2::ZERO);
+        // Free again, they spring back within a few seconds without overshoot.
+        let mut least = f32::MAX;
+        for _ in 0..240 { g.relax(1.0 / 60.0); least = least.min(at(&g, Vec2::new(1.8, 0.1)).x); }
+        assert!(at(&g, Vec2::new(1.8, 0.1)).length() < 0.05 * PUSH_MAX_M, "{:?}", at(&g, Vec2::new(1.8, 0.1)));
+        assert!(least >= -1e-4, "overshoot {least}");
+        // A walker parts the grass round his legs.
+        g.press_disc(Vec2::new(5.0, 5.0), 0.5);
+        assert!(at(&g, Vec2::new(5.25, 5.0)).x > 0.1);
     }
 
     #[test]

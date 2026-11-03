@@ -50,6 +50,8 @@ pub struct MeadowGpu {
     view_bufs: Vec<wgpu::Buffer>,
     binds: Vec<wgpu::BindGroup>,
     wind_tex: wgpu::Texture,
+    push_tex: wgpu::Texture,
+    push_origin: Vec2,
     track_table: wgpu::Texture,
     track_atlas: wgpu::Texture,
     tiles: wgpu::Buffer,
@@ -64,6 +66,8 @@ pub struct MeadowGpu {
     flower_gbuffer: wgpu::RenderPipeline,
     blade_depth: wgpu::RenderPipeline,
     heights: Vec<f32>,
+    /// The canopy as a medium for the ray queries (meadow::canopy_grid).
+    canopy_view: wgpu::TextureView,
     height_res: usize,
     height_spacing: f32,
     cover_half: f32,
@@ -106,6 +110,13 @@ impl MeadowGpu {
         let cover_res = build.cover.res as u32;
         let cover_tex = tex(device, "meadow-cover", cover_res, cover_res, wgpu::TextureFormat::Rg8Unorm);
         write(queue, &cover_tex, [0, 0], [cover_res, cover_res], 2, &build.cover.rg);
+        let canopy = meadow::canopy_grid(&build.heights, build.height_res, build.height_spacing, &build.cover);
+        let canopy_tex = tex(device, "meadow-canopy", res, res, wgpu::TextureFormat::Rgba32Float);
+        write(queue, &canopy_tex, [0, 0], [res, res], 16, bytemuck::cast_slice(&canopy));
+        let canopy_view = canopy_tex.create_view(&Default::default());
+        let pc = meadow::PUSH_CELLS as u32;
+        let push_tex = tex(device, "meadow-push", pc, pc, wgpu::TextureFormat::Rg32Float);
+        write(queue, &push_tex, [0, 0], [pc, pc], 8, &vec![0u8; (pc * pc * 8) as usize]);
         let n = meadow::WIND_CELLS as u32;
         let wind_tex = tex(device, "meadow-wind", n, n, wgpu::TextureFormat::Rg32Float);
         write(queue, &wind_tex, [0, 0], [n, n], 8, &vec![0u8; (n * n * 8) as usize]);
@@ -132,6 +143,7 @@ impl MeadowGpu {
                 t(4, wgpu::TextureSampleType::Float { filterable: false }),
                 t(5, wgpu::TextureSampleType::Uint),
                 t(6, wgpu::TextureSampleType::Uint),
+                t(7, wgpu::TextureSampleType::Float { filterable: false }),
             ],
         });
         let view_bufs: Vec<wgpu::Buffer> = (0..VIEWS).map(|i| device.create_buffer(&wgpu::BufferDescriptor {
@@ -139,7 +151,8 @@ impl MeadowGpu {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
         })).collect();
         let views = [heights_tex.create_view(&Default::default()), cover_tex.create_view(&Default::default()),
-            wind_tex.create_view(&Default::default()), track_table.create_view(&Default::default()), track_atlas.create_view(&Default::default())];
+            wind_tex.create_view(&Default::default()), track_table.create_view(&Default::default()), track_atlas.create_view(&Default::default()),
+            push_tex.create_view(&Default::default())];
         let binds = view_bufs.iter().map(|buf| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meadow"), layout: &bgl, entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
@@ -149,6 +162,7 @@ impl MeadowGpu {
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&views[2]) },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&views[3]) },
                 wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&views[4]) },
+                wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(&views[5]) },
             ],
         })).collect();
         let tiles = device.create_buffer(&wgpu::BufferDescriptor {
@@ -196,14 +210,16 @@ impl MeadowGpu {
         println!("[meadow] installed: heights {}x{} at {:.2} m, cover {}x{} over {:.0} m, {} species of flowers",
             res, res, build.height_spacing, cover_res, cover_res, 2.0 * build.cover.half_extent, meadow::SPECIES.len());
         Self {
-            view_bufs, binds, wind_tex, track_table, track_atlas, tiles,
+            view_bufs, binds, wind_tex, push_tex, push_origin: Vec2::ZERO, track_table, track_atlas, tiles,
             ranges: [[(0, 0); LEVELS]; VIEWS], far_ranges: [(0, 0); LEVELS], flowers: (0, 0), slab: [(0, 0); 2], slab_gbuffer, blade_gbuffer, flower_gbuffer, blade_depth,
-            heights: build.heights, height_res: build.height_res, height_spacing: build.height_spacing, cover_half: build.cover.half_extent,
+            heights: build.heights, canopy_view, height_res: build.height_res, height_spacing: build.height_spacing, cover_half: build.cover.half_extent,
             pending: None, wind_origin: Vec2::ZERO, mean_wind: Vec2::ZERO, time: 0.0, track_pages: 0,
             stats: MeadowStats::default(),
             skip: std::env::var("KESSEL_MEADOW_SKIP").as_deref() == Ok("1"),
         }
     }
+
+    pub(super) fn canopy_view(&self) -> &wgpu::TextureView { &self.canopy_view }
 
     pub fn set_frame(&mut self, frame: meadow::Frame) {
         // Keep pages of a frame that was never presented.
@@ -238,6 +254,9 @@ impl MeadowGpu {
         if let Some(frame) = self.pending.take() {
             let n = meadow::WIND_CELLS as u32;
             write(queue, &self.wind_tex, [0, 0], [n, n], 8, bytemuck::cast_slice(&frame.wind));
+            let pc = meadow::PUSH_CELLS as u32;
+            write(queue, &self.push_tex, [0, 0], [pc, pc], 8, bytemuck::cast_slice(&frame.push));
+            self.push_origin = frame.push_origin;
             self.wind_origin = frame.wind_origin;
             self.mean_wind = frame.mean_wind;
             self.time = frame.time;
@@ -405,10 +424,10 @@ impl MeadowGpu {
                 vp: vp.to_cols_array_2d(),
                 origin: [origin.x, origin.y, origin.z, self.time],
                 eye: [eye.x, eye.y, eye.z, pixel_angle],
-                lod: [texel, radius, if camera { 1.0 } else { 0.0 }, 0.0],
+                lod: [texel, radius, if camera { 1.0 } else { 0.0 }, self.push_origin.x],
                 wind: [self.wind_origin.x, self.wind_origin.y, meadow::WIND_CELL_M, meadow::WIND_CELLS as f32],
                 map: [self.height_spacing, self.height_res as f32, self.cover_half, meadow::TRACK_TABLE_SIDE as f32],
-                air: [self.mean_wind.x, self.mean_wind.y, meadow::TRACK_ATLAS_PAGES as f32, 0.0],
+                air: [self.mean_wind.x, self.mean_wind.y, meadow::TRACK_ATLAS_PAGES as f32, self.push_origin.y],
             };
         }
         for (view, buf) in views.iter().zip(&self.view_bufs) { queue.write_buffer(buf, 0, bytemuck::bytes_of(view)); }
