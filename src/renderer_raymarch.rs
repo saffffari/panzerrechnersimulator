@@ -3342,6 +3342,15 @@ impl Backend {
         let encloses = |mn: Vec3, mx: Vec3| enclosing.is_some_and(|(p, m)| {
             p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
         });
+        // A vehicle's armour is never a housing to a light outside the crew compartment's air: a
+        // blast, a cook-off or a burning vent beside the Tiger lies inside its hull's box, and that
+        // test dropped the whole hull from the light's cube, so it shone through the plates (the
+        // owner, 2026-11-03). A light in the compartment keeps the exemption; the cabin gate in
+        // the shade and volume passes keeps its light inside the armour.
+        let light_in_cabin = enclosing.is_some_and(|(p, _)| r.cabin_medium.as_ref()
+            .is_some_and(|medium| medium.contains_world(&r.cabin_medium_uniform, p)));
+        let housing = |m: &super::MeshGpu| encloses(m.world_min, m.world_max)
+            && (light_in_cabin || (m.vsm_frame == 0 && m.vehicle_finish == [0.0; 4] && !m.painted_steel));
         // What rides aboard the player's tank (a lamp, a box, a fitting) lies under no world snow:
         // the lying-snow lift raised the top faces of the cabin's lamp housings off their bodies,
         // green faces floating by the gunner (owner report, 2026-11-02). Aboard: a part whose box
@@ -3428,7 +3437,7 @@ impl Backend {
             // A glowing own-colour emitter (a bulb, a flame) casts no shadow of its own light; one
             // that is dark (the cupola hatch lid, a round) is ordinary geometry: the lid, left out,
             // opened a hole over the commander in the sun cascades and the sky cover (2026-10-28).
-            if shadow && ((m.emissive_own && m.emissive > 0.0) || encloses(m.world_min, m.world_max)) { continue; }
+            if shadow && ((m.emissive_own && m.emissive > 0.0) || housing(m)) { continue; }
             // Self-luminous effect meshes (muzzle flash and impact flash balls) are drawn as
             // volumetric emitters by the froxel grid, never as glowing sphere silhouettes.
             if m.emissive > 0.0 && !m.emissive_own && !m.emissive_win && !m.track_recv { continue; }
@@ -4027,6 +4036,24 @@ fn is_aboard(frames: &[(Mat4, Vec3, Vec3)], mn: Vec3, mx: Vec3) -> bool {
 #[cfg(test)]
 mod shader_tests {
     use super::*;
+
+    /// The owner (2026-11-03): explosions shone through the Tiger's armour. Every point light's
+    /// shadow ray stops at the shared housing rule, a lamp's fixture only for a bulb-sized scene
+    /// light, and a vehicle's armour is never a housing in a shadow cube of a light outside the cabin.
+    #[test]
+    fn no_light_but_a_lamp_skips_the_steel_before_it() {
+        let visibility = rm_source("rm_visibility.wgsl");
+        assert!(visibility.contains("let lamp = l.c.z < 0.5 && l.a.w < RM_LAMP_MAX_RADIUS_M;"));
+        assert!(visibility.contains("return select(l.a.w, clamp(4.0 * l.a.w, 0.15, 0.3), lamp);"));
+        for name in ["rm_shade.wgsl", "rm_volume.wgsl"] {
+            let source = rm_source(name);
+            assert!(source.contains("s.dist - rm_light_housing_m(index)"), "{name}");
+            assert!(!source.contains("clamp(4.0 * lights[index].a.w, 0.15, 0.3)"), "{name} keeps its own housing stop");
+        }
+        let this = include_str!("renderer_raymarch.rs");
+        assert!(this.contains("if shadow && ((m.emissive_own && m.emissive > 0.0) || housing(m)) { continue; }"));
+        assert!(this.contains("&& (light_in_cabin || (m.vsm_frame == 0 && m.vehicle_finish == [0.0; 4] && !m.painted_steel));"));
+    }
 
     /// The vehicle surface model's finish changes a surface's albedo, roughness, metallic and
     /// shading normal only: no layer writes emission, and its false colour is drawn only in the

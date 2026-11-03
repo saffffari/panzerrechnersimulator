@@ -837,7 +837,7 @@ fn fs(in: VsOut) -> ShadeOut {
             if (RM_RAY_QUERIES && lights[index].c.y < -0.5 && fr.debug.w < 0.5) {
                 // Lights without depth faces: one shadow ray toward the source, stopped short of
                 // its own fixture (the emitter sits inside its housing).
-                let reach = s.dist - clamp(4.0 * lights[index].a.w, 0.15, 0.3);
+                let reach = s.dist - rm_light_housing_m(index);
                 if (reach > 0.02 && rm_ray_blocked(world + n * (0.01 + 0.002 * dist), s.dir, 0.0, reach) >= 0.0) { continue; }
                 vis *= rm_canopy_transmittance(world + n * (0.01 + 0.002 * dist), s.dir, max(reach, 0.0));
             } else {
