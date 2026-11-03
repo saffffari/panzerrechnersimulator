@@ -365,10 +365,11 @@ fn vsm_finish(frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32>, up: vec3<f32
             f.roughness = 0.82;
             f.metallic = 0.35;
         } else if (breech_steel) {
-            // The breech's machined steel: blackened (bluing, oxide) under a film of oil.
-            f.albedo = vec3(0.14, 0.14, 0.145);
-            f.roughness = 0.42;
-            f.metallic = 0.85;
+            // The breech's machined steel: blackened (bluing, oxide) under a film of oil and the
+            // compartment's dust, which scatters most of what it reflects.
+            f.albedo = vec3(0.10, 0.10, 0.105);
+            f.roughness = 0.58;
+            f.metallic = 0.7;
         } else {
             // Rolled plate (mill scale over steel) or sheet: what wear exposes.
             let sheet = s.thickness < 0.012;
