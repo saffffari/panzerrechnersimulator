@@ -17348,6 +17348,10 @@ fn main() -> anyhow::Result<()> {
             args.get(5).and_then(|s| s.parse().ok()).unwrap_or(240.0),
         );
     }
+    if args.len() >= 2 && args[1] == "course-camp-check" {
+        return canyon_attempt::course_camp_check(&capture_arg(&args, 2, "course_camp_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29));
+    }
     if args.len() >= 2 && args[1] == "bridge-check" {
         return canyon_attempt::bridge_check(
             &capture_arg(&args, 2, "bridge_check"),
