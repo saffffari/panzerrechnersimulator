@@ -116,7 +116,10 @@ impl Runtime {
         // vertices are the hull frame's, so their paint moves with them.
         for &s in &self.slots{r.mark_vsm_part(s,1,Vec3::ZERO);}
         // The deck carries the player's vehicle's snow, as the hull around it does.
-        r.mark_snow_vehicle(self.deck_slot);}
+        r.mark_snow_vehicle(self.deck_slot);
+        // They were cut out of the painted hull: its paint, not the source's bare default metal
+        // (unmarked, the deck drew as a polished mirror plate, flat white; the owner, 2026-11-03).
+        for &s in self.slots.iter().chain([&self.tank_slot,&self.deck_slot]){r.mark_painted_steel(s);}}
     pub(super) fn present(&self,r:&mut Renderer,hull:Mat4){
         for i in 0..2{r.set_model(self.slots[i],hull*Mat4::from_translation(path(i,self.state.fraction[i])));}r.set_model(self.tank_slot,hull);r.set_model(self.deck_slot,hull);}
     fn center(&self,index:usize)->Vec3{(self.caps[index].min+self.caps[index].max)*0.5+path(index,self.state.fraction[index])}

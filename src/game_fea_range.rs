@@ -904,6 +904,11 @@ impl Range {
     /// some of the game's clocks and counters running on (the projectile serial, the armour clock,
     /// the infantry), so a Tiger built again does not start a strike from the same state.
     fn fresh(&mut self) {
+        // Every reset and run rebuilds the Tiger through the match reset. The kept checkpoint is the
+        // world save's state, which holds no shells in flight, cook-off or thrown turret, so putting
+        // it back left the last run's shell flying and its damage in place (owner, 2026-11-03:
+        // "reset is still autoplaying and also firing the shell from previous run").
+        self.rewind.fresh = None;
         let key = format!("{:?}", (self.shot.seed, self.scene.racks_loaded, self.scene.cabin_lamps, self.tiger_at,
             self.tiger_heading, self.engine, self.muted));
         let kept = self.rewind.fresh.as_ref().filter(|(k, _)| *k == key).map(|(_, c)| c.clone());
