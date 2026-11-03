@@ -3390,8 +3390,15 @@ impl Backend {
                 // glows), else an ordinary surface (or an effect's incandescent glow).
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor,
                     if flags > 3.5 { 4.0 } else if (flags - 2.0).abs() < 0.5 { 2.0 } else { 0.0 }] },
-                extra: [if aboard(b.world_min, b.world_max) { 0.0 } else { self.snow_load(r.world_snow_load) }, 0.0, 0.0, 0.0],
-                scars: [0; 4],
+                // Lying snow is lifted along each vertex's face normal, which parts a hard-edged
+                // mesh's faces: a moving pool's bodies (fragments, a body's cells, lodged rounds,
+                // pieces in flight) carry none, so their cubes stay closed (the owner, 2026-11-03:
+                // "the faces are like offset in this like accordion shape").
+                extra: [if b.moving_rt_pool || b.raster_only_dynamic || aboard(b.world_min, b.world_max) { 0.0 }
+                    else { self.snow_load(r.world_snow_load) }, 0.0, 0.0, 0.0],
+                // The film section (camera only) cuts a moving pool's bodies with the vehicle they
+                // fly in; cut, a cell or fragment shows its own material (bit 25: no steel cut face).
+                scars: [0, 0, 0, if b.moving_rt_pool { section_bit(r.film_section(), true, shadow) * (1 << SECTION_BIT_SHIFT | 1 << (SECTION_BIT_SHIFT + 1)) } else { 0 }],
                 vehicle: [0.0; 4],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
@@ -4552,5 +4559,16 @@ mod beam_tests {
         assert!(volume.contains("let b = rm_cabin_beam(fr.cam_pos.xyz + ray * t);") && volume.contains("const RM_BEAM_STRATA: u32 = 4u;"));
         assert_eq!(SKIP_BEAM_TRACE, 1 << 23);
         assert!(SKIP_BEAM_TRACE & (SKIP_APERTURES | SKIP_LOW_CLOUDS | SKIP_RELAYS) == 0);
+    }
+}
+
+#[cfg(test)]
+mod moving_pool_snow_tests {
+    /// Lying snow lifts each vertex along its face normal (rm_snow_lift.wgsl, up to
+    /// `SNOW_LIFT_M`), which parts a hard-edged mesh's faces. A moving pool's bodies carry none.
+    #[test]
+    fn moving_pools_carry_no_lying_snow() {
+        let source = include_str!("renderer_raymarch.rs");
+        assert!(source.contains("extra: [if b.moving_rt_pool || b.raster_only_dynamic || aboard(b.world_min, b.world_max) { 0.0 }"));
     }
 }
