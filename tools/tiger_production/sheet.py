@@ -54,3 +54,7 @@ json.dump(dict(schema='panzer.tiger-parts.v1', frame='game master Blender world 
                parts={r['game_node']: {k: v for k, v in r.items() if k != 'game_node'} for r in rows}),
           open('catalog/tiger_parts.v1.json', 'w'), indent=0)
 print('parts', len(rows), 'total mass t', round(sum(mass.values())/1000, 1), {k: round(v/1000, 1) for k, v in mass.most_common()})
+# The visual classes (materials.py) join the material table, so FEA and render share class names.
+import importlib.util
+_spec = importlib.util.spec_from_file_location('tiger_materials', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'materials.py'))
+_mod = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_mod); _mod.join_csv(os.getcwd())
