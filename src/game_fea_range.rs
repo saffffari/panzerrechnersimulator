@@ -1252,7 +1252,10 @@ impl Range {
             self.r.player_snow_load = tank;
             self.r.world_snow_load = world;
         }
-        if !self.accumulate_moving && self.last_pose.is_some_and(|p| p != pose) {
+        // Sharp (the default) restarts the history every frame, held still too: a held camera built
+        // the cabin air's in-scatter up into expanding haze that vanished on the next move, which the
+        // owner found jarring (2026-11-03). Held and moving views now look the same.
+        if !self.accumulate_moving {
             self.r.reset_history();
         }
         self.last_pose = Some(pose);

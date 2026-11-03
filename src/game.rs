@@ -2389,12 +2389,26 @@ const CREW_STEEL_HELMET_GLB: &str = "assets/flavor/Characters/german-ww2-soldier
 const CREW_RELAXED_HEAD_MIN: Vec3 = Vec3::new(-0.094_941_74, 1.262_698_7, -0.127_659_84);
 const CREW_RELAXED_HEAD_MAX: Vec3 = Vec3::new(0.060_105_927, 1.533_565_2, 0.073_475_61);
 
+/// The crew's steel helmet drawn at 1.5x its source size (owner-directed, cosmetic).
+const CREW_HELMET_SCALE: f32 = 1.5;
+
 fn load_crew_steel_helmet() -> anyhow::Result<CpuMesh> {
     let mut mesh = crate::gltf_load::load_glb(CREW_STEEL_HELMET_GLB)?;
     anyhow::ensure!(
         mesh.vertices.len() == 229 && mesh.indices.len() == 738,
         "reviewed CC0 helmet geometry contract changed"
     );
+    // The owner's call (2026-11-03): helmets 1.5x, "would be funny to be oversize", and it covers
+    // the hair and face corners that showed through the fitted one. Scaled about a point near the
+    // crown so it grows down over the head rather than up off it.
+    let (lo, hi) = (mesh.min, mesh.max);
+    let pivot = Vec3::new(0.5 * (lo.x + hi.x), hi.y - 0.2 * (hi.y - lo.y), 0.5 * (lo.z + hi.z));
+    for v in &mut mesh.vertices {
+        let p = pivot + (Vec3::from(v.pos) - pivot) * CREW_HELMET_SCALE;
+        v.pos = p.to_array();
+    }
+    mesh.min = pivot + (lo - pivot) * CREW_HELMET_SCALE;
+    mesh.max = pivot + (hi - pivot) * CREW_HELMET_SCALE;
     // Match the old reference's painted-steel material; the original UVs and atlas stay intact.
     mesh.metallic_factor = 0.02;
     mesh.roughness_factor = 0.88;
@@ -37138,6 +37152,36 @@ mod tests {
         );
     }
 
+    /// No point of any crew head (hair included) above the helmet's brim pokes out through the
+    /// shell: each lies inside the helmet's own radius at its height and bearing.
+    #[test]
+    fn no_head_point_shows_through_the_helmet() {
+        let helmet = load_crew_steel_helmet().expect("source steel helmet");
+        let axis = Vec3::new(0.5 * (helmet.min.x + helmet.max.x), 0.0, 0.5 * (helmet.min.z + helmet.max.z));
+        const BINS: usize = 36;
+        let bin = |p: Vec3| {
+            let d = p - axis;
+            (((d.z.atan2(d.x) + std::f32::consts::PI) / std::f32::consts::TAU * BINS as f32) as usize).min(BINS - 1)
+        };
+        let shell: Vec<Vec3> = helmet.vertices.iter().map(|v| Vec3::from(v.pos)).collect();
+        let mut worst = (0usize, f32::NEG_INFINITY, Vec3::ZERO);
+        for identity in 0..5 {
+            for p in crew_head_source_points(CREW_RELAXED_GLBS[identity]) {
+                if p.y <= helmet.min.y { continue; }
+                let (b, r) = (bin(p), (p - axis).with_y(0.0).length());
+                let cover = shell.iter().filter(|h| {
+                    let near = (bin(**h) as i32 - b as i32).rem_euclid(BINS as i32);
+                    (near <= 3 || near >= BINS as i32 - 3) && (h.y - p.y).abs() < 0.04
+                }).map(|h| (*h - axis).with_y(0.0).length()).fold(0.0f32, f32::max);
+                let poke = r - cover;
+                if p.y > helmet.max.y { worst = (worst.0 + 1, worst.1.max(p.y - helmet.max.y), p); continue; }
+                if poke > 0.0 { worst = (worst.0 + 1, worst.1.max(poke), p); }
+            }
+        }
+        assert_eq!(worst.0, 0, "{} head points show through the helmet, worst by {:.1} mm at {:?} (brim at y {:.3})",
+            worst.0, worst.1 * 1000.0, worst.2, helmet.min.y);
+    }
+
     fn crew_head_source_points(path: &str) -> Vec<Vec3> {
         let bytes = crate::resource::read(path).expect("reviewed crew source");
         let (document, buffers, _) = gltf::import_slice(&bytes).expect("crew GLB");
@@ -37173,12 +37217,12 @@ mod tests {
         assert_eq!(helmet.indices.len() / 3, 246);
         let dimensions = helmet.max - helmet.min;
         assert!(
-            (dimensions - Vec3::new(0.182_251_51, 0.133_522_27, 0.214_004_47))
+            (dimensions - Vec3::new(0.182_251_51, 0.133_522_27, 0.214_004_47) * CREW_HELMET_SCALE)
                 .abs()
                 .max_element()
                 < 1e-6
         );
-        assert!((helmet.max.y - CREW_RELAXED_HEAD_MAX.y - 0.020).abs() < 1e-6);
+        assert!(helmet.max.y > CREW_RELAXED_HEAD_MAX.y);
         assert!(helmet.min.x < CREW_RELAXED_HEAD_MIN.x && helmet.max.x > CREW_RELAXED_HEAD_MAX.x);
         assert!(helmet.min.z < CREW_RELAXED_HEAD_MIN.z && helmet.max.z > CREW_RELAXED_HEAD_MAX.z);
         for identity in 0..5 {
