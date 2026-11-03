@@ -23,6 +23,21 @@ fn still(
     Ok(())
 }
 
+/// A review camera at `from` looking at `to` (after the frame's update; nothing simulated moves).
+fn look_at(r: &mut Renderer, from: Vec3, to: Vec3) {
+    r.camera.pos = from;
+    r.camera.set_forward((to - from).normalize());
+}
+
+/// Centre of a crewman's head: his head-attached helmet's world bounds.
+fn crew_heads(g: &Game, r: &Renderer) -> Vec<(usize, Vec3)> {
+    g.slots.crew_helmet.iter().enumerate().filter_map(|(identity, &slot)| {
+        let (visible, _) = r.debug_mesh_state(slot)?;
+        let (lo, hi) = r.debug_mesh_world_bounds(slot)?;
+        (visible && lo.is_finite() && hi.is_finite()).then(|| (identity, (lo + hi) * 0.5 - Vec3::Y * 0.06))
+    }).collect()
+}
+
 pub fn run(requested: &str) -> anyhow::Result<()> {
     let prefix = crate::capture_target(requested);
     if let Some(parent) = std::path::Path::new(&prefix).parent() { std::fs::create_dir_all(parent)?; }
@@ -51,6 +66,48 @@ pub fn run(requested: &str) -> anyhow::Result<()> {
             run_for(&mut g, &mut r, 0.1);
             still(&g, &mut r, &device, &queue, &prefix, &format!("{label}_{name}"), &mut receipt)?;
         }
+        // From each turret post, the seated gunner's head below and ahead.
+        let eye = r.camera.pos;
+        if let Some(&(_, head)) = crew_heads(&g, &r).iter().find(|(i, _)| *i == 1) {
+            look_at(&mut r, eye, head);
+            still(&g, &mut r, &device, &queue, &prefix, &format!("{label}_gunner_head"), &mut receipt)?;
+        }
+    }
+    // From the cupola: the crew at their stations across the fighting compartment.
+    g.jump_station(Station::Commander);
+    run_for(&mut g, &mut r, 0.5);
+    for (name, yaw) in [("left", 0.9f32), ("ahead", 0.0), ("right", -0.9)] {
+        g.head_yaw = yaw;
+        g.head_pitch = -0.55;
+        run_for(&mut g, &mut r, 0.1);
+        still(&g, &mut r, &device, &queue, &prefix, &format!("crew_from_cupola_{name}"), &mut receipt)?;
+    }
+    // The commander's own right hand on the cupola traverse handwheel's crank knob.
+    g.head_yaw = 0.0;
+    g.head_pitch = -0.4;
+    run_for(&mut g, &mut r, 0.2);
+    let eye = r.camera.pos;
+    if let Some(grip) = g.first_person.as_ref().and_then(|f| f.debug_grip_points(&r)[1]) {
+        look_at(&mut r, grip + (eye - grip).normalize() * 0.42 + Vec3::Y * 0.05, grip);
+        still(&g, &mut r, &device, &queue, &prefix, "cupola_crank", &mut receipt)?;
+    } else {
+        println!("[fp-body] cupola_crank: no commander grip drawn");
+    }
+    // Every crewman's head and headgear, close, from the turret centre's side.
+    for (identity, head) in crew_heads(&g, &r) {
+        let centre = g.player.turret_model().transform_point3(Vec3::new(0.0, 1.5, 0.0));
+        let away = Vec3::new(centre.x - head.x, 0.0, centre.z - head.z).normalize_or_zero();
+        look_at(&mut r, head + away * 0.55 + Vec3::Y * 0.12, head);
+        still(&g, &mut r, &device, &queue, &prefix, &format!("head_{identity}"), &mut receipt)?;
+    }
+    // The gunner's own hand on his elevation handwheel's crank knob.
+    g.jump_station(Station::Gunner);
+    run_for(&mut g, &mut r, 1.5);
+    anyhow::ensure!(g.station == Station::Gunner, "could not reach the gunner post");
+    let eye = g.station_eye(Station::Gunner);
+    if let Some(grip) = g.first_person.as_ref().and_then(|f| f.debug_grip_points(&r)[1]) {
+        look_at(&mut r, grip + (eye - grip).normalize() * 0.42 + Vec3::Y * 0.08, grip);
+        still(&g, &mut r, &device, &queue, &prefix, "gunner_handwheel", &mut receipt)?;
     }
     // The seated driver: hands on his steering levers, looking down into his lap.
     g.jump_station(Station::Driver);

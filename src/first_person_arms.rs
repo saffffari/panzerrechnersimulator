@@ -48,8 +48,23 @@ struct Rig {
     palm_offsets: [Vec3; 2],
     source_hand_directions: [Vec3; 2],
 }
+/// The crank knob of a source handwheel, in the wheel's own frame: the centroid of the rim
+/// vertices that stand furthest out along the shaft (`sign` picks the operator's side).
+fn handwheel_knob(path: &str, axis: usize, sign: f32) -> anyhow::Result<Vec3> {
+    let wheel = crate::gltf_load::load_glb(path)?;
+    let points = wheel.vertices.iter().map(|v| Vec3::from_array(v.pos)).collect::<Vec<_>>();
+    let radial = |p: Vec3| { let mut q = p; q[axis] = 0.0; q.length() };
+    let out = points.iter().filter(|p| radial(**p) > 0.06).map(|p| p[axis] * sign).fold(f32::MIN, f32::max);
+    let knob = points.iter().copied().filter(|p| radial(*p) > 0.06 && p[axis] * sign > out - 0.035).collect::<Vec<_>>();
+    anyhow::ensure!(!knob.is_empty(), "handwheel knob absent in {path}");
+    Ok(knob.iter().copied().sum::<Vec3>() / knob.len() as f32)
+}
 pub(super) struct FirstPerson {
     rigs: [Rig; 2],
+    /// Crank knobs of the gunner's elevation handwheel (shaft X) and the commander's auxiliary
+    /// traverse handwheel (shaft -Z), each in its wheel's frame.
+    knobs: [Vec3; 2],
+    last_turret_yaw: std::cell::Cell<f32>,
     slots: [[usize; 2]; 2],
     last_sample: std::cell::Cell<f32>,
     last_grips: std::cell::Cell<(usize, [Option<Mat4>; 2])>,
@@ -490,6 +505,11 @@ impl FirstPerson {
             witness_indices,
             witness_ownership,
             witness_mask: std::cell::Cell::new(u16::MAX),
+            knobs: [
+                handwheel_knob("assets/tanks/tiger/baked/tiger_part_wheel1.glb", 0, 1.0)?,
+                handwheel_knob("assets/tanks/tiger/baked/tiger_part_wheel2.glb", 2, -1.0)?,
+            ],
+            last_turret_yaw: std::cell::Cell::new(f32::NAN),
             slots,
             last_sample: std::cell::Cell::new(-100.0),
             last_grips: std::cell::Cell::new((usize::MAX, [None; 2])),
@@ -541,6 +561,12 @@ impl FirstPerson {
         }
         r.set_model(self.witness_slot, model);
         r.set_visible(self.witness_slot, true);
+    }
+    /// Review harness: where the drawn hands' grips are in the world, if the hands are posed.
+    pub(super) fn debug_grip_points(&self, r: &Renderer) -> [Option<Vec3>; 2] {
+        let (_, grips) = self.last_grips.get();
+        let Some(model) = self.debug_drawn_model(r) else { return [None, None] };
+        grips.map(|g| g.map(|m| model.transform_point3(m.w_axis.truncate())))
     }
     /// Review harness: the world model of the drawn local body, if one is drawn.
     pub(super) fn debug_drawn_model(&self, r: &Renderer) -> Option<Mat4> {
@@ -691,12 +717,25 @@ impl FirstPerson {
                 .crew_loader_hand_targets()
                 .map(|p| p.map(Mat4::from_translation));
         } else if game.mode == Mode::Tank && game.station == Station::Gunner {
-            let p = game
-                .player
-                .turret_model()
-                .transform_point3(crate::interior_rig::WHEEL1_POS + Vec3::X * 0.13);
-            grips[1] = Some(Mat4::from_translation(p));
+            // The right hand on the elevation handwheel's crank knob, which turns with the gun
+            // (the same wheel transform the renderer draws).
+            let wheel = game.player.turret_model()
+                * Mat4::from_translation(crate::interior_rig::WHEEL1_POS)
+                * Mat4::from_axis_angle(Vec3::X, game.player.gun_pitch * 40.0);
+            grips[1] = Some(Mat4::from_translation(wheel.transform_point3(self.knobs[0])));
+        } else if game.mode == Mode::Tank && game.station == Station::Commander
+            && !game.commander_outside && game.binocular_raise <= 0.0
+            && (game.player.turret_yaw - self.last_turret_yaw.get()).abs() < 1.0e-4 {
+            // Buttoned at the cupola with the turret at rest, the right hand rests on the crank
+            // knob of the auxiliary traverse handwheel beside him. Under power traverse that wheel
+            // spins about 10 turns a second (595 per turret turn), so the hand lets go.
+            let wheel = game.player.turret_model()
+                * Mat4::from_translation(crate::interior_rig::WHEEL2_POS)
+                * Mat4::from_axis_angle(crate::interior_rig::COMMANDER_TRAVERSE_WHEEL_AXIS,
+                    game.player.turret_yaw * crate::interior_rig::COMMANDER_TRAVERSE_TURNS_PER_TURRET_REV);
+            grips[1] = Some(Mat4::from_translation(wheel.transform_point3(self.knobs[1])));
         }
+        self.last_turret_yaw.set(game.player.turret_yaw);
         // Tools and cartridges move every simulation step. An idle skin cadence must not
         // leave the actual hands behind them; compare in the same body's local frame so
         // rigid vehicle/world motion alone does not request a new skin solve.
