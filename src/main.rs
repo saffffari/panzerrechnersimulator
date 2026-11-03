@@ -60,6 +60,7 @@ mod ai_doctrine;
 mod anti_infantry_ai;
 mod armor_damage;
 mod fea_damage;
+mod cabin_heat;
 #[cfg(test)]
 mod asset_catalog;
 mod asset_yard;
@@ -11636,7 +11637,25 @@ const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
 
 /// What the death sequence shows `t` seconds after the fatal frame, with a silent card.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Done }
+enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Throw(f32), Crew(f32), Done }
+
+/// A death in the stowage's cook-off (`Game::cookoff_death`; the owner, 2026-11-02): black at once
+/// from the bang while it rings (the world held), then the tank from outside as the rest of the
+/// stowage goes and the turret is thrown (the world runs on, silent), then the dead from above the
+/// open ring, then the card.
+use game::{COOKOFF_BLACK_S, COOKOFF_CREW_S, COOKOFF_THROW_S};
+fn cookoff_shot(card: death_card::Presentation, t: f32) -> DeathShot {
+    let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
+    if t < COOKOFF_BLACK_S { DeathShot::Black }
+    else if t < COOKOFF_BLACK_S + COOKOFF_THROW_S { DeathShot::Throw((t - COOKOFF_BLACK_S) / COOKOFF_THROW_S) }
+    else if t < card.reveal_at_s() { DeathShot::Crew((t - COOKOFF_BLACK_S - COOKOFF_THROW_S) / COOKOFF_CREW_S) }
+    else if t < card_end { DeathShot::Card }
+    else { DeathShot::Done }
+}
+/// The death's shot: the cook-off's order when the man died in it, else the ordinary one.
+fn death_shot_for(cookoff: bool, card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
+    if cookoff { cookoff_shot(card, t) } else { death_shot(card, t, has_replay) }
+}
 fn death_shot(card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
     if t < DEATH_FADE { DeathShot::Fade }
@@ -11753,6 +11772,19 @@ mod local_presentation_tests {
         assert_eq!(death_shot(card, end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR, true), DeathShot::Done);
         // A death with no recorded killing round (on foot, burned) ends with the card.
         assert_eq!(death_shot(card, end, false), DeathShot::Done);
+    }
+
+    #[test]
+    fn a_cookoff_death_is_black_at_once_then_outside_then_the_dead_then_the_card() {
+        let reveal = COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S;
+        let card = death_card::Presentation::silent(1, 1943, reveal, DEATH_CARD_SECONDS);
+        assert_eq!(cookoff_shot(card, 0.0), DeathShot::Black, "no fade: black from the bang");
+        assert_eq!(cookoff_shot(card, COOKOFF_BLACK_S - 0.01), DeathShot::Black);
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + 0.01), DeathShot::Throw(p) if p < 0.01));
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + COOKOFF_THROW_S + 0.01), DeathShot::Crew(p) if p < 0.01));
+        assert_eq!(cookoff_shot(card, reveal + 0.01), DeathShot::Card);
+        assert_eq!(cookoff_shot(card, reveal + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
+        assert_eq!(death_shot_for(false, card, 0.5, true), DeathShot::Fade, "other deaths keep their fade");
     }
 
     #[test]
@@ -13661,8 +13693,10 @@ impl WindowState {
             // The fatal view fades, the screen is black for two seconds, the card is held for
             // five, and the run ends. No score plays over it.
             println!("[panzerrechnersystem] killed: {over_cause:?}");
+            let reveal = if self.game.cookoff_death() { COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S }
+                else { DEATH_FADE + DEATH_BLACK_SECONDS };
             let card = Some(death_card::Presentation::silent(self.game.death_card_seed(),
-                self.game.death_year(), DEATH_FADE + DEATH_BLACK_SECONDS, DEATH_CARD_SECONDS));
+                self.game.death_year(), reveal, DEATH_CARD_SECONDS));
             self.state = AppState::Death { t: 0.0, card };
             self.render_death(0.0);
             true
@@ -14779,14 +14813,44 @@ impl WindowState {
             AppState::Death { card, .. } => card,
             _ => None,
         };
-        let fade = death_fade(t);
+        let cookoff = self.game.cookoff_death();
+        // A cook-off's bang rings out in the black at full level; its outside shots are silent.
+        let fade = if cookoff { if t < COOKOFF_BLACK_S { 0.0 } else { 1.0 } } else { death_fade(t) };
         self.game.set_audio_level(1.0 - fade);
-        if t >= DEATH_FADE {
+        if (!cookoff && t >= DEATH_FADE) || (cookoff && t >= COOKOFF_BLACK_S) {
             self.game.set_audio_silenced(true);
+        }
+        if let Some(card) = card.filter(|card| card.is_silent() && cookoff) {
+            match cookoff_shot(card, t) {
+                DeathShot::Throw(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.render_cookoff_outside(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                DeathShot::Crew(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.render_cookoff_crew(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                DeathShot::Black => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.renderer.ui_reset();
+                    ui::draw_black(&mut self.renderer);
+                    self.renderer.render_ui_to_surface(&self.device, &self.queue, &view,
+                        self.config.format, self.config.width, self.config.height);
+                    frame.present();
+                    return;
+                }
+                _ => {}
+            }
         }
         // The silent card is followed by two replay shots: the round coming in, seen from behind
         // and above, and then what it did inside.
-        if let Some(card) = card.filter(|card| card.is_silent()) {
+        if let Some(card) = card.filter(|card| card.is_silent() && !cookoff) {
             match death_shot(card, t, self.game.last_fatal.is_some()) {
                 DeathShot::Exterior(phase) => {
                     let Some((frame, view)) = self.acquire() else { return; };
@@ -15540,10 +15604,13 @@ impl ApplicationHandler for App {
                         if matches!(code, KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape) {
                             let has_replay = state.game.last_fatal.is_some();
                             let card_end = card.card_end_s().unwrap_or(t);
-                            match death_shot(card, t, has_replay) {
+                            match death_shot_for(state.game.cookoff_death(), card, t, has_replay) {
                                 DeathShot::Card => state.state = AppState::Death { t: card_end, card: Some(card) },
                                 DeathShot::Exterior(_) | DeathShot::Interior(_) => state.state = AppState::Death {
                                     t: card_end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR, card: Some(card) },
+                                // The cook-off's shots give way to the card.
+                                DeathShot::Throw(_) | DeathShot::Crew(_) => state.state = AppState::Death {
+                                    t: card.reveal_at_s(), card: Some(card) },
                                 _ => {}
                             }
                         }
@@ -16858,8 +16925,13 @@ impl ApplicationHandler for App {
                     AppState::Death { t, card } => {
                         let nt = t + dt;
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
+                        // In a cook-off death the world runs on behind its outside shots.
+                        let cookoff = state.game.cookoff_death();
+                        if cookoff && card.is_some_and(|card| matches!(cookoff_shot(card, nt), DeathShot::Throw(_) | DeathShot::Crew(_))) {
+                            state.game.update_realtime(&TankInput::default(), dt, &mut state.renderer);
+                        }
                         let finished = card.map_or(nt >= DEATH_END, |card| if card.is_silent() {
-                            death_shot(card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
+                            death_shot_for(cookoff, card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
                         } else {
                             card.phase(nt, state.game.death_score_elapsed(),
                                 state.game.death_score_finished()) == death_card::Phase::Finished

@@ -1179,6 +1179,70 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   wounds keep the existing rules; the couch co-op renderer draws a part whole or as bone as before;
   the solved state is not saved (a restored body is whole); dragging and picking a body still use
   its whole flesh triangles.
+- **The compartment's heat, the ammunition's cook-off and the thrown turret** (2026-11-02,
+  `cabin_heat`, `game::game_cookoff`; the owner: model the internal temperature; any live round,
+  racked, chambered, loose or carried, ignites from the heat or from flames reaching it; one
+  burning round sets off the rest and blows the turret off within a second or two; a direct hit
+  on the racks goes at once). It replaces the earlier exposure fuse (a dimensionless flame
+  exposure past 0.65 lit a 3 s fuse). One well-mixed gas zone in the burst model's 10 m³ of free
+  air (ideal gas, γ 1.4): its mass and internal energy, heated by the burning surfaces (45 kW per
+  surface patch at full intensity: about 0.12 m of burning oil, paint and stowage at 1 MW/m²,
+  authored) and by burning propellant (2.5 kg a cartridge, `propellant_charge_kg`; heat of
+  explosion 3.7 MJ/kg and the mass of its gas), losing heat to the hull's steel held at ambient by
+  its mass (600 W/K: about 15 W/m²K over 40 m², authored), trading air through what is open
+  (Kawagoe's ventilation factor 0.5·A·√H with H 0.5 m, authored for roof hatches), pushed out by its
+  pressure through the openings and 0.01 m² of leaks (authored) by the burst model's orifice flow,
+  never hotter than the propellant's flame (2,600 K, authored within 2,500-3,000 K); a closed hatch
+  whose latch the gauge pressure beats is thrown open (the burst model's 20 kN). Ambient is the
+  burst model's 293 K (the weather's air temperature is not used; named). No oxygen balance: a
+  fire is not limited by its ventilation (named). Each case wall with the propellant heated behind
+  it is one lumped areal heat capacity (9 kJ/m²K: 1.5 mm of brass and about a millimetre of
+  propellant, authored), heated by convection from the gas (25 W/m²K, authored), the gas's
+  radiation (emissivity 0.3 clean to 0.7 sooty, authored), the flames in sight of it (80 kW/m² at
+  contact falling as (0.2/(0.2 + d))², from burning patches within 1.5 m with a clear line through
+  the tank's own triangles, re-measured every 0.2 s; authored within impinging flames' 50-100
+  kW/m²) and the flame of any burning neighbour (12 MW/m² at contact while it burns, falling as
+  (0.05/(0.05 + gap))² with the gap between the cases: a case it touches ignites in about 0.2 s;
+  authored). At 453 K (nitrocellulose's ignition, about 170-180 °C) its propellant ignites and
+  burns in 0.3 s at atmospheric pressure, faster under pressure by Vieille's law with exponent 0.8
+  (authored within 0.7-0.9). The turret (11 t, the Tiger I's turret with its gun; ring 1.85 m, real
+  size) sits on its ring under its weight (no hold-down; named): the gauge pressure on the ring's
+  area lifts it, the gap round the ring vents only once its skirt has risen 6 cm (authored), and
+  once that gap is as large as the ring (a quarter of its diameter further up) it flies with the
+  speed it has; while it is still over the open ring the leaving gas pushes it on, the gauge
+  pressure on the ring's area falling as (D/(D + 2h))² with its height (authored). The thrown
+  turret is the wreck turret's rigid body (`wreck_turret::Body::thrown`) built from the player's
+  own Tiger at real size, its support samples kept one per 12 cm cube (3,485 of 233,288; the gap
+  bound rises to 0.21 m; named), its thin-shell mass estimate (41 t) not the real 11 t (named: its
+  flight is the same; contact impulses scale with it); everything authored in the turret's frame
+  goes with it (`Tank::turret_thrown`), the dead in that frame are detached into the world first.
+  The first round's bang kills the crew inside (the compartment at the propellant's flame: every
+  man inside, not solved per body; the blast that throws them is the struck rounds' fillers and
+  their propellant's TNT equivalent, 0.36 kg a kilogram); each later round is its own bang and
+  flash and a flame from every opening. A round that ignites leaves the live inventory (its burst
+  case and its shell are not drawn after; named). An HE shell's filler (the SprGr's 0.9 kg)
+  detonates when a strike crosses it, when another HE shell within 0.2 m of it (centre to centre,
+  about two shell diameters; authored) detonates, or when its steel body (36 kJ/m²K: about 10 mm,
+  authored), heated like the case and by its own burning charge, reaches 570 K (TNT's cook-off,
+  about 300 °C; authored): its energy (the burst model's TNT equivalence) and products go into
+  the gas at once (the gas held at the flame's temperature at most; named) and its own charge is
+  lit. An armour-piercing round's bursting charge (under 0.2 kg) is not counted (named); no shell
+  fragments are thrown by a detonation in the chain (named). A strike that crosses a round sets
+  off every round within 0.2 m of the crossings at once (authored reach of its flame and
+  fragments). Measured (unit tests on the game's stowage at real
+  size, two groups of 32 2.5 m apart): a round in a 60 kW/m² flame under a 300 kW fire ignites in
+  about 20 s; its group pops over about 0.5 s; the turret goes 0.5-0.6 s after the first round at
+  7-8 m/s (about 3 m up); a struck rack throws it within 0.6 s. In the game (fea-film,
+  `cookoff_fire` and `cookoff_struck`): a flame staged on the rack's fitting ignites the first case
+  in 12-13 s; the turret was thrown at 3.4-3.9 m/s (about 1 m) by the heated chain, at 2.8-6.9 m/s
+  (0.5-3.6 m) by a 122 mm round into a rack of armour-piercing rounds, and at 17.6 m/s (about
+  16 m) by one into the right sponson's twelve HE shells, which all detonated together (2.2 MPa).
+  The death's outside shot frames the throw's whole height (the camera draws back on the cook-off's
+  clock toward the turret's height plus v²/2g while it rises). Historical scale (2026-11-02 search): no measured heights; a
+  T-34-76's full load set off in 1944 Soviet tests threw the turret roof about 30 m; Tiger wrecks
+  show turrets beside the hull; a 122 mm hit in a Soviet trial moved a Tiger's turret 0.5 m. Not
+  saved: the compartment's heat and the thrown turret (a restored tank is cold, its turret on its
+  ring; named).
 - **Blood droplets and film** (2026-11-02, `surface_blood`; the owner: droplets too large, and
   blood should form a continuous film where enough lands). A droplet's edge comes from its seed,
   1.5–6 mm with most under 3 mm (an authored distribution, not a measured spatter one), and the

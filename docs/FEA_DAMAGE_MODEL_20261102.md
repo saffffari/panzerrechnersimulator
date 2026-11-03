@@ -549,3 +549,38 @@ and the skeleton to voxels on one grid and run the simulation on those voxels.
   Planck visible share, the drawn pages lifted at the owner's call) is the one kept.
 - **Not yet**: the living and the couch renderer keep the old rule; the solved state is not saved;
   parts are rigid segments, so cells of two parts cut into each other at a bent joint.
+
+## The cook-off and the death it brings (2026-11-02, night)
+
+The owner: model the compartment's temperature; a live round, racked, chambered, loose or still in
+a man's hands, ignites once its propellant is hot enough, from the hot gas or a flame reaching it;
+one round going sets off the rest in rapid popping and blows the turret off within a second or
+two; a direct hit on the racks goes at once. The screen cuts to black when the bang reaches the
+man inside and stays black while it rings; then the tank from outside with the turret's whole
+throw in the frame; then what the cook-off left of the crew.
+
+- **The heat** (`cabin_heat.rs`): one gas zone (mass, energy, pressure) in the burst model's free
+  air, fed by the burning surfaces and burning propellant, cooled by the steel and the openings,
+  vented by the burst model's orifice flow, its latched hatches thrown open past 20 kN. Each case
+  wall heats under the gas, the flames in sight of it and its burning neighbours; at 453 K its
+  2.5 kg of propellant ignites and burns in 0.3 s, faster under pressure (Vieille's law).
+- **The turret**: lifted by the pressure on its ring, venting round its skirt as it rises, thrown
+  once the gap matches the ring, pushed on by the gas while still over it; then the wreck
+  turret's rigid body built from the player's own Tiger at real size (`game_cookoff.rs`), with
+  everything in its frame (hatches, blood, fittings) going with it and the dead in it left in
+  the hull.
+- **HE shells**: a struck SprGr's 0.9 kg filler detonates at once and sets off every HE shell
+  within two shell diameters; a heated one detonates when its steel body reaches TNT's cook-off.
+- **In play**: a flame on the rack's fitting ignited the first case after 12 s, its sponson group
+  popped over half a second and the turret went at 3.4-3.9 m/s; a 122 mm round into a rack of
+  armour-piercing rounds threw it at up to 6.9 m/s (about 3 m up); one into the right sponson's
+  twelve HE shells set them all off together and threw it at 17.6 m/s, about 16 m up. For scale, the record holds no measured heights: a T-34-76's full
+  load threw its turret roof about 30 m in 1944 Soviet tests; Tiger wrecks show their turrets
+  beside the hull.
+- **The death** (`main.rs` `cookoff_shot`): black from the bang for 3.5 s with the world held and
+  the bang ringing at full level; then 7 s outside (wide, 24 m off, the frame reaching 13 m above
+  the ring) with the world running on, silent; then 8 s on the dead from the first eye with a
+  clear line to them (above the open ring, above an opening, or inside the hull); then the card.
+- **Not yet**: the penetration replay the owner asked for (the impact in slow motion outside, a
+  section cut along the shot, the interior from the turret's rear corner); the heat and the
+  thrown turret are not saved.
