@@ -617,6 +617,8 @@ struct Range {
     /// A moving camera keeps the renderer's history (accumulated, smeared) rather than restarting
     /// it (sharp, noisier).
     accumulate_moving: bool,
+    /// The present run was fired with F (into the live state): it plays on and never loops back.
+    free_fire: bool,
     /// The tank's surface state held at these values (exterior grime, interior grime, glass grime,
     /// mechanical wear; snow on the tank and on the ground), or the game's own.
     wear: Option<[f32; 4]>,
@@ -757,6 +759,7 @@ impl Range {
             run_tape: Vec::new(),
             engine: false,
             accumulate_moving: false,
+            free_fire: false,
             wear: None,
             snow: None,
             run: None,
@@ -1055,6 +1058,7 @@ impl Range {
 
     /// RUN: the shot on a fresh Tiger (or, with FRESH EACH RUN off, into the present state).
     fn run(&mut self) {
+        self.free_fire = false;
         if self.scene.fresh_each_run {
             self.fresh();
         }
@@ -1882,7 +1886,7 @@ impl Range {
                     }
                 }
                 self.play_clock = self.play_clock.min(1.0);
-            } else if self.looping && self.run.is_some() {
+            } else if self.looping && !self.free_fire && self.run.is_some() {
                 self.loop_back();
             } else {
                 // While recording, a frame is 1/30 s of game time whatever the window's frame rate,
@@ -1912,7 +1916,7 @@ impl Range {
         if k < end {
             return false;
         }
-        if self.looping {
+        if self.looping && !self.free_fire {
             self.loop_back();
         } else {
             self.playing = false;
@@ -3536,7 +3540,8 @@ impl App {
             }
             KeyCode::KeyG => rg.adjust(Knob::SnapToShot, 1.0, false, false),
             KeyCode::Tab => rg.hide_ui = !rg.hide_ui,
-            KeyCode::KeyF => rg.fire_now(),
+            // F fires into the present state and plays on: it never loops back (owner, 2026-11-03).
+            KeyCode::KeyF => { rg.fire_now(); rg.free_fire = true; }
             KeyCode::Period | KeyCode::NumpadDecimal | KeyCode::KeyZ => rg.frame_tiger(),
             KeyCode::KeyC => rg.section.on = !rg.section.on,
             KeyCode::KeyV => {
