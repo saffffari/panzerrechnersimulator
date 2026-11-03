@@ -108,7 +108,8 @@ def july_mask():
 # The owner's standing rule (2026-11-03): before any compute, check that his game or editor is not
 # live; while it is, start nothing. Otherwise at most `--workers` (two) episodes at once. Checked
 # right before every episode starts.
-OWNER_GAME = r"panzerrechnersystem( fea-range| edit)?$|launch_demo"
+# The bracketed first letters keep the pattern from matching a command line that merely spells it.
+OWNER_GAME = r"[p]anzerrechnersystem( fea-range| edit)?$|[l]aunch_demo"
 _gpu = threading.Condition()
 _running = 0
 
