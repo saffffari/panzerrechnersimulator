@@ -317,7 +317,7 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     // the solid. It is drawn as the cut face of steel, facing the removed half, not as the plate's
     // inner skin (named in docs/PHYSICAL_TRUTH_AUDIT.md: at the skin's depth, not on the plane).
     var cut_face = false;
-    if (((pc.scars.w >> 24u) & 1u) != 0u && !front && kind < 0.5) {
+    if (((pc.scars.w >> 24u) & 1u) != 0u && ((pc.scars.w >> 25u) & 1u) == 0u && !front && kind < 0.5) {
         let behind = fr.section.w - dot(in.relative + fr.cam_pos.xyz, fr.section.xyz);
         if (dot(fr.cam_pos.xyz, fr.section.xyz) > fr.section.w && behind < 0.3) {
             cut_face = true;

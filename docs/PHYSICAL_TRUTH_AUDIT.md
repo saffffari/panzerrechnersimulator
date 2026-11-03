@@ -687,6 +687,13 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   the cabin lamps' top faces off their bodies, green faces floating by the gunner (owner report,
   2 November 2026). The tank's own snow is its catch, of which none is kept. Named approximation:
   a box-centre test, so a small object under the hull between the tracks is counted aboard.
+  A moving pool's bodies (hot fragments and their tails, a body's cells, lodged rounds, pieces in
+  flight) take no lying snow at all (2026-11-03): the lift moves each vertex along its own face's
+  normal, so a hard-edged box's faces parted by up to 6 cm round a 1-2 cm cube, drawn as offset
+  triangles and loose planes (owner report: "the faces are like offset in this like accordion
+  shape"). Open debt: any other hard-edged mesh out in the snow (a crate, a box prop) still has
+  its faces parted by the lift where the field differs between them; a lift along a welded
+  (shared-position) normal would close it.
 - The winter running gear (2026-11-02; `snow_cover::step_pack`, `Renderer::set_running_gear_snow`,
   `snow_gear_crust`). Nothing packed the tracks before: the Tiger's belt carried only
   centimetre flecks (`track_snow`), the enemies' nothing, and lying snow stays off every
@@ -1319,6 +1326,8 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   section on, a body solved on its cells also draws its inside cells within 1.5 cells of the plane
   (`crew_corpse_tissue::set_review_section`, set by the range alone), so the cut shows cells, not
   the inside of the drawn shell; the solve and the cells present are unchanged.
+  The section also cuts the moving pools' bodies (cells, fragments, rounds; camera only), each
+  showing its own material where cut rather than the steel cut face (scars.w bit 25).
   **Tissue knobs** (`crew_tissue::TissueTuning`): a review-only override of the crew lattice's
   authored constants (tear energies, critical stretches, momentum shares, active reach, the piece
   landing-breakup factor), set only by `fea-range` while it differs from the authored values; with
