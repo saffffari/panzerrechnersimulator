@@ -159,6 +159,8 @@ pub fn run(prefix: &str, map: &str) -> anyhow::Result<()> {
     let idle = TankInput::default();
 
     if bridge {
+        // The course sets its own start clock on its first update; step it first, then set the hour.
+        g.update(&idle, DT, &mut r);
         clock(&mut r, &queue, "1943-05-12T18:20:00Z")?;
         post(&mut g, Station::Commander, true, true);
         for (yaw, name) in [(0.0, "ahead"), (90.0, "right"), (180.0, "behind"), (270.0, "left")] {
