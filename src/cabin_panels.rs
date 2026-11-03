@@ -103,6 +103,8 @@ const DRIVER_GLASS: [f32; 2] = [0.0306, 0.0316];
 
 /// Colours (sRGB).
 const SILVER: [u8; 3] = [190, 192, 194];
+/// rm_gbuffer.wgsl `RM_INTERIOR_PAINT` (linear 0.7231, 0.6867, 0.6172) encoded as sRGB.
+const INTERIOR_PAINT_SRGB: [u8; 3] = [221, 216, 206];
 const NEEDLE_RED: [u8; 3] = [214, 28, 22];
 const DRUM_AMBER: [u8; 3] = [232, 148, 38];
 const SCALE_CREAM: [u8; 3] = [232, 227, 212];
@@ -210,10 +212,10 @@ fn atlases() -> (CpuImage, CpuImage) {
         for x in 0..ATLAS {
             let o = (y * ATLAS + x) * 4;
             let (rgb, metal, rough) = if y < SILVER_ROWS {
-                let g = hash(y as u32 * 7 + 1) - 0.5;
-                let fine = hash((y * ATLAS + x) as u32) - 0.5;
-                let shade = |c: u8| (c as f32 + g * 14.0 + fine * 3.0).clamp(0.0, 255.0) as u8;
-                (SILVER.map(shade), 1.0, 0.40 + g * 0.16)
+                // The slab bodies wear the Tiger's interior paint (the owner, 2026-11-03: "braun panels
+                // material grey should be changed to the same interior metal as the rest of the
+                // tank"): rm_gbuffer.wgsl `RM_INTERIOR_PAINT` in sRGB, its 0.70 roughness, dielectric.
+                (INTERIOR_PAINT_SRGB, 0.0, 0.70)
             } else {
                 let k = (x / 8).min(5);
                 let s = [Swatch::Black, Swatch::Bezel, Swatch::Bore, Swatch::Chrome, Swatch::Grille, Swatch::Key][k];
