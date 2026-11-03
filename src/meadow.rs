@@ -38,7 +38,17 @@ pub const MIN_PIXELS: f32 = 1.5;
 /// it out to `FAR_RADIUS_M`, where the mat sinks into the ground's own green.
 pub const NEAR_RADIUS_M: f32 = 100.0;
 pub const BAND_M: f32 = 12.0;
-pub const FAR_RADIUS_M: f32 = 450.0;
+/// Far blade tiles fade out by this radius while the canopy slab rises over [SLAB_START_M, SLAB_FULL_M].
+pub const FAR_RADIUS_M: f32 = 140.0;
+pub const SLAB_START_M: f32 = 90.0;
+pub const SLAB_FULL_M: f32 = 140.0;
+/// The slab's shell: 32 m tiles of 8 x 8 quads to `SLAB_SPLIT_M`, 128 m tiles of 16 x 16 beyond,
+/// out to `SLAB_RADIUS_M`.
+pub const SLAB_TILE_M: f32 = 32.0;
+pub const SLAB_TILE_FAR_M: f32 = 128.0;
+pub const SLAB_SPLIT_M: f32 = 600.0;
+pub const SLAB_RADIUS_M: f32 = 3000.0;
+pub fn slab_vertices(far: bool) -> u32 { if far { 16 * 16 * 6 } else { 8 * 8 * 6 } }
 pub const FAR_TILE_M: f32 = 8.0;
 pub const SALT_FAR: u32 = 0x6661_7274;
 /// Blades cast into the near sun cascade and the sky-cover map only this close to the eye.
@@ -201,6 +211,7 @@ pub fn wgsl_constants() -> String {
     f("MD_TILE", TILE_M); f("MD_NEAR_DENSITY", NEAR_DENSITY); f("MD_BLADE_WIDTH", BLADE_WIDTH_M);
     f("MD_MIN_PIXELS", MIN_PIXELS); f("MD_NEAR_RADIUS", NEAR_RADIUS_M); f("MD_BAND", BAND_M);
     f("MD_FAR_RADIUS", FAR_RADIUS_M); f("MD_FAR_TILE", FAR_TILE_M);
+    f("MD_SLAB_START", SLAB_START_M); f("MD_SLAB_FULL", SLAB_FULL_M); f("MD_SLAB_TILE", SLAB_TILE_M); f("MD_SLAB_TILE_FAR", SLAB_TILE_FAR_M);
     f("MD_SHADOW_RADIUS", SHADOW_RADIUS_M); f("MD_FLOWER_RADIUS", FLOWER_RADIUS_M); f("MD_FLOWER_CAP", FLOWER_CAP_PER_M2);
     f("MD_HEIGHT_MIN", HEIGHT_MIN_M); f("MD_HEIGHT_SPAN", HEIGHT_SPAN_M); f("MD_R2_A1", R2_A1); f("MD_R2_A2", R2_A2);
     f("MD_WIND_REFERENCE_HEIGHT", WIND_REFERENCE_HEIGHT_M); f("MD_TRACK_CELL", TRACK_CELL_M);

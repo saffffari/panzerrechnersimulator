@@ -39,6 +39,7 @@ pub struct MeadowStats {
     pub camera_levels: [usize; LEVELS],
     pub flower_tiles: usize,
     pub far_tiles: usize,
+    pub slab_tiles: [usize; 2],
     /// Upper bound of blades the camera's draws can emit this frame (capacity of its tiles).
     pub camera_blade_capacity: u64,
     pub track_pages: usize,
@@ -56,6 +57,9 @@ pub struct MeadowGpu {
     ranges: [[(u32, u32); LEVELS]; VIEWS],
     far_ranges: [(u32, u32); LEVELS],
     flowers: (u32, u32),
+    /// The canopy slab's shell tiles: (first, count) of 32 m tiles and of 128 m tiles.
+    slab: [(u32, u32); 2],
+    slab_gbuffer: wgpu::RenderPipeline,
     blade_gbuffer: wgpu::RenderPipeline,
     flower_gbuffer: wgpu::RenderPipeline,
     blade_depth: wgpu::RenderPipeline,
@@ -170,6 +174,16 @@ impl MeadowGpu {
             multiview: None, cache: None,
         });
         let blade_gbuffer = gbuffer("meadow-blades", "vs_blade");
+        let slab_gbuffer = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("meadow-slab"), layout: Some(&layout),
+            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_slab"), buffers: std::slice::from_ref(&instance), compilation_options: Default::default() },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(), bias: Default::default() }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &module, entry_point: Some("fs_slab"), targets: &targets, compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
         let flower_gbuffer = gbuffer("meadow-flowers", "vs_flower");
         let blade_depth = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("meadow-blades-depth"), layout: Some(&layout),
@@ -183,7 +197,7 @@ impl MeadowGpu {
             res, res, build.height_spacing, cover_res, cover_res, 2.0 * build.cover.half_extent, meadow::SPECIES.len());
         Self {
             view_bufs, binds, wind_tex, track_table, track_atlas, tiles,
-            ranges: [[(0, 0); LEVELS]; VIEWS], far_ranges: [(0, 0); LEVELS], flowers: (0, 0), blade_gbuffer, flower_gbuffer, blade_depth,
+            ranges: [[(0, 0); LEVELS]; VIEWS], far_ranges: [(0, 0); LEVELS], flowers: (0, 0), slab: [(0, 0); 2], slab_gbuffer, blade_gbuffer, flower_gbuffer, blade_depth,
             heights: build.heights, height_res: build.height_res, height_spacing: build.height_spacing, cover_half: build.cover.half_extent,
             pending: None, wind_origin: Vec2::ZERO, mean_wind: Vec2::ZERO, time: 0.0, track_pages: 0,
             stats: MeadowStats::default(),
@@ -280,6 +294,52 @@ impl MeadowGpu {
         let mut views = [GpuView { vp: Mat4::IDENTITY.to_cols_array_2d(), origin: [0.0; 4], eye: [0.0; 4], lod: [0.0; 4], wind: [0.0; 4], map: [0.0; 4], air: [0.0; 4] }; VIEWS];
         self.ranges = [[(0, 0); LEVELS]; VIEWS];
         self.far_ranges = [(0, 0); LEVELS];
+        self.slab = [(0, 0); 2];
+        // The slab's shell, camera only: a 128 m tile beyond the split distance is drawn whole,
+        // nearer it is split into its sixteen 32 m tiles, so the two never overlap.
+        let mut slab_tiles: [Vec<[i32; 4]>; 2] = [Vec::new(), Vec::new()];
+        {
+            let planes = frustum_planes(cam.view_proj());
+            let big = meadow::SLAB_TILE_FAR_M;
+            let reach = (meadow::SLAB_RADIUS_M / big).ceil() as i32 + 1;
+            let (cx, cz) = ((eye.x / big).floor() as i32, (eye.z / big).floor() as i32);
+            let tile_box = |x0: f32, z0: f32, size: f32| {
+                let h = size * 0.5;
+                let s = [self.ground(x0, z0), self.ground(x0 + size, z0), self.ground(x0, z0 + size), self.ground(x0 + size, z0 + size), self.ground(x0 + h, z0 + h)];
+                let (lo, hi) = s.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+                (Vec3::new(x0, lo - 4.0, z0), Vec3::new(x0 + size, hi + 4.0, z0 + size))
+            };
+            let near_far = |x0: f32, z0: f32, size: f32| {
+                let near = Vec2::new(eye.x.clamp(x0, x0 + size), eye.z.clamp(z0, z0 + size)).distance(eye2);
+                let far = Vec2::new(if eye.x < x0 + size * 0.5 { x0 + size } else { x0 }, if eye.z < z0 + size * 0.5 { z0 + size } else { z0 }).distance(eye2);
+                (near, far)
+            };
+            for tz in cz - reach..=cz + reach {
+                for tx in cx - reach..=cx + reach {
+                    let (x0, z0) = (tx as f32 * big, tz as f32 * big);
+                    if x0 + big <= -bound || z0 + big <= -bound || x0 >= bound || z0 >= bound { continue; }
+                    let (near, far) = near_far(x0, z0, big);
+                    if near > meadow::SLAB_RADIUS_M || far < meadow::SLAB_START_M { continue; }
+                    let (lo, hi) = tile_box(x0, z0, big);
+                    if !super::aabb_in_frustum(&planes, lo, hi) { continue; }
+                    if near >= meadow::SLAB_SPLIT_M {
+                        slab_tiles[1].push([tx, tz, 1, 2]);
+                        continue;
+                    }
+                    let k = (big / meadow::SLAB_TILE_M) as i32;
+                    for sz in 0..k {
+                        for sx in 0..k {
+                            let (ix, iz) = (tx * k + sx, tz * k + sz);
+                            let (x1, z1) = (ix as f32 * meadow::SLAB_TILE_M, iz as f32 * meadow::SLAB_TILE_M);
+                            let (_, far) = near_far(x1, z1, meadow::SLAB_TILE_M);
+                            if far < meadow::SLAB_START_M { continue; }
+                            let (lo, hi) = tile_box(x1, z1, meadow::SLAB_TILE_M);
+                            if super::aabb_in_frustum(&planes, lo, hi) { slab_tiles[0].push([ix, iz, 0, 2]); }
+                        }
+                    }
+                }
+            }
+        }
         self.flowers = (0, 0);
         for view in [1usize, 2, CAMERA] {
             let camera = view == CAMERA;
@@ -330,6 +390,12 @@ impl MeadowGpu {
                 self.flowers = ((base + tiles.len() - start) as u32, take as u32);
                 tiles.extend_from_slice(&flower_tiles[..take]);
                 stats.flower_tiles = take;
+                for (k, list) in slab_tiles.iter().enumerate() {
+                    let take = list.len().min(MAX_TILES.saturating_sub(tiles.len() - start));
+                    self.slab[k] = ((base + tiles.len() - start) as u32, take as u32);
+                    tiles.extend_from_slice(&list[..take]);
+                    stats.slab_tiles[k] = take;
+                }
             }
             stats.tiles[view] = tiles.len() - start;
             // Write this view's region.
@@ -371,6 +437,15 @@ impl MeadowGpu {
                 if count == 0 { continue; }
                 let l = level as u32;
                 pass.draw(0..meadow::far_capacity(l) * meadow::level_vertices(l), first..first + count);
+                work.scene_instanced_draws += 1;
+            }
+        }
+        if camera && self.slab.iter().any(|s| s.1 > 0) {
+            pass.set_pipeline(&self.slab_gbuffer);
+            pass.set_bind_group(0, &self.binds[view], &[]);
+            for (k, &(first, count)) in self.slab.iter().enumerate() {
+                if count == 0 { continue; }
+                pass.draw(0..meadow::slab_vertices(k == 1), first..first + count);
                 work.scene_instanced_draws += 1;
             }
         }

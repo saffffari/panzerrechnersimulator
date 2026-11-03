@@ -779,8 +779,28 @@ fn rm_source(name: &str) -> String {
         // The meadow's leaves (leaf_optics.rs, meadow.rs): cuticle f0, the canopy's leaf angle
         // projection G (spherical distribution), the radius within which blades cast into the
         // near cascade.
-        return format!("const RM_LEAF_F0: f32 = {:?};\nconst RM_LEAF_G: f32 = 0.5;\nconst RM_MEADOW_SHADOW_RADIUS: f32 = {:?};\n{text}",
-            crate::leaf_optics::cuticle_f0(1.47) as f32, crate::meadow::SHADOW_RADIUS_M);
+        let (gr, gt) = crate::leaf_optics::gamma_tables();
+        let list = |g: [f32; crate::leaf_optics::GAMMA_STEPS]| g.iter().map(|v| format!("{v:?}")).collect::<Vec<_>>().join(", ");
+        let n = crate::leaf_optics::GAMMA_STEPS;
+        return format!("const RM_LEAF_F0: f32 = {:?};\nconst RM_LEAF_G: f32 = 0.5;\nconst RM_MEADOW_SHADOW_RADIUS: f32 = {:?};\n\
+            const RM_HOTSPOT: f32 = {:?};\nconst RM_SOIL_ALBEDO: f32 = {:?};\n\
+            var<private> RM_GAMMA_R: array<f32, {n}> = array<f32, {n}>({});\n\
+            var<private> RM_GAMMA_T: array<f32, {n}> = array<f32, {n}>({});\n\
+            fn rm_slab_gamma(beta: f32, which: u32) -> f32 {{\n\
+                let x = clamp(beta / 3.14159265, 0.0, 1.0) * f32({n} - 1);\n\
+                let i = min(u32(x), {n}u - 2u);\n\
+                let t = x - f32(i);\n\
+                if (which == 0u) {{ return mix(RM_GAMMA_R[i], RM_GAMMA_R[i + 1u], t); }}\n\
+                return mix(RM_GAMMA_T[i], RM_GAMMA_T[i + 1u], t);\n\
+            }}\n\
+            fn rm_km_reflectance(rho: vec3<f32>, tau: vec3<f32>) -> vec3<f32> {{\n\
+                let omega = max(rho + tau, vec3(1e-6));\n\
+                let s = (vec3(0.5) + (rho - tau) / (6.0 * omega)) * omega;\n\
+                let q = (vec3(1.0) - omega) / max(s, vec3(1e-9));\n\
+                return vec3(1.0) + q - sqrt(q * q + 2.0 * q);\n\
+            }}\n{text}",
+            crate::leaf_optics::cuticle_f0(1.47) as f32, crate::meadow::SHADOW_RADIUS_M,
+            crate::leaf_optics::HOTSPOT, crate::leaf_optics::SOIL_ALBEDO, list(gr), list(gt));
     }
     text
 }
