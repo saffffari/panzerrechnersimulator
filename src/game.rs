@@ -204,6 +204,8 @@ pub(crate) mod tiger_front_optics;
 mod tiger_gunner_sight;
 #[path = "tiger_hatches.rs"]
 mod tiger_hatches;
+/// The roof lids' openings in their frames (the shaft stills of `sky-review` aim at them).
+pub(crate) use tiger_hatches::APERTURE_CENTERS as ROOF_APERTURE_CENTERS;
 #[path = "tiger_cupola.rs"]
 mod tiger_cupola;
 #[path = "tiger_periscopes.rs"]

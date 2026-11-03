@@ -39,7 +39,8 @@ struct Frame {
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
     cabin_air: RmCabinAir,        // the player's cabin air domains (cabin_medium.rs; rm_visibility.wgsl)
     cabin_motion: array<mat4x4<f32>, 3>, // per domain: world point now -> same frame point last frame
-    worn_count: vec4<f32>,        // x other vehicles worn at their edges and corners (Renderer::set_worn_vehicles)
+    worn_count: vec4<f32>,        // x other vehicles worn at their edges and corners (Renderer::set_worn_vehicles),
+                                  // y the apertures, z 1 = the cabin's key beam from the cascades alone (KESSEL_RM_SKIP 8388608)
     worn: array<vec4<f32>, 32>,   // per vehicle: centre xyz + reach m, then mechanical wear, exterior grime
     // The player's panes as daylight apertures (worn_count.y of them; rm_aperture.wgsl measures
     // each and names its face): col0 centre xyz + tint r, col1 the piece's shortest axis (unit)
