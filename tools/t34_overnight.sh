@@ -12,7 +12,7 @@ set -euo pipefail
 GENS=${1:-12}
 # Not even the trainer's first build of state starts while he is using the machine.
 # (The bracketed first letters keep the pattern from matching a command line that merely spells it.)
-while pgrep -f '[p]anzerrechnersystem( fea-range| edit)?$|[l]aunch_demo' >/dev/null; do sleep 30; done
+while pgrep -f 'release/[p]anzerrechnersystem( fea-range| edit)?$|[l]aunch_demo' >/dev/null; do sleep 30; done
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 BINS=/home/alex/panzer/t34-eyes-bin
 BIN=${BIN:-$BINS/eyes-train}
@@ -22,7 +22,7 @@ ROOT=/windows/shop/panzerrechnersystem
 JULY=$ROOT/assets/ai/weights_academy.bin
 OUT=$HERE/artifacts/t34-eyes-20261102
 # The owner's standing rule (2026-11-03): nothing starts while his game or editor is live.
-OWNER_GAME='[p]anzerrechnersystem( fea-range| edit)?$|[l]aunch_demo'
+OWNER_GAME='release/[p]anzerrechnersystem( fea-range| edit)?$|[l]aunch_demo'
 export KESSEL_ASSET_ROOT=$ROOT
 export KESSEL_CANYON_MANIFEST=$ROOT/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json
 export KESSEL_CANYON_V2=1 KESSEL_CANYON_T34S=5 KESSEL_CANYON_GUNS=0

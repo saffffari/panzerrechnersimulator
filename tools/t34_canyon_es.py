@@ -109,7 +109,7 @@ def july_mask():
 # live; while it is, start nothing. Otherwise at most `--workers` (two) episodes at once. Checked
 # right before every episode starts.
 # The bracketed first letters keep the pattern from matching a command line that merely spells it.
-OWNER_GAME = r"[p]anzerrechnersystem( fea-range| edit)?$|[l]aunch_demo"
+OWNER_GAME = r"release/[p]anzerrechnersystem( fea-range| edit)?$|[l]aunch_demo"
 _gpu = threading.Condition()
 _running = 0
 
