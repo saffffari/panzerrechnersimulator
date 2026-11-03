@@ -924,11 +924,6 @@ struct Wreck {
     cook_flash: f32, // brief fire-intensity spike right after a cook-off, decays to 0
     pressure_vent_started: bool,
     catastrophe_plume_started: bool,
-    /// The ammunition's burn before the turret goes: seconds left of the pressure building in
-    /// the compartment, during which the gas and flame jet from every real opening
-    /// (`drive_cookoff_build`); at zero the launch is armed.
-    vent_build_s: f32,
-    vent_last_tick: u32,
 }
 
 impl Wreck {
@@ -7482,6 +7477,10 @@ pub struct FatalHit {
     fragment_frame: BloodFrame,
     fragments: Vec<HotFragment>,
     fragment_contacts: Vec<FragmentDamageContact>,
+    /// The armour clock at the strike (`armor_clock_s`): the replay shows the struck plate whole
+    /// until the round arrives. Transient (a restored replay shows the wound throughout).
+    #[serde(skip)]
+    struck_at_s: Option<f32>,
 }
 
 // ── Death instant-replay (kill-cam) — phase timeline + camera/shell math ─────────────────────────
@@ -8492,11 +8491,6 @@ const HULL_BLOOD_MAX: Vec3 = Vec3::new(1.24, HULL_BLOOD_CEILING, 2.30);
 pub(crate) const N_HOT_FRAGMENTS: usize = 768;
 const N_HOT_FRAGMENT_BATCHES: usize = 5;
 const HOT_FRAGMENT_STAGE_CAPACITY: usize = N_HOT_FRAGMENTS;
-/// The stowage's burn before a turret goes (`drive_cookoff_build`): an authored estimate of how
-/// long a full stowage deflagrates before the ring vents [E].
-const COOKOFF_VENT_BUILD_S: f32 = 1.4;
-/// Radius of the turret race the gas vents round at the end of the build [E: T-34 1.42 m ring].
-const COOKOFF_RING_RADIUS_M: f32 = 0.71;
 const HOT_FRAGMENT_FIXED_DT: f32 = 1.0 / 480.0;
 const HOT_FRAGMENT_DAMAGE_MAX_S: f32 = 3.6;
 const HOT_FRAGMENT_TAIL_MIN_SPEED: f32 = 1.2;
@@ -10137,6 +10131,9 @@ pub struct Game {
     force_crew_ko_dir: Option<[f32; 2]>, // KESSEL_CREWKO_DIR=<deg> pins the screen spray axis for a screenshot
     // ── Death instant-replay (kill-cam) ────────────────────────────────────────────────────────
     death_replay: Option<death_replay::Aftermath>,
+    /// While a replay shows the moment before the killing strike: its armour clock, so the struck
+    /// plate is drawn whole (`ArmorField::struck_before`).
+    replay_scar_cutoff: Option<f32>,
     replay_cue: u8, // one-shot audio gate for the replay (0 none, 1 muzzle, 2 impact)
     // ── Crew-of-one interior workload (stations / manual reload / fire-fighting / repair) ─────────
     /// The posted station the ONE player is manning (source of truth). `gunner_optic` is a derived
@@ -14518,6 +14515,7 @@ impl Game {
             force_crew_ko,
             force_crew_ko_dir,
             death_replay: None,
+            replay_scar_cutoff: None,
             replay_cue: 0,
             // Crew-of-one interior workload. Boots posted at the Commander's cupola (matching the
             // buttoned/hatch default) with one round up the spout.
@@ -19828,7 +19826,9 @@ impl Game {
             return;
         }
         let player_frames = [self.player.hull_model(), self.player.turret_model()];
-        self.push_vehicle_scars(r, [self.slots.tiger[0], self.slots.tiger[1]], &self.armor_scars,
+        // A replay of the moment before the killing strike draws the plate as it stood then.
+        let before = self.replay_scar_cutoff.map(|t| self.armor_scars.struck_before(t));
+        self.push_vehicle_scars(r, [self.slots.tiger[0], self.slots.tiger[1]], before.as_ref().unwrap_or(&self.armor_scars),
             ArmorInterior::PlayerTiger, player_frames, false);
         for (ei, enemy) in self.enemies.iter().enumerate() {
             let rigs = [
@@ -29854,6 +29854,7 @@ impl Game {
                     fragment_frame: solution.frame,
                     fragments: solution.fragments.clone(),
                     fragment_contacts: solution.contacts.clone(),
+                struck_at_s: Some(self.armor_clock_s),
                 });
                 println!("[panzerrechnersystem] controlled crew lost — surviving people and machine damage retained");
                 return sound_context;
@@ -29882,6 +29883,7 @@ impl Game {
                 fragment_frame: solution.frame,
                 fragments: solution.fragments.clone(),
                 fragment_contacts: solution.contacts.clone(),
+            struck_at_s: Some(self.armor_clock_s),
             });
             println!(
                 "[panzerrechnersystem] KILLED — spall caught you at the {:?} station ({})",
@@ -29977,6 +29979,7 @@ impl Game {
             fragment_frame,
             fragments,
             fragment_contacts,
+            struck_at_s: Some(self.armor_clock_s),
         });
         println!("[panzerrechnersystem] CATASTROPHIC — ammunition detonation, Tiger destroyed.");
     }
@@ -30060,11 +30063,10 @@ impl Game {
                 w.t_pos = ring;
                 w.t_initial = turret_world;
                 w.t_gun_local = turret_world.inverse() * gun_world;
-                // The stowage burns first: the pressure builds for `COOKOFF_VENT_BUILD_S`, the
-                // gas and flame jetting from the breach and every open hole, and only then is
-                // the launch armed (`drive_cookoff_build` sets `t_launch_pending`); the terminal
-                // event has long attached its contact point and normal by then.
-                w.vent_build_s = COOKOFF_VENT_BUILD_S;
+                // The owner's rule (2026-11-02): one round going sets off the whole load at
+                // once, so the turret goes at once (`game_cookoff::enemy_cookoff_throw`); the
+                // former 1.4 s build-up of venting jets before the launch is gone.
+                w.t_launch_pending = true;
                 // A turret-popped tank has already vented its ammunition — no secondary cook-off.
                 w.cookoff_t = None;
             } else {
@@ -30078,9 +30080,9 @@ impl Game {
 
         if catastrophic {
             // The first blast at the ring (the ready rounds, `VEHICLE_KILL_TNT_KG`) and a spray
-            // of glowing debris, its boom and its front leaving now; the stowage's detonation,
-            // the turret's throw and the tearing metal come with the launch after the burn
-            // (`drive_cookoff_build`, the launch in `update_fx`).
+            // of glowing debris, its boom and its front leaving now; the whole load's
+            // detonation, the turret's throw and the tearing metal come with the launch on the
+            // next wreck update (`update_wrecks`).
             self.spawn_blast(ring, 6.5, 20.0, 0.7);
             self.spawn_debris(ring, 11, 15.0, seed);
             if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::KillExplosion, ring,
@@ -30136,10 +30138,20 @@ impl Game {
                     if w.t_launch_pending {
                         w.t_launch_pending = false;
                         launched = Some(w.t_pos);
-                        let source = self.wreck_turret_sources[wreck_kind_index(self.enemies[i].kind)].clone();
+                        let kind = self.enemies[i].kind;
+                        let source = self.wreck_turret_sources[wreck_kind_index(kind)].clone();
                         let (point, normal) = w.t_impact.unwrap_or((w.t_pos, Vec3::Y));
-                        w.t_body = wreck_turret::Body::launch(source, w.t_gun_local,
-                            w.t_initial, w.ignition_load, point, normal);
+                        // The whole load's throw in the vehicle's own compartment, leaning a little
+                        // away from the breach; the authored launch where no load is known.
+                        w.t_body = match game_cookoff::enemy_cookoff_throw(kind) {
+                            Some((speed, _, _)) => {
+                                let up = w.t_initial.transform_vector3(Vec3::Y).normalize_or_zero();
+                                let away = -(normal - up * normal.dot(up)).normalize_or_zero();
+                                let velocity = (up + away * 0.18).normalize_or_zero() * speed;
+                                wreck_turret::Body::thrown(source, w.t_gun_local, w.t_initial, velocity, up.cross(away) * 0.9)
+                            }
+                            None => wreck_turret::Body::launch(source, w.t_gun_local, w.t_initial, w.ignition_load, point, normal),
+                        };
                         if let Some(body) = &w.t_body {
                             println!("[wreck turret] #{i} estimated source mass {:.1} kg, impulse energy {:.1} J, speed {:.2} m/s, spin {:.3} rad/s",
                                 body.mass_kg, body.launched_energy_j, body.velocity.length(), body.angular_speed());
@@ -30160,14 +30172,24 @@ impl Game {
                 // ring, the turret's own report and the tearing metal, and the front that
                 // reaches the eye, the men, the trees and the grass at the speed of sound.
                 let seed = (i as u32).wrapping_mul(0x9E37_79B9) ^ self.kill_tick.wrapping_mul(0x85EB_CA6B);
-                self.spawn_blast(ring, 9.0, 26.0, 0.85);
+                // The whole load's fireball and front (`game_cookoff::enemy_cookoff_throw`).
+                let whole = game_cookoff::enemy_cookoff_throw(self.enemies[i].kind);
+                match whole {
+                    Some((_, fuel, _)) => {
+                        let (diameter, life) = game_cookoff::fireball(fuel);
+                        self.weapon_vfx.cookoff_fireball(ring + Vec3::Y * 0.5, Vec3::Y, game_cookoff::fireball_scale(fuel));
+                        self.spawn_blast_light(ring + Vec3::Y * (0.25 * diameter), 0.5 * diameter / 0.28, 26.0, life);
+                    }
+                    None => self.spawn_blast(ring, 9.0, 26.0, 0.85),
+                }
                 if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::TurretPop, ring,
                     seed.wrapping_add(0x7055), "enemy_catastrophic_kill")
                 {
                     self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring);
                 }
                 self.schedule_sound_from(crate::audio::Sfx::TurretRip, ring);
-                self.queue_blast_front(0x5400_0000 | u64::from(seed), ring, crate::sound_levels::AMMUNITION_DETONATION_TNT_KG, true);
+                let tnt = whole.map_or(crate::sound_levels::AMMUNITION_DETONATION_TNT_KG, |(_, _, tnt)| tnt);
+                self.queue_blast_front(0x5400_0000 | u64::from(seed), ring, tnt, true);
             }
             // Cosmetic pressure sequence uses the actual terminal breach. A merged closed
             // hatch is not invented as an opening. Mark once per wreck, not once per frame.
@@ -31590,49 +31612,8 @@ impl Game {
         self.mission_smoke(r);
     }
 
-    /// The ammunition burnout before a turret goes (the owner, 2026-11-02: "a jet of flames
-    /// shoots out of the top hatch as the pressure builds and leaks out of the openings before
-    /// the whole turret blows"). While the stowage deflagrates the compartment's pressure
-    /// climbs, and its gas and flame leave through every real opening: the terminal breach and
-    /// each open hole in the plates, hull and turret (a closed hatch is not invented as an
-    /// opening), as pressure-vent bursts whose cadence quickens with the pressure (one every
-    /// 0.35 s at first, every 0.08 s at the end), and in the last fifth of a second from the
-    /// turret ring all round as the race begins to lift. Then the launch is armed. The build-up
-    /// time is an authored estimate of a stowage's deflagration before the ring vents
-    /// (`wreck_turret` takes a fifth of it as the launch's gas).
-    fn drive_cookoff_build(&mut self, dt: f32) {
-        for i in 0..self.wrecks.len() {
-            let (build, fire_t, started) = {
-                let w = &self.wrecks[i];
-                if w.kind != WreckKind::TurretPop || w.vent_build_s <= 0.0 { continue; }
-                (w.vent_build_s, w.fire_t, w.vent_last_tick)
-            };
-            let progress = (1.0 - build / COOKOFF_VENT_BUILD_S).clamp(0.0, 1.0);
-            // One jet from the turret roof, where the hatch is (the commander's eye sits under
-            // it): re-issued every 0.3 s so it stands as long as the pressure builds, its
-            // strength (the jet's length and heat in the raymarch) rising with the build. The
-            // breach, the open holes and the ring vented separately before 2026-11-02; the
-            // owner asked for the one flame jet up through the roof.
-            let tick = (fire_t / 0.3) as u32;
-            if tick != started {
-                let e = &self.enemies[i];
-                let ring = self.wrecks[i].t_initial;
-                let roof = self.wreck_turret_sources[wreck_kind_index(e.kind)].turret_top_y();
-                let eye = e.parts.commander_eye;
-                let point = ring.transform_point3(Vec3::new(eye.x, roof + 0.02, eye.z));
-                let up = ring.transform_vector3(Vec3::Y).normalize_or_zero();
-                self.weapon_vfx.pressure_vent(point, up, 0.35 + 0.65 * progress);
-            }
-            let w = &mut self.wrecks[i];
-            if tick != started { w.vent_last_tick = tick; }
-            w.vent_build_s -= dt.max(0.0);
-            if w.vent_build_s <= 0.0 { w.t_launch_pending = true; }
-        }
-    }
-
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("update_fx");
-        self.drive_cookoff_build(dt);
         self.drive_fea_effects(dt, r);
         self.hide_claimed_field_people(r);
         // Persistent casualty physics advances once with the host simulation, never once per split

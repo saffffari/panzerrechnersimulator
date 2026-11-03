@@ -69,10 +69,20 @@ struct Frame {
     air_spectrum: vec4<f32>,
     // A fire's soot in the cabin air: x its extinction /m (Renderer::set_interior_soot).
     soot: vec4<f32>,
+    // The section's window (Renderer::set_replay_cutaway): centre xyz and radius w; with a radius
+    // only what lies within it of the line through the centre along the plane's normal is cut.
+    section_window: vec4<f32>,
 };
-// True where a camera pass must leave `world` out: beyond the film's section plane.
+// True where a camera pass must leave `world` out: beyond the film's section plane (within its
+// window, when it has one).
 fn rm_beyond_section(world: vec3<f32>) -> bool {
-    return any(fr.section.xyz != vec3<f32>(0.0)) && dot(world, fr.section.xyz) > fr.section.w;
+    if (all(fr.section.xyz == vec3<f32>(0.0)) || dot(world, fr.section.xyz) <= fr.section.w) { return false; }
+    if (fr.section_window.w > 0.0) {
+        let d = world - fr.section_window.xyz;
+        let lateral = d - fr.section.xyz * dot(d, fr.section.xyz);
+        return dot(lateral, lateral) < fr.section_window.w * fr.section_window.w;
+    }
+    return true;
 }
 const RM_APERTURES: u32 = 24u;
 // cabin_medium.rs `Uniform` (shaders/cabin_medium.wgsl `CabinMedium`): hull, turret, cupola.

@@ -121,9 +121,10 @@ impl Game {
         if self.mode == Mode::Foot { self.foot.pos + Vec3::Y * 0.9 } else { self.player.center() }
     }
 
-    pub(super) fn render_replay_interior(&mut self, phase: f32, r: &mut Renderer) {
-        if self.last_fatal.is_none() { return; }
-        let target = desired_time(phase);
+    /// Seek the recorded aftermath to `target` seconds after the strike and pose the scene for a
+    /// replay shot: bodies, blood, fragments, the Tiger, its hatches, scars and crew. Returns the
+    /// aftermath's transient lights at that time and the scene clock it started at.
+    fn replay_aftermath(&mut self, target: f32, r: &mut Renderer) -> (Vec<PointLight>, f32) {
         let mut replay = self.death_replay.take().unwrap_or_else(|| Aftermath {
             ragdolls: self.couch_ragdolls.clone(), blood: self.surface_blood.clone(),
             fragments: self.hot_fragments, blasts: self.blasts.clone(), elapsed: 0.0, scene_time: self.stealth.t,
@@ -182,7 +183,34 @@ impl Game {
         if self.singleplayer_crew_active { self.drive_singleplayer_crew_rigs_for_view(None, r); }
         else if self.couch_crew_active { self.drive_couch_crew_rigs_for_view(u32::MAX, r); }
         else { self.drive_physical_crew_casualties(r); }
+        (transient_lights, scene_time)
+    }
 
+    /// The aftermath's fire and lights at `target`, once the shot's camera is set.
+    fn replay_light(&mut self, target: f32, scene_time: f32, transient_lights: &[PointLight], r: &mut Renderer) {
+        // Fire is present only if the killing event actually ignited it. Ensure those source
+        // contacts exist on an immediate ammo death; don't run combat or ammunition damage again.
+        if self.fire_active {
+            let models = self.fire_surface_models();
+            self.cabin_fire.ensure_anchors(&models,
+                INTERIOR_FIRE_SPOTS.map(|p| models[0].transform_point3(p + Vec3::Y * 0.10)));
+            self.cabin_fire.update_fire(0.0, true, self.fire, &models, &[], self.hatch_open);
+        }
+        let live_time = self.stealth.t;
+        self.stealth.t = scene_time + target;
+        r.clear_smoke();
+        self.drive_interior_fire(r);
+        self.drive_lights_with_transients(r, false);
+        r.observer_flash_source = !transient_lights.is_empty();
+        r.extend_lights(transient_lights);
+        self.stealth.t = live_time;
+    }
+
+    pub(super) fn render_replay_interior(&mut self, phase: f32, r: &mut Renderer) {
+        if self.last_fatal.is_none() { return; }
+        r.set_replay_cutaway(None, &[]);
+        let target = desired_time(phase);
+        let (transient_lights, scene_time) = self.replay_aftermath(target, r);
         // The established rear turret witness eye stays inside the roof. Its parent is the
         // actual turret, so hull pitch, turret traverse and a displaced wreck remain coherent.
         // Never select a driver/optic/exterior eye based on the victim's last location.
@@ -197,23 +225,141 @@ impl Game {
         r.optic_mask = 0.0;
         r.interior_light = 1.0;
         r.weather_shelter = 1.0;
-        // Fire is present only if the killing event actually ignited it. Ensure those source
-        // contacts exist on an immediate ammo death; don't run combat or ammunition damage again.
-        if self.fire_active {
-            let models = self.fire_surface_models();
-            self.cabin_fire.ensure_anchors(&models,
-                INTERIOR_FIRE_SPOTS.map(|p| models[0].transform_point3(p + Vec3::Y * 0.10)));
-            self.cabin_fire.update_fire(0.0, true, self.fire, &models, &[], self.hatch_open);
-        }
-        let live_time = self.stealth.t;
-        self.stealth.t = scene_time + target;
-        r.clear_smoke();
-        self.drive_interior_fire(r);
-        self.drive_lights_with_transients(r, false);
-        r.observer_flash_source=!transient_lights.is_empty();
-        r.extend_lights(&transient_lights);
-        self.stealth.t = live_time;
+        self.replay_light(target, scene_time, &transient_lights, r);
     }
+
+    /// The penetration replay's first shot (2026-11-02, the owner): outside, at the struck
+    /// surface, the round arriving and the plate breaking in slow motion; then, in the same shot,
+    /// the struck part's armour (the turret with its gun, or the hull) cut away round the shot's
+    /// line from the outside inward through the plate's thickness (a camera-only cutaway,
+    /// `Renderer::set_replay_cutaway`), the fragments and what they did inside replayed slowly.
+    /// Presentation only: nothing is fired, hit or damaged again; the recorded aftermath is re-run
+    /// as the interior shot re-runs it.
+    pub fn render_replay_impact(&mut self, phase: f32, r: &mut Renderer) {
+        let Some((entry, shell_dir, struck_at)) = self.last_fatal.as_ref().map(|f| (f.entry_point, f.shell_dir, f.struck_at_s)) else { return };
+        let dir = shell_dir.normalize_or_zero();
+        if dir == Vec3::ZERO {
+            self.render_replay_interior(phase, r);
+            return;
+        }
+        r.ui_reset();
+        let phase = phase.clamp(0.0, 1.0);
+        let after = if phase < IMPACT_ARRIVE { 0.0 } else { (phase - IMPACT_ARRIVE) / (1.0 - IMPACT_ARRIVE) * IMPACT_AFTERMATH_S };
+        // Before the round arrives the struck plate is drawn as it stood.
+        self.replay_scar_cutoff = struck_at.filter(|_| phase < IMPACT_ARRIVE);
+        let (mut transient_lights, scene_time) = self.replay_aftermath(after, r);
+        self.replay_scar_cutoff = None;
+        // The camera outside the struck surface, closing toward the hole as the armour opens.
+        let models = self.fire_surface_models();
+        let clear = |eye: Vec3| eye.y > self.hf.height_at(eye.x, eye.z) + 0.3
+            && self.cabin_fire.sweep(eye, entry - dir * 0.05, &models).is_none();
+        let (eye, look) = impact_camera(entry, dir, clear);
+        // The round is drawn from a metre in front of the eye's depth along the shot (behind or
+        // at the eye it is not seen, or fills the lens) to the plate.
+        let reach = ((entry - eye).dot(dir) - 1.0).clamp(0.6, 6.0);
+        let open = smoothstep_unit((phase - IMPACT_CUT_START) / (IMPACT_CUT_END - IMPACT_CUT_START));
+        let eye = eye.lerp(entry - dir * 1.25 + (eye - entry - dir * (eye - entry).dot(dir)) * 0.6, 0.45 * open);
+        r.camera.pos = eye;
+        r.camera.set_forward(look - eye);
+        r.camera.fov_y = 50_f32.to_radians();
+        r.camera.znear = 0.05;
+        r.camera.zfar = 6000.0;
+        r.reticle = false;
+        r.crew_ko = 0.0;
+        r.concussion = 0.0;
+        r.optic_blast = 0.0;
+        r.optic_mask = 0.0;
+        r.interior_light = 0.0;
+        r.interior_haze = 0.0;
+        r.rt_mix = 1.0;
+        r.weather_shelter = 0.0;
+        r.set_interior_atmosphere_enabled(true);
+        // The round coming in, slowed.
+        let arrive = ((phase - 0.04) / (IMPACT_ARRIVE - 0.04)).clamp(0.0, 1.0);
+        if phase >= 0.04 && phase < IMPACT_ARRIVE {
+            r.set_visible(self.slots.tracer, true);
+            r.set_emissive(self.slots.tracer, 6.0);
+            r.set_model(self.slots.tracer, Mat4::from_scale_rotation_translation(Vec3::new(0.06, 0.06, 0.3),
+                Quat::from_rotation_arc(Vec3::Z, dir), entry - dir * (reach * (1.0 - arrive) + 0.3)));
+        }
+        // The strike's flash at the plate as it arrives.
+        let since = phase - IMPACT_ARRIVE;
+        if (0.0..0.05).contains(&since) {
+            transient_lights.push(PointLight { pos: entry - dir * 0.3, source_radius: 0.25,
+                color: Vec3::new(1.0, 0.62, 0.22), radiant_intensity: 5.0 * (1.0 - since / 0.05) });
+        }
+        // The cutaway: the struck armour's near side within a widening window round the shot's
+        // line, swept from the outer face in through the plate.
+        if open > 0.0 {
+            let thickness = self.replay_plate_thickness(entry, dir);
+            let depth = open * (thickness + 0.03);
+            let normal = -dir;
+            let plane = normal.extend(entry.dot(normal) - depth);
+            let radius = 0.15 + 0.75 * open;
+            // The struck part is cut with what is stowed on it: everything round the shot's line
+            // but the other part's armour (the hull for a turret hit, the turret and gun for a
+            // hull hit; the fatal record's fragment frame says which was struck).
+            let keep = match self.last_fatal.as_ref().map(|f| f.fragment_frame) {
+                Some(BloodFrame::Turret) => vec![self.slots.tiger[0]],
+                _ => vec![self.slots.tiger[1], self.slots.tiger[2]],
+            };
+            let tank = self.player.center();
+            let meshes: Vec<usize> = r.solid_meshes_within(tank - Vec3::splat(5.0), tank + Vec3::splat(5.0))
+                .into_iter().filter(|m| !keep.contains(m)).collect();
+            r.set_replay_cutaway(Some((plane, entry, radius)), &meshes);
+        } else {
+            r.set_replay_cutaway(None, &[]);
+        }
+        self.replay_light(after, scene_time, &transient_lights, r);
+    }
+
+    /// The struck plate's thickness along the shot (m): the tank's own surfaces met going in from
+    /// the entry and leaving the plate's back face; 0.1 m if they cannot be found.
+    fn replay_plate_thickness(&self, entry: Vec3, dir: Vec3) -> f32 {
+        let models = self.fire_surface_models();
+        let outer = self.cabin_fire.sweep(entry - dir * 0.4, entry + dir * 0.4, &models)
+            .map(|c| models[c.frame].transform_point3(c.point));
+        outer.and_then(|o| self.cabin_fire.sweep(o + dir * 0.004, entry + dir * 0.6, &models)
+            .map(|c| models[c.frame].transform_point3(c.point).distance(o)))
+            .map_or(0.1, |t| t.clamp(0.02, 0.3))
+    }
+
+    /// Whether the death's replay opens on the struck surface: a round through the armour killed
+    /// the man (the fatal record has the shot's direction), not the cook-off.
+    pub fn replay_has_impact(&self) -> bool {
+        !self.cookoff_death() && self.last_fatal.as_ref().is_some_and(|f| f.shell_dir.length_squared() > 1.0e-6)
+    }
+
+    /// Put the replay's cutaway away (the shots that follow see the whole vehicle).
+    pub fn end_replay_cutaway(&mut self, r: &mut Renderer) {
+        r.set_replay_cutaway(None, &[]);
+    }
+}
+
+fn smoothstep_unit(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The impact shot's phases: the round reaches the plate at `IMPACT_ARRIVE`; the armour opens
+/// from `IMPACT_CUT_START` to `IMPACT_CUT_END`; by the shot's end `IMPACT_AFTERMATH_S` of the
+/// strike has been replayed (half a second over three quarters of the shot).
+pub(super) const IMPACT_ARRIVE: f32 = 0.22;
+const IMPACT_CUT_START: f32 = 0.36;
+const IMPACT_CUT_END: f32 = 0.64;
+const IMPACT_AFTERMATH_S: f32 = 0.5;
+
+/// The impact shot's eye: 3.2 m back along the shot from its entry, a little to one side and up,
+/// on a point just inside the plate; the first candidate the `clear` test passes (above the ground
+/// with a clear line to the plate), else the first.
+pub(super) fn impact_camera(entry: Vec3, dir: Vec3, clear: impl Fn(Vec3) -> bool) -> (Vec3, Vec3) {
+    let side = dir.cross(Vec3::Y).normalize_or_zero();
+    let side = if side == Vec3::ZERO { Vec3::X } else { side };
+    let back = entry - dir * 3.2;
+    let candidates = [back + side * 0.8 + Vec3::Y * 0.45, back - side * 0.8 + Vec3::Y * 0.45,
+        back + Vec3::Y * 1.1, entry - dir * 4.2 + Vec3::Y * 1.6];
+    let eye = candidates.iter().copied().find(|&e| clear(e)).unwrap_or(candidates[0]);
+    (eye, entry + dir * 0.35)
 }
 
 #[cfg(test)]

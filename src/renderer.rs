@@ -2843,6 +2843,8 @@ pub struct Renderer {
     /// The film/review section plane (world normal xyz into the removed half, offset w), set only
     /// through `set_film_section`; None in play and in both shipping presets.
     film_section: Option<[f32; 4]>,
+    /// The section's window (`set_replay_cutaway`): centre xyz, radius w; zeros for none.
+    section_window: [f32; 4],
     /// Other vehicles' worn edges and corners this frame (`set_worn_vehicles`).
     pub(crate) worn_vehicles: Vec<[[f32; 4]; 2]>,
     /// The player's Tiger's exhaust puffs this frame (`exhaust_plume`), drawn by the raymarch
@@ -6277,6 +6279,7 @@ impl Renderer {
             wear: [0.0; 4],
             whitewash: 0.0,
             film_section: None,
+            section_window: [0.0; 4],
             worn_vehicles: Vec::new(),
             exhaust_puffs: Vec::new(),
             fog_bank: [0.0; 4],
@@ -6970,6 +6973,7 @@ impl Renderer {
     /// keep the whole vehicle, so the opened view shows the closed vehicle's own light. `None`
     /// clears it. A view for the film harness, never a change to the scene; play never sets it.
     pub fn set_film_section(&mut self, plane: Option<glam::Vec4>, meshes: &[usize]) {
+        self.section_window = [0.0; 4];
         for mesh in &mut self.meshes { mesh.section_cut = false; }
         self.film_section = plane.filter(|p| p.is_finite() && p.truncate().length() > 0.5).map(|p| p.to_array());
         if self.film_section.is_some() {
@@ -6978,6 +6982,27 @@ impl Renderer {
     }
     /// The plane `set_film_section` holds, if any (receipts and tests).
     pub fn film_section(&self) -> Option<[f32; 4]> { self.film_section }
+    /// The death replay's cutaway (`death_replay`, the owner's penetration replay): the film
+    /// section's camera-only cut held to a window, so only `meshes`' surfaces on the near side of
+    /// `plane` and within `radius` of the line through `centre` along its normal leave the camera's
+    /// G-buffer (and its glass and near-wound patches). The sun cascades, light faces, sky cover,
+    /// ray queries and every simulation query keep the whole vehicle: the opened view shows the
+    /// closed vehicle's own light. A presentation view of a replay; `None` clears it.
+    pub fn set_replay_cutaway(&mut self, cut: Option<(glam::Vec4, glam::Vec3, f32)>, meshes: &[usize]) {
+        match cut.filter(|(plane, centre, radius)| plane.is_finite() && centre.is_finite() && *radius > 0.0) {
+            Some((plane, centre, radius)) => {
+                let held = Some(plane);
+                self.set_film_section(held, meshes);
+                self.section_window = if self.film_section.is_some() { [centre.x, centre.y, centre.z, radius] } else { [0.0; 4] };
+            }
+            None => {
+                self.set_film_section(None, &[]);
+                self.section_window = [0.0; 4];
+            }
+        }
+    }
+    /// The section's window, centre xyz and radius (zeros for none).
+    pub fn section_window(&self) -> [f32; 4] { if self.film_section.is_some() { self.section_window } else { [0.0; 4] } }
     /// Every solid scene mesh whose world bounds lie inside `lo..hi`: the parts of a vehicle
     /// standing there, for a section view. Crew and other raster-only actors, terrain and glowing
     /// effect meshes are left out.

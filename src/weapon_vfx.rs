@@ -82,7 +82,10 @@ impl Weapon {
 struct Flight { from: Vec3, to: Vec3, age: f32, life: f32, weapon: Weapon, armor_normal: Option<Vec3> }
 #[derive(Clone, Copy)]
 #[derive(serde::Serialize, serde::Deserialize)]
-enum BurstKind { Muzzle, Blast, InteriorBlast, PressureVent(Vec3, f32), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet { normal:Vec3, energy_j:f32 }, BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
+enum BurstKind { Muzzle, Blast, InteriorBlast,
+    /// A cook-off's fireball (`game_cookoff`): an 88 mm burst's envelope with its visible size
+    /// scaled by the factor (its fireball's diameter against the 88 mm burst's).
+    CookoffFireball(f32), PressureVent(Vec3, f32), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet { normal:Vec3, energy_j:f32 }, BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
 impl BurstKind {
     fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet{..} | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
 }
@@ -212,9 +215,10 @@ impl Effects {
         let k = (0..BURSTS).map(|n| (self.next_burst + n) % BURSTS)
             .find(|&i| self.bursts[i].is_none()).unwrap_or_else(|| {
                 // A sustained MG stream must not erase a sixteen-second cookoff plume before
-                // its ballistic apex. Reuse ordinary/muzzle emitters before catastrophe slots.
+                // its ballistic apex, nor a cook-off's fireball. Reuse ordinary/muzzle emitters
+                // before catastrophe slots.
                 (0..BURSTS).map(|n|(self.next_burst+n)%BURSTS).find(|&i| {
-                    !matches!(self.bursts[i].unwrap().kind,BurstKind::FullCookoff(_)|BurstKind::PressureVent(..))
+                    !matches!(self.bursts[i].unwrap().kind,BurstKind::FullCookoff(_)|BurstKind::PressureVent(..)|BurstKind::CookoffFireball(_))
                 }).unwrap_or(self.next_burst)
             });
         if self.bursts[k].is_some(){self.replaced_bursts+=1;}
@@ -234,6 +238,13 @@ impl Effects {
     /// raymarch backend's detonation cloud leaves the surface along it.
     pub(super) fn blast(&mut self, pos: Vec3, normal: Vec3, radius: f32) {
         self.burst(pos, normal.normalize_or_zero(), radius, 6.0, BurstKind::Blast, Weapon::Cannon(88));
+    }
+    /// A cook-off's fireball: the burning propellant and fillers venting from the open ring or
+    /// hatches, `scale` its diameter against the 88 mm burst's (the caller's fireball law); the
+    /// sparks keep the 88's charge (their own bounded law).
+    pub(super) fn cookoff_fireball(&mut self, pos: Vec3, normal: Vec3, scale: f32) {
+        if !scale.is_finite() { return; }
+        self.burst(pos, normal.normalize_or_zero(), 2.9, 6.0, BurstKind::CookoffFireball(scale.clamp(1.0, 24.0)), Weapon::Cannon(88));
     }
     /// Cabin fragmentation already comes from the authoritative solver. Keep the same ignition
     /// flash and smoke without adding uncollided exterior ejecta through the compartment.
@@ -580,6 +591,8 @@ impl Effects {
         self.bursts.iter().flatten().filter_map(|&b|gpu_burst_record(b)).collect()
     }
     fn draw_burst(&mut self, mut b: Burst, eye: Vec3, remaining: usize) -> usize {
+        // The raster path draws a cook-off's fireball as the blast flash at its size (bounded).
+        if let BurstKind::CookoffFireball(scale) = b.kind { b.kind = BurstKind::Blast; b.radius = (2.9 * scale).min(9.0); }
         // Only exterior blast presentation expands; source damage and cabin ignition do not.
         if matches!(b.kind,BurstKind::Blast) {b.radius*=gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER;}
         if matches!(b.kind,BurstKind::PressureVent(..)|BurstKind::FullCookoff(_)|BurstKind::Ground{..}|BurstKind::PenetrationSmoke(_)|BurstKind::HotRim{..}) {return 0;}
@@ -733,6 +746,8 @@ fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
         // path's flash presentation (`draw_burst`), not a 4.6x on burning residue (2026-11-02:
         // blast sparks at 46-175 m/s were gone from the plate within a frame).
         BurstKind::Blast=>(gpu_weapon::BLAST,BLAST_SPARKS,b.dir,0.0,b.radius/2.9,0.0,1.0),
+        // The fireball's size scale rides in `parameters.y` (zero for an ordinary blast).
+        BurstKind::CookoffFireball(scale)=>(gpu_weapon::BLAST,BLAST_SPARKS,b.dir,0.0,1.0,scale,1.0),
         BurstKind::Impact=>(gpu_weapon::BLAST,IMPACT_SPARKS,Vec3::ZERO,0.0,0.0,0.0,1.0),
         BurstKind::ArmorImpact(n)=>(gpu_weapon::ARMOR_IMPACT,IMPACT_SPARKS,n,ARMOR_FLASH_OFFSET_M,0.0,0.0,1.0),
         BurstKind::Ricochet{normal,energy_j}=>(gpu_weapon::RICOCHET,if heavy {CANNON_RICOCHET_SPARKS}else{SMALL_ARM_RICOCHET_SPARKS},normal,ARMOR_RICOCHET_OFFSET_M,energy_j.max(0.0),0.0,1.0),
@@ -876,6 +891,8 @@ impl Game {
         smoke.sort_by(|a,b|a.pos.distance_squared(r.camera.pos).total_cmp(&b.pos.distance_squared(r.camera.pos)));
         for mut b in smoke {
             if !b.kind.emits_smoke(){continue;}
+            // A cook-off's fireball smokes as a blast at its (bounded) size on this path.
+            if let BurstKind::CookoffFireball(scale)=b.kind { b.kind=BurstKind::Blast; b.radius=(2.9*scale).min(9.0); }
             if let BurstKind::PenetrationSmoke(normal)=b.kind {
                 let radius=b.radius*(0.4+0.6*b.age.sqrt());
                 let wind=Vec3::new(self.weapon_vfx.wind.x,0.0,self.weapon_vfx.wind.y);

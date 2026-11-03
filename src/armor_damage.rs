@@ -499,6 +499,19 @@ impl ArmorField {
         self.revision
     }
 
+    /// The field as it stood before `time_s`: the scars struck at or after it left out (a replay's
+    /// view of the moment before a strike; a scar struck again then goes with it, named).
+    pub fn struck_before(&self, time_s: f32) -> ArmorField {
+        let keep: Vec<usize> = (0..self.scars.len()).filter(|&i| self.struck_at(i) < time_s).collect();
+        ArmorField {
+            scars: keep.iter().map(|&i| self.scars[i]).collect(),
+            struck_s: keep.iter().map(|&i| self.struck_at(i)).collect(),
+            rim_k: keep.iter().map(|&i| self.rim_kelvin(i)).collect(),
+            rim_curve: keep.iter().map(|&i| self.rim_curve(i)).collect(),
+            revision: self.revision ^ 0x8000_0000,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.scars.is_empty()
     }
