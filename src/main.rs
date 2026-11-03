@@ -118,6 +118,7 @@ mod platoon_proof;
 mod wreck_fire_review;
 mod raymarch_showcase;
 mod eye_review;
+mod eye_local;
 mod fx_review;
 mod canyon_director;
 mod playtest_mode;

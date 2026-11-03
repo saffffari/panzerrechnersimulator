@@ -9,6 +9,7 @@
 mod smoke_support;
 #[path="renderer_world_state.rs"]
 mod renderer_world_state;
+use crate::eye_local::EyeLocal;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -1184,7 +1185,9 @@ struct CrushUniform {
     debug: [f32; 4],
     /// The eye's field state for the display (byte 192, copied from the view's eye state every
     /// metered frame): x = the CIE 191 mesopic coefficient of the field's adaptation (lane 14), the
-    /// floor of each pixel's local mesopic weight (`observer::local_rod_weight`). Appended lane.
+    /// floor of each pixel's local mesopic weight (`observer::local_rod_weight`); y = the cone
+    /// adaptation (lane 12, byte 196), z = the metered luminance (lane 15, byte 200), w = the local
+    /// adaptation's strength (`observer::local_cone_gain`). Appended lane.
     eye: [f32; 4],
 }
 
@@ -3056,6 +3059,10 @@ pub struct Renderer {
     exp_binds: Vec<wgpu::BindGroup>,
     exp_bufs: Vec<wgpu::Buffer>,
     exp_clock_buf: wgpu::Buffer,
+    /// The eye's local adaptation (`eye_local.wgsl`, `observer::local_cone_gain`): the cell,
+    /// horizontal and vertical pooling passes, their bind group and parameters, and the setting
+    /// in use (pooling sigma in degrees, strength).
+    eye_local: EyeLocal,
     replay_previous_elapsed: Option<f32>,
     replay_exposure_time: Option<f32>,
     continuous_camera_translation: bool,
@@ -6003,6 +6010,8 @@ impl Renderer {
             wgpu::Extent3d{width:64,height:64,depth_or_array_layers:1});
         let blue_noise_view=blue_noise_texture.create_view(&Default::default());
 
+        let eye_local = EyeLocal::new(device, &hdr_view);
+
         let crush_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("crush-bgl"),
             entries: &[
@@ -6027,6 +6036,8 @@ impl Renderer {
                     ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Uint,
                         view_dimension:wgpu::TextureViewDimension::D2,multisampled:false},count:None},
                 tex_entry(8), // the sub-pixel emitters' radiance (rod pooling)
+                tex_entry(9), // the eye's pooled neighbourhood luminance (local adaptation)
+                sampler_entry(10),
             ],
         });
         let crush_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -6059,6 +6070,8 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {binding:7,resource:wgpu::BindingResource::TextureView(&blue_noise_view)},
                 wgpu::BindGroupEntry {binding:8,resource:wgpu::BindingResource::TextureView(&point_view)},
+                wgpu::BindGroupEntry {binding:9,resource:wgpu::BindingResource::TextureView(&eye_local.pooled_view)},
+                wgpu::BindGroupEntry {binding:10,resource:wgpu::BindingResource::Sampler(&eye_local.sampler)},
             ],
         });
         let crush_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -6432,6 +6445,7 @@ impl Renderer {
             exp_binds,
             exp_bufs,
             exp_clock_buf,
+            eye_local,
             replay_previous_elapsed: None,
             replay_exposure_time: None,
             continuous_camera_translation: false,
@@ -8851,9 +8865,14 @@ impl Renderer {
             loupe: self.loupe,
             real: self.real,
             debug: [if std::env::var("KESSEL_POINT_LAYER_VIEW").as_deref() == Ok("1") { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-            eye: [unmetered.mesopic_m as f32, 0.0, 0.0, 0.0],
+            // y, z: the cone adaptation and the metered luminance, copied from the eye's lanes 12
+            // and 15 on metered frames; 0 here, so an unmetered frame has no local adaptation.
+            // w: the local adaptation's strength (none under a fixed debug exposure).
+            eye: [unmetered.mesopic_m as f32, 0.0, 0.0,
+                if self.exposure_override.is_some() { 0.0 } else { self.eye_local.strength }],
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
+        self.eye_local.upload(queue, self.camera.fov_y, self.camera.aspect);
         if let Some(surface) = &self.rt_surface_gpu {
             let triangles = self.meshes.iter().filter(|m| m.glass && m.visible)
                 .flat_map(|m| {
@@ -9529,6 +9548,7 @@ impl Renderer {
             encoder.copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8);
             // The field's mesopic coefficient (lane 14) for the pixels' local mesopic weight.
             encoder.copy_buffer_to_buffer(eye, 56, &self.crush_buf, 192, 4);
+            self.encode_eye_local(encoder, eye);
             if let Some(optics) = &self.raster_optics {
                 // Port images take the same eye (one frame later, as they render first).
                 optics.copy_eye_mapping(encoder, eye);
@@ -11148,6 +11168,15 @@ impl Renderer {
         drop(mapped);
         readback.unmap();
         Ok(state)
+    }
+
+    /// The eye's local adaptation for the frame just metered (both backends call it right after
+    /// the meter): pool the HDR's neighbourhood luminance (`eye_local.wgsl`) and give the crush
+    /// the eye's cone adaptation (lane 12) and metered luminance (lane 15) it is drawn between.
+    pub(crate) fn encode_eye_local(&self, encoder: &mut wgpu::CommandEncoder, eye: &wgpu::Buffer) {
+        encoder.copy_buffer_to_buffer(eye, 48, &self.crush_buf, 196, 4);
+        encoder.copy_buffer_to_buffer(eye, 60, &self.crush_buf, 200, 4);
+        self.eye_local.encode(encoder, self.gpu_profile.as_ref().and_then(|p| p.compute("eye-local")));
     }
 
     /// Read one view's whole eye state (the 32 lanes `exposure.wgsl` documents) for the opt-in
@@ -13610,7 +13639,10 @@ mod atmosphere_tests {
         // source-contract module, after the actual renderer implementation and GPU copies.
         let shipping = renderer.split("\n#[cfg(test)]\nmod atmosphere_tests").next().unwrap();
         let copies: Vec<_> = shipping.match_indices("copy_buffer_to_buffer(eye,").collect();
-        assert_eq!(copies.len(), 3, "cone, rod and mesopic lanes into crush");
+        assert_eq!(copies.len(), 5, "cone, rod and mesopic lanes, and the local adaptation's cone and metered lanes, into crush");
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 48, &self.crush_buf, 196, 4)"));
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 60, &self.crush_buf, 200, 4)"));
+        assert!(include_str!("renderer_raymarch.rs").contains("r.encode_eye_local(encoder, eye);"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 56, &self.crush_buf, 192, 4)"));
@@ -13622,8 +13654,10 @@ mod atmosphere_tests {
         // A view starts adapted to its first frame; an optic's own eye also when it is returned to
         // (observer::OPTIC_RESNAP_GAP_S), and only then. Lane 30 holds an outdoor first snap one
         // frame for the glare split's background (the small-bright-source veil, 2 Nov 2026).
-        assert!(eye.contains("if (state[1] < 0.0 || state[30] > 0.5 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP))"),
+        assert!(eye.contains("let fresh = state[1] < 0.0 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP);"),
             "a view starts adapted to its first frame");
+        // The snap repeats for SNAP_HOLD_S of frames so stale histories cannot become the eye.
+        assert!(eye.contains("if (fresh || state[30] > 0.5 || (clock.time_s < state[31] && state[1] >= 0.0)) {"));
         // An authored lighting record cannot expose the camera; only the debug gate can fix it.
         let authored = renderer.split("pub fn apply_authored_lighting").nth(1).unwrap()
             .split("pub fn apply_campaign_atmosphere").next().unwrap();
@@ -13646,7 +13680,8 @@ mod atmosphere_tests {
         // The cone channel is the frame plus a fixated sub-pixel point's foveal concentration.
         assert!(crush.contains("let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));"));
         // The rods' local share (observer::local_rod_weight) scales the display rod term only.
-        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;"),
+        // The eye's local adaptation (observer::local_cone_gain) scales the cone term only.
+        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure * local_gain + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;"),
             "the display's rod reproduction acts only on the rod term");
         assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));"),
             "the night's hue outdoors, achromatic rods inside the hull");
