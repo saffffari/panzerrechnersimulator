@@ -177,6 +177,8 @@ mod pixel_particles;
 mod pressure_front;
 mod incandescence;
 mod cabin_fumes;
+#[cfg(test)]
+mod point_footprint;
 mod heat_haze;
 mod world_doors;
 mod prims;
