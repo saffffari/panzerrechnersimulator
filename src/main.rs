@@ -13475,12 +13475,17 @@ impl WindowState {
                         .and_then(|value| value.parse::<u64>().ok()).unwrap_or(1944);
                     let enabled = g.expedition_initial_camp_position()
                         .and_then(|position| g.enable_expedition(seed, position))
-                        .and_then(|()| g.begin_expedition_at_camp(&mut r));
+                        .and_then(|()| if canyon::selected_course_camp_start_in_tank() {
+                            // In the Tiger at the course's start; the camp and the half-track
+                            // stand behind, to walk or drive back to.
+                            g.sync_expedition_now()
+                        } else { g.begin_expedition_at_camp(&mut r) });
                     if let Err(error) = enabled {
                         eprintln!("[canyon] cannot set up the course's camp: {error:#}");
                         return false;
                     }
-                    println!("[canyon] the course's camp and half-track are installed; the commander starts at the camp");
+                    println!("[canyon] the course's camp and half-track are installed; the commander starts {}",
+                        if canyon::selected_course_camp_start_in_tank() { "in the Tiger" } else { "at the camp" });
                 }
                 if let Some(start) = campaign_start.as_ref() {
                     if let Err(error) = g.configure_campaign(&start, &mut r) {
