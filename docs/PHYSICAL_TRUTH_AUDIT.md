@@ -1668,6 +1668,28 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   break-up for the `fea-film` range review only: the harness opens its gate and nothing else
   does (test `the_tune_is_the_constants_unless_the_review_allows_it`), so play and both
   shipping presets keep the constants above.
+- **Blood: droplets the anatomy's cell, a continuous coat, the owner's look** (2026-11-03,
+  `surface_blood`, `surface_fire::SourceContacts::supports_cell`, `game::blood_material`).
+  - Every droplet is a 1 cm cube, the crew anatomy's own cell (the owner: "blood voxels should be
+    the same size as character voxels"), replacing the 1.5-6 mm distribution. The wound events'
+    counts were set against that distribution; each count is converted to the 1 cm droplets that
+    hold the same blood (its mean droplet volume, 0.031 cm³, against 1 cm³: about 32 to one), so a
+    full burst is about a litre. A droplet wets its volume at a 1 mm coat (authored), about 3 cm
+    across.
+  - The coat is continuous across the facets of a curved surface: a film cell is covered by its
+    own plane's triangles together with those of a facet turned by less than 25 degrees (the film's
+    own facet carry) whose plane lies within sin 25 degrees of the cell's edge of every corner,
+    their footprints projected onto the cell's plane. Before, a cell across a crease was covered by
+    neither facet alone and left a bare strip a cell wide along every facet edge (the owner's pale
+    lines through a pooled coat). A gap or a hole still has no cover (test), and the same rule
+    applies to the fire's surface cells that use this test.
+  - Look (owner-directed presentation): opaque, a bright saturated red base, roughness 0.12 and
+    metallic 0.86, so it reads nearly black except in its reflections (the owner: "an opaque dark
+    red, make sure it's shiny though and a bit metallic", "more red and brighter, but use the
+    metallic knob to make it really dark like almost black"). Blood is a dielectric: its metallic
+    response is the owner's art direction, not a measured property. The droplets, the coat and the
+    pools under the couch dead share it.
+  - Not yet seen rendered (no renders while the owner works).
 - **The round as a deformable body** (2026-11-03, `fea_damage::shot`, review film
   `fea-shot-film`; the owner: shells must squash, bend, ricochet and spin off the armour and break
   into shrapnel, each by its kind). Status: joined to play for perforations and ricochets. The round of a
