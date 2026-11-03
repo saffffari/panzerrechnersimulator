@@ -45,6 +45,15 @@ pub const LUMINANCE_PER_UNIT_RADIANCE: f64 = 72_983.3;
 /// pixel's share of this disc (`crush.wgsl` `eye_response`); its cones take it whole. Extended
 /// fields (everything else, the stars included) are unchanged.
 pub const ROD_SUMMATION_DIAMETER_DEG: f64 = 0.5;
+/// The fovea has no rods: the rod-free foveola is about 0.35 mm, 1.25 deg, across (Curcio,
+/// Sloan, Kalina & Hendrickson 1990, "Human photoreceptor topography", J. Comp. Neurol.
+/// 292:497); rod density climbs steeply beyond it and is past a third of its peak by about 5 deg.
+/// A sub-pixel emitter near the line of sight (the screen's centre, where the eye fixates) gives
+/// no rod signal; its pooled rod share rises to full by `ROD_FULL_DEG` (crush.wgsl). Extended
+/// fields keep the whole-field rod model (a named limit: the eye's central night blind spot is
+/// not drawn).
+pub const ROD_FREE_RADIUS_DEG: f64 = 0.6;
+pub const ROD_FULL_DEG: f64 = 5.0;
 /// The share of a sub-pixel emitter's scotopic luminance its own pixel's rods see (crush.wgsl).
 pub fn rod_point_share(pixel_deg: f64) -> f64 {
     (pixel_deg * pixel_deg / (std::f64::consts::PI * 0.25 * ROD_SUMMATION_DIAMETER_DEG * ROD_SUMMATION_DIAMETER_DEG)).clamp(0.0, 1.0)
@@ -61,6 +70,9 @@ mod rod_pooling_tests {
         // The shader carries the same law; stars are not in the point layer.
         let crush = include_str!("../shaders/crush.wgsl");
         assert!(crush.contains("let rod_seen = max(radiance - point * (1.0 - share), vec3(0.0));"));
+        // The fovea is rod-free for points: the share is scaled by the rods' presence there.
+        assert!(crush.contains("smoothstep(OBS_ROD_FREE_RADIUS_DEG, OBS_ROD_FULL_DEG, eccentricity)"));
+        assert!(super::ROD_FREE_RADIUS_DEG < 1.0 && super::ROD_FULL_DEG > 2.0);
         assert!(!include_str!("../shaders/rm_shade.wgsl").contains("point_layer"));
     }
 }
@@ -602,6 +614,8 @@ pub fn wgsl_constants() -> String {
     push("OBS_SCOTOPIC_B", SCOTOPIC_WEIGHTS[2]);
     push("OBS_LUMINANCE_PER_UNIT_RADIANCE", LUMINANCE_PER_UNIT_RADIANCE);
     push("OBS_ROD_SUMMATION_DEG", ROD_SUMMATION_DIAMETER_DEG);
+    push("OBS_ROD_FREE_RADIUS_DEG", ROD_FREE_RADIUS_DEG);
+    push("OBS_ROD_FULL_DEG", ROD_FULL_DEG);
     push("OBS_METER_MIN", METER_MIN_CD_M2);
     push("OBS_METER_MAX", METER_MAX_CD_M2);
     push("OBS_FOVEA_RADIUS_DEG", METER_FOVEA_RADIUS_DEG);
