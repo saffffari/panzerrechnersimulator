@@ -319,7 +319,28 @@ impl Grass {
             material.as_ref().map(|(d, n)| (d.as_slice(), *n)), mask.as_ref().map(|(d, n)| (d.as_slice(), *n)),
             half_extent, river.as_ref(), &|x, z| hf.height_at(x, z)));
         let presence = cover.rg.chunks(2).map(|c| c[0] as f64).sum::<f64>() / (cover.res * cover.res) as f64 / 255.0;
+        // The growing season's sun (mid-May, hourly) at the act's site, and the trees' crowns.
+        let site = r.sky_clock.site;
+        let suns: Vec<Vec3> = (0..24).filter_map(|h| {
+            let instant = crate::ephemeris::UtcInstant::parse_iso(&format!("1942-05-15T{h:02}:30:00Z")).ok()?;
+            let sun = crate::ephemeris::CelestialState::at(instant, site).sun;
+            (sun.altitude_deg > 2.0).then(|| sun.engine_direction().as_vec3().normalize())
+        }).collect();
+        let assets = manifest["assets"].as_array().cloned().unwrap_or_default();
+        let occluders: Vec<crate::meadow::Occluder> = manifest["placements"].as_array().map(|list| list.iter().filter_map(|p| {
+            let a = p.as_array()?;
+            let name = assets.get(a.first()?.as_u64()? as usize)?.as_str()?.rsplit('/').next()?.to_ascii_lowercase();
+            if !(name.contains("tree") || name.contains("pine")) || name.contains("stump") || name.contains("log") { return None; }
+            let scale = a.get(5).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            // Crown estimates: 12 m (deciduous) or 14 m (pine) tall, 3.5 m across the radius.
+            let height = if name.contains("pine") { 14.0 } else { 12.0 } * scale;
+            Some(crate::meadow::Occluder { at: Vec2::new(a.get(1)?.as_f64()? as f32, a.get(3)?.as_f64()? as f32), height, radius: 3.5 * scale })
+        }).collect()).unwrap_or_default();
+        let exposure_started = std::time::Instant::now();
+        let exposure = crate::meadow::sun_exposure(&|x, z| hf.height_at(x, z), &occluders, half_extent, &suns);
+        println!("[meadow] sun exposure: {} hourly suns, {} tree crowns, {:.2} s", suns.len(), occluders.len(), exposure_started.elapsed().as_secs_f32());
         r.install_meadow(device, queue, crate::meadow::Build {
+            exposure,
             heights: hf.heights.clone(), height_res: hf.res, height_spacing: hf.spacing, cover: cover.clone() });
         let wing_batches = (0..crate::meadow_fauna::BUTTERFLIES.len()).filter_map(|s|
             r.add_dynamic_instanced_pool(device, queue, &crate::meadow_fauna::wing_mesh(s), 2 * 96)).collect();
@@ -342,6 +363,7 @@ impl Grass {
                 "nearest_butterfly": m.butterflies.alive.iter().min_by(|a, b| a.pos.distance(m.eye).total_cmp(&b.pos.distance(m.eye))).map(|b| b.pos.to_array()),
                 "butterflies_flying": m.butterflies.alive.iter().filter(|b| !b.perched()).count(),
                 "fireflies_lit_within_30_m": m.fireflies.iter().filter(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye) < 30.0).count(),
+                "nearest_lit_firefly": m.fireflies.iter().min_by(|a, b| Vec3::new(a[0], a[1], a[2]).distance(m.eye).total_cmp(&Vec3::new(b[0], b[1], b[2]).distance(m.eye))).map(|f| [f[0], f[1], f[2]]),
                 "nearest_lit_firefly_m": m.fireflies.iter().map(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye)).fold(f32::INFINITY, f32::min), "sun_altitude_deg": m.sun_altitude_deg,
                 "near_density_per_m2": crate::meadow::NEAR_DENSITY, "draw_radius_m": crate::meadow::FAR_RADIUS_M,
                 "ground_class_loaded": self.mask.is_some(), "primary_raster_only": false,
