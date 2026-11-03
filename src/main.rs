@@ -13190,6 +13190,8 @@ impl WindowState {
                 // Lost, outdated or an unspecified failure (often memory pressure): configure the
                 // surface again; a swapchain that cannot come back keeps failing quietly.
                 self.surface.configure(&self.device, &self.config);
+                // No vsync wait happens on a failed acquire: wait a frame here, or the loop spins.
+                std::thread::sleep(std::time::Duration::from_millis(16));
                 None
             }
         }
