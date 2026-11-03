@@ -60,6 +60,7 @@ mod ai_doctrine;
 mod anti_infantry_ai;
 mod armor_damage;
 mod fea_damage;
+mod periscope_optics_review;
 mod cabin_heat;
 #[cfg(test)]
 mod asset_catalog;
@@ -117,6 +118,8 @@ mod radio_llm;
 mod platoon_proof;
 mod wreck_fire_review;
 mod raymarch_showcase;
+mod eye_review;
+mod eye_local;
 mod fx_review;
 mod canyon_director;
 mod playtest_mode;
@@ -725,6 +728,31 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         // survey camera. Use the same world-fixed roots and wind as a real exterior view.
         g.prepare_world_survey(&mut r, 1.0 / 60.0);
         println!("[grass] survey {}", g.world_survey_grass_stats());
+    }
+    // KESSEL_SHOT_AIM=sun|moon|antisun[:PITCH_OFFSET_DEG] turns the recon camera to face that
+    // body's compass bearing (the antisolar point's for `antisun`) at its altitude plus the offset
+    // (`sun:8` puts the setting Sun low in the frame), for the sky's look-development stills;
+    // KESSEL_SHOT_FOV=DEG narrows the view. Headless only; the bodies are where the clock puts them.
+    if let (Some(_), Ok(aim)) = (cam, std::env::var("KESSEL_SHOT_AIM")) {
+        let mut parts = aim.split(':');
+        let body = parts.next().unwrap_or("");
+        let offset = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+        let state = r.celestial().state;
+        let (position, flip) = match body {
+            "sun" => (state.sun, false),
+            "moon" => (state.moon, false),
+            "antisun" => (state.sun, true),
+            other => anyhow::bail!("unknown KESSEL_SHOT_AIM {other:?}; use sun, moon or antisun"),
+        };
+        let azimuth = if flip { position.azimuth_deg + 180.0 } else { position.azimuth_deg };
+        let altitude = if flip { 0.0 } else { position.altitude_deg };
+        r.camera.yaw = (azimuth as f32).to_radians();
+        r.camera.pitch = (altitude as f32 + offset).to_radians();
+        println!("[sky] aim {body}: azimuth {azimuth:.2} altitude {:.2} (sun {:+.2}, moon {:+.2}, lit {:.3})",
+            position.altitude_deg, state.sun.altitude_deg, state.moon.altitude_deg, state.moon_phase.illuminated_fraction);
+    }
+    if let Some(fov) = std::env::var("KESSEL_SHOT_FOV").ok().and_then(|v| v.parse::<f32>().ok()) {
+        r.camera.fov_y = fov.clamp(1.0, 120.0).to_radians();
     }
     if std::env::var("KESSEL_DEMOLISH_BUILDING").is_ok() {
         // The build hook exercised the real damage/state/render path. The requested aftermath frame
@@ -17022,6 +17050,20 @@ impl ApplicationHandler for App {
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
                         // In a cook-off death the world runs on behind its outside shots.
                         let cookoff = state.game.cookoff_death();
+                        // The casualties' tissue solves run behind the fade and the black (the
+                        // world is frozen meanwhile): taken back while the screen is black, and
+                        // waited for before any view of the world returns.
+                        if state.game.casualty_tissue_pending() {
+                            let shot = card.filter(|card| card.is_silent()).map(|card| death_shot_for(cookoff,
+                                state.game.replay_has_impact(), card, nt, state.game.last_fatal.is_some()));
+                            match shot {
+                                Some(DeathShot::Fade) => {}
+                                Some(DeathShot::Black) => state.game.settle_casualty_tissue(false),
+                                None if nt < DEATH_FADE => {}
+                                None if nt < DEATH_END - 0.25 => state.game.settle_casualty_tissue(false),
+                                _ => state.game.settle_casualty_tissue(true),
+                            }
+                        }
                         if cookoff && card.is_some_and(|card| matches!(cookoff_shot(card, nt), DeathShot::Throw(_) | DeathShot::Crew(_))) {
                             state.game.update_realtime(&TankInput::default(), dt, &mut state.renderer);
                         }
@@ -17032,6 +17074,7 @@ impl ApplicationHandler for App {
                                 state.game.death_score_finished()) == death_card::Phase::Finished
                         });
                         if finished {
+                            state.game.settle_casualty_tissue(true);
                             // However long the last frame took, the dead Game ends silent.
                             state.game.set_audio_silenced(true);
                             // Acts 1/2 restore their entrance checkpoint. Act 3 has spent its single
@@ -17388,6 +17431,9 @@ fn main() -> anyhow::Result<()> {
     if args.get(1).is_some_and(|s| s == "raymarch-exhaust") {
         return raymarch_showcase::run_exhaust(&capture_arg(&args, 2, "raymarch_exhaust"));
     }
+    if args.get(1).is_some_and(|s| s == "eye-review") {
+        return eye_review::run(&capture_arg(&args, 2, "eye_review"), args.get(3).map(String::as_str).unwrap_or("canyon"));
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-cabin") {
         return raymarch_showcase::run_cabin(&capture_arg(&args, 2, "raymarch_cabin"));
     }
@@ -17464,10 +17510,20 @@ fn main() -> anyhow::Result<()> {
         let shots = (args.get(2).map(String::as_str) == Some("--shots")).then(|| capture_arg(&args, 3, "fea_range"));
         return game::game_fea_range::run(shots.as_deref());
     }
+    if args.len() >= 2 && args[1] == "cabin-panels" {
+        // GPU: the radio operator's sets and the driver's panel at dusk, cabin lamps on
+        // (KESSEL_RENDERER=raymarch; KESSEL_CABIN_SHOTS / KESSEL_CABIN_CLOCK / KESSEL_CABIN_LAMPS).
+        return game::game_cabin_panels_review::run(&capture_arg(&args, 2, "cabin_panels"));
+    }
     if args.len() >= 2 && args[1] == "fea-play" {
         // GPU: the layered damage model in play (KESSEL_RENDERER=raymarch): lodged rounds, the
         // loader's hands, the field repair and an interior burst, with stills and a receipt.
         return game::game_fea_review::run(&capture_arg(&args, 2, "fea_play"));
+    }
+    if args.len() >= 2 && args[1] == "fea-shot-film" {
+        // CPU only: slow-motion film of the round as a deformable body against a plate (squash,
+        // ricochet and tumble, break-up), with a receipt.
+        return fea_damage::shot_film::run(&capture_arg(&args, 2, "fea_shot_film"));
     }
     if args.len() >= 2 && args[1] == "fea-cross-section" {
         // CPU only: the layered damage model's slow-motion cross sections (no wgpu device).
@@ -17691,6 +17747,10 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or("assets/tanks/tiger/baked/tiger_hull.glb");
         let prefix = capture_arg(&args, 3, "texel");
         return texelsplat::run_texel(glb, &prefix);
+    }
+    if args.len() >= 2 && args[1] == "periscope-optics" {
+        let prefix = capture_arg(&args, 2, "periscope_optics");
+        return periscope_optics_review::run(&prefix);
     }
     if args.len() >= 2 && args[1] == "cupola" {
         let prefix = capture_arg(&args, 2, "cupola");

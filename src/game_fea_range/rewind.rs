@@ -352,6 +352,7 @@ impl Checkpoint {
     pub(super) fn capture(g: &Game, r: &Renderer, previous: Option<(&Checkpoint, &BTreeMap<String, Vec<u8>>)>)
         -> anyhow::Result<(Self, BTreeMap<String, Vec<u8>>)> {
         anyhow::ensure!(g.fea.started.is_none(), "a plate solve is being started inside this update");
+        anyhow::ensure!(!g.casualty_tissue_pending(), "a casualty's tissue is solving on its worker");
         let started = std::time::Instant::now();
         let raw = encode(g, r)?;
         let encoded_ms = started.elapsed().as_secs_f32() * 1000.0;
@@ -420,6 +421,8 @@ impl Checkpoint {
     /// the present state are assigned (the heavy world owners, trees and buildings, rarely do).
     pub(super) fn restore(&self, g: &mut Game, r: &mut Renderer) -> anyhow::Result<()> {
         r.time = self.clock_s;
+        // A casualty's tissue still solving on its worker belongs to the moment left: let go.
+        g.deferred_carves.clear();
         let started = std::time::Instant::now();
         let now = encode(g, r)?;
         let fields = self.decoded();
@@ -697,6 +700,11 @@ impl Rewind {
             return;
         }
         self.step_s[k as usize] = step_s;
+        // A frame that ends with a casualty's tissue solving on its worker (taken back at the next
+        // update's start) is not kept: a seek steps through it from the frame before.
+        if g.casualty_tissue_pending() {
+            return;
+        }
         if self.bytes > REWIND_BUDGET_BYTES && k % SPARSE_EVERY != 0 {
             return;
         }

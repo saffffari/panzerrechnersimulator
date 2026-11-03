@@ -887,7 +887,7 @@ pub(crate) fn fire_odds(shots: usize, out: &str) -> anyhow::Result<()> {
                 let mut solver = lattice::Lattice::new(impact);
                 solver.solve();
                 let outcome = game_fea::lattice_outcome(&mut solver, line.entry, axes, t0.elapsed().as_secs_f32() * 1000.0);
-                game_fea::lattice_fragments(&line, chain_result.burst, &outcome, hull, parent, frame, penetration_id, &event, seed)
+                game_fea::lattice_fragments(&line, chain_result.burst, &outcome, hull, parent, frame, penetration_id, &event, seed, None)
             }
             None => {
                 let entry = parent.inverse().transform_point3(contact.pos);

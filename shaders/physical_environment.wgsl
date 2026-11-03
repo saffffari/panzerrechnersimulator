@@ -848,9 +848,41 @@ fn physical_ozone_column_density_m(
     return 0.0;
 }
 
+// Chapman's grazing-incidence function: the slant column of an exponential atmosphere of scale
+// height `scale_m` toward a body at zenith cosine `mu`, seen from radius `radius_m`, relative to
+// the vertical column; past the local horizon it carries the planet's screening by the identity
+// Ch(x, chi > 90) = 2 Ch(x sin chi, 90) exp(x - x sin chi) - Ch(x, 180 - chi) (Schueler 2012,
+// GPU Pro 3; within 1 % of the exact function above 90 deg and a few per cent at the horizon).
+// physical_environment.rs `chapman`.
+fn physical_chapman(radius_m: f32, scale_m: f32, mu: f32) -> f32 {
+    let x = radius_m / max(scale_m, 1.0);
+    let c = sqrt(0.5 * PHYSICAL_ENV_PI * x);
+    if (mu >= 0.0) { return c / ((c - 1.0) * mu + 1.0); }
+    let s = sqrt(max(1.0 - mu * mu, 0.0));
+    let c0 = sqrt(0.5 * PHYSICAL_ENV_PI * x * s);
+    // 1 - s without the cancellation near the horizon.
+    let lift = x * mu * mu / (1.0 + s);
+    return 2.0 * c0 * exp(min(lift, 80.0)) - c / ((c - 1.0) * (-mu) + 1.0);
+}
+// The effective cosine of a body for the diffuse field at altitude `altitude_m`: the inverse of
+// Chapman's function for the molecular scale height. In an exponential atmosphere the light a
+// column takes from a beam per unit of ground is the beam's irradiance over Ch, so the plane
+// two-stream solve with this cosine is the sphere's (exactly where Ch varies slowly up the
+// column; the planet's screening below the horizon, exp(-R delta^2 / 2H) for a depression delta,
+// is constant up it to first order). Above some 20 deg it is the plain cosine; at the horizon
+// about 1/35, not zero; 6 deg down about 1/5,000; 18 deg down nothing. The twilight sky's
+// higher orders and the Earth's shadow's blue come from here (3 November 2026: the plain cosine
+// cut them off the moment the Sun set, and the shadow rendered black).
+fn physical_spherical_cosine(environment: PhysicalEnvironment, altitude_m: f32, mu: f32) -> f32 {
+    let scale = max(environment.atmosphere_cloud_bottom.y, 1.0);
+    return 1.0 / max(physical_chapman(environment.planet_center_radius.w + max(altitude_m, 0.0), scale, mu), 1.0);
+}
+
 // Spectral diffuse horizontal flux arriving at cloud top after Rayleigh/Mie/ozone transport in
 // the atmosphere above it. This is another two-stream solve over physically integrated columns,
-// not an authored blue term.
+// not an authored blue term. `cosine_solar_zenith` is the source's effective cosine for a
+// spherical atmosphere (physical_spherical_cosine); the slab's angular shape is taken at no less
+// than 1e-3, the energy it intercepts at the cosine itself.
 fn physical_upper_atmosphere_diffuse_flux(
     environment: PhysicalEnvironment,
     from_altitude_m: f32,
@@ -858,6 +890,7 @@ fn physical_upper_atmosphere_diffuse_flux(
     irradiance: vec3<f32>,
 ) -> vec3<f32> {
     let mu0 = clamp(cosine_solar_zenith, 1.0e-3, 1.0);
+    let intercepted = clamp(cosine_solar_zenith, 0.0, 1.0);
     let remaining = max(environment.atmosphere_cloud_bottom.x - from_altitude_m, 0.0);
     let rayleigh_scale = max(environment.atmosphere_cloud_bottom.y, 1.0);
     let mie_scale = max(environment.atmosphere_cloud_bottom.z, 1.0);
@@ -894,7 +927,7 @@ fn physical_upper_atmosphere_diffuse_flux(
             effective_g,
             mu0,
         );
-        diffuse_flux[channel] = irradiance[channel] * mu0
+        diffuse_flux[channel] = irradiance[channel] * intercepted
             * max(flux.transmittance - flux.direct_transmittance, 0.0);
     }
     return diffuse_flux;
@@ -1030,14 +1063,14 @@ fn physical_multiple_scattering_radiance(
                 cloud_diffuse.transmittance, second_direction, second_irradiance);
     } else {
         if (dot(key_direction, key_direction) > 0.0) {
-            let mu0 = dot(up, normalize(key_direction));
-            if (mu0 > 0.0 && max(max(key_irradiance.x, key_irradiance.y), key_irradiance.z) > 0.0) {
+            let mu0 = physical_spherical_cosine(environment, altitude, dot(up, normalize(key_direction)));
+            if (mu0 > 1.0e-9 && max(max(key_irradiance.x, key_irradiance.y), key_irradiance.z) > 0.0) {
                 flux += physical_upper_atmosphere_diffuse_flux(environment, altitude, mu0, key_irradiance);
             }
         }
         if (dot(second_direction, second_direction) > 0.0) {
-            let mu0 = dot(up, normalize(second_direction));
-            if (mu0 > 0.0 && max(max(second_irradiance.x, second_irradiance.y), second_irradiance.z) > 0.0) {
+            let mu0 = physical_spherical_cosine(environment, altitude, dot(up, normalize(second_direction)));
+            if (mu0 > 1.0e-9 && max(max(second_irradiance.x, second_irradiance.y), second_irradiance.z) > 0.0) {
                 flux += physical_upper_atmosphere_diffuse_flux(environment, altitude, mu0, second_irradiance);
             }
         }
@@ -1060,12 +1093,18 @@ fn physical_cloud_source_lower_flux(
     }
     let direction = normalize(direction_raw);
     let mu0 = dot(column_up, direction);
+    let top = environment.cloud_top_lwc_radius_coverage.x;
+    // The air above the deck is a sphere's: its diffuse light outlasts the Sun's setting on the
+    // deck's top, which only the plain cosine lights.
+    let spherical = physical_spherical_cosine(environment, top, mu0);
+    let upper_diffuse_flux = select(vec3(0.0),
+        physical_upper_atmosphere_diffuse_flux(environment, top, spherical, irradiance),
+        spherical > 1.0e-9);
     if (mu0 <= 0.0) {
-        return vec3(0.0);
+        return upper_diffuse_flux * cloud_diffuse_transmittance;
     }
     // Two metres is a numerical ray-origin offset at planetary f32 scale, not an optical layer.
     // Millimetre epsilons disappear when added to the 6,360 km radius on Vulkan.
-    let top = environment.cloud_top_lwc_radius_coverage.x;
     let top_position = environment.planet_center_radius.xyz
         + column_up * (environment.planet_center_radius.w + top + 2.0);
     let top_transmittance = physical_solar_transmittance(environment, top_position, direction);
@@ -1078,12 +1117,6 @@ fn physical_cloud_source_lower_flux(
     let diffuse_transmittance = max(flux.transmittance - flux.direct_transmittance, 0.0);
     let direct_generated_diffuse_flux = irradiance * top_transmittance
         * (mu0 * diffuse_transmittance);
-    let upper_diffuse_flux = physical_upper_atmosphere_diffuse_flux(
-        environment,
-        top,
-        mu0,
-        irradiance,
-    );
     return direct_generated_diffuse_flux + upper_diffuse_flux * cloud_diffuse_transmittance;
 }
 
@@ -1115,10 +1148,10 @@ fn physical_airglow_hemispheric_flux(environment: PhysicalEnvironment, altitude_
 // Unresolved, deterministic stars in a rotating celestial frame with the real sky's population
 // (physical_environment.rs STAR_*: the same lattice, share, magnitude law and irradiance). Radiance
 // enters above the atmosphere: the ordinary volumetric cloud/aerosol transmittance occludes it.
-const PHYSICAL_STAR_CELLS: f32 = 96.0;
+const PHYSICAL_STAR_CELLS: f32 = 170.0;
 const PHYSICAL_STAR_SHARE: f32 = 0.16;
 const PHYSICAL_STAR_MAG_BRIGHTEST: f32 = -1.5;
-const PHYSICAL_STAR_MAG_FAINTEST: f32 = 6.5;
+const PHYSICAL_STAR_MAG_FAINTEST: f32 = 7.5;
 const PHYSICAL_STAR_V0_IRRADIANCE: f32 = 3.6e-11;
 fn physical_star_irradiance(x: f32) -> f32 {
     let lo = pow(10.0, 0.5 * PHYSICAL_STAR_MAG_BRIGHTEST);

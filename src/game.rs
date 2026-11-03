@@ -66,6 +66,8 @@ mod game_fea_effects;
 pub(crate) mod game_fea_section;
 #[path = "game_fea_review.rs"]
 pub(crate) mod game_fea_review;
+#[path = "game_cabin_panels_review.rs"]
+pub(crate) mod game_cabin_panels_review;
 #[path = "game_fea_film.rs"]
 pub(crate) mod game_fea_film;
 #[path = "game_fea_range.rs"]
@@ -197,6 +199,8 @@ mod recovery_threat;
 mod soldier_life;
 #[path = "driver_panel.rs"]
 mod driver_panel;
+#[path = "cabin_panels.rs"]
+mod cabin_panels;
 #[path = "tank_editor_play.rs"]
 mod tank_editor_play;
 #[path = "surface_blood.rs"]
@@ -2704,7 +2708,7 @@ fn lan_crew_mesh(color: [u8; 3]) -> CpuMesh {
 /// of paper-thin irregular pools and a few solid fragments rather than a luminous red decal. The
 /// local frame matches `corpse_mesh`: head toward +Z, floor at y=0.
 fn crew_gore_mesh() -> CpuMesh {
-    let color = [110, 9, 7];
+    let color = WET_BLOOD[0];
     let boxes: [(Vec3, Vec3); 9] = [
         (Vec3::new(-0.32, 0.006, 0.22), Vec3::new(0.28, 0.026, 0.65)),
         (Vec3::new(-0.45, 0.008, 0.32), Vec3::new(-0.18, 0.024, 0.78)),
@@ -2729,7 +2733,9 @@ fn crew_gore_mesh() -> CpuMesh {
         mn = mn.min(lo);
         mx = mx.max(hi);
     }
-    CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx)
+    let mut mesh = CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx);
+    blood_material(&mut mesh);
+    mesh
 }
 
 /// The one and only wet-blood render primitive: one unit cube, never a packed cluster. Runtime
@@ -2737,12 +2743,27 @@ fn crew_gore_mesh() -> CpuMesh {
 /// strict visible-grain == physics-body contract while hundreds of grains share this tiny mesh.
 fn blood_grain_mesh(color: [u8; 3]) -> CpuMesh {
     let mut mesh = box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), color);
-    // Fresh droplets are a dark, wet dielectric: the highlight comes from the scene lights, not
-    // metallic response or self-emission. Keep the low roughness even on tiny facets so a furnace
-    // flash catches individual grains instead of turning the whole cloud into matte red dust.
-    mesh.metallic_factor = 0.0;
-    mesh.roughness_factor = 0.08;
+    blood_material(&mut mesh);
     mesh
+}
+
+/// Blood's look (2026-11-03, the owner: "an opaque dark red, make sure it's shiny though and a bit
+/// metallic", then "more red and brighter, but use the metallic knob to make it really dark like
+/// almost black"): an opaque, saturated red base, glossy, and mostly metallic, so it reads nearly
+/// black except where it catches a reflection. An owner-directed presentation choice: blood is a
+/// dielectric, and its metallic response is not a measured property (ledger).
+pub(super) const BLOOD_METALLIC: f32 = 0.86;
+pub(super) const BLOOD_ROUGHNESS: f32 = 0.12;
+pub(super) const WET_BLOOD: [[u8; 3]; 4] = [[178, 14, 12], [196, 20, 14], [160, 10, 10], [186, 16, 12]];
+
+fn blood_material(mesh: &mut CpuMesh) {
+    mesh.metallic_factor = BLOOD_METALLIC;
+    mesh.roughness_factor = BLOOD_ROUGHNESS;
+}
+
+/// The crew anatomy's cell (m): blood droplets are this size (`surface_blood::DROPLET_M`).
+pub(crate) fn crew_tissue_cell_m() -> f32 {
+    0.01
 }
 
 /// The one and only live hot-steel primitive: one unit cube. Each independently simulated
@@ -2827,7 +2848,7 @@ fn micro_spark_tail_pose(spark: &MicroSpark) -> Option<(Vec3, Quat, Vec3)> {
 /// stays dark, non-emissive and present in the physical ray scene.
 fn dried_blood_stain_mesh(color: [u8; 3]) -> CpuMesh {
     let mut mesh = crate::prims::box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), color);
-    mesh.roughness_factor = 0.34;
+    blood_material(&mut mesh);
     mesh
 }
 
@@ -3292,6 +3313,10 @@ impl ProjectileShooter {
     }
 }
 
+fn full_mass_fraction() -> f32 {
+    1.0
+}
+
 /// One live shell. `pos`, `velocity`, `distance_m` and `seed` are the authoritative modeled state;
 /// no target or terminal result exists until a swept segment actually reaches physical geometry.
 #[derive(Clone, Debug)]
@@ -3317,6 +3342,10 @@ struct AuthoritativeProjectile {
     /// Gravity/wind restart at a resolved deflection; total lifetime and range never reset.
     flight_epoch_s:f32,
     ricochet_count:u8,
+    /// The share of its mass the round still has after its ricochets (its own solve,
+    /// `fea_damage::shot`); 1 for a round that has struck nothing.
+    #[serde(default = "full_mass_fraction")]
+    mass_fraction:f32,
     muzzle_cleared:bool,
     passed_at_gun_part:Option<(usize,u8)>,
     ignored_structure: Option<usize>,
@@ -3362,6 +3391,7 @@ impl AuthoritativeProjectile {
             retained_speed:1.0,
             flight_epoch_s:0.0,
             ricochet_count:0,
+            mass_fraction:1.0,
             muzzle_cleared:false,
             passed_at_gun_part:None,
             ignored_structure: None,
@@ -3782,8 +3812,12 @@ fn crew_live_model(player: &Tank, post: crate::lan::LanRole) -> Mat4 {
         crate::lan::LanRole::Driver => {
             (player.hull_model(), Vec3::new(0.535, 0.675745, 1.777748), 0.0, 0.80)
         }
+        // The seated figure (contact ~0.40, back ~-0.10 mesh units) on the radio seat's cushion
+        // (Hull_0394, top y 0.92-0.96, z 1.55-1.91), back to its backrest plate (Hull_0414, front
+        // face z 1.501); eye ~1.59, the player's at this post 1.58. Until 3 November 2026 the
+        // pre-fit (-0.66, 0.38, 1.42): boots through the belly plate, seat 0.24 m inside the pedestal.
         crate::lan::LanRole::Radio => {
-            (player.hull_model(), Vec3::new(-0.66, 0.38, 1.42), 0.0, 0.80)
+            (player.hull_model(), Vec3::new(-0.635, 0.635, 1.58), 0.0, 0.80)
         }
         crate::lan::LanRole::Gunner => (
             player.turret_model(),
@@ -9842,7 +9876,8 @@ pub struct Game {
     roof_hatches: tiger_hatches::RoofHatches, // lid motion, independent of head-out exposure
     driver_visor_lean: f32, // local seated aim phase; never grants roof exposure or repair access
     driver_shutters: tiger_driver_shutters::Shutters,
-    driver_fuel_panel: driver_panel::FuelPanel,
+    tpz_cover: driver_panel::TpzCover,
+    cabin_panels: cabin_panels::CabinPanels,
     driver_look: glam::Vec2, // seated glance, independent of other crew posts
     radio_look: glam::Vec2, // retained full-circle look at the bow MG/radio post
     cupola_focus: tiger_periscopes::FocusState,
@@ -10240,6 +10275,9 @@ pub struct Game {
     /// Physical state keyed by the same stable peer identity as `couch_casualties`. The four
     /// dedicated render slots are never recycled: every body keeps its final transform until reset.
     couch_ragdolls: Vec<CrewRagdoll>,
+    /// Casualties' tissue solves running behind the death's fade and black
+    /// (`settle_casualty_tissue`); the world does not advance while any is pending.
+    deferred_carves: Vec<crew_tissue::DeferredCarve>,
     crew_corpse_render: std::cell::RefCell<Option<crew_corpse_render::Corpses>>,
     crew_body_recovery: crew_body_recovery::Recovery,
     couch_last_casualty: Option<CouchCrewCasualty>,
@@ -11689,8 +11727,12 @@ impl Game {
         anyhow::ensure!(direct_glass[0].is_none(), "new authored hull glass needs explicit integration with the repaired driver visor");
         direct_glass[0]=Some(driver_visor_glass);
         direct_glass[1]=Some(sight.turret_glass);
+        let mut tiger_glass_m = [0.0f32; 3];
         for (k, gm) in direct_glass.into_iter().enumerate() {
             if let Some(m) = gm {
+                // The driver's visor block and the turret's side slit blocks (one mesh for both,
+                // equal blocks: tiger_side_ports tests). k 2 would be gun glass, not a vision block.
+                if k < 2 { tiger_glass_m[k] = tiger_periscopes::side_ports::slab_thickness(&m).unwrap_or(0.0); }
                 tiger_glass[k] = Some(scene.len());
                 scene.push(m);
             }
@@ -12227,7 +12269,8 @@ impl Game {
             "assets/tanks/tiger/baked/tiger_part_tpz.glb",
             [200, 40, 30],
         ));
-        let driver_fuel_panel = driver_panel::FuelPanel::append(&mut scene, tpz_needle);
+        let tpz_cover = driver_panel::TpzCover::append(&mut scene, tpz_needle);
+        let cabin_panels = cabin_panels::CabinPanels::append(&mut scene);
         // Project-authored low-poly 88 mm rounds: no imported-ordnance fallback or runtime payload.
         let ap_round = round_88_mesh(false);
         let he_round = round_88_mesh(true);
@@ -12474,9 +12517,9 @@ impl Game {
         // a stable tail; only the four wet materials are selected here.
         // Fresh blood stays optically dark even under the amber furnace beat; low material roughness
         // supplies the wet highlight, so the diffuse albedo must not glow candy-red in shadow.
-        let wet_blood = [[92, 5, 4], [112, 7, 5], [74, 3, 3], [101, 6, 4]];
+        let wet_blood = WET_BLOOD;
         let blood_cube_batch = [usize::MAX; N_BLOOD_BATCHES];
-        let dry_blood = [[92, 7, 5], [108, 10, 7], [80, 6, 5], [99, 8, 6]];
+        let dry_blood = WET_BLOOD;
         let blood_stain_batch = [usize::MAX; N_BLOOD_BATCHES];
         let hot_fragment_batch = [usize::MAX; N_HOT_FRAGMENT_BATCHES];
         let hot_fragment_tail_batch = [usize::MAX; N_HOT_FRAGMENT_BATCHES];
@@ -13016,6 +13059,7 @@ impl Game {
         let mut renderer =
             Renderer::new_with_raster_only(device, queue, &scene, &crew_raster_only_slots);
         crew_status_panel.configure(&mut renderer);
+        cabin_panels.configure(&mut renderer);
         crew_body_recovery.initialize_aid(&mut renderer);
         if let Some(transport)=&mut halftrack_runtime {
             transport.initialize(&mut renderer)?;
@@ -13652,6 +13696,9 @@ impl Game {
                                          // them, unlike the mirror periscopes (which get RTT screens instead).
         for s in tiger_glass.iter().flatten() {
             renderer.set_glass(*s, true);
+        }
+        for (s, thickness) in tiger_glass.iter().zip(tiger_glass_m) {
+            if let (Some(s), true) = (s, thickness > 0.0) { renderer.mark_vision_glass(*s, thickness); }
         }
         renderer.set_glass(slots.gunner_sight[1], true);
         // The RTT screens sample the periscope atlas, unlit (they ARE the light).
@@ -14430,7 +14477,8 @@ impl Game {
             roof_hatches: tiger_hatches::RoofHatches::default(),
             driver_visor_lean: 0.0,
             driver_shutters: tiger_driver_shutters::Shutters::default(),
-            driver_fuel_panel,
+            tpz_cover,
+            cabin_panels,
             driver_look: glam::Vec2::ZERO,
             radio_look: glam::Vec2::ZERO,
             cupola_focus: tiger_periscopes::FocusState::default(),
@@ -14677,6 +14725,7 @@ impl Game {
             couch_kia_peers: Vec::new(),
             couch_casualties: Vec::new(),
             couch_ragdolls: Vec::new(),
+            deferred_carves: Vec::new(),
             crew_corpse_render: std::cell::RefCell::new(crew_corpse_render),
             crew_body_recovery,
             couch_last_casualty: None,
@@ -17420,6 +17469,8 @@ impl Game {
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        // A casualty's solve deferred behind a death is back before the world moves on.
+        self.settle_casualty_tissue(true);
         self.enforce_engine_operability();
         self.sim_phase.count_update();
         self.sim_phase.seg_begin();
@@ -19881,9 +19932,7 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         let yaw = self.player.turret_yaw;
-        let fuel_liters = self.tank_fuel_liters();
-        let coolant=self.workshop_coolant_temperature();
-        self.driver_fuel_panel.drive(fuel_liters,coolant,r.time,hm,tm,r);
+        self.tpz_cover.drive(tm, r);
         let enigma_model = self.enigma_dressing.as_ref()
             .map(|prop| prop.visual_world_model(&self.player))
             .unwrap_or_else(|| enigma_radio_model(hm));
@@ -20552,6 +20601,19 @@ impl Game {
                 emitting_meshes.push(emitter);
             }
             append_optional_cabin_fixture(&mut lights, &mut shadowed_cabin_lights, &mut emitting_meshes, self.workshop_light());
+            // The radio sets' and the driver's panel lamps (`cabin_panels`): amber pilot lamps
+            // and indicators, finite lenses on the same switch.
+            let panel_state = cabin_panels::PanelState {
+                engine_rpm: self.player_powertrain.rpm,
+                coolant_c: self.workshop_coolant_temperature(),
+                fuel_liters: self.tank_fuel_liters(),
+                radio_transmitting: false,
+            };
+            for (light, emitter) in self.cabin_panels.drive(r, hm, practical_gain, &panel_state) {
+                if light.radiant_intensity > 0.0 { lights.push(light); }
+                shadowed_cabin_lights.push(light);
+                emitting_meshes.push(emitter);
+            }
             debug_assert_eq!(shadowed_cabin_lights.len(), crate::renderer::CABIN_LIGHT_REGISTRATIONS);
             debug_assert_eq!(shadowed_cabin_lights.len(), emitting_meshes.len());
             r.set_cabin_light_frame(Quat::from_mat4(&self.player.turret_model()));
@@ -23278,6 +23340,39 @@ impl Game {
     /// scarred vehicle across all three acts, so losing that Tiger while bailed out resolves the
     /// checkpoint instead of leaving a living crewman permanently stranded with no legal mount.
     /// Canyon likewise ends on losing its Tiger, including while the player is outside it.
+    /// Whether this strike's death hides a casualty's tissue solve: the tank's own loss or the
+    /// player's own man (the death's fade and black then cover the solve, `settle_casualty_tissue`).
+    fn death_hides_tissue(&self, casualty: CouchCrewCasualty) -> bool {
+        self.game_over().is_some()
+            || self.singleplayer_embodied_role().is_some_and(|role| singleplayer_crew::body_post(role) == casualty.identity)
+    }
+
+    /// Whether a casualty's tissue solve is still running behind the death.
+    pub fn casualty_tissue_pending(&self) -> bool {
+        !self.deferred_carves.is_empty()
+    }
+
+    /// Take the deferred casualty solves back in the order they began (each waited for when `wait`,
+    /// else only those already done, stopping at the first still running) and apply the carve's
+    /// consequences exactly as the strike would have: the world has not advanced since (the death
+    /// freezes it), so the result is the same as solving at the strike.
+    pub fn settle_casualty_tissue(&mut self, wait: bool) {
+        while self.deferred_carves.first().is_some_and(|c| wait || c.job.is_finished()) {
+            let carve = self.deferred_carves.remove(0);
+            let Some(index) = self.couch_ragdolls.iter().position(|r| r.casualty == carve.casualty) else {
+                // His body is gone (a reset): the solve is let go.
+                continue;
+            };
+            let kept = crew_tissue::finish_casualty_carve(&self.crew_corpse_render, carve.solo, carve.job,
+                &self.couch_ragdolls[index]);
+            let ragdoll = &mut self.couch_ragdolls[index];
+            let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
+                std::array::from_fn(|i| !kept[i] && carve.hide[i]);
+            crew_physics::couple_pulverized_fragment_impulses(&mut ragdoll.segments, &carve.fragment_impulses, &pulverized);
+            apply_crew_pulverization(ragdoll, &pulverized);
+        }
+    }
+
     pub fn game_over(&self) -> Option<DeathCause> {
         if let Some(runtime) = &self.expedition_runtime {
             // A disabled Tiger does not kill a walking survivor. Unconsciousness is not a
@@ -25411,6 +25506,7 @@ impl Game {
                     plan.impact,
                     casualty_seed ^ 0x2A66_D011,
                 );
+                let hides_tissue = self.death_hides_tissue(plan.casualty);
                 if let Some(ragdoll) = self
                     .couch_ragdolls
                     .iter_mut()
@@ -25437,24 +25533,27 @@ impl Game {
                         .map(|event| (event.result.part, event.result.blast_work_j)).collect();
                     let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll, contacts,
                         &pressure, blast_origin_local);
-                    let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
-                        self.singleplayer_crew_active, ragdoll, &strikes);
-                    let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
-                        std::array::from_fn(|index| {
-                            !kept[index] && plan.events.iter().any(|event| {
-                                event.result.part.index() == index && event.result.hide_mesh_part
-                            })
-                        });
-                    crew_physics::couple_pulverized_fragment_impulses(
-                        &mut ragdoll.segments,
-                        &fragment_impulses,
-                        &pulverized,
-                    );
+                    let hide: [bool; crew_physics::CREW_BODY_PART_COUNT] = std::array::from_fn(|index| {
+                        plan.events.iter().any(|event| event.result.part.index() == index && event.result.hide_mesh_part)
+                    });
                     for event in &plan.events {
                         let segment = &mut ragdoll.segments[event.result.part.index()];
                         segment.detached |= event.result.detach_joint;
                     }
-                    apply_crew_pulverization(ragdoll, &pulverized);
+                    let deferred = hides_tissue
+                        .then(|| crew_tissue::begin_casualty_carve(&self.crew_corpse_render, ragdoll, &strikes)).flatten();
+                    match deferred {
+                        Some(job) => self.deferred_carves.push(crew_tissue::DeferredCarve { casualty: plan.casualty, job,
+                            solo: self.singleplayer_crew_active, fragment_impulses, hide }),
+                        None => {
+                            let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                                self.singleplayer_crew_active, ragdoll, &strikes);
+                            let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
+                                std::array::from_fn(|index| !kept[index] && hide[index]);
+                            crew_physics::couple_pulverized_fragment_impulses(&mut ragdoll.segments, &fragment_impulses, &pulverized);
+                            apply_crew_pulverization(ragdoll, &pulverized);
+                        }
+                    }
                 }
 
                 let requests: Vec<usize> = plan
@@ -26672,6 +26771,14 @@ impl Game {
                 };
                 self.enemy_report_audit.clock_s=flight_at+step_dt*fraction;
                 projectile.commit_fraction(step, fraction, contact.pos);
+                // A ricochet's own solve takes effect at the round's next contact.
+                if let Some(handle) = self.fea.ricochet_solves.remove(&projectile.id) {
+                    if let Ok(Some(solved)) = handle.join() {
+                        projectile.mass_fraction *= solved.residual_fraction;
+                        println!("[fea] ricochet solve for round {}: {:.0} % of its mass left, {} pieces, tumble {:.0} rad/s, hottest {:.0} K ({:.0} ms on a worker)",
+                            projectile.id, solved.residual_fraction * 100.0, solved.pieces, solved.tumble_rad_s, solved.peak_temp_k, solved.wall_ms);
+                    }
+                }
                 if let Some(bullet) = projectile.small_arm {
                     self.present_source_ground_impact(&projectile,contact,r);
                     self.finish_small_arm(&projectile,contact,bullet, &r.camera);
@@ -26697,7 +26804,7 @@ impl Game {
                     {
                         self.explode_at_gun(hit.index,contact.pos,armor_incident_velocity,projectile.shell.name);
                         if hit.steel {
-                            let deposited=0.5*projectile.shell.mass_kg
+                            let deposited=0.5*projectile.shell.mass_kg*projectile.mass_fraction
                                 *(armor_incident_velocity.length_squared()-projectile.velocity.length_squared()).max(0.0);
                             self.weapon_vfx.set_ground_hint(Some(self.hf.height_at(contact.pos.x,contact.pos.z)));
                             self.weapon_vfx.steel_perforation_spray(contact.pos,armor_incident_velocity,hit.normal,
@@ -26818,6 +26925,8 @@ impl Game {
             }
             drop(initial);
             active.append(&mut self.projectiles);
+            // A retired round's ricochet solve is let go (its worker ends on its own).
+            self.fea.ricochet_solves.retain(|id, _| active.iter().any(|p| p.id == *id) || pending.iter().any(|(p, _, _)| p.id == *id));
             self.finish_shell_flight_step(flight_start, &active);
             self.projectiles = active;
             self.projectile_scratch = flying;
@@ -27079,7 +27188,9 @@ impl Game {
                 projectile.seed ^ self.armor_tick,
                 projectile.penalty_mm,
                 projectile.disruption,
-                projectile.velocity.length(),
+                // A round lightened by an earlier ricochet meets the plate at the speed that gives
+                // its lighter body the same DeMarre capability (`chain::run_with_residual`).
+                projectile.velocity.length() * projectile.mass_fraction.sqrt(),
             );
             event.flight_time=projectile.age_s;
             // Preserve the existing non-kinetic terminal policy pending its separate audit.
@@ -27092,6 +27203,13 @@ impl Game {
             }
             ricochet=crate::ballistics::ricochet::response(&event,projectile.velocity,
                 armor.world_normal,projectile.ricochet_count);
+            if ricochet.is_some() {
+                // The round's own solve of the glancing strike: its mass and tumble (joined at its
+                // next contact).
+                if let Some(handle) = game_fea::RicochetShot::spawn(&event, projectile.seed ^ self.armor_tick ^ 0x5407_0000) {
+                    self.fea.ricochet_solves.insert(projectile.id, handle);
+                }
+            }
             if let Some(response)=ricochet {
                 event.terminal=crate::ballistics::Terminal::Ricochet;
                 event.residual_v=response.velocity.length();event.behind_armor=0.0;
@@ -27159,13 +27277,13 @@ impl Game {
                 );
             }
             ProjectileContactKind::FieldPerson(person,part)=>{
-                let energy=0.5*projectile.shell.mass_kg*projectile.velocity.length_squared();
+                let energy=0.5*projectile.shell.mass_kg*projectile.mass_fraction*projectile.velocity.length_squared();
                 let impact=CrewRagdollImpact{hit_part:part,point_world:contact.pos,velocity_world:projectile.velocity,energy_j:energy,
                     blast_origin_world:contact.pos,explosive_energy_j:0.,behind_armor:0.,blast_proximity_m:0.};
                 if let Ok(actor)=self.retain_struck_field_person(person,impact){self.injure_field_actor(actor,part,contact.pos,projectile.velocity,energy,0.,0.,projectile.id);}
             }
             ProjectileContactKind::ExposedCrew(actor,part)=>{
-                let energy=0.5*projectile.shell.mass_kg*projectile.velocity.length_squared();
+                let energy=0.5*projectile.shell.mass_kg*projectile.mass_fraction*projectile.velocity.length_squared();
                 self.injure_field_actor(actor,part,contact.pos,projectile.velocity,energy,0.,0.,projectile.id);
             }
             ProjectileContactKind::Foot => {
@@ -27187,7 +27305,7 @@ impl Game {
             ProjectileContactKind::Infantry(index) => {
                 // A direct cannon strike is lethal to an exposed body for AP and HE alike.
                 // HE already ran the existing blast above; shared casualty handling is idempotent.
-                self.infantry_contact(index,contact.pos,projectile.velocity,projectile.shell.mass_kg,0.0,false,projectile.shell.name);
+                self.infantry_contact(index,contact.pos,projectile.velocity,projectile.shell.mass_kg*projectile.mass_fraction,0.0,false,projectile.shell.name);
                 self.schedule_sound_from(crate::audio::Sfx::ImpactGround,contact.pos);
             }
             ProjectileContactKind::Structure(index) => {
@@ -30001,6 +30119,7 @@ impl Game {
                             .inverse()
                             * blood_parent_model(&self.player, solution.frame);
                     self.spawn_couch_ragdoll_impact(casualty, impact, casualty_seed ^ 0x2A66_D011);
+                    let hides_tissue = self.death_hides_tissue(casualty);
                     if let Some(ragdoll) = self
                         .couch_ragdolls
                         .iter_mut()
@@ -30033,25 +30152,27 @@ impl Game {
                             .map(|event| (event.result.part, event.result.blast_work_j)).collect();
                         let strikes = crew_tissue::casualty_strikes(ragdoll, source_to_ragdoll,
                             &solution.contacts, &pressure, solution.entry);
-                        let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
-                            self.singleplayer_crew_active, ragdoll, &strikes);
-                        let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
-                            std::array::from_fn(|index| {
-                                !kept[index] && damage_events.iter().any(|event| {
-                                    event.result.part.index() == index
-                                        && event.result.hide_mesh_part
-                                })
-                            });
-                        crew_physics::couple_pulverized_fragment_impulses(
-                            &mut ragdoll.segments,
-                            &fragment_impulses,
-                            &pulverized,
-                        );
+                        let hide: [bool; crew_physics::CREW_BODY_PART_COUNT] = std::array::from_fn(|index| {
+                            damage_events.iter().any(|event| event.result.part.index() == index && event.result.hide_mesh_part)
+                        });
                         for event in &damage_events {
                             let segment = &mut ragdoll.segments[event.result.part.index()];
                             segment.detached |= event.result.detach_joint;
                         }
-                        apply_crew_pulverization(ragdoll, &pulverized);
+                        let deferred = hides_tissue
+                            .then(|| crew_tissue::begin_casualty_carve(&self.crew_corpse_render, ragdoll, &strikes)).flatten();
+                        match deferred {
+                            Some(job) => self.deferred_carves.push(crew_tissue::DeferredCarve { casualty, job,
+                                solo: self.singleplayer_crew_active, fragment_impulses, hide }),
+                            None => {
+                                let kept = crew_tissue::carve_casualty_tissue(&self.crew_corpse_render,
+                                    self.singleplayer_crew_active, ragdoll, &strikes);
+                                let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
+                                    std::array::from_fn(|index| !kept[index] && hide[index]);
+                                crew_physics::couple_pulverized_fragment_impulses(&mut ragdoll.segments, &fragment_impulses, &pulverized);
+                                apply_crew_pulverization(ragdoll, &pulverized);
+                            }
+                        }
                     }
 
                     if damage_events.is_empty() {
@@ -30875,6 +30996,8 @@ impl Game {
         let severity = severity.clamp(0.20, 1.65);
         let ejection_strength = ejection_strength.clamp(0.55, 2.80);
         let blood_owner = owner.min(self.physical_crew_capacity() - 1) as u8;
+        // The wound's count is of the former small droplets; the same blood leaves as 1 cm ones.
+        let count = surface_blood::droplets_for(count);
 
         for j in 0..count.min(N_BLOOD_CUBES) {
             let s = seed
@@ -34923,7 +35046,8 @@ mod tests {
             + crate::interior_rig::ANNUNCIATOR_FIXTURES.len() + crate::lamp_mounts::BREECH.len();
         let sight_count = crate::lamp_mounts::SIGHT.iter().map(|station|station.len()).sum::<usize>();
         let panel_count = crew_status_panel::SHADOW_REGISTRATIONS;
-        assert_eq!(base_count+sight_count+panel_count+1, crate::renderer::CABIN_LIGHT_REGISTRATIONS);
+        let cluster_count = cabin_panels::SHADOW_REGISTRATIONS;
+        assert_eq!(base_count+sight_count+panel_count+1+cluster_count, crate::renderer::CABIN_LIGHT_REGISTRATIONS);
         let light = |i:usize| PointLight {pos:Vec3::new(i as f32, 1.0, 0.0), source_radius:0.01,
             color:Vec3::ONE, radiant_intensity:0.001};
         for work_installed in [false,true] {
@@ -34944,6 +35068,10 @@ mod tests {
             let before_work = active.len();
             append_optional_cabin_fixture(&mut active,&mut named,&mut emitters,
                 work_installed.then(||(light(21),900)));
+            // The panel lamps follow the work lamp; every identity is kept, dark ones too.
+            for i in 0..cluster_count {
+                named.push(light(22+i)); emitters.push(Some(600+i));
+            }
             assert_eq!(named.len(),crate::renderer::CABIN_LIGHT_REGISTRATIONS);
             assert_eq!(emitters.len(),named.len());
             assert_eq!(&emitters[9..13],&[Some(301),None,None,Some(404)]);
@@ -38204,9 +38332,12 @@ mod tests {
         assert_eq!(allocation.iter().sum::<usize>(), N_BLOOD_CUBES / 4);
         assert_eq!(visual_blood_request(usize::MAX), N_BLOOD_CUBES);
         assert!(
-            (0..1000).all(|seed| surface_blood::droplet_m(seed) <= 0.006),
-            "droplets must stay small"
+            (0..1000).all(|seed| surface_blood::droplet_m(seed) == crew_tissue_cell_m()),
+            "droplets are the anatomy's cells"
         );
+        // A horror burst's full count is about a litre of blood in 1 cm droplets, not 33.
+        let litres = surface_blood::droplets_for(N_BLOOD_CUBES) as f32 * surface_blood::DROPLET_M.powi(3) * 1000.0;
+        assert!((0.8..1.3).contains(&litres), "{litres} l");
         assert_eq!(
             N_BLOOD_STAINS,
             surface_blood::MAX_CELLS
@@ -38221,11 +38352,10 @@ mod tests {
         assert_eq!(N_BLOOD_CUBES * (mesh.indices.len() / 36), 32768);
         assert_eq!(mesh.min, Vec3::splat(-0.5));
         assert_eq!(mesh.max, Vec3::splat(0.5));
-        assert_eq!(mesh.metallic_factor, 0.0);
-        assert!(
-            mesh.roughness_factor <= 0.10,
-            "fresh grains must read as wet"
-        );
+        // The owner's look: glossy and mostly metallic over a saturated red, so nearly black.
+        assert_eq!(mesh.metallic_factor, BLOOD_METALLIC);
+        assert!(BLOOD_METALLIC > 0.8 && mesh.roughness_factor <= 0.15, "glossy, nearly black blood");
+        assert!(WET_BLOOD.iter().all(|c| c[0] > 150 && c[0] > 8 * c[1].max(c[2])), "a bright, saturated red base");
     }
 
     #[test]
@@ -38870,7 +39000,7 @@ mod tests {
         assert_eq!(film.min, Vec3::splat(-0.5));
         assert_eq!(film.max, Vec3::splat(0.5));
         assert_eq!(film.indices.len(), 36);
-        assert_eq!(film.roughness_factor, 0.34);
+        assert_eq!((film.metallic_factor, film.roughness_factor), (BLOOD_METALLIC, BLOOD_ROUGHNESS), "the coat matches the droplets");
         assert_eq!(N_BLOOD_STAINS, surface_blood::MAX_CELLS);
         assert_eq!(N_BLOOD_CUBES, surface_blood::MAX_GRAINS);
     }

@@ -9,24 +9,32 @@ pub const CELL_M: f32 = 0.005;
 pub const MAX_GRAINS: usize = 32_768;
 pub const MAX_CELLS: usize = 262_144;
 const MAX_FRONTIER: usize = MAX_CELLS * 4;
-/// Droplet sizes (m): from the smallest to the largest, most of them small (2026-11-02, the
-/// owner: "the droplet size of the splatter is too large"; an authored distribution, not a
-/// measured spatter one).
-const DROPLET_MIN_M: f32 = 0.0015;
-const DROPLET_MAX_M: f32 = 0.006;
-/// A fresh stain's thickness (m): a droplet's volume covers its area at this (authored). A
-/// 1.5 mm droplet wets one 5 mm cell, a 4 mm one about nine (1.5 cm), a 6 mm one about 29.
-const FILM_THICKNESS_M: f32 = 0.0003;
+/// A droplet is a cube of the crew anatomy's own cell (2026-11-03, the owner: "blood voxels should
+/// be the same size as character voxels"; it replaces the 1.5-6 mm distribution of 2026-11-02), so
+/// each carries a cubic centimetre of blood.
+pub const DROPLET_M: f32 = 0.01;
+/// A fresh coat's thickness (m): a droplet's volume covers its area at this (authored: a pooled wet
+/// coat about a millimetre deep). A droplet wets 40 film cells, a stain about 3 cm across.
+const FILM_THICKNESS_M: f32 = 0.001;
 
 fn hash01(seed: u32) -> f32 {
     let h = seed.wrapping_mul(2_654_435_761) ^ (seed >> 13).wrapping_mul(2_246_822_519);
     (h >> 8) as f32 / (1u32 << 24) as f32
 }
 
-/// A droplet's edge (m) from its seed.
-pub fn droplet_m(seed: u32) -> f32 {
-    let u = hash01(seed ^ 0xD0_9E7);
-    DROPLET_MIN_M * (DROPLET_MAX_M / DROPLET_MIN_M).powf(u * u)
+/// The mean droplet volume (m³) of the 1.5-6 mm distribution the wound events' blood counts were
+/// set against; a count of those becomes the 1 cm droplets holding the same blood.
+pub const FORMER_MEAN_DROPLET_M3: f32 = 3.108e-8;
+
+/// The droplets of `DROPLET_M` that hold the blood of `former` droplets of the former distribution
+/// (at least one).
+pub fn droplets_for(former: usize) -> usize {
+    ((former as f32 * FORMER_MEAN_DROPLET_M3 / DROPLET_M.powi(3)).ceil() as usize).max(1)
+}
+
+/// A droplet's edge (m); every droplet is one anatomy cell (`DROPLET_M`).
+pub fn droplet_m(_seed: u32) -> f32 {
+    DROPLET_M
 }
 
 /// The film cells a droplet's volume covers at a fresh stain's thickness (at least one).
@@ -992,15 +1000,13 @@ mod tests {
         assert!(!query.supports_cell(0, &corners));
     }
     #[test]
-    fn droplets_are_mostly_small_and_wet_film_in_proportion_to_their_volume() {
-        let sizes: Vec<f32> = (0..2000).map(droplet_m).collect();
-        let small = sizes.iter().filter(|&&d| d < 0.003).count();
-        assert!(small > 1000, "most droplets are small: {small} of 2000 under 3 mm");
-        assert!(sizes.iter().all(|&d| (DROPLET_MIN_M..=DROPLET_MAX_M).contains(&d)));
-        let stain = |seed: u32| (film_cells(seed) as f32).sqrt() * CELL_M;
-        let largest = (0..2000).map(stain).fold(0.0f32, f32::max);
-        assert!(largest < 0.03, "no stain wider than 3 cm: {largest}");
-        assert!((0..2000).all(|s| film_cells(s) >= 1));
+    fn droplets_are_anatomy_cells_and_wet_film_in_proportion_to_their_volume() {
+        assert!((0..2000).all(|s| droplet_m(s) == DROPLET_M));
+        assert_eq!(DROPLET_M, crate::game::crew_tissue_cell_m());
+        let stain = (film_cells(7) as f32).sqrt() * CELL_M;
+        assert!((0.025..0.04).contains(&stain), "a droplet's stain is about 3 cm across: {stain}");
+        let wet = film_cells(7) as f32 * CELL_M * CELL_M * FILM_THICKNESS_M;
+        assert!((wet - DROPLET_M.powi(3)).abs() < 0.05 * DROPLET_M.powi(3));
     }
     #[test]
     fn film_carries_over_the_edge_between_two_facets() {
@@ -1021,6 +1027,32 @@ mod tests {
         let on_left = blood.deposits().filter(|d| d.normal.dot(n_left) > 0.9999).count();
         assert!(on_left > 0 && on_right > 0, "film on both facets: {on_left} left, {on_right} right");
     }
+    #[test]
+    fn a_cell_across_a_gentle_crease_is_covered_and_one_over_a_gap_is_not() {
+        let models = [Mat4::IDENTITY; FRAMES];
+        // A floor folded at x = 0 by 8 degrees: a cell straddling the fold, in the left facet's plane.
+        let fold = Mat4::from_rotation_z(0.07);
+        let left = floor(-0.2, 0.0, -0.2, 0.2).transformed(fold);
+        let right = floor(0.0, 0.2, -0.2, 0.2).transformed(Mat4::from_rotation_z(-0.07));
+        let folded = CabinFire::new(&[(0, &left), (0, &right)]);
+        let corner = |x: f32, z: f32| fold.transform_point3(Vec3::new(x, 0.0, z));
+        let across = [corner(-0.0025, 0.0), corner(0.0025, 0.0), corner(0.0025, CELL_M), corner(-0.0025, CELL_M)];
+        assert!(folded.source_contacts(&models).supports_cell(0, &across), "the coat is continuous over the crease");
+        // Two flat plates with a 2 cm gap between them: a cell over the gap stays bare.
+        let a = floor(-0.2, -0.01, -0.2, 0.2);
+        let b = floor(0.01, 0.2, -0.2, 0.2);
+        let gapped = CabinFire::new(&[(0, &a), (0, &b)]);
+        let over = [Vec3::new(-0.0125, 0.0, 0.0), Vec3::new(-0.0075, 0.0, 0.0), Vec3::new(-0.0075, 0.0, CELL_M), Vec3::new(-0.0125, 0.0, CELL_M)];
+        assert!(!gapped.source_contacts(&models).supports_cell(0, &over), "a gap is never filmed");
+        // A steep 60-degree fold is no facet of the same surface.
+        let steep = Mat4::from_rotation_z(0.52);
+        let wall = floor(0.0, 0.2, -0.2, 0.2).transformed(Mat4::from_rotation_z(-0.52));
+        let sharp = CabinFire::new(&[(0, &floor(-0.2, 0.0, -0.2, 0.2).transformed(steep)), (0, &wall)]);
+        let at = |x: f32, z: f32| steep.transform_point3(Vec3::new(x, 0.0, z));
+        let across_sharp = [at(-0.0025, 0.0), at(0.0025, 0.0), at(0.0025, CELL_M), at(-0.0025, CELL_M)];
+        assert!(!sharp.source_contacts(&models).supports_cell(0, &across_sharp));
+    }
+
     #[test]
     fn film_on_a_wall_runs_downhill_first() {
         // A wall in the frame (normal +X): a big droplet's film reaches lower than higher.
@@ -1049,7 +1081,7 @@ mod tests {
         assert_eq!(before.actor_id, e.actor_id);
         assert_eq!(before.seed, e.seed);
         let size = droplet_m(e.seed);
-        assert!((DROPLET_MIN_M..=DROPLET_MAX_M).contains(&size));
+        assert_eq!(size, DROPLET_M);
         for m in blood.wet_models(&models).into_iter().flatten() {
             assert!((m.x_axis.truncate().length() - size).abs() < 1e-7);
             assert!((m.y_axis.truncate().length() - size).abs() < 1e-7);

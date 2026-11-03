@@ -9,6 +9,7 @@
 mod smoke_support;
 #[path="renderer_world_state.rs"]
 mod renderer_world_state;
+use crate::eye_local::EyeLocal;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -601,6 +602,24 @@ fn day_phase(sun_altitude_deg: f64) -> usize {
     if sun_altitude_deg < BLUE_FROM_DEG { 0 } else if sun_altitude_deg < TWILIGHT_FROM_DEG { 1 }
     else if sun_altitude_deg < TWILIGHT_TO_DEG { 2 } else { 3 }
 }
+/// Half the width of the band over which the clock's pace passes from one phase's to the next.
+const PACE_BLEND_HALF_DEG: f64 = 2.0;
+/// The clock's rate at a Sun altitude from the four phases' rates (night, blue hour, twilight,
+/// day): their logarithms blended by a smoothstep `PACE_BLEND_HALF_DEG` either side of each edge,
+/// so the pace never changes at a step. The bridge's authored pacing runs its blue hour some
+/// seventy times slower than the night beside it; the former linear ramp over one degree turned
+/// the blue hour's end into a lurch the eye's pigment rate (which follows the clock) lurched with
+/// (3 November 2026). The phases' play times move by a few per cent; named in
+/// docs/PHYSICAL_TRUTH_AUDIT.md with the day cycle.
+fn blended_clock_rate(rates: [f64; 4], sun_altitude_deg: f64) -> f64 {
+    let step = |edge: f64| {
+        let t = ((sun_altitude_deg - edge) / (2.0 * PACE_BLEND_HALF_DEG) + 0.5).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let ln = rates.map(|r| r.max(1.0e-6).ln());
+    (ln[0] + (ln[1] - ln[0]) * step(BLUE_FROM_DEG) + (ln[2] - ln[1]) * step(TWILIGHT_FROM_DEG)
+        + (ln[3] - ln[2]) * step(TWILIGHT_TO_DEG)).exp()
+}
 /// On in play. Off for unit tests and wherever `KESSEL_DAY_NIGHT=0` asks for the real-time clock
 /// (stills and films that must hold their authored light).
 fn day_night_cycle_enabled() -> bool {
@@ -818,9 +837,10 @@ const MENU_RIGHT_SHIFT: f32 = 3.7; // world metres along the camera's right → 
 /// flashes and fire glow are the working set; cheap at internal resolution.
 pub const N_LIGHTS: usize = 32;
 
-/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources
-/// and one optional work lamp. This is not the active packed-light budget or a shader array size.
-pub const CABIN_LIGHT_REGISTRATIONS: usize = 22;
+/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources,
+/// one optional work lamp and the radio sets' and driver's eleven panel lamps (`cabin_panels`).
+/// This is not the active packed-light budget or a shader array size.
+pub const CABIN_LIGHT_REGISTRATIONS: usize = 33;
 
 /// A modeled compact spherical emitter. `source_radius` is the physical luminous radius in metres,
 /// used only to regularize the near field of the inverse-square law; it is never an illumination
@@ -1184,7 +1204,9 @@ struct CrushUniform {
     debug: [f32; 4],
     /// The eye's field state for the display (byte 192, copied from the view's eye state every
     /// metered frame): x = the CIE 191 mesopic coefficient of the field's adaptation (lane 14), the
-    /// floor of each pixel's local mesopic weight (`observer::local_rod_weight`). Appended lane.
+    /// floor of each pixel's local mesopic weight (`observer::local_rod_weight`); y = the cone
+    /// adaptation (lane 12, byte 196), z = the metered luminance (lane 15, byte 200), w = the local
+    /// adaptation's strength (`observer::local_cone_gain`). Appended lane.
     eye: [f32; 4],
 }
 
@@ -1330,7 +1352,10 @@ mod environment_probe;
 #[path = "raster_optics.rs"] mod raster_optics;
 #[path = "raster_ssao.rs"] mod raster_ssao;
 #[path = "renderer_aa.rs"] mod renderer_aa;
-pub use raster_optics::{Eyepiece, RasterOpticSpec};
+pub use raster_optics::{Eyepiece, RasterOpticSpec, RelayStop, MAX_RELAY_STOPS,
+    STOP_LENS, STOP_MIRROR, STOP_PANE, STOP_WINDOW};
+#[cfg(test)]
+pub use raster_optics::relay_trace;
 #[path = "daylight_sampling.rs"]
 mod daylight_sampling;
 #[path = "protective_glass.rs"]
@@ -1689,6 +1714,9 @@ struct MeshGpu {
     vehicle_finish: [f32; 4],
     /// A clear cover over an instrument dial (`mark_instrument_cover`).
     instrument_cover: bool,
+    /// A direct-view vision block's closed glass slab, its measured thickness (`mark_vision_glass`;
+    /// 0: an ordinary pane).
+    vision_glass_m: f32,
     /// The source model's default metal on this mesh is painted steel (`mark_painted_steel`).
     painted_steel: bool,
     /// The player's vehicle surface model frame this mesh samples (`mark_vsm_frame`): 0 none, 1 the
@@ -3056,6 +3084,10 @@ pub struct Renderer {
     exp_binds: Vec<wgpu::BindGroup>,
     exp_bufs: Vec<wgpu::Buffer>,
     exp_clock_buf: wgpu::Buffer,
+    /// The eye's local adaptation (`eye_local.wgsl`, `observer::local_cone_gain`): the cell,
+    /// horizontal and vertical pooling passes, their bind group and parameters, and the setting
+    /// in use (pooling sigma in degrees, strength).
+    eye_local: EyeLocal,
     replay_previous_elapsed: Option<f32>,
     replay_exposure_time: Option<f32>,
     continuous_camera_translation: bool,
@@ -3827,6 +3859,7 @@ fn make_mesh_gpu(
         running_gear: 0,
         vehicle_finish: [0.0; 4],
         instrument_cover: false,
+        vision_glass_m: 0.0,
         painted_steel: false,
         vsm_frame: 0,
         sky_visibility_excluded: false,
@@ -6003,6 +6036,8 @@ impl Renderer {
             wgpu::Extent3d{width:64,height:64,depth_or_array_layers:1});
         let blue_noise_view=blue_noise_texture.create_view(&Default::default());
 
+        let eye_local = EyeLocal::new(device, &hdr_view);
+
         let crush_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("crush-bgl"),
             entries: &[
@@ -6027,6 +6062,8 @@ impl Renderer {
                     ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Uint,
                         view_dimension:wgpu::TextureViewDimension::D2,multisampled:false},count:None},
                 tex_entry(8), // the sub-pixel emitters' radiance (rod pooling)
+                tex_entry(9), // the eye's pooled neighbourhood luminance (local adaptation)
+                sampler_entry(10),
             ],
         });
         let crush_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -6059,6 +6096,8 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {binding:7,resource:wgpu::BindingResource::TextureView(&blue_noise_view)},
                 wgpu::BindGroupEntry {binding:8,resource:wgpu::BindingResource::TextureView(&point_view)},
+                wgpu::BindGroupEntry {binding:9,resource:wgpu::BindingResource::TextureView(&eye_local.pooled_view)},
+                wgpu::BindGroupEntry {binding:10,resource:wgpu::BindingResource::Sampler(&eye_local.sampler)},
             ],
         });
         let crush_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -6432,6 +6471,7 @@ impl Renderer {
             exp_binds,
             exp_bufs,
             exp_clock_buf,
+            eye_local,
             replay_previous_elapsed: None,
             replay_exposure_time: None,
             continuous_camera_translation: false,
@@ -6674,12 +6714,7 @@ impl Renderer {
                 [dark, dark, rate(2, 2.0 * TWILIGHT_S), rate(3, FULL_DAY_S)]
             }
         };
-        // Blend across a degree at each boundary so the clock never jumps.
-        let altitude = self.celestial.sun_altitude_deg();
-        let ramp = |edge: f64| ((altitude - edge) / 1.0 + 0.5).clamp(0.0, 1.0);
-        let (above_night, above_blue, above_twilight) = (ramp(BLUE_FROM_DEG), ramp(TWILIGHT_FROM_DEG), ramp(TWILIGHT_TO_DEG));
-        (rates[0] * (1.0 - above_night) + rates[1] * (above_night - above_blue).max(0.0)
-            + rates[2] * (above_blue - above_twilight).max(0.0) + rates[3] * above_twilight) * self.sky_time_scale as f64
+        blended_clock_rate(rates, self.celestial.sun_altitude_deg()) * self.sky_time_scale as f64
     }
 
     pub fn advance_sky_clock(&mut self, dt_s: f32) {
@@ -7013,6 +7048,17 @@ impl Renderer {
     }
     /// The section's window, centre xyz and radius (zeros for none).
     pub fn section_window(&self) -> [f32; 4] { if self.film_section.is_some() { self.section_window } else { [0.0; 4] } }
+    /// Review harnesses only: hide every mesh (raster-only actors kept) whose world bounds lie
+    /// wholly farther than `radius` from `centre`, the world round a studied vehicle. Returns how
+    /// many were hidden. Play never calls it.
+    pub fn hide_meshes_beyond(&mut self, centre: glam::Vec3, radius: f32) -> usize {
+        let far: Vec<usize> = self.meshes.iter().enumerate().filter(|(_, m)| !m.raster_only
+            && centre.clamp(m.world_min, m.world_max).distance(centre) > radius).map(|(i, _)| i).collect();
+        for &i in &far {
+            self.set_visible(i, false);
+        }
+        far.len()
+    }
     /// Every solid scene mesh whose world bounds lie inside `lo..hi`: the parts of a vehicle
     /// standing there, for a section view. Crew and other raster-only actors, terrain and glowing
     /// effect meshes are left out.
@@ -7021,6 +7067,18 @@ impl Renderer {
             && !(m.emissive > 0.0 && !m.emissive_own && !m.emissive_win)
             && m.world_min.cmpge(lo).all() && m.world_max.cmple(hi).all()).map(|(i, _)| i).collect()
     }
+    /// Every scene mesh whose bounds' middle lies inside `lo..hi` and which is smaller than
+    /// `max_extent_m` across: a vehicle's whole content for the review range's section (glass
+    /// panes, periscope screens, lamp lenses, crew and effects with it), terrain and large world
+    /// pages left out. `solid_meshes_within` is the film's narrower set (solid parts only).
+    pub fn meshes_centred_within(&self, lo: glam::Vec3, hi: glam::Vec3, max_extent_m: f32) -> Vec<usize> {
+        self.meshes.iter().enumerate().filter(|(_, m)| {
+            let centre = (m.world_min + m.world_max) * 0.5;
+            !m.track_recv && centre.cmpge(lo).all() && centre.cmple(hi).all()
+                && (m.world_max - m.world_min).max_element() < max_extent_m
+        }).map(|(i, _)| i).collect()
+    }
+
     /// Mesh `idx` is a hull with running gear in its frame's envelope |x| >= `inner_m`, y <=
     /// `top_m`: `pack` (0..1) of the gear is crusted with the snow it ran through
     /// (`snow_cover::step_pack`; rm_snow_lift.wgsl `snow_gear_crust`).
@@ -7099,6 +7157,11 @@ impl Renderer {
     }
     /// Flag glass mesh `idx` as a clear cover over an instrument dial: the raymarch glass pass
     /// gives it a broad sheen of the cabin's lamps and a faint fixed dust (`rm_glass.wgsl`).
+    /// A direct-view vision block's closed glass of `thickness_m`: the raymarch glass pass draws
+    /// its faces as the slab's interfaces with the wiped-glass wear (rm_glass.wgsl).
+    pub fn mark_vision_glass(&mut self, idx: usize, thickness_m: f32) {
+        if let Some(g) = self.meshes.get_mut(idx) { g.vision_glass_m = thickness_m; }
+    }
     pub fn mark_instrument_cover(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.instrument_cover = true;
@@ -8840,9 +8903,14 @@ impl Renderer {
             loupe: self.loupe,
             real: self.real,
             debug: [if std::env::var("KESSEL_POINT_LAYER_VIEW").as_deref() == Ok("1") { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-            eye: [unmetered.mesopic_m as f32, 0.0, 0.0, 0.0],
+            // y, z: the cone adaptation and the metered luminance, copied from the eye's lanes 12
+            // and 15 on metered frames; 0 here, so an unmetered frame has no local adaptation.
+            // w: the local adaptation's strength (none under a fixed debug exposure).
+            eye: [unmetered.mesopic_m as f32, 0.0, 0.0,
+                if self.exposure_override.is_some() { 0.0 } else { self.eye_local.strength }],
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
+        self.eye_local.upload(queue, self.camera.fov_y, self.camera.aspect);
         if let Some(surface) = &self.rt_surface_gpu {
             let triangles = self.meshes.iter().filter(|m| m.glass && m.visible)
                 .flat_map(|m| {
@@ -9518,6 +9586,7 @@ impl Renderer {
             encoder.copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8);
             // The field's mesopic coefficient (lane 14) for the pixels' local mesopic weight.
             encoder.copy_buffer_to_buffer(eye, 56, &self.crush_buf, 192, 4);
+            self.encode_eye_local(encoder, eye);
             if let Some(optics) = &self.raster_optics {
                 // Port images take the same eye (one frame later, as they render first).
                 optics.copy_eye_mapping(encoder, eye);
@@ -11139,6 +11208,52 @@ impl Renderer {
         Ok(state)
     }
 
+    /// The eye's local adaptation for the frame just metered (both backends call it right after
+    /// the meter): pool the HDR's neighbourhood luminance (`eye_local.wgsl`) and give the crush
+    /// the eye's cone adaptation (lane 12) and metered luminance (lane 15) it is drawn between.
+    pub(crate) fn encode_eye_local(&self, encoder: &mut wgpu::CommandEncoder, eye: &wgpu::Buffer) {
+        encoder.copy_buffer_to_buffer(eye, 48, &self.crush_buf, 196, 4);
+        encoder.copy_buffer_to_buffer(eye, 60, &self.crush_buf, 200, 4);
+        self.eye_local.encode(encoder, self.gpu_profile.as_ref().and_then(|p| p.compute("eye-local")));
+    }
+
+    /// Read one view's whole eye state (the 32 lanes `exposure.wgsl` documents) for the opt-in
+    /// headless eye review (`eye-review`). A pure GPU-buffer readback, as above; shipping frames
+    /// never call it.
+    pub fn debug_read_eye_lanes(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: usize,
+    ) -> anyhow::Result<[f32; EYE_STATE_LANES]> {
+        let bytes = (EYE_STATE_LANES * std::mem::size_of::<f32>()) as u64;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("eye-lanes-readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("eye-lanes-diagnostic"),
+        });
+        let view = view.min(self.exp_bufs.len().saturating_sub(1));
+        encoder.copy_buffer_to_buffer(&self.exp_bufs[view], 0, &readback, 0, bytes);
+        queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        rx.recv()??;
+        let mapped = slice.get_mapped_range();
+        let mut lanes = [0.0f32; EYE_STATE_LANES];
+        lanes.copy_from_slice(&bytemuck::cast_slice::<u8, f32>(&mapped)[..EYE_STATE_LANES]);
+        drop(mapped);
+        readback.unmap();
+        Ok(lanes)
+    }
+
     /// Re-arm the active view's first-measurement sentinel after a headless transport pre-roll.
     ///
     /// The shipping render loop never calls this. A deterministic screenshot can temporarily pause
@@ -12397,6 +12512,25 @@ mod atmosphere_tests {
     use super::*;
 
     #[test]
+    fn the_clocks_pace_passes_between_phases_without_a_step() {
+        // The spring bridge's authored pacing: a slow blue hour between a fast night and twilight.
+        let rates = [25.0, 0.33, 3.5, 26.0];
+        assert!((blended_clock_rate(rates, -40.0) - 25.0).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, -10.0) - 0.33).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, 0.0) - 3.5).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, 30.0) - 26.0).abs() < 1e-9);
+        // A tenth of a degree never changes the pace by more than a few per cent.
+        let mut worst: f64 = 0.0;
+        let mut altitude = -30.0;
+        while altitude < 20.0 {
+            let (a, b) = (blended_clock_rate(rates, altitude), blended_clock_rate(rates, altitude + 0.1));
+            worst = worst.max((b / a).ln().abs());
+            altitude += 0.1;
+        }
+        assert!(worst < 0.25, "the pace steps by {:.0} % in a tenth of a degree", (worst.exp() - 1.0) * 100.0);
+    }
+
+    #[test]
     fn replay_capture_policies_isolate_history_from_exposure() {
         let parameters = |policy| replay_policy_parameters(Some(1.4), 1.5, 123.0, policy);
         assert_eq!(parameters(ReplayCapturePolicy::Legacy), (1.5, false, false, 123.0));
@@ -13562,7 +13696,10 @@ mod atmosphere_tests {
         // source-contract module, after the actual renderer implementation and GPU copies.
         let shipping = renderer.split("\n#[cfg(test)]\nmod atmosphere_tests").next().unwrap();
         let copies: Vec<_> = shipping.match_indices("copy_buffer_to_buffer(eye,").collect();
-        assert_eq!(copies.len(), 3, "cone, rod and mesopic lanes into crush");
+        assert_eq!(copies.len(), 5, "cone, rod and mesopic lanes, and the local adaptation's cone and metered lanes, into crush");
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 48, &self.crush_buf, 196, 4)"));
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 60, &self.crush_buf, 200, 4)"));
+        assert!(include_str!("renderer_raymarch.rs").contains("r.encode_eye_local(encoder, eye);"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 56, &self.crush_buf, 192, 4)"));
@@ -13574,8 +13711,10 @@ mod atmosphere_tests {
         // A view starts adapted to its first frame; an optic's own eye also when it is returned to
         // (observer::OPTIC_RESNAP_GAP_S), and only then. Lane 30 holds an outdoor first snap one
         // frame for the glare split's background (the small-bright-source veil, 2 Nov 2026).
-        assert!(eye.contains("if (state[1] < 0.0 || state[30] > 0.5 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP))"),
+        assert!(eye.contains("let fresh = state[1] < 0.0 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP);"),
             "a view starts adapted to its first frame");
+        // The snap repeats for SNAP_HOLD_S of frames so stale histories cannot become the eye.
+        assert!(eye.contains("if (fresh || state[30] > 0.5 || (clock.time_s < state[31] && state[1] >= 0.0)) {"));
         // An authored lighting record cannot expose the camera; only the debug gate can fix it.
         let authored = renderer.split("pub fn apply_authored_lighting").nth(1).unwrap()
             .split("pub fn apply_campaign_atmosphere").next().unwrap();
@@ -13598,7 +13737,8 @@ mod atmosphere_tests {
         // The cone channel is the frame plus a fixated sub-pixel point's foveal concentration.
         assert!(crush.contains("let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));"));
         // The rods' local share (observer::local_rod_weight) scales the display rod term only.
-        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;"),
+        // The eye's local adaptation (observer::local_cone_gain) scales the cone term only.
+        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure * local_gain + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;"),
             "the display's rod reproduction acts only on the rod term");
         assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));"),
             "the night's hue outdoors, achromatic rods inside the hull");

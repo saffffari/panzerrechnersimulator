@@ -61,7 +61,9 @@ impl Weapon {
     }
     fn width(self) -> f32 {
         match self { Self::Pistol => 0.025, Self::Rifle | Self::MachineGun => 0.035,
-            Self::Cannon(mm) => (mm as f32 * 0.0015).clamp(0.07, 0.23), Self::Rocket => 0.12 }
+            // A tank round's tracer burns in a cavity in its base: its glow a third of the calibre
+            // across, never wider than the shell (the owner, 2026-11-03: it hid the round).
+            Self::Cannon(mm) => (mm as f32 * 0.00035).max(0.012), Self::Rocket => 0.12 }
     }
     fn length(self) -> f32 {
         match self { Self::Pistol => 1.6, Self::Rifle | Self::MachineGun => 3.4,
@@ -86,8 +88,26 @@ enum BurstKind { Muzzle, Blast, InteriorBlast,
     /// A cook-off's fireball (`game_cookoff`): an 88 mm burst's envelope with its visible size
     /// scaled by the factor (its fireball's diameter against the 88 mm burst's).
     CookoffFireball(f32), PressureVent(Vec3, f32), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet { normal:Vec3, energy_j:f32 }, BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
+/// Smoke from a round's impact on armour (and the penetration's puff): none while the flash and
+/// sparks play, then building over half a second, at 40 % of the earlier density (the owner,
+/// 2026-11-03: the smoke reached full density within 0.08 s and hid the strike; it should be light
+/// and build after the impact has begun to decay). An authored envelope, not combustion modelling.
+pub(super) const IMPACT_SMOKE_DELAY_S: f32 = 0.12;
+const IMPACT_SMOKE_RISE_S: f32 = 0.5;
+const IMPACT_SMOKE_SCALE: f32 = 0.4;
+
+/// The impact smoke's build-up at `age` s (0..IMPACT_SMOKE_SCALE), with the FEA range's review
+/// factors (1 and the authored delay everywhere else).
+fn impact_smoke_build(age: f32) -> f32 {
+    let delay = super::game_fea_range::review_smoke_delay();
+    smoothstep(delay, delay + IMPACT_SMOKE_RISE_S, age) * IMPACT_SMOKE_SCALE * super::game_fea_range::review_smoke_density()
+}
+
 impl BurstKind {
-    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet{..} | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
+    /// A hit that does not go through armour gives no smoke (the owner, 2026-11-03: "the non
+    /// penetrating smoke should not really be white"): its sparks, flash and hot steel only.
+    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet{..} | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}
+        | Self::ArmorImpact(_)) }
 }
 #[derive(Clone,Copy)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -339,8 +359,11 @@ impl Effects {
                 self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,normal,0.02,0.45,
                     BurstKind::BulletArmor{normal,energy_j:deposited*0.006,cosine:(-incident.dot(normal)).clamp(0.0,1.0)},weapon);
                 self.stamp_newest(at,None);
-                self.burst(point,normal,(event.shell.caliber_mm*0.00065).clamp(0.025,0.15),0.9,
-                    BurstKind::PenetrationSmoke(normal),weapon);self.stamp_newest(at,None);
+                // Smoke only where the round went through: a shattered round leaves the plate whole.
+                if event.terminal==Terminal::Penetration {
+                    self.burst(point,normal,(event.shell.caliber_mm*0.00065).clamp(0.025,0.15),0.9,
+                        BurstKind::PenetrationSmoke(normal),weapon);self.stamp_newest(at,None);
+                }
                 // The hole's rim (a perforation) or the shattered round's crater (`rim_heat`):
                 // the plate's own steel at the strike, heated by the work left in it.
                 if let Some(heat)=gpu_weapon::rim_heat(event.shell.caliber_mm,event.plate.thickness_mm,deposited) {
@@ -909,7 +932,7 @@ impl Game {
                 let tangent_wind=wind-normal*wind.dot(normal);
                 let source=b.pos+normal*radius;
                 r.add_smoke_sweep(source,source+normal*b.age*0.6+tangent_wind*b.age*0.20,
-                    radius,0.24*(1.0-b.age/b.life).max(0.0).powi(2),
+                    radius,0.24*(1.0-b.age/b.life).max(0.0).powi(2)*impact_smoke_build(b.age),
                     crate::particle_motion::seed_phase(b.seed)+b.age*0.8,0.35);
                 continue;
             }
@@ -941,7 +964,8 @@ impl Game {
             let radius=if muzzle {b.radius*(0.22+age.sqrt()*0.70)}else{b.radius*(0.25+0.60*age.sqrt())};
             let center=if muzzle {b.pos+propellant_offset(b.dir,Vec3::ZERO,age,b.radius,0.5,wind)}
                 else {b.pos+Vec3::new(wind.x*age*0.55,age*b.radius*0.32,wind.y*age*0.55)};
-            let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*smoothstep(0.0,0.08,age);
+            let onset=if matches!(b.kind,BurstKind::Impact|BurstKind::ArmorImpact(_)) {impact_smoke_build(age)} else {smoothstep(0.0,0.08,age)};
+            let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*onset;
             for lobe in 0..3 {
                 let phase=crate::particle_motion::seed_phase(b.seed)+lobe as f32*2.1;
                 let offset=Vec3::new(phase.sin(),0.3*phase.cos(),phase.cos())*radius*0.30;
@@ -955,7 +979,11 @@ impl Game {
             if cannon_draws>=CANNON_DRAWS {continue;}
             cannon_draws+=1;
             let weapon=Weapon::Cannon(shot.shell.caliber_mm as u16);
-            self.weapon_vfx.streak(shot.pos,shot.velocity.normalize_or_zero(),shot.distance_m,weapon,r.camera.pos);
+            // The tracer burns at the round's base, behind the body the round is drawn as
+            // (`drive_lodged_rounds` draws it in flight): its streak starts there, not at the nose.
+            let dir=shot.velocity.normalize_or_zero();
+            let base=shot.pos-dir*super::game_fea::penetrator_body(shot.shell).length_m;
+            self.weapon_vfx.streak(base,dir,shot.distance_m,weapon,r.camera.pos);
         }
         if self.panzerfaust_shot.active {
             let shot = &self.panzerfaust_shot;
@@ -1004,7 +1032,8 @@ mod tests {
             let has=|pred:fn(BurstKind)->bool|fx.bursts.iter().flatten().any(|b|pred(b.kind));
             assert_eq!(has(|k|matches!(k,BurstKind::Ricochet{..})),terminal==Terminal::Ricochet);
             assert_eq!(has(|k|matches!(k,BurstKind::HotRim{..})),matches!(terminal,Terminal::Penetration|Terminal::Shatter|Terminal::Ricochet));
-            assert_eq!(has(|k|matches!(k,BurstKind::PenetrationSmoke(_))),matches!(terminal,Terminal::Penetration|Terminal::Shatter));
+            assert_eq!(has(|k|matches!(k,BurstKind::PenetrationSmoke(_))),terminal==Terminal::Penetration,
+                "smoke only where the round went through");
             assert_eq!(has(|k|matches!(k,BurstKind::Blast)),terminal==Terminal::HeBlast);
             assert!(!has(|k|matches!(k,BurstKind::ArmorImpact(_)|BurstKind::Impact|BurstKind::InteriorBlast)));
             if terminal==Terminal::Penetration {assert!(fx.mats.iter().all(Vec::is_empty),"no generic exterior flame parcels");}
@@ -1013,6 +1042,25 @@ mod tests {
         let mut fx=Effects::default();fx.armor_terminal(8,0.0,point,incoming,normal,event,anchor,None);
         assert!(fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Blast)),"real HE breach retains its chemical detonation");
         assert!(!fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::HotRim{..}|BurstKind::Ricochet{..})));
+    }
+    /// A hit that does not go through armour (bounce, ricochet, shatter, a cannon round's armour
+    /// sparks) gives no smoke at all.
+    #[test] fn a_hit_that_does_not_go_through_gives_no_smoke() {
+        use crate::ballistics::{ArmorScheme,Facing,Terminal};
+        let point=Vec3::new(21.0,4.0,-61.0);let normal=Vec3::NEG_Z;
+        let mut event=crate::ballistics::resolve(&crate::ballistics::PZGR_39,100.0,
+            ArmorScheme::T34_76.plate(Facing::HullSide),0.0,7);
+        let anchor=SurfaceAnchor::new(ProjectileVehicle::Player,ArmorPart::Hull,Mat4::IDENTITY,point,normal);
+        for terminal in [Terminal::Bounce,Terminal::Ricochet,Terminal::Shatter] {
+            event.terminal=terminal;event.residual_v=0.0;
+            let mut fx=Effects::default();
+            fx.armor_terminal(9,0.0,point,Vec3::Z*760.0,normal,event,anchor,
+                (terminal==Terminal::Ricochet).then_some(Vec3::new(100.0,200.0,0.0)));
+            assert!(!fx.bursts.iter().flatten().any(|b|b.kind.emits_smoke()),"{terminal:?} smoked");
+        }
+        let mut fx=Effects::default();
+        fx.armor_sparks(point,-normal*760.0,normal,Weapon::Cannon(76));
+        assert!(!fx.bursts.iter().flatten().any(|b|b.kind.emits_smoke()),"armour sparks smoked");
     }
     #[test] fn entry_rim_follows_the_exact_source_frame_and_outward_normal() {
         let original=Mat4::from_rotation_translation(Quat::from_rotation_y(0.8),Vec3::new(10.0,4.0,-17.0));

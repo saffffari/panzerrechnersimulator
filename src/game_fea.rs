@@ -104,6 +104,43 @@ pub(super) struct ImpactSolve {
     pub(super) line: chain::ShotLine,
     pub(super) chain: chain::ChainResult,
     pub(super) lattice: Option<LatticeOutcome>,
+    /// The round's own solve, for a perforation (`fea_damage::shot`).
+    pub(super) shot: Option<ShotStrike>,
+}
+
+/// Cells across the calibre for the round's solve in play (the review film draws 12; the same in
+/// every preset).
+pub(super) const SHOT_CELLS_ACROSS: f32 = 8.0;
+
+/// What the round's own solve gave a perforation: the share of its mass that flies on, and the
+/// pieces it shed through the plate (plate frame).
+#[derive(Clone, Debug)]
+pub(super) struct ShotStrike {
+    pub(super) residual_kg: f32,
+    pub(super) mass_kg: f32,
+    pub(super) pieces: usize,
+    pub(super) shrapnel: Vec<crate::fea_damage::shot::Shrapnel>,
+    pub(super) wall_ms: f32,
+}
+
+impl ShotStrike {
+    /// Solve the round of a perforation as a deformable body (`None` for other outcomes and for
+    /// rounds without a kinetic body).
+    pub(super) fn solve(event: &crate::ballistics::ImpactEvent, seed: u32) -> Option<Self> {
+        if event.terminal != crate::ballistics::Terminal::Penetration {
+            return None;
+        }
+        let impact = crate::fea_damage::shot::impact_of(event, seed)?;
+        let started = std::time::Instant::now();
+        let mut shot = crate::fea_damage::shot::Shot::with_cells(impact, SHOT_CELLS_ACROSS);
+        let out = shot.solve_for(crate::fea_damage::shot::GAME_HORIZON);
+        Some(Self { residual_kg: out.residual_kg, mass_kg: out.mass_kg, pieces: out.pieces.len(),
+            shrapnel: out.shrapnel(impact.thickness_m), wall_ms: started.elapsed().as_secs_f32() * 1000.0 })
+    }
+
+    pub(super) fn residual_fraction(&self) -> f32 {
+        (self.residual_kg / self.mass_kg.max(1e-6)).clamp(0.0, 1.0)
+    }
 }
 
 /// One plate problem for the lattice and the hull-frame placement of its answer.
@@ -193,6 +230,34 @@ pub(super) struct FeaRuntime {
     lodged_draw: Vec<usize>,
     /// Lodged rounds over a pool's capacity, already reported.
     lodged_overflow_logged: bool,
+    /// The own solves of rounds that ricocheted (any vehicle's armour), by projectile id; each is
+    /// joined at that round's next contact, so its result never depends on when the worker ends.
+    pub(super) ricochet_solves: std::collections::BTreeMap<u64, std::thread::JoinHandle<Option<RicochetShot>>>,
+}
+
+/// What a ricochet's own solve left of the round.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RicochetShot {
+    pub(super) residual_fraction: f32,
+    pub(super) tumble_rad_s: f32,
+    pub(super) pieces: usize,
+    pub(super) peak_temp_k: f32,
+    pub(super) wall_ms: f32,
+}
+
+impl RicochetShot {
+    /// Start a ricocheting round's solve on a worker (`None` for rounds without a kinetic body).
+    pub(super) fn spawn(event: &crate::ballistics::ImpactEvent, seed: u32) -> Option<std::thread::JoinHandle<Option<Self>>> {
+        let impact = crate::fea_damage::shot::impact_of(event, seed)?;
+        Some(std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let out = crate::fea_damage::shot::Shot::with_cells(impact, SHOT_CELLS_ACROSS)
+                .solve_for(crate::fea_damage::shot::GAME_HORIZON);
+            Some(Self { residual_fraction: (out.residual_kg / out.mass_kg.max(1e-6)).clamp(0.05, 1.0),
+                tumble_rad_s: out.tumble_rad_s, pieces: out.pieces.len(), peak_temp_k: out.peak_temp_k,
+                wall_ms: started.elapsed().as_secs_f32() * 1000.0 })
+        }))
+    }
 }
 
 impl FeaRuntime {
@@ -357,7 +422,8 @@ pub(super) fn lattice_problem(event: &crate::ballistics::ImpactEvent, line: &cha
 /// steel (mass minus filler) partitioned into the existing authored size shape and speeds (named:
 /// no fragmentation law). `parent` is the penetration frame's model.
 pub(super) fn lattice_fragments(line: &chain::ShotLine, burst: bool, lat: &LatticeOutcome, hull: Mat4, parent: Mat4,
-    frame: BloodFrame, penetration_id: u64, event: &crate::ballistics::ImpactEvent, seed: u32) -> Vec<HotFragment> {
+    frame: BloodFrame, penetration_id: u64, event: &crate::ballistics::ImpactEvent, seed: u32,
+    shot: Option<&ShotStrike>) -> Vec<HotFragment> {
     let parent_inv = parent.inverse();
     let to_frame = |p_plate: Vec3| parent_inv.transform_point3(hull.transform_point3(lat.plate_to_hull(p_plate)));
     let dir_to_frame = |v: Vec3| parent_inv.transform_vector3(hull.transform_vector3(lat.plate_dir_to_hull(v)));
@@ -412,9 +478,23 @@ pub(super) fn lattice_fragments(line: &chain::ShotLine, burst: bool, lat: &Latti
         out.push(make(index, to_frame(cluster.centre), dir_to_frame(cluster.velocity), cluster.size_m,
             dir_to_frame(cluster.angular_velocity), cluster.temperature_k.max(crate::armor_damage::AMBIENT_K + 1.0), true));
     }
+    // Pieces of the round itself that came through the plate (its own solve), as they left the
+    // back face, at their solved motion and heat.
+    if let Some(shot) = shot {
+        for piece in &shot.shrapnel {
+            if out.len() >= N_HOT_FRAGMENTS {
+                break;
+            }
+            let index = out.len();
+            out.push(make(index, to_frame(piece.pos), dir_to_frame(piece.vel), piece.size_m, dir_to_frame(piece.spin),
+                piece.temperature_k.max(crate::armor_damage::AMBIENT_K + 1.0), true));
+        }
+    }
     if burst {
         const STEEL: f32 = 7850.0;
-        let body_mass = (event.shell.mass_kg - event.shell.filler_g * 0.001).max(0.0);
+        // The burst breaks the steel the round still has (its own solve's residual, when solved).
+        let carried = shot.map_or(event.shell.mass_kg, |s| s.residual_kg);
+        let body_mass = (carried - event.shell.filler_g * 0.001).max(0.0);
         let count = (N_HOT_FRAGMENTS - out.len()).min(512);
         if body_mass > 0.0 && count > 0 {
             let exit = lat.plate_to_hull(Vec3::ZERO) + line.dir * line.plate_path_m;
@@ -509,6 +589,12 @@ impl Game {
     /// terminals keep their existing rules.
     pub(super) fn fea_run_chain(&self, impact_world: Vec3, dir_world: Vec3,
         event: &crate::ballistics::ImpactEvent) -> Option<(chain::ShotLine, chain::ChainResult)> {
+        self.fea_run_chain_with(impact_world, dir_world, event, 1.0)
+    }
+
+    /// `fea_run_chain` with the round keeping `residual_fraction` of its mass past the plate.
+    pub(super) fn fea_run_chain_with(&self, impact_world: Vec3, dir_world: Vec3,
+        event: &crate::ballistics::ImpactEvent, residual_fraction: f32) -> Option<(chain::ShotLine, chain::ChainResult)> {
         use crate::ballistics::ShellKind;
         if !matches!(event.shell.kind, ShellKind::Ap | ShellKind::Apcbc | ShellKind::Apcr) {
             return None;
@@ -527,7 +613,7 @@ impl Game {
             live_rounds: &rounds,
         };
         let layers = chain::build_layers(&line, components::tiger_components(), &state);
-        let result = chain::run(event, &layers, crate::fea_damage::materials::AIR.density);
+        let result = chain::run_with_residual(event, &layers, crate::fea_damage::materials::AIR.density, residual_fraction);
         Some((line, result))
     }
 
@@ -627,7 +713,9 @@ impl Game {
         let to_frame = |p_hull: Vec3| parent_inv.transform_point3(hull.transform_point3(p_hull));
         let dir_frame = parent_inv.transform_vector3(hull.transform_vector3(line.dir)).normalize_or_zero();
         let shell = event.shell;
-        let mass = shell.mass_kg;
+        // The round flies on at the mass its own solve left it (the whole round when unsolved).
+        let mass = self.fea.current.as_ref().filter(|s| s.projectile_id == penetration_id)
+            .and_then(|s| s.shot.as_ref()).map_or(shell.mass_kg, |s| s.residual_kg);
         let radius = shell.caliber_mm * 0.0005;
         let contact_id = penetrator_contact_id(penetration_id);
         let mut knocked_out = Vec::new();
@@ -815,6 +903,12 @@ impl Game {
     pub(super) fn fea_solve_impact(&mut self, projectile_id: u64, seed: u32, armor: &VehicleArmorContact,
         event: &crate::ballistics::ImpactEvent, impact_world: Vec3, dir_world: Vec3) {
         self.fea.current = None;
+        // A perforating round's own solve runs beside the plate's; the chain takes its residual
+        // mass (the plate's problem depends only on the struck plate's calibrated crossing).
+        let shot_event = *event;
+        let shot_seed = seed ^ 0x5407_5407;
+        let shot_handle = (event.terminal == crate::ballistics::Terminal::Penetration)
+            .then(|| std::thread::spawn(move || ShotStrike::solve(&shot_event, shot_seed)));
         let Some((line, chain_result)) = self.fea_run_chain(impact_world, dir_world, event) else { return };
         let hull_inv = self.player.hull_model().inverse();
         let normal_hull = hull_inv.transform_vector3(armor.world_normal).normalize_or_zero();
@@ -825,7 +919,7 @@ impl Game {
         let job = problem.map(|(impact, axes)| PlateJob { impact, origin: line.entry, axes });
         if let Some(job) = job.filter(|j| matches!(j.impact.motion, lattice::Motion::Stop { .. })) {
             self.fea.started = Some((job, job.spawn()));
-            self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice: None });
+            self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice: None, shot: None });
             return;
         }
         let lattice = job.map(|job| {
@@ -836,7 +930,16 @@ impl Game {
                 g.lip_mm, g.bulge_mm, g.rim_kelvin, outcome.ledger.closure() * 100.0);
             outcome
         });
-        self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice });
+        let shot = shot_handle.and_then(|h| h.join().ok().flatten());
+        let chain_result = match &shot {
+            Some(s) => {
+                println!("[fea] the round's own solve: {:.2} of {:.2} kg flies on, {} pieces, {} through the plate as shrapnel, {:.0} ms",
+                    s.residual_kg, s.mass_kg, s.pieces, s.shrapnel.len(), s.wall_ms);
+                self.fea_run_chain_with(impact_world, dir_world, event, s.residual_fraction()).map_or(chain_result, |(_, r)| r)
+            }
+            None => chain_result,
+        };
+        self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice, shot });
     }
 
     /// The measured terminal geometry and solved rim cooling for the strike being resolved, if
@@ -854,7 +957,7 @@ impl Game {
         let solve = self.fea.current.as_ref().filter(|s| s.projectile_id == penetration_id)?;
         let lat = solve.lattice.as_ref()?;
         Some(lattice_fragments(&solve.line, solve.chain.burst, lat, self.player.hull_model(),
-            blood_parent_model(&self.player, frame), frame, penetration_id, event, seed))
+            blood_parent_model(&self.player, frame), frame, penetration_id, event, seed, solve.shot.as_ref()))
     }
 
     /// Commit every deferred plate solve whose time has come (called at the start of each update).
@@ -1133,7 +1236,7 @@ impl Game {
         parent * Mat4::from_rotation_translation(rotation, round.tip_local)
     }
 
-    /// Pose every lodged round with its hull or turret.
+    /// Pose every lodged round with its hull or turret, and every cannon round in flight.
     pub(super) fn drive_lodged_rounds(&mut self, r: &mut Renderer) {
         if self.fea.lodged_draw.is_empty() {
             return;
@@ -1147,6 +1250,16 @@ impl Game {
                 continue;
             }
             per_spec[index].push(self.lodged_round_model(round));
+        }
+        // Rounds in flight are drawn as the same body (nose at the round's point, along its
+        // velocity): a cannon round is a real object in the air, not only its tracer's glow.
+        for shot in self.projectiles.iter().filter(|p| p.small_arm.is_none()) {
+            let Some(index) = lodged_spec_index(shot.shell) else { continue };
+            let dir = shot.velocity.normalize_or_zero();
+            if dir == Vec3::ZERO || per_spec[index].len() >= LODGED_DRAW_CAPACITY {
+                continue;
+            }
+            per_spec[index].push(Mat4::from_rotation_translation(Quat::from_rotation_arc(Vec3::Z, dir), shot.pos));
         }
         if overflow && !self.fea.lodged_overflow_logged {
             println!("[fea] more than {LODGED_DRAW_CAPACITY} rounds of one kind are lodged: the extra ones are not drawn (named bound)");
@@ -1682,5 +1795,28 @@ mod ignition_tests {
             result.fire
         }).count();
         assert_eq!(cold, 0);
+    }
+}
+
+#[cfg(test)]
+mod round_solve_tests {
+    use super::*;
+    use crate::ballistics::{self, ArmorMaterial, Plate, Terminal};
+
+    fn plate(mm: f32) -> Plate {
+        Plate { name: "test plate", thickness_mm: mm, slope_deg: 0.0, material: ArmorMaterial::Rha }
+    }
+
+    #[test]
+    fn a_glancing_round_is_solved_tumbling_and_a_perforating_one_sheds_into_the_vehicle() {
+        let glance = ballistics::resolve(&ballistics::BR_471, 500.0, plate(100.0), 72.0, 5);
+        assert_eq!(glance.terminal, Terminal::Bounce);
+        let solved = RicochetShot::spawn(&glance, 9).unwrap().join().unwrap().unwrap();
+        assert!(solved.tumble_rad_s > 20.0 && solved.residual_fraction > 0.5 && solved.residual_fraction <= 1.0, "{solved:?}");
+        let through = ballistics::resolve(&ballistics::PZGR_39, 300.0, plate(80.0), 30.0, 5);
+        assert_eq!(through.terminal, Terminal::Penetration);
+        let shot = ShotStrike::solve(&through, 9).unwrap();
+        assert!(shot.residual_fraction() < 1.0 && !shot.shrapnel.is_empty(), "{} kg, {} shrapnel", shot.residual_kg, shot.shrapnel.len());
+        assert!(ShotStrike::solve(&glance, 9).is_none(), "only a perforation's round is solved for the chain");
     }
 }

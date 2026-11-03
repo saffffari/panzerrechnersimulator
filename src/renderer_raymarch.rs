@@ -273,6 +273,11 @@ struct FrameUniform {
     /// frame the brick grid's origin and cell edge, its dims and first brick; then the mask base,
     /// the cell count, the review view and the layer switches. Zeros until the field is installed.
     vsm: [[f32; 4]; 8],
+    /// The Moon's disc (`celestial_sky::MoonDisc`; rm_common.wgsl `rm_moon_disc`): direction +
+    /// display radius (0: below the horizon); the sunlit part's irradiance at the eye through the
+    /// air + the slot carrying its light (1 key, 2 secondary, 0 neither); the earthlit night side's
+    /// irradiance at the eye were the whole disc earthlit; the direction to the Sun.
+    moon: [[f32; 4]; 4],
 }
 
 /// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
@@ -737,7 +742,8 @@ pub(super) struct Backend {
     weapon_draws: Vec<(u32, u32)>,
     tracer_range: (u32, u32),
     /// Visible glass panes this frame, back to front.
-    panes: Vec<usize>,
+    /// Glass panes back to front, with a vision block's inner-window slab thickness (0: ordinary).
+    panes: Vec<(usize, f32)>,
     events: Vec<Event>,
     /// World wind this frame (m/s, xz), for drifting soot and dust.
     wind: Vec3,
@@ -950,6 +956,7 @@ fn rm_source_text(name: &str) -> String {
         "rm_points.wgsl" => include_str!("../shaders/rm_points.wgsl"),
         "rm_sparks.wgsl" => include_str!("../shaders/rm_sparks.wgsl"),
         "rm_glass.wgsl" => include_str!("../shaders/rm_glass.wgsl"),
+        "glass_scratches.wgsl" => include_str!("../shaders/glass_scratches.wgsl"),
         "rm_rt.wgsl" => include_str!("../shaders/rm_rt.wgsl"),
         "rm_cloud_shadow.wgsl" => include_str!("../shaders/rm_cloud_shadow.wgsl"),
         "rm_low_clouds.wgsl" => include_str!("../shaders/rm_low_clouds.wgsl"),
@@ -1526,7 +1533,7 @@ impl Backend {
 
         // Glass panes: forward over the lit frame, depth-tested, premultiplied.
         let glass_rt = if rt_scene { "rm_rt_g3.wgsl" } else { "rm_rt_stub.wgsl" };
-        let glass_shader = rm_shader(device, "rm-glass", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", glass_rt, "rm_glass.wgsl"]);
+        let glass_shader = rm_shader(device, "rm-glass", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", glass_rt, "glass_scratches.wgsl", "rm_glass.wgsl"]);
         let glass_layouts: Vec<&wgpu::BindGroupLayout> = [&post_bgl, &visibility_bgl, material_bgl].into_iter().chain(rt_bgl.as_ref()).collect();
         let glass_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-glass-pl"), bind_group_layouts: &glass_layouts, push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
@@ -2150,6 +2157,23 @@ impl Backend {
         let secondary_radiance = if secondary_on {
             atmosphere.secondary_irradiance * physical_environment::solar_transmittance_at(&atmosphere, origin, secondary_dir, quality.source_steps.max(4))
         } else { glam::DVec3::ZERO };
+        // The Moon's disc, drawn by its phase whichever slot carries its light, and by day too
+        // (its light is dropped while the Sun keys; its disc is not).
+        let moon = {
+            let disc = r.celestial().moon_disc(AtmosphereParameters::default().solar_irradiance);
+            let dir = disc.direction.normalize_or_zero();
+            if dir.y > -0.02 && dir.length_squared() > 0.5 && disc.irradiance.max_element() > 0.0 {
+                let through = physical_environment::solar_transmittance_at(&atmosphere, origin, dir, quality.source_steps.max(4));
+                let lit = disc.irradiance * through;
+                let shine = disc.earthshine * through;
+                let sun = disc.sun_direction.normalize_or_zero();
+                let slot = if disc.is_key { 1.0 } else if disc.is_secondary { 2.0 } else { 0.0 };
+                [[dir.x as f32, dir.y as f32, dir.z as f32, disc.angular_radius_rad as f32],
+                 [lit.x as f32, lit.y as f32, lit.z as f32, slot],
+                 [shine.x as f32, shine.y as f32, shine.z as f32, 0.0],
+                 [sun.x as f32, sun.y as f32, sun.z as f32, 0.0]]
+            } else { [[0.0; 4]; 4] }
+        };
         // Sky cache refresh: one phase of the texel pattern per frame; every texel after a jump
         // of the key body or the weather (a time-of-day cut, a capture's weather override).
         let jumped = match self.prev_sky_key {
@@ -2267,15 +2291,24 @@ impl Backend {
         self.optic_active = (r.optic_mask - 1.0).abs() < 0.5 || (r.optic_mask - 3.0).abs() < 0.5;
         // Glass panes in view, sorted back to front for the forward pass.
         let planes = frustum_planes(r.camera.view_proj());
-        let mut panes: Vec<(f32, usize)> = r.meshes.iter().enumerate().filter_map(|(i, m)| {
+        let mut panes: Vec<(f32, usize, f32)> = r.meshes.iter().enumerate().filter_map(|(i, m)| {
             if !m.visible || !m.glass || (r.optic_hide_pass && m.optic_hidden) { return None; }
             if !aabb_in_frustum(&planes, m.world_min, m.world_max) { return None; }
             let center = (m.world_min + m.world_max) * 0.5;
-            Some(((center - eye).length_squared(), i))
+            Some(((center - eye).length_squared(), i, m.vision_glass_m))
         }).collect();
+        // A vision block's closed inner window over its relay (drawn this frame, 5b).
+        if self.relays(r) {
+            for (i, thickness) in r.raster_optic_window_panes() {
+                let m = &r.meshes[i];
+                if !m.visible || !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
+                let center = (m.world_min + m.world_max) * 0.5;
+                panes.push(((center - eye).length_squared(), i, thickness));
+            }
+        }
         panes.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         self.panes.clear();
-        self.panes.extend(panes.iter().map(|&(_, i)| i));
+        self.panes.extend(panes.iter().map(|&(_, i, thickness)| (i, thickness)));
         self.stats.panes = self.panes.len();
 
         // The player's crew compartment: 0.9 m above the turret frame's origin (its basket
@@ -2393,6 +2426,7 @@ impl Backend {
                 lanes[6][3] = r.vsm_layers as f32;
                 lanes
             }),
+            moon,
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -3704,7 +3738,7 @@ impl Backend {
             pass.set_bind_group(1, &binds.visibility, &[]);
             if let Some(rt) = &self.rt_bind { pass.set_bind_group(3, rt, &[]); }
             let frames = aboard_frames(r);
-            for &i in &self.panes {
+            for &(i, window_m) in &self.panes {
                 let m = &r.meshes[i];
                 // A pane of a sectioned vehicle beyond the film's plane goes with its frame.
                 if let (Some(plane), true) = (r.film_section(), m.section_cut) {
@@ -3716,12 +3750,15 @@ impl Backend {
                     if centre.dot(normal) > plane[3] && inside { continue; }
                 }
                 // The slab thickness is the pane's thinnest local extent (port glass ~9 cm,
-                // sight glass millimetres).
-                let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
+                // sight glass millimetres). A vision block's closed inner window draws each face
+                // (and a direct-view block's glass) as one interface carrying half its registered
+                // slab (rm_glass.wgsl).
+                let thickness = if window_m > 0.0 { window_m * 0.5 }
+                    else { (m.local_max - m.local_min).min_element().clamp(0.003, 0.12) };
                 let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
                     extra: [if m.snow_vehicle { self.snow_load(r.player_snow_load) } else if is_aboard(&frames, m.world_min, m.world_max) { 0.0 }
                         else { self.snow_load(r.world_snow_load) }, if m.snow_vehicle { 1.0 } else { 0.0 },
-                        if m.instrument_cover { 1.0 } else { 0.0 }, 0.0], scars: [0; 4], vehicle: [0.0; 4] };
+                        if m.instrument_cover { 1.0 } else { 0.0 }, if window_m > 0.0 { 1.0 } else { 0.0 }], scars: [0; 4], vehicle: [0.0; 4] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));
@@ -3802,6 +3839,7 @@ impl Backend {
             encoder.copy_buffer_to_buffer(eye, 8, &r.crush_buf, 16, 8);
             // The field's mesopic coefficient (lane 14) for the pixels' local mesopic weight.
             encoder.copy_buffer_to_buffer(eye, 56, &r.crush_buf, 192, 4);
+            r.encode_eye_local(encoder, eye);
             if let Some(optics) = &r.raster_optics {
                 // The relayed views' particles take the same eye (one frame later).
                 optics.copy_eye_mapping(encoder, eye);
@@ -4050,7 +4088,7 @@ mod shader_tests {
             validate(&format!("rm-shade {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt, "rm_shade.wgsl"]));
             validate(&format!("rm-volume {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt, "rm_volume.wgsl"]));
             validate(&format!("rm-reflect {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", rt, "rm_reflect.wgsl"]));
-            validate(&format!("rm-glass {glass_rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", glass_rt, "rm_glass.wgsl"]));
+            validate(&format!("rm-glass {glass_rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", glass_rt, "glass_scratches.wgsl", "rm_glass.wgsl"]));
         }
         validate("rm-cloud-shadow", &physical_atmosphere_transport_shader_source(
             &format!("{}\n{}", rm_source("sky.wgsl"), rm_source("rm_cloud_shadow.wgsl"))));

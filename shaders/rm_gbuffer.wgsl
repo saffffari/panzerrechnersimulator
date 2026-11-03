@@ -312,6 +312,18 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     var n = normalize(in.normal);
     let view = normalize(-in.relative);
     if (dot(n, view) < 0.0) { n = -n; }
+    // The section's cut face (film/review section, camera only): a sectioned part's back face seen
+    // through the cut, close behind the plane with the eye on the removed side, is the inside of
+    // the solid. It is drawn as the cut face of steel, facing the removed half, not as the plate's
+    // inner skin (named in docs/PHYSICAL_TRUTH_AUDIT.md: at the skin's depth, not on the plane).
+    var cut_face = false;
+    if (((pc.scars.w >> 24u) & 1u) != 0u && !front && kind < 0.5) {
+        let behind = fr.section.w - dot(in.relative + fr.cam_pos.xyz, fr.section.xyz);
+        if (dot(fr.cam_pos.xyz, fr.section.xyz) > fr.section.w && behind < 0.3) {
+            cut_face = true;
+            n = normalize(fr.section.xyz);
+        }
+    }
     let face_n = n;
     gb_in_cabin = gb_cabin_air(in.relative + fr.cam_pos.xyz + n * 0.03);
     // The vehicle surface model's review view (KESSEL_VSM_VIEW): a measured channel as unlit false
@@ -349,7 +361,7 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     }
     // Tangent-space normal map where the source carries one (a flat 1x1 fallback otherwise).
     let tangent = in.tangent.xyz - n * dot(n, in.tangent.xyz);
-    if (dot(tangent, tangent) > 1e-8) {
+    if (!cut_face && dot(tangent, tangent) > 1e-8) {
         let t = normalize(tangent);
         let b = cross(n, t) * in.tangent.w;
         let tn = textureSample(normal_tex, samp, in.uv).xyz * 2.0 - vec3(1.0);
@@ -360,6 +372,14 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     var roughness = clamp(mr.g * pc.params.z, 0.08, 1.0);
     var metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
     var albedo = raw.rgb;
+    if (cut_face) {
+        // Sawn rolled armour: bare steel with a ground sheen (the final encoding below: albedo
+        // and no lying snow, the normal and roughness, metallic).
+        out.g0 = vec4(vec3(0.30, 0.30, 0.31), 0.0);
+        out.g1 = vec4(n, 0.55);
+        out.g2 = vec4(0.0, 0.0, 0.0, 0.85);
+        return out;
+    }
     // Snow's relief: the lift field's slope across the face tilts the shading normal (the
     // vertices carry the thickness, the pillows and lips between them come from here), and the
     // running gear's packed crust is a matte, slightly grey snow whatever the face's slope.

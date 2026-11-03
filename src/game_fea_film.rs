@@ -192,6 +192,14 @@ struct Clip {
     sound: Vec<f32>,
     frames: u64,
     segments: Vec<serde_json::Value>,
+    /// When the last frame was pushed (`KESSEL_FILM_DUTY`).
+    last_push: Option<std::time::Instant>,
+}
+
+/// `KESSEL_FILM_DUTY=0.5`: after each frame rest long enough that the film keeps the GPU busy
+/// that share of the time (the owner works on the same machine). Unset: no rest.
+fn film_duty() -> Option<f32> {
+    std::env::var("KESSEL_FILM_DUTY").ok().and_then(|v| v.parse::<f32>().ok()).filter(|d| *d > 0.0 && *d < 1.0)
 }
 
 impl Clip {
@@ -210,7 +218,7 @@ impl Clip {
             .stdin(Stdio::piped())
             .spawn()?;
         println!("[fea-film] recording {name}");
-        Ok(Self { name: name.into(), path, picture, encoder, sound: Vec::new(), frames: 0, segments: Vec::new() })
+        Ok(Self { name: name.into(), path, picture, encoder, sound: Vec::new(), frames: 0, segments: Vec::new(), last_push: None })
     }
 
     fn mark(&mut self, label: &str, scale: &str) {
@@ -218,7 +226,12 @@ impl Clip {
     }
 
     fn push(&mut self, rgba: &[u8], sound: Option<&[f32]>) -> anyhow::Result<()> {
+        if let (Some(duty), Some(last)) = (film_duty(), self.last_push) {
+            let busy = last.elapsed();
+            std::thread::sleep(busy.mul_f32(1.0 / duty - 1.0).min(std::time::Duration::from_secs(2)));
+        }
         self.encoder.stdin.as_mut().expect("encoder input").write_all(rgba)?;
+        self.last_push = Some(std::time::Instant::now());
         self.frames += 1;
         let target = self.frames as usize * FRAME_SAMPLES;
         if let Some(sound) = sound {
@@ -873,7 +886,171 @@ fn ignition_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, n
     Ok(receipt)
 }
 
-/// The fallen man's head (world), from his body's head segment.
+/// One strike of the crew range (`range_study`): a round of the Soviet anti-tank catalogue at a
+/// crewman, from an azimuth round the tank (the golden angle, so every few runs cover the circle).
+struct RangeRun {
+    index: u32,
+    shell: &'static crate::ballistics::ShellSpec,
+    range_m: f32,
+    azimuth_deg: f32,
+    below_deg: f32,
+    role: CrewRole,
+}
+
+fn range_run(index: u32) -> RangeRun {
+    use crate::ballistics as b;
+    let h = |k: u32| hash01(index.wrapping_mul(0x9E37_79B9) ^ k.wrapping_mul(0x85EB_CA6B) ^ 0x4A4E_6E01);
+    let azimuth_deg = (index as f32 * 137.507_77) % 360.0;
+    // Rounds that hole the Tiger from most bearings (a bounce shows nothing of the crew).
+    let front = azimuth_deg.to_radians().cos() > 0.7;
+    let shells: [&'static b::ShellSpec; 5] = [&b::BR_471, &b::BR_365, &b::BR_471, &b::BR_354P, &b::BR_471];
+    let shell = if front { &b::BR_471 } else { shells[((h(1) * 5.0) as usize).min(4)] };
+    RangeRun { index, shell, range_m: 100.0 + 300.0 * h(2), azimuth_deg, below_deg: 4.0 * h(3),
+        role: CrewRole::ALL[index as usize % 5] }
+}
+
+fn station_of(role: CrewRole) -> Station {
+    match role {
+        CrewRole::Commander => Station::Commander,
+        CrewRole::Gunner => Station::Gunner,
+        CrewRole::Loader => Station::Loader,
+        CrewRole::Driver => Station::Driver,
+        CrewRole::Radioman => Station::Radioman,
+    }
+}
+
+/// The crew range (the owner, 2026-11-03: tune the crew's voxel tissue on the full Tiger and its
+/// five men, the rest of the world cut away, rounds from all sides). Runs `KESSEL_FEA_RANGE_RUNS`
+/// (e.g. "0-4"), each filmed twice from the same strike replayed exactly (the strike counters
+/// restored on a fresh Tiger): a camera-only section on the loader's side through the full height
+/// of hull and turret looking toward the commander, then an uncut interior view of the struck man.
+/// Disclosed: racks emptied (no cook-off), the player at a post not struck in that run, the world
+/// beyond 30 m hidden (`Renderer::hide_meshes_beyond`), the section a view only. Tissue tuning, if
+/// any, is `KESSEL_TISSUE_TUNE` (review only), named on every frame.
+fn range_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, name: &str) -> anyhow::Result<serde_json::Value> {
+    let spec = std::env::var("KESSEL_FEA_RANGE_RUNS").unwrap_or_else(|_| "0-4".into());
+    let (first, last) = spec.split_once('-').map_or((0u32, 4u32), |(a, b)| (a.trim().parse().unwrap_or(0), b.trim().parse().unwrap_or(4)));
+    let tune = std::env::var("KESSEL_TISSUE_TUNE").unwrap_or_default();
+    let day_clock = ctx.clock;
+    ctx.clock = ephemeris::UtcInstant::parse_iso("1942-12-21T09:30:00Z")?;
+    g.enable_singleplayer_crew();
+    ctx.all_crew = true;
+    let mut clip = Clip::start(prefix, name)?;
+    let mut runs = Vec::new();
+    for index in first..=last {
+        let run = range_run(index);
+        let mut counters = None;
+        let mut passes = Vec::new();
+        for section in [true, false] {
+            fresh_tiger(ctx, g, r, 0x7A46_0000 ^ index, false)?;
+            let player = CrewRole::ALL[(index as usize + 2) % 5];
+            g.jump_station(station_of(if player == run.role { CrewRole::ALL[(index as usize + 3) % 5] } else { player }));
+            g.set_cabin_lights(true);
+            ctx.run(g, r, 0.3, TICK)?;
+            let hidden = r.hide_meshes_beyond(g.player.center(), 30.0);
+            match counters {
+                None => counters = Some(g.debug_strike_counters()),
+                Some(c) => g.debug_set_strike_counters(c),
+            }
+            let hull = g.player.hull_model();
+            // His body's own centre (the hit volumes the strike meets), the nearest to his post.
+            let post = g.crew_solo_man_point(run.role);
+            let man = [BloodFrame::Hull, BloodFrame::Turret].into_iter().flat_map(|frame| {
+                let parent = blood_parent_model(&g.player, frame);
+                g.physical_crew_bodies(frame).into_iter().map(move |b| parent.transform_point3(b.pos))
+            }).min_by(|a, b| a.distance(post).total_cmp(&b.distance(post))).filter(|p| p.distance(post) < 1.2).unwrap_or(post);
+            let (az, below) = (run.azimuth_deg.to_radians(), run.below_deg.to_radians());
+            let dir = hull.transform_vector3(Vec3::new(-az.sin() * below.cos(), -below.sin(), -az.cos() * below.cos())).normalize();
+            // Inside: an eye about a metre from him with a clear line to him; its metered exposure is
+            // held for both views (the cut-away side is daylit, the cabin lamp-lit).
+            let inside = {
+                // A ring of eyes 0.8-1.3 m from him at chest height and above, scored by clear lines
+                // to his head, chest and pelvis; none with a surface within 12 cm (inside a fitting).
+                let up = hull.transform_vector3(Vec3::Y).normalize();
+                let marks = [man + up * 0.35, man, man - up * 0.3];
+                let models = g.fire_surface_models();
+                let roomy = |e: Vec3| [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z].iter()
+                    .all(|d| g.cabin_fire.sweep(e, e + *d * 0.12, &models).is_none());
+                let mut best = (0usize, g.station_eye(Station::Commander));
+                // The crew's own eyes (inside the cabin by construction), then the ring.
+                for station in [Station::Commander, Station::Gunner, Station::Loader, Station::Driver, Station::Radioman] {
+                    let e = g.station_eye(station);
+                    if e.distance(man) < 0.45 {
+                        continue;
+                    }
+                    let score = marks.iter().filter(|&&m| sight_clear(g, e, m)).count();
+                    if score > best.0 {
+                        best = (score, e);
+                    }
+                }
+                for k in 0..16u32 {
+                    let a = k as f32 / 16.0 * std::f32::consts::TAU;
+                    for (radius, lift) in [(1.0f32, 0.3f32), (0.8, 0.55), (1.3, 0.4)] {
+                        let e = man + hull.transform_vector3(Vec3::new(a.cos() * radius, lift, a.sin() * radius));
+                        if !roomy(e) {
+                            continue;
+                        }
+                        let score = marks.iter().filter(|&&m| sight_clear(g, e, m)).count();
+                        if score > best.0 {
+                            best = (score, e);
+                        }
+                    }
+                }
+                View::Inside(best.1, man, 64.0)
+            };
+            ctx.meter(g, r, inside)?;
+            let view = if section {
+                let n = hull.transform_vector3(Vec3::NEG_X).normalize();
+                let plane = n.extend(n.dot(hull.transform_point3(Vec3::new(-0.7, 0.0, 0.0))));
+                let c = g.player.center();
+                let meshes = r.solid_meshes_within(c - Vec3::splat(7.0), c + Vec3::splat(7.0));
+                r.set_film_section(Some(plane), &meshes);
+                View::Inside(hull.transform_point3(Vec3::new(-3.9, 1.65, -0.3)), hull.transform_point3(Vec3::new(0.0, 1.45, -0.3)), 60.0)
+            } else {
+                r.set_film_section(None, &[]);
+                inside
+            };
+            ctx.banner = Some(format!("RUN {}: {} {:.0} M FROM {:.0} DEG, {:.0} DEG DOWN, AT THE {:?}; {}; TISSUE {}",
+                index + 1, run.shell.name, run.range_m, run.azimuth_deg, run.below_deg, run.role,
+                if section { "SECTION (VIEW ONLY)" } else { "INTERIOR" }, if tune.is_empty() { "AS SHIPPED".to_string() } else { tune.to_uppercase() }).to_uppercase());
+            ctx.cut(g, r, view)?;
+            let before = ctx.shoot(g, r, view, None)?;
+            for _ in 0..9 {
+                clip.push(&before, None)?;
+            }
+            g.debug_launch_round(run.shell, false, man - dir * 6.0, dir, run.range_m, 0x7A46_1000 ^ index);
+            clip.mark(&format!("run {} {}", index + 1, if section { "section" } else { "interior" }), "1/16 speed then real time");
+            for _ in 0..48 {
+                ctx.update(g, r, &TankInput::default(), SLOW_DT)?;
+                let rgba = ctx.shoot(g, r, view, Some("1/16 SPEED"))?;
+                clip.push(&rgba, None)?;
+            }
+            for _ in 0..36 {
+                for _ in 0..2 {
+                    ctx.update(g, r, &TankInput::default(), TICK)?;
+                }
+                let rgba = ctx.shoot(g, r, view, None)?;
+                clip.push(&rgba, None)?;
+            }
+            passes.push(json!({"section": section, "hidden_meshes": hidden, "outcome": strike_outcome(g),
+                "tissue": g.crew_corpse_render_receipt()}));
+        }
+        r.set_film_section(None, &[]);
+        r.exposure_override = None;
+        println!("[fea-film] range run {}: {} from {:.0} deg at the {:?}", index + 1, run.shell.name, run.azimuth_deg, run.role);
+        runs.push(json!({"run": index + 1, "shell": run.shell.name, "range_m": run.range_m, "azimuth_deg": run.azimuth_deg,
+            "below_deg": run.below_deg, "role": format!("{:?}", run.role), "passes": passes}));
+    }
+    ctx.all_crew = false;
+    ctx.banner = None;
+    ctx.clock = day_clock;
+    let mut receipt = clip.finish()?;
+    receipt["tune"] = json!(tune);
+    receipt["runs"] = json!(runs);
+    Ok(receipt)
+}
+
+/// The fallen man's head (world), from his body's head segment./// The fallen man's head (world), from his body's head segment.
 fn head_point(g: &Game, role: CrewRole) -> Option<Vec3> {
     let actor = g.singleplayer_casualty_identity(role).peer_id;
     let body = g.couch_ragdolls.iter().find(|b| b.casualty.peer_id == actor)?;
@@ -1136,6 +1313,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let prefix_owned = super::game_fea_section::shared_capture_prefix(prefix);
     let prefix = prefix_owned.as_str();
     anyhow::ensure!(graphics::raymarch_backend_enabled(), "fea-film requires KESSEL_RENDERER=raymarch");
+    // A review harness: `KESSEL_TISSUE_TUNE` may scale the crew tissue here (never in play).
+    super::crew_tissue::allow_review_tune();
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_receipt.json")).exists(),
         "preserving an existing film; choose a new prefix");
     let started = std::time::Instant::now();
@@ -1964,6 +2143,12 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     // plate whose round or fragments light what a component holds, from behind the driver's seat.
     if wanted("ignition") {
         clips.push(ignition_study(&mut ctx, &mut g, &mut r, prefix, "ignition", &idle_input)?);
+    }
+
+    // ── 21. The crew range (`range_study`): rounds from all sides at the five men, each strike
+    // filmed in a section on the loader's side and from inside (KESSEL_FEA_RANGE_RUNS).
+    if only.as_ref().is_some_and(|o| o.iter().any(|w| w == "range")) {
+        clips.push(range_study(&mut ctx, &mut g, &mut r, prefix, "range")?);
     }
 
     let receipt = json!({

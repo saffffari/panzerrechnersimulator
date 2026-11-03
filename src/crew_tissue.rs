@@ -48,6 +48,8 @@ const FORWARD: f32 = 0.95;
 const OUTWARD: f32 = 0.3;
 /// Simulated time after the strikes, and the per-step velocity damping (named numerical damping).
 const SOLVE_S: f32 = 0.008;
+/// Worker threads for a body's lattice solve (its result is the same for any count).
+pub(super) const SOLVE_THREADS: usize = 8;
 /// Cells this far from a fragment's path move in the solve; farther ones hold them (anchored).
 const ACTIVE_REACH_M: f32 = 0.12;
 const DAMPING: f32 = 0.001;
@@ -73,11 +75,13 @@ pub(crate) struct TissueTuning {
     pub active_reach_m: f32,
     /// A landing piece breaks into grains when ½·m·vn² exceeds this times its bonds' cohesion.
     pub landing_breakup: f32,
+    /// The radius a fragment's lost momentum is shared over, as a factor (with `Tune::spread`).
+    pub spread: f32,
 }
 
 impl TissueTuning {
     pub(crate) const AUTHORED: Self = Self { tear_j_m3: TEAR_J_M3, critical_stretch: CRITICAL_STRETCH, forward: FORWARD,
-        outward: OUTWARD, active_reach_m: ACTIVE_REACH_M, landing_breakup: 1.0 };
+        outward: OUTWARD, active_reach_m: ACTIVE_REACH_M, landing_breakup: 1.0, spread: 1.0 };
 }
 
 static REVIEW_TUNING: std::sync::RwLock<Option<TissueTuning>> = std::sync::RwLock::new(None);
@@ -85,6 +89,11 @@ static REVIEW_TUNING: std::sync::RwLock<Option<TissueTuning>> = std::sync::RwLoc
 /// Review-only (`fea-range`): replace the authored lattice constants, or `None` to restore them.
 pub(crate) fn set_review_tuning(tuning: Option<TissueTuning>) {
     *REVIEW_TUNING.write().unwrap_or_else(|e| e.into_inner()) = tuning;
+}
+
+/// Whether the range's review override is set.
+fn review_tuning_active() -> bool {
+    REVIEW_TUNING.read().unwrap_or_else(|e| e.into_inner()).is_some()
 }
 
 /// The lattice constants in force: the authored ones unless a review override is set.
@@ -111,6 +120,60 @@ pub(super) const BONE_LABEL: u8 = SKIN_LABELS + 3;
 /// `MAX_ANATOMY_ID`), each in its table colour.
 pub(super) const MAX_ANATOMY_ID: u8 = 48;
 pub(super) const LABELS: usize = BONE_LABEL as usize + MAX_ANATOMY_ID as usize;
+
+/// Review-only tuning (`KESSEL_TISSUE_TUNE="tear=2,stretch=1.5,outward=0.3,forward=0.95,grain=1"`):
+/// scales on the bonds' tearing energy and critical stretch, the momentum shares a fragment gives
+/// the cells about it, and the energy a landing piece needs to break into grains. Read only after
+/// `allow_review_tune` (the `fea-film` and `fea-range` review tools call it); play and both shipping presets
+/// never do, so every scale is 1 and the shares their constants there (test
+/// `the_tune_is_the_constants_unless_the_review_allows_it`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Tune {
+    pub tear: f32,
+    pub stretch: f32,
+    pub forward: f32,
+    pub outward: f32,
+    pub grain: f32,
+    /// The radius the lost momentum is shared over, in multiples of the fragment's half-size plus
+    /// half a cell.
+    pub spread: f32,
+}
+
+static REVIEW_TUNE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The review harness's gate on `KESSEL_TISSUE_TUNE` (call before the first body is built).
+pub(super) fn allow_review_tune() {
+    REVIEW_TUNE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn parse_tune(spec: Option<&str>) -> Tune {
+    let mut t = Tune { tear: 1.0, stretch: 1.0, forward: FORWARD, outward: OUTWARD, grain: 1.0, spread: 1.0 };
+    for (key, value) in spec.unwrap_or("").split(',').filter_map(|kv| kv.split_once('=')) {
+        let Ok(v) = value.trim().parse::<f32>() else { continue };
+        match key.trim() {
+            "tear" => t.tear = v,
+            "stretch" => t.stretch = v,
+            "forward" => t.forward = v,
+            "outward" => t.outward = v,
+            "grain" => t.grain = v,
+            "spread" => t.spread = v,
+            _ => {}
+        }
+    }
+    t
+}
+
+pub(super) fn tune() -> Tune {
+    static TUNE: std::sync::OnceLock<Tune> = std::sync::OnceLock::new();
+    *TUNE.get_or_init(|| {
+        let spec = REVIEW_TUNE.load(std::sync::atomic::Ordering::Relaxed).then(|| std::env::var("KESSEL_TISSUE_TUNE").ok()).flatten();
+        let t = parse_tune(spec.as_deref());
+        if spec.is_some() {
+            println!("[crew] tissue tuning (review only): {t:?}");
+        }
+        t
+    })
+}
 
 /// The 18-neighbourhood, owned half (each bond stored once).
 const OFFSETS: [[i32; 3]; 9] = [
@@ -443,8 +506,80 @@ fn build_procedural(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -> Tissu
 }
 
 /// The parts' cells, the joints' blend and the bonds, for either build.
-fn finish_model(cell_m: f32, anatomy: Option<String>, origin: Vec3, dims: [usize; 3], grid: Vec<u32>, cells: Vec<Cell>,
+/// The part classifier works point by point, so a few cells of one part can lie apart from the
+/// rest of it, bonded only to its neighbours (the relaxed figure's left hand on the thigh: 121
+/// forearm cells and 103 thigh cells). Such an island would come away whole, unhurt, whenever its
+/// part was struck; each one joins the part it touches most instead.
+fn rehome_part_islands(dims: [usize; 3], grid: &[u32], cells: &mut [Cell]) -> usize {
+    let lookup = |ijk: [i32; 3]| -> Option<usize> {
+        if ijk.iter().zip(dims).any(|(&v, d)| v < 0 || v as usize >= d) {
+            return None;
+        }
+        let [i, j, k] = ijk.map(|v| v as usize);
+        let packed = grid[(j * dims[2] + k) * dims[0] + i];
+        (packed != 0).then(|| packed as usize - 1)
+    };
+    let neighbours = |ijk: [u16; 3]| {
+        let [x, y, z] = ijk.map(i32::from);
+        OFFSETS.iter().flat_map(move |o| [[x + o[0], y + o[1], z + o[2]], [x - o[0], y - o[1], z - o[2]]])
+    };
+    let mut moved = 0;
+    for _ in 0..4 {
+        let n = cells.len();
+        let mut parent: Vec<u32> = (0..n as u32).collect();
+        for a in 0..n {
+            for ijk in neighbours(cells[a].ijk) {
+                if let Some(b) = lookup(ijk).filter(|&b| cells[b].part == cells[a].part) {
+                    let (ra, rb) = (find(&mut parent, a as u32), find(&mut parent, b as u32));
+                    if ra != rb {
+                        parent[ra.max(rb) as usize] = ra.min(rb);
+                    }
+                }
+            }
+        }
+        let mut pieces: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
+        for c in 0..n {
+            pieces.entry(find(&mut parent, c as u32)).or_default().push(c);
+        }
+        let mut main = [None::<(usize, u32)>; PARTS];
+        for (&root, piece) in &pieces {
+            let slot = &mut main[cells[piece[0]].part.index()];
+            if slot.is_none_or(|(len, _)| piece.len() > len) {
+                *slot = Some((piece.len(), root));
+            }
+        }
+        let mut changed = false;
+        for (root, piece) in pieces {
+            if main[cells[piece[0]].part.index()].is_some_and(|(_, m)| m == root) {
+                continue;
+            }
+            let own = cells[piece[0]].part;
+            let mut touch = [0usize; PARTS];
+            for &c in &piece {
+                for ijk in neighbours(cells[c].ijk) {
+                    if let Some(b) = lookup(ijk).filter(|&b| cells[b].part != own) {
+                        touch[cells[b].part.index()] += 1;
+                    }
+                }
+            }
+            let Some(best) = (0..PARTS).filter(|&p| touch[p] > 0).max_by_key(|&p| touch[p]) else { continue };
+            let to = crew_physics::CrewBodyPart::ALL[best];
+            for &c in &piece {
+                cells[c].part = to;
+            }
+            moved += piece.len();
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+    moved
+}
+
+fn finish_model(cell_m: f32, anatomy: Option<String>, origin: Vec3, dims: [usize; 3], grid: Vec<u32>, mut cells: Vec<Cell>,
     mass_kg: Vec<f32>) -> TissueModel {
+    rehome_part_islands(dims, &grid, &mut cells);
     let mut part_cells: [Vec<u32>; PARTS] = std::array::from_fn(|_| Vec::new());
     let mut soft_cells = [0usize; PARTS];
     for (n, cell) in cells.iter().enumerate() {
@@ -493,8 +628,8 @@ fn finish_model(cell_m: f32, anatomy: Option<String>, origin: Vec3, dims: [usize
             let weaker = if TEAR_J_M3[cell.tissue.index()] <= TEAR_J_M3[model.cells[b].tissue.index()] { cell.tissue }
                 else { model.cells[b].tissue }.index();
             let rest_m = cell_m * ((o[0] * o[0] + o[1] * o[1] + o[2] * o[2]) as f32).sqrt();
-            let energy = TEAR_J_M3[weaker] * cell_m.powi(3) / 18.0;
-            let critical = CRITICAL_STRETCH[weaker];
+            let energy = TEAR_J_M3[weaker] * tune().tear * cell_m.powi(3) / 18.0;
+            let critical = CRITICAL_STRETCH[weaker] * tune().stretch;
             let stiffness = 2.0 * energy / (critical * rest_m).powi(2);
             bonds.push(Bond { a: a as u32, b: b as u32, rest_m, stiffness, critical, class: weaker as u8 });
         }
@@ -551,6 +686,8 @@ pub(super) struct Solve {
     pub chunks: Vec<Chunk>,
     pub lodged: usize,
     pub bonds_broken: usize,
+    /// Cells crushed along a fragment's track (its permanent cavity), drawn as gone.
+    pub crushed: usize,
     pub steps: usize,
 }
 
@@ -596,6 +733,11 @@ impl CasualtyTissue {
 
     /// Solve one killing event's strikes on the lattice (see the module doc).
     pub(super) fn solve(&mut self, model: &TissueModel, strikes: &[Strike]) -> Solve {
+        let threads = std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, SOLVE_THREADS);
+        self.solve_with_threads(model, strikes, threads)
+    }
+
+    fn solve_with_threads(&mut self, model: &TissueModel, strikes: &[Strike], threads: usize) -> Solve {
         let n = model.cells.len();
         let mut struck = [false; PARTS];
         for strike in strikes.iter().filter(|s| s.work_j.is_finite() && s.work_j > 0.0) {
@@ -633,13 +775,25 @@ impl CasualtyTissue {
         let mass = &model.mass_kg;
         let mut vel = vec![Vec3::ZERO; n];
         let mut out = Solve::default();
+        let mut crushed: Vec<usize> = Vec::new();
         for strike in strikes.iter().filter(|s| s.work_j.is_finite() && s.work_j > 0.0) {
             let dir = strike.dir.normalize_or_zero();
             if dir == Vec3::ZERO || strike.speed_mps <= STOPPED_MPS {
                 self.push_pressure(model, strike, &active, mass, &mut vel);
-            } else if self.push_fragment(model, strike, dir, &active, mass, &mut vel, &tuning) {
+            } else if self.push_fragment(model, strike, dir, &active, mass, &mut vel, &tuning, &mut crushed) {
                 out.lodged += 1;
             }
+        }
+        // The track itself: what the fragment passed through is crushed (its permanent cavity) and
+        // drawn as gone; its pulp and blood are the blood system's (named).
+        for c in crushed {
+            if self.present[c] {
+                self.present[c] = false;
+                out.crushed += 1;
+            }
+        }
+        if out.crushed > 0 {
+            self.revision = self.revision.wrapping_add(1);
         }
         // The lattice: explicit symplectic Euler at a tenth of the stiffest moving cell's period.
         let live: Vec<u32> = (0..model.bonds.len() as u32).filter(|&b| {
@@ -661,35 +815,99 @@ impl CasualtyTissue {
         }
         let dt = 0.6 * period;
         let steps = (SOLVE_S / dt).ceil() as usize;
-        let mut disp = vec![Vec3::ZERO; n];
-        let mut force = vec![Vec3::ZERO; n];
+        // In parallel and the same for any thread count: each live bond's force from both ends'
+        // displacements, then each moving cell gathers its bonds' forces in a fixed order.
+        let threads = threads.max(1);
+        let mut slot = vec![u32::MAX; n];
+        for (i, &c) in moving.iter().enumerate() {
+            slot[c] = i as u32;
+        }
+        let mut gather_start = vec![0u32; moving.len() + 1];
+        for &b in &live {
+            let bond = model.bonds[b as usize];
+            for end in [bond.a, bond.b] {
+                if slot[end as usize] != u32::MAX {
+                    gather_start[slot[end as usize] as usize + 1] += 1;
+                }
+            }
+        }
+        for i in 1..gather_start.len() {
+            gather_start[i] += gather_start[i - 1];
+        }
+        let mut fill = gather_start.clone();
+        let mut gather = vec![(0u32, 0.0f32); *gather_start.last().unwrap_or(&0) as usize];
+        for (li, &b) in live.iter().enumerate() {
+            let bond = model.bonds[b as usize];
+            for (end, sign) in [(bond.a, 1.0f32), (bond.b, -1.0)] {
+                let m = slot[end as usize];
+                if m != u32::MAX {
+                    gather[fill[m as usize] as usize] = (li as u32, sign);
+                    fill[m as usize] += 1;
+                }
+            }
+        }
+        let mut intact: Vec<bool> = live.iter().map(|&b| !self.broken[b as usize]).collect();
+        let mut bond_force = vec![Vec3::ZERO; live.len()];
+        let mut mdisp = vec![Vec3::ZERO; moving.len()];
+        let mut mvel: Vec<Vec3> = moving.iter().map(|&c| vel[c]).collect();
+        let bond_chunk = live.len().div_ceil(threads).max(1);
+        let cell_chunk = moving.len().div_ceil(threads).max(1);
         for _ in 0..steps {
-            for &c in &moving {
-                force[c] = Vec3::ZERO;
-            }
-            for &b in &live {
-                if self.broken[b as usize] {
-                    continue;
+            let (slot, mdisp_ref) = (&slot, &mdisp);
+            std::thread::scope(|scope| {
+                for ((bonds, alive), forces) in live.chunks(bond_chunk).zip(intact.chunks_mut(bond_chunk)).zip(bond_force.chunks_mut(bond_chunk)) {
+                    scope.spawn(move || {
+                        for i in 0..bonds.len() {
+                            if !alive[i] {
+                                forces[i] = Vec3::ZERO;
+                                continue;
+                            }
+                            let bond = model.bonds[bonds[i] as usize];
+                            let (bond_stiffness, bond_critical) = bond_law(&bond);
+                            let at = |cell: u32| {
+                                let m = slot[cell as usize];
+                                model.cells[cell as usize].at + if m == u32::MAX { Vec3::ZERO } else { mdisp_ref[m as usize] }
+                            };
+                            let d = at(bond.b) - at(bond.a);
+                            let length = d.length();
+                            if ((length - bond.rest_m) / bond.rest_m).abs() > bond_critical {
+                                alive[i] = false;
+                                forces[i] = Vec3::ZERO;
+                                continue;
+                            }
+                            forces[i] = d / length.max(1.0e-9) * (bond_stiffness * (length - bond.rest_m));
+                        }
+                    });
                 }
-                let bond = model.bonds[b as usize];
-                let (a, c) = (bond.a as usize, bond.b as usize);
-                let d = (model.cells[c].at + disp[c]) - (model.cells[a].at + disp[a]);
-                let length = d.length();
-                let stretch = (length - bond.rest_m) / bond.rest_m;
-                let (bond_stiffness, bond_critical) = bond_law(&bond);
-                if stretch.abs() > bond_critical {
-                    self.broken[b as usize] = true;
-                    out.bonds_broken += 1;
-                    continue;
+            });
+            let (gather, gather_start, bond_force, moving) = (&gather, &gather_start, &bond_force, &moving);
+            std::thread::scope(|scope| {
+                for (k, (vels, disps)) in mvel.chunks_mut(cell_chunk).zip(mdisp.chunks_mut(cell_chunk)).enumerate() {
+                    scope.spawn(move || {
+                        for j in 0..vels.len() {
+                            let m = k * cell_chunk + j;
+                            let mut f = Vec3::ZERO;
+                            for &(li, sign) in &gather[gather_start[m] as usize..gather_start[m + 1] as usize] {
+                                f += bond_force[li as usize] * sign;
+                            }
+                            let c = moving[m];
+                            vels[j] = (vels[j] + f / mass[c] * dt) * (1.0 - DAMPING);
+                            disps[j] += vels[j] * dt;
+                        }
+                    });
                 }
-                let f = d / length.max(1.0e-9) * (bond_stiffness * (length - bond.rest_m));
-                force[a] += f;
-                force[c] -= f;
+            });
+        }
+        for (li, &b) in live.iter().enumerate() {
+            if !intact[li] && !self.broken[b as usize] {
+                self.broken[b as usize] = true;
+                out.bonds_broken += 1;
             }
-            for &c in &moving {
-                vel[c] = (vel[c] + force[c] / mass[c] * dt) * (1.0 - DAMPING);
-                disp[c] += vel[c] * dt;
-            }
+        }
+        let mut disp = vec![Vec3::ZERO; n];
+        for (m, &c) in moving.iter().enumerate() {
+            disp[c] = mdisp[m];
+            vel[c] = mvel[m];
         }
         out.steps = steps;
         if std::env::var("KESSEL_TISSUE_DEBUG").as_deref() == Ok("cells") {
@@ -764,12 +982,16 @@ impl CasualtyTissue {
     /// A fragment through the part's cells: Newtonian drag in the tissue it crosses, its lost
     /// momentum given to the cells about it. True when it stopped inside.
     fn push_fragment(&self, model: &TissueModel, strike: &Strike, dir: Vec3, active: &[bool], mass: &[f32], vel: &mut [Vec3],
-        tuning: &TissueTuning) -> bool {
+        tuning: &TissueTuning, crushed: &mut Vec<usize>) -> bool {
         let body = 2.0 * strike.work_j / (strike.speed_mps * strike.speed_mps);
         let side = (body / STEEL_DENSITY).cbrt();
         let area = side * side;
+        // The range's live dials when set, else the review tune (constants outside the reviews).
+        let (forward, outward_share) = if review_tuning_active() { (tuning.forward, tuning.outward) } else { (tune().forward, tune().outward) };
         let cell_m = model.cell;
-        let reach = 0.5 * side + 0.5 * cell_m;
+        let reach = (0.5 * side + 0.5 * cell_m) * tune().spread * tuning.spread;
+        // The track: cells whose centre the fragment's own section passes within a quarter cell of.
+        let crush = 0.5 * side + 0.25 * cell_m;
         let step = 0.25 * cell_m;
         let mut speed = strike.speed_mps;
         let mut s = 0.0;
@@ -793,7 +1015,7 @@ impl CasualtyTissue {
             speed = next;
             // The cells within the body's reach of this point share the momentum it lost.
             let g = ((p - model.origin) / cell_m).floor();
-            let r = (reach / cell_m).ceil() as i32;
+            let r = (reach.max(crush) / cell_m).ceil() as i32;
             let mut near: Vec<usize> = Vec::new();
             for dz in -r..=r {
                 for dy in -r..=r {
@@ -801,9 +1023,14 @@ impl CasualtyTissue {
                         if let Some(c) = model.lookup([g.x as i32 + dx, g.y as i32 + dy, g.z as i32 + dz]) {
                             let q = model.cells[c].at;
                             let off = (q - p) - dir * (q - p).dot(dir);
-                            if active[c] && model.cells[c].part == strike.part && off.length() <= reach
-                                && (q - p).dot(dir).abs() <= 0.5 * cell_m + 1.0e-4 {
-                                near.push(c);
+                            let slab = (q - p).dot(dir).abs() <= 0.5 * cell_m + 1.0e-4;
+                            if active[c] && model.cells[c].part == strike.part && slab {
+                                if off.length() <= reach {
+                                    near.push(c);
+                                }
+                                if off.length() <= crush {
+                                    crushed.push(c);
+                                }
                             }
                         }
                     }
@@ -816,7 +1043,7 @@ impl CasualtyTissue {
             for c in near {
                 let q = model.cells[c].at;
                 let outward = ((q - p) - dir * (q - p).dot(dir)).normalize_or_zero();
-                vel[c] += (dir * tuning.forward + outward * tuning.outward) * (share / mass[c]);
+                vel[c] += (dir * forward + outward * outward_share) * (share / mass[c]);
             }
         }
         speed <= STOPPED_MPS
@@ -984,6 +1211,31 @@ pub(super) fn carve_casualty_tissue(corpses: &std::cell::RefCell<Option<crew_cor
     std::array::from_fn(|i| solo && shares.is_some_and(|shares| shares[i] >= KEEP_SOFT_SHARE))
 }
 
+/// A casualty's solve deferred behind the death's fade and black (`Game::settle_casualty_tissue`):
+/// its worker, and what the carve's consequences need once it is back.
+pub(super) struct DeferredCarve {
+    pub(super) casualty: CouchCrewCasualty,
+    pub(super) job: crew_corpse_tissue::StrikeJob,
+    pub(super) solo: bool,
+    pub(super) fragment_impulses: [Vec3; PARTS],
+    /// Parts the strike would hide (its pulverizing outcome), before the cells decide.
+    pub(super) hide: [bool; PARTS],
+}
+
+/// Start a casualty's solve on a worker (`None` without the voxel corpse renderer).
+pub(super) fn begin_casualty_carve(corpses: &std::cell::RefCell<Option<crew_corpse_render::Corpses>>,
+    ragdoll: &CrewRagdoll, strikes: &[Strike]) -> Option<crew_corpse_tissue::StrikeJob> {
+    corpses.borrow_mut().as_mut().and_then(|corpses| corpses.begin_tissue_strike(ragdoll, strikes))
+}
+
+/// Take a casualty's solve back: the parts whose soft cells keep them in the articulated
+/// simulation (as `carve_casualty_tissue`).
+pub(super) fn finish_casualty_carve(corpses: &std::cell::RefCell<Option<crew_corpse_render::Corpses>>, solo: bool,
+    job: crew_corpse_tissue::StrikeJob, ragdoll: &CrewRagdoll) -> [bool; PARTS] {
+    let shares = corpses.borrow_mut().as_mut().and_then(|corpses| corpses.finish_tissue_strike(job, ragdoll));
+    std::array::from_fn(|i| solo && shares.is_some_and(|shares| shares[i] >= KEEP_SOFT_SHARE))
+}
+
 /// Restitution and tangential keep of a piece meeting a surface or another grain (authored: wet
 /// tissue), the speed below which a piece resting on a face turned up (or on grains) stops, and its
 /// bounce budget.
@@ -1010,8 +1262,8 @@ mod tests {
     #[test]
     fn the_tissue_tuning_is_authored_unless_the_review_range_sets_it() {
         let t = TissueTuning::AUTHORED;
-        assert_eq!((t.tear_j_m3, t.critical_stretch, t.forward, t.outward, t.active_reach_m, t.landing_breakup),
-            (TEAR_J_M3, CRITICAL_STRETCH, FORWARD, OUTWARD, ACTIVE_REACH_M, 1.0));
+        assert_eq!((t.tear_j_m3, t.critical_stretch, t.forward, t.outward, t.active_reach_m, t.landing_breakup, t.spread),
+            (TEAR_J_M3, CRITICAL_STRETCH, FORWARD, OUTWARD, ACTIVE_REACH_M, 1.0, 1.0));
         assert_eq!(*REVIEW_TUNING.read().unwrap(), None, "no override at start");
         assert!(bond_law_scale(&t).iter().all(|&(k, c)| k == 1.0 && c == 1.0));
         // Doubling skin's tearing energy at its stretch doubles its bonds' stiffness.
@@ -1050,7 +1302,8 @@ mod tests {
         let figure = crate::prims::box_mesh(Vec3::new(-0.06, 1.0, -0.06), Vec3::new(0.06, 1.2, 0.06), [1, 1, 1]);
         let bone = crate::prims::box_mesh(Vec3::new(-0.015, 1.02, -0.015), Vec3::new(0.015, 1.18, 0.015), [1, 1, 1]);
         let bones = std::array::from_fn(|i| (i == crew_physics::CrewBodyPart::Torso.index()).then(|| bone.clone()));
-        build_tissue(&figure, &bones)
+        // The procedural build, whatever anatomical volume the asset root holds.
+        build_procedural(&figure, &bones)
     }
 
     fn count(model: &TissueModel, t: Tissue) -> usize {
@@ -1076,6 +1329,24 @@ mod tests {
     }
 
     #[test]
+    fn the_solve_is_the_same_on_one_thread_or_many() {
+        let model = toy();
+        let part = crew_physics::CrewBodyPart::Torso;
+        let strikes = [Strike { part, at: Vec3::new(0.07, 1.1, 0.03), dir: Vec3::NEG_X, work_j: 0.5 * 0.01 * 600.0 * 600.0, speed_mps: 600.0 },
+            Strike { part, at: Vec3::new(0.0, 1.1, 0.6), dir: Vec3::ZERO, work_j: 2_000.0, speed_mps: 0.0 }];
+        let mut one = CasualtyTissue::new(&model);
+        let a = one.solve_with_threads(&model, &strikes, 1);
+        let mut many = CasualtyTissue::new(&model);
+        let b = many.solve_with_threads(&model, &strikes, 7);
+        assert_eq!((a.bonds_broken, a.chunks.len(), a.crushed), (b.bonds_broken, b.chunks.len(), b.crushed));
+        assert_eq!(one.present, many.present);
+        assert_eq!(one.broken, many.broken);
+        for (x, y) in a.chunks.iter().zip(&b.chunks) {
+            assert_eq!(x.velocity.to_array().map(f32::to_bits), y.velocity.to_array().map(f32::to_bits));
+        }
+    }
+
+    #[test]
     fn a_fast_fragment_tears_a_channel_and_a_slow_one_does_not() {
         let model = toy();
         let part = crew_physics::CrewBodyPart::Torso;
@@ -1083,8 +1354,13 @@ mod tests {
         // 10 g at 600 m/s across the box.
         let mut tissue = CasualtyTissue::new(&model);
         let fast = tissue.solve(&model, &[Strike { part, at: entry, dir: Vec3::NEG_X, work_j: 0.5 * 0.01 * 600.0 * 600.0, speed_mps: 600.0 }]);
-        let torn: usize = fast.chunks.iter().map(|c| c.cells.len()).sum();
-        assert!(torn > 0 && fast.bonds_broken > 0, "{fast:?}");
+        // The channel: cells crushed in the track and pieces torn from its walls.
+        let gone = (0..model.cells.len()).filter(|&c| !tissue.present[c]).count();
+        assert!(fast.crushed > 0 && gone >= fast.crushed, "{fast:?}");
+        for c in (0..model.cells.len()).filter(|&c| !tissue.present[c]) {
+            let at = model.cells[c].at;
+            assert!((at.y - 1.1).abs() < 0.05 && (at.z - 0.03).abs() < 0.05, "gone far from the path: {at:?}");
+        }
         for chunk in &fast.chunks {
             for &c in &chunk.cells {
                 let at = model.cells[c as usize].at;
@@ -1107,10 +1383,11 @@ mod tests {
         let at = Vec3::new(0.07, 1.1, 0.0);
         let bone_torn = |work_j: f32, speed: f32| {
             let mut tissue = CasualtyTissue::new(&model);
-            let solve = tissue.solve(&model, &[Strike { part, at, dir: Vec3::NEG_X, work_j, speed_mps: speed }]);
-            let cells: Vec<u32> = solve.chunks.iter().flat_map(|c| c.cells.iter().copied()).collect();
-            (cells.iter().filter(|&&c| model.cells[c as usize].tissue == Tissue::Bone).count(),
-             cells.iter().filter(|&&c| model.cells[c as usize].tissue != Tissue::Bone).count())
+            tissue.solve(&model, &[Strike { part, at, dir: Vec3::NEG_X, work_j, speed_mps: speed }]);
+            // Crushed in the track or torn away.
+            let gone: Vec<usize> = (0..model.cells.len()).filter(|&c| !tissue.present[c]).collect();
+            (gone.iter().filter(|&&c| model.cells[c].tissue == Tissue::Bone).count(),
+             gone.iter().filter(|&&c| model.cells[c].tissue != Tissue::Bone).count())
         };
         let (bone_small, soft_small) = bone_torn(0.5 * 0.004 * 300.0 * 300.0, 300.0);
         let (bone_big, soft_big) = bone_torn(0.5 * 3.0 * 380.0 * 380.0, 380.0);
@@ -1145,11 +1422,54 @@ mod tests {
         let part = crew_physics::CrewBodyPart::Torso;
         let solve = tissue.solve(&model, &[Strike { part, at: Vec3::new(0.07, 1.1, 0.03), dir: Vec3::NEG_X,
             work_j: 0.5 * 0.01 * 600.0 * 600.0, speed_mps: 600.0 }]);
-        assert!(!solve.chunks.is_empty());
+        let gone = (0..model.cells.len()).filter(|&c| !tissue.present[c]).count();
+        assert!(gone > 0);
         let after = (0..model.cells.len()).filter(|&c| tissue.present[c] && model.exposed(&tissue.present, c)).count();
-        assert!(after > shell - solve.chunks.iter().map(|c| c.cells.len()).sum::<usize>(), "the wound's walls are drawn");
+        assert!(after > shell - gone, "the wound's walls are drawn");
         assert!(solve.chunks.iter().all(|c| c.cohesion_j >= 0.0));
         assert!(model.blend.iter().all(|b| b.is_none()), "one part: no joint");
+    }
+
+    #[test]
+    fn the_tune_is_the_constants_unless_the_review_allows_it() {
+        let constants = Tune { tear: 1.0, stretch: 1.0, forward: FORWARD, outward: OUTWARD, grain: 1.0, spread: 1.0 };
+        assert_eq!(parse_tune(None), constants);
+        assert_eq!(parse_tune(Some("tear=6,grain=30")).tear, 6.0);
+        // No test or play path opens the gate; only `fea-film` does.
+        assert!(!REVIEW_TUNE.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(tune(), constants);
+    }
+
+    /// Each part of the real figure is built in one bonded piece (`rehome_part_islands`).
+    #[test]
+    #[ignore]
+    fn the_real_figure_parts_are_each_one_piece() {
+        let figure = load_full_crew_mesh(CREW_RELAXED_GLBS[0], "tissue probe").expect("relaxed figure");
+        let (bones, _) = crew_skeleton::fitted_bone_pages(&figure).expect("PSX skeleton");
+        let model = build_tissue(&figure, &bones);
+        let n = model.cells.len();
+        let mut parent: Vec<u32> = (0..n as u32).collect();
+        for bond in &model.bonds {
+            if model.cells[bond.a as usize].part == model.cells[bond.b as usize].part {
+                let (ra, rc) = (find(&mut parent, bond.a), find(&mut parent, bond.b));
+                if ra != rc {
+                    parent[ra.max(rc) as usize] = ra.min(rc);
+                }
+            }
+        }
+        for part in crew_physics::CrewBodyPart::ALL {
+            let mut pieces: std::collections::BTreeMap<u32, Vec<u32>> = std::collections::BTreeMap::new();
+            for &c in &model.part_cells[part.index()] {
+                pieces.entry(find(&mut parent, c)).or_default().push(c);
+            }
+            let mut sizes: Vec<(usize, [u16; 3], u8)> = pieces.values().map(|cells| {
+                let c = &model.cells[cells[0] as usize];
+                (cells.len(), c.ijk, c.label)
+            }).collect();
+            sizes.sort_by(|a, b| b.0.cmp(&a.0));
+            println!("{part:?}: {} pieces {:?}", sizes.len(), &sizes[..sizes.len().min(6)]);
+            assert_eq!(sizes.len(), 1, "{part:?} is built in one piece");
+        }
     }
 
     /// Measures the real crew figure: cells by tissue, bonds, boxes for a whole body, build time.
@@ -1171,6 +1491,16 @@ mod tests {
             println!("{part:?}: skin {} muscle {} bone {}, {part_drawn} cubes drawn", t(Tissue::Skin), t(Tissue::Muscle), t(Tissue::Bone));
         }
         println!("whole body: {drawn} cubes drawn; {} cells blended at joints", model.blend.iter().filter(|b| b.is_some()).count());
+        // A burst on every part (a cook-off's), on one thread and on the solve's workers.
+        let blast: Vec<Strike> = crew_physics::CrewBodyPart::ALL.iter().map(|&part| Strike { part, at: part.rest_center() + Vec3::new(0.0, 0.0, 0.8),
+            dir: Vec3::ZERO, work_j: 600.0, speed_mps: 0.0 }).collect();
+        for threads in [1, SOLVE_THREADS] {
+            let mut tissue = CasualtyTissue::new(&model);
+            let start = std::time::Instant::now();
+            let solve = tissue.solve_with_threads(&model, &blast, threads);
+            println!("whole-body burst on {threads} threads: {} bonds broken, {} pieces, {} steps in {:.0} ms", solve.bonds_broken,
+                solve.chunks.len(), solve.steps, start.elapsed().as_secs_f32() * 1000.0);
+        }
         // A 57 mm shot's 3.1 kg at 377 m/s through the torso, and a 20 g fragment at 700 m/s.
         let part = crew_physics::CrewBodyPart::Torso;
         let centre = part.rest_center();
@@ -1180,8 +1510,11 @@ mod tests {
             let solve = tissue.solve(&model, &[Strike { part, at: centre + Vec3::new(0.3, 0.05, 0.0), dir: Vec3::NEG_X,
                 work_j: 0.5 * mass * speed * speed, speed_mps: speed }]);
             let torn: usize = solve.chunks.iter().map(|c| c.cells.len()).sum();
-            println!("{label}: {} pieces, {torn} cells torn, {} bonds broken, lodged {}, soft share left {:.2}, {} steps in {:.1} ms",
-                solve.chunks.len(), solve.bonds_broken, solve.lodged, tissue.soft_share(&model, part), solve.steps,
+            let single = solve.chunks.iter().filter(|c| c.cells.len() == 1).count();
+            let largest = solve.chunks.iter().map(|c| c.cells.len()).max().unwrap_or(0);
+            let fastest = solve.chunks.iter().map(|c| c.velocity.length()).fold(0.0f32, f32::max);
+            println!("{label}: {} pieces ({single} single cells, largest {largest}, fastest {fastest:.0} m/s), {torn} cells torn, {} crushed, {} bonds broken, lodged {}, soft share left {:.2}, {} steps in {:.1} ms",
+                solve.chunks.len(), solve.crushed, solve.bonds_broken, solve.lodged, tissue.soft_share(&model, part), solve.steps,
                 start.elapsed().as_secs_f32() * 1000.0);
         }
     }

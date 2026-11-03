@@ -52,8 +52,6 @@ const SLOW_DT: f32 = 1.0 / 480.0;
 const TICK: f32 = 1.0 / 60.0;
 /// Real-time frames are recorded at 30 a second: two game ticks each.
 const REAL_TICKS_PER_FRAME: u32 = 2;
-/// Recorded frames are kept in memory up to this many bytes; a run stops recording past it.
-const RECORD_BUDGET_BYTES: usize = 1_500_000_000;
 /// After this long with nothing changing the window renders ten frames a second (the owner plays
 /// on the same machine).
 const IDLE_AFTER_S: f32 = 2.0;
@@ -80,9 +78,50 @@ pub(super) fn review_lamp_gain() -> f32 {
     f32::from_bits(REVIEW_LAMP_GAIN_BITS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
+/// Review-only (`fea-range`'s EFFECTS dials): the impact smoke's density factor and onset delay
+/// (`weapon_vfx::impact_smoke_build`); 1 and the authored delay in every other path.
+static REVIEW_SMOKE_DENSITY_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3F80_0000);
+static REVIEW_SMOKE_DELAY_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
+
+pub(super) fn review_smoke_density() -> f32 {
+    f32::from_bits(REVIEW_SMOKE_DENSITY_BITS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+pub(super) fn review_smoke_delay() -> f32 {
+    match REVIEW_SMOKE_DELAY_BITS.load(std::sync::atomic::Ordering::Relaxed) {
+        u32::MAX => super::weapon_vfx::IMPACT_SMOKE_DELAY_S,
+        bits => f32::from_bits(bits),
+    }
+}
+
+fn set_review_smoke(density: f32, delay: Option<f32>) {
+    REVIEW_SMOKE_DENSITY_BITS.store(density.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    REVIEW_SMOKE_DELAY_BITS.store(delay.map_or(u32::MAX, f32::to_bits), std::sync::atomic::Ordering::Relaxed);
+}
+
 fn set_review_lamp_gain(gain: f32) {
     REVIEW_LAMP_GAIN_BITS.store(gain.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
+
+/// The gun that fires each catalogue round and the vehicles that carried it (`shells()` order).
+const SHOOTERS: [&str; 16] = [
+    "M-42 45 MM ANTI-TANK GUN (TOWED)",
+    "20-K 45 MM: T-70, BT-7, T-26",
+    "20-K 45 MM: T-70, BT-7, T-26",
+    "ZIS-2 57 MM ANTI-TANK GUN; ZIS-4: T-34-57",
+    "F-34 / ZIS-5 76 MM: T-34/76, KV-1",
+    "F-34 / ZIS-5 76 MM: T-34/76, KV-1",
+    "F-34 / ZIS-5 76 MM: T-34/76, KV-1",
+    "D-5T / ZIS-S-53 85 MM: T-34-85, KV-85, IS-1, SU-85",
+    "D-10S 100 MM: SU-100",
+    "D-25T 122 MM: IS-2, IS-3",
+    "M-10T 152 MM: KV-2",
+    "ML-20S 152 MM: ISU-152, SU-152",
+    "KWK 36 88 MM: TIGER I",
+    "KWK 36 88 MM: TIGER I",
+    "KWK 36 88 MM: TIGER I",
+    "KWK 36 88 MM: TIGER I",
+];
 
 fn shells() -> [&'static crate::ballistics::ShellSpec; 16] {
     use crate::ballistics as b;
@@ -191,15 +230,6 @@ impl Sky {
     }
 }
 
-/// A recorded frame: its sim time after the shot and the frame index of the run's schedule.
-struct Frame {
-    t: f32,
-    /// The viewport's crop of the frame, `w` x `h`.
-    rgba: Vec<u8>,
-    w: u32,
-    h: u32,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
     /// The present state, the camera free (always, but while the timeline is dragged).
@@ -227,21 +257,22 @@ enum Tape {
 /// Every adjustable row of the sidebar.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Knob {
-    Shell, Range, Velocity, FromAz, FromEl, TargetKind, Seed,
+    Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed,
     Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
-    MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame,
+    MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame, SmokeDensity, SmokeDelay, EffectsAuthored,
     Focal, SavedCam, AddCam, DeleteCam, ExportCams,
     SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset,
     Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure,
     Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
     WhiteBalance, WhiteBalanceStrength, Fog, LookDefaults,
-    Tear(usize), Stretch(usize), Forward, Outward, Reach, Landing, TissueAuthored,
+    Tear(usize), Stretch(usize), Forward, Outward, Reach, Spread, Landing, TissueAuthored,
 }
 
 /// How a row is worked: a stepper (< >) for discrete choices, a toggle, a knob for continuous
-/// values, or an action.
+/// values, an action, or only shown.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
+    Info,
     Stepper,
     Toggle,
     Dial,
@@ -251,9 +282,10 @@ enum Kind {
 fn kind(knob: Knob) -> Kind {
     use Knob::*;
     match knob {
+        Gun => Kind::Info,
         Shell | TargetKind | Seed | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
         Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance => Kind::Toggle,
-        AddCam | DeleteCam | ExportCams | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
+        AddCam | DeleteCam | ExportCams | EffectsAuthored | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
         _ => Kind::Dial,
     }
 }
@@ -266,7 +298,7 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
         Velocity => (150.0, 1_200.0, false),
         FromAz => (-180.0, 180.0, false),
         FromEl => (-60.0, 80.0, false),
-        LampPower => (1.0, 4_096.0, true),
+        LampPower => (1.0, 1.0e6, true),
         SlowSpan => (0.0, 1.0, false),
         RunLength => (0.1, 20.0, true),
         TimeSpeed => (0.01, 4.0, true),
@@ -286,22 +318,25 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
         OrderedDither | LdrDither | Retro | WhiteBalanceStrength => (0.0, 1.0, false),
         Fog => (0.0001, 0.25, true),
         Wear(_) | SnowTank | SnowWorld => (0.0, 1.0, false),
+        SmokeDensity => (0.0, 4.0, false),
+        SmokeDelay => (0.0, 2.0, false),
         Tear(_) => (1.0e3, 1.0e8, true),
         Stretch(_) => (0.005, 5.0, true),
         Forward | Outward => (0.0, 2.0, false),
         Reach => (0.01, 0.6, true),
+        Spread => (0.25, 8.0, true),
         Landing => (0.01, 1.0e4, true),
         _ => (0.0, 1.0, false),
     }
 }
 
 /// The sidebar's disclosable groups.
-const GROUPS: [&str; 8] = ["SHOT", "SCENE", "CAMERA", "SECTION", "SKY", "LOOK", "MATERIALS", "TISSUE (REVIEW)"];
+const GROUPS: [&str; 9] = ["SHOT", "SCENE", "CAMERA", "SECTION", "SKY", "LOOK", "MATERIALS", "EFFECTS", "TISSUE (REVIEW)"];
 
 fn group_rows(group: usize) -> Vec<Knob> {
     use Knob::*;
     match group {
-        0 => vec![Shell, Range, Velocity, FromAz, FromEl, TargetKind, Seed],
+        0 => vec![Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed],
         1 => vec![TimeSpeed, Loop, Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength],
         2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams, MovingCamera],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
@@ -309,10 +344,11 @@ fn group_rows(group: usize) -> Vec<Knob> {
         5 => vec![Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
             WhiteBalance, WhiteBalanceStrength, Fog, LookDefaults],
         6 => vec![Wear(1), Wear(0), Wear(2), Wear(3), SnowTank, SnowWorld, MaterialsGame],
+        7 => vec![SmokeDensity, SmokeDelay, EffectsAuthored],
         _ => {
             let mut rows: Vec<Knob> = (0..4).map(Tear).collect();
             rows.extend((0..4).map(Stretch));
-            rows.extend([Forward, Outward, Reach, Landing, TissueAuthored]);
+            rows.extend([Forward, Outward, Reach, Spread, Landing, TissueAuthored]);
             rows
         }
     }
@@ -327,30 +363,33 @@ const DITHERS: [&str; 4] = ["SCREEN BAYER4", "BLUE NOISE", "SPHERE BAYER8", "SCR
 // The panel along the bottom (window fractions, top-left origin): the viewport above it is the
 // window's whole width. Left, the title, the buttons, the status and the hull's axes; right, the
 // groups as tabs, the chosen group's rows in columns.
-const PANEL_H: f32 = 0.20;
+const PANEL_H: f32 = 0.215;
 /// The timeline line's thickness (px) and the clip's colour (Blender's orange, linear).
 const TL_PX: f32 = 5.0;
 const AMBER: [f32; 4] = [0.807, 0.205, 0.006, 1.0];
 const RED: [f32; 4] = [0.95, 0.22, 0.18, 1.0];
 const GREEN: [f32; 4] = [0.35, 0.9, 0.3, 1.0];
 const BLUE: [f32; 4] = [0.3, 0.5, 1.0, 1.0];
-/// Very dark grey (linear).
-const PANEL_FILL: [f32; 4] = [0.007, 0.007, 0.007, 1.0];
+/// Black.
+const PANEL_FILL: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const INK: [f32; 4] = [0.92, 0.92, 0.92, 1.0];
 const DIM: [f32; 4] = [0.42, 0.42, 0.42, 1.0];
 const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const BOX: [f32; 4] = [0.035, 0.035, 0.035, 1.0];
 const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
-/// The left block's margin and width, and the buttons there (label, column, row).
+/// The left block (title, crew, axes, status), and the right block (buttons) with its width.
 const LEFT_X: f32 = 0.008;
 const LEFT_W: f32 = 0.15;
-const BUTTONS: [(&str, usize, usize); 6] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1)];
+const RIGHT_W: f32 = 0.15;
+const RIGHT_X: f32 = 1.0 - 0.006 - RIGHT_W;
+const BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
+    ("LOOP", 0, 2)];
 const BUTTON_H: f32 = 0.028;
 /// The groups' area: its left edge, the tabs' row and the rows' columns.
-const GROUPS_X: f32 = 0.215;
-const COLS_W: f32 = 0.195;
-const ROWS_PER_COL: usize = 8;
+const GROUPS_X: f32 = 0.168;
+const COLS_W: f32 = 0.166;
+const ROWS_PER_COL: usize = 9;
 const BTN_W: f32 = 0.011;
 /// The panel's hide button (its show button sits in the same corner when it is hidden).
 const HIDE_W: f32 = 0.045;
@@ -369,13 +408,18 @@ const HANDLE_DRAG_STEP: f32 = 0.04;
 /// A button's rectangle (x, y, w, h) in the panel's left block.
 fn button_rect(col: usize, row: usize) -> [f32; 4] {
     let gap = 0.004;
-    let w = (LEFT_W - 2.0 * gap) / 3.0;
-    [LEFT_X + col as f32 * (w + gap), 1.0 - PANEL_H + 0.034 + row as f32 * (BUTTON_H + 0.005), w, BUTTON_H]
+    let w = (RIGHT_W - 2.0 * gap) / 3.0;
+    let y = 1.0 - PANEL_H + 0.040 + row as f32 * (BUTTON_H + 0.005);
+    // The third row is one wide button (LOOP).
+    if row == 2 {
+        return [RIGHT_X, y, RIGHT_W, BUTTON_H];
+    }
+    [RIGHT_X + col as f32 * (w + gap), y, w, BUTTON_H]
 }
 
 /// The panel's hide (or, hidden, show) button.
 fn hide_rect(hidden: bool) -> [f32; 4] {
-    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [1.0 - HIDE_W - 0.006, 1.0 - PANEL_H + 0.006, HIDE_W, 0.024] }
+    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [RIGHT_X + RIGHT_W - HIDE_W, 1.0 - PANEL_H + 0.008, HIDE_W, 0.024] }
 }
 
 
@@ -439,6 +483,17 @@ struct SavedCam {
     hull_eye: Option<[f32; 3]>,
     #[serde(default)]
     hull_forward: Option<[f32; 3]>,
+    /// The section as it stood when the camera was saved (on or off, and its plane).
+    #[serde(default)]
+    section: Option<SavedSection>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+struct SavedSection {
+    on: bool,
+    yaw: f32,
+    pitch: f32,
+    offset: f32,
 }
 
 const CAMERAS_PATH: &str = "target/fea_range_cameras.json";
@@ -485,7 +540,6 @@ struct Range {
     sky: Sky,
     tuning: crew_tissue::TissueTuning,
     mode: Mode,
-    frames: Vec<Frame>,
     /// Everything given to the simulation since the fresh Tiger it started from (its seed and scene),
     /// and for each run frame how much of it had been given then.
     tape: Vec<Tape>,
@@ -540,7 +594,8 @@ struct Range {
     /// Where the section's rotation handle was drawn this frame (window 0..1), if it was.
     handle_at: Option<[f32; 2]>,
     /// Where the shot's handle was drawn this frame (window 0..1), if it was.
-    shot_handle_at: Option<[f32; 2]>,
+    shot_az_at: Option<[f32; 2]>,
+    shot_el_at: Option<[f32; 2]>,
     /// REC in progress, and the last viewport frame captured (what it writes).
     recorder: Option<Recorder>,
     last_rgba: Option<(Vec<u8>, u32, u32)>,
@@ -548,6 +603,10 @@ struct Range {
     hide_ui: bool,
     /// Every dial's value as the editor started.
     dial_defaults: Vec<(Knob, f32)>,
+    /// Smoothed frame time (s), simulation and render time (ms) a frame, for the readout.
+    perf: [f32; 3],
+    /// The orbit point set by a double click.
+    orbit_pivot: Option<Vec3>,
     /// The cursor as of the last interface drawn (window 0..1).
     cursor: [f32; 2],
     /// The corner gizmo's axis labels (window 0..1), and the axis view last snapped to.
@@ -565,8 +624,8 @@ struct Range {
     /// Where the Tiger stands (x, z) and its heading (rad).
     tiger_at: Vec2,
     tiger_heading: f32,
-    /// The group whose rows the panel shows.
-    tab: usize,
+    /// The groups open on the panel (each in its own columns, left to right, as far as they fit).
+    open: [bool; GROUPS.len()],
     cameras: Vec<SavedCam>,
     camera_at: Option<usize>,
     /// The fog density set by the LOOK group's dial (the physical medium), held each frame.
@@ -613,7 +672,6 @@ impl Range {
             sky,
             tuning: crew_tissue::TissueTuning::AUTHORED,
             mode: Mode::Live,
-            frames: Vec::new(),
             tape: Vec::new(),
             rewind: rewind::Rewind::default(),
             tape_base: (0, SceneSetup { racks_loaded: false, cabin_lamps: true, fresh_each_run: true, slow_s: 0.25, run_s: 4.0 },
@@ -632,7 +690,7 @@ impl Range {
             time_speed: 1.0,
             play_clock: 0.0,
             clip: None,
-            looping: false,
+            looping: true,
             eye: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -647,9 +705,12 @@ impl Range {
             idle_s: 0.0,
             last_chain: String::new(),
             handle_at: None,
-            shot_handle_at: None,
+            shot_az_at: None,
+            shot_el_at: None,
             axis_labels: [[-1.0, -1.0]; 3],
             cursor: [0.5, 0.5],
+            orbit_pivot: None,
+            perf: [1.0 / 60.0, 0.0, 0.0],
             hide_ui: false,
             recorder: None,
             last_rgba: None,
@@ -661,7 +722,7 @@ impl Range {
             live_image: false,
             tiger_at: TIGER_AT,
             tiger_heading: TIGER_HEADING,
-            tab: 0,
+            open: [true, true, false, true, false, false, false, true, false],
             cameras: std::fs::read_to_string(CAMERAS_PATH).ok().and_then(|t| serde_json::from_str(&t).ok())
                 .or_else(|| std::fs::read_to_string(CAMERA_CATALOG).ok()
                     .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
@@ -862,7 +923,6 @@ impl Range {
         self.run = None;
         self.frame_at = None;
         self.past_run = false;
-        self.frames.clear();
         self.run_tape.clear();
         self.shown_frame = None;
         self.status = "RESET: a fresh Tiger and crew".into();
@@ -879,7 +939,6 @@ impl Range {
     /// F: the shot fired into the present state at once; its run starts on the timeline.
     fn fire_now(&mut self) {
         self.apply_tuning();
-        self.frames.clear();
         self.shown_frame = None;
         let total = self.total_frames(&self.scene);
         self.run = Some(RunInfo { scene: self.scene, total });
@@ -893,6 +952,13 @@ impl Range {
         self.status = format!("FIRED: {} at {:.0} m ({:.0} m/s)", self.shot.spec().name, self.shot.range_m, self.shot.impact_velocity());
     }
 
+    /// Time after the shot at the end of run frame `k` (the run's schedule).
+    fn frame_time(&self, k: u32) -> f32 {
+        let scene = self.run.map_or(self.scene, |r| r.scene);
+        let slow = self.slow_frames(&scene);
+        if k < slow { (k + 1) as f32 * SLOW_DT } else { slow as f32 * SLOW_DT + (k + 1 - slow) as f32 * TICK * REAL_TICKS_PER_FRAME as f32 }
+    }
+
     /// The run frame the live simulation steps to next, if the run has one left.
     fn next_run_frame(&self) -> Option<u32> {
         let run = self.run?;
@@ -900,8 +966,8 @@ impl Range {
         (!self.past_run && next < run.total).then_some(next)
     }
 
-    /// Step the run's next frame, keeping its picture for the timeline when `capture`.
-    fn run_frame(&mut self, k: u32, capture: bool) {
+    /// Step the run's next frame.
+    fn run_frame(&mut self, k: u32) {
         let Some(run) = self.run else { return };
         let started = std::time::Instant::now();
         self.advance_frame(k, &run.scene);
@@ -911,23 +977,6 @@ impl Range {
             *slot = self.tape.len();
         }
         self.rewind.keep(&self.g, &self.r, k, self.shot_t, self.tape.len(), step_s);
-        if capture {
-            self.pose_view();
-            match self.r.render_to_rgba(&self.device, &self.queue, self.r.iw, self.r.ih) {
-                Ok(rgba) => {
-                    let (rgba, w, h) = self.crop_rgba(&rgba);
-                    let bytes = rgba.len() * (k as usize + 1);
-                    self.upload_image(&rgba, w, h);
-                    self.captured = true;
-                    self.last_rgba = Some((rgba.clone(), w, h));
-                    self.frames.truncate(k as usize);
-                    if bytes <= RECORD_BUDGET_BYTES && self.frames.len() == k as usize {
-                        self.frames.push(Frame { t: self.shot_t, rgba, w, h });
-                    }
-                }
-                Err(e) => self.status = format!("RUN: capture failed: {e:#}"),
-            }
-        }
         if k + 1 == run.total {
             self.status = format!("RUN DONE at {:.2} s: the simulation plays on in real time (SPACE pauses)", self.shot_t);
         }
@@ -948,7 +997,7 @@ impl Range {
         }
         if current.is_some_and(|c| index > c) {
             for k in current.unwrap_or(0) + 1..=index {
-                self.run_frame(k, false);
+                self.run_frame(k);
             }
             self.status = format!("ON TO {:.4} S", self.shot_t);
             return;
@@ -1033,7 +1082,7 @@ impl Range {
         self.past_run = false;
         let first = from.map_or(0, |f| f + 1);
         for k in first..=index {
-            self.run_frame(k, false);
+            self.run_frame(k);
         }
         let kept = self.rewind.prints_at(index);
         let now = rewind::Checkpoint::capture(&self.g, &self.r, None).map(|(c, _)| c.prints());
@@ -1127,7 +1176,9 @@ impl Range {
             lo = lo.min(p);
             hi = hi.max(p);
         }
-        self.r.solid_meshes_within(lo, hi)
+        // Everything of the vehicle, not only its solid parts: the glass, the periscope screens,
+        // the lamp lenses, the crew and the effects inside it are cut with it (the camera's only).
+        self.r.meshes_centred_within(lo, hi, 20.0)
     }
 
     /// The camera ray through the window point `cursor` (0..1; the viewport's centre for a point
@@ -1194,6 +1245,7 @@ impl Range {
         let mark = |changed: bool| if changed { " *" } else { "" };
         match knob {
             Knob::Shell => ("SHELL".into(), self.shot.spec().name.to_uppercase()),
+            Knob::Gun => ("FIRED BY".into(), SHOOTERS[self.shot.shell % SHOOTERS.len()].into()),
             Knob::Range => ("RANGE".into(), format!("{:.0} M", self.shot.range_m)),
 
             Knob::Velocity => ("IMPACT VELOCITY".into(), format!("{:.0} M/S (MUZZLE {:.0})", self.shot.impact_velocity(), self.shot.spec().muzzle_velocity)),
@@ -1215,6 +1267,11 @@ impl Range {
                 format!("{:.2}{}", self.r.wear[k], if self.wear.is_some() { " HELD" } else { "" })),
             Knob::SnowTank => ("SNOW ON TANK".into(), format!("{:.2}{}", self.r.player_snow_load, if self.snow.is_some() { " HELD" } else { "" })),
             Knob::SnowWorld => ("SNOW ON GROUND".into(), format!("{:.2}{}", self.r.world_snow_load, if self.snow.is_some() { " HELD" } else { "" })),
+            Knob::SmokeDensity => ("IMPACT SMOKE".into(), format!("X{:.2}{}", review_smoke_density(),
+                if review_smoke_density() != 1.0 { " * (REVIEW)" } else { "" })),
+            Knob::SmokeDelay => ("SMOKE DELAY".into(), format!("{:.2} S{}", review_smoke_delay(),
+                if review_smoke_delay() != super::weapon_vfx::IMPACT_SMOKE_DELAY_S { " * (REVIEW)" } else { "" })),
+            Knob::EffectsAuthored => ("RESTORE AUTHORED".into(), "SMOKE AS AUTHORED".into()),
             Knob::MaterialsGame => ("GAME'S OWN".into(), if self.wear.is_none() && self.snow.is_none() { "IN FORCE".into() } else { "CLICK".into() }),
             Knob::TimeSpeed => ("TIME SPEED".into(), format!("X{:.2}{}", self.time_speed,
                 if self.time_speed < 1.0 { " (SLOWER)" } else if self.time_speed > 1.0 { " (FASTER)" } else { "" })),
@@ -1263,6 +1320,7 @@ impl Range {
             Knob::Forward => ("FORWARD SHARE".into(), format!("{:.2}{}", t.forward, mark(t.forward != a.forward))),
             Knob::Outward => ("OUTWARD SHARE".into(), format!("{:.2}{}", t.outward, mark(t.outward != a.outward))),
             Knob::Reach => ("ACTIVE REACH".into(), format!("{:.3} M{}", t.active_reach_m, mark(t.active_reach_m != a.active_reach_m))),
+            Knob::Spread => ("MOMENTUM SPREAD".into(), format!("X{:.2}{}", t.spread, mark(t.spread != a.spread))),
             Knob::Landing => ("LANDING BREAKUP".into(), format!("X{:.2}{}", t.landing_breakup, mark(t.landing_breakup != a.landing_breakup))),
             Knob::TissueAuthored => ("RESTORE AUTHORED".into(), if *t == a { "IN FORCE".into() } else { "CLICK".into() }),
         }
@@ -1304,7 +1362,7 @@ impl Range {
                 self.g.set_cabin_lights(self.scene.cabin_lamps);
             }
             Knob::LampPower => {
-                let gain = (review_lamp_gain() * 2f32.powf(s)).clamp(1.0, 4096.0);
+                let gain = (review_lamp_gain() * 2f32.powf(s)).clamp(1.0, 1.0e6);
                 set_review_lamp_gain(if (gain - 1.0).abs() < 1.0e-3 { 1.0 } else { gain });
             }
             Knob::Fresh => self.scene.fresh_each_run = !self.scene.fresh_each_run,
@@ -1341,9 +1399,11 @@ impl Range {
             Knob::Landing => self.tuning.landing_breakup = (self.tuning.landing_breakup * ratio).clamp(0.01, 1.0e4),
             Knob::TissueAuthored => self.tuning = crew_tissue::TissueTuning::AUTHORED,
             Knob::SnapToShot => self.snap_section_to_shot(),
+            Knob::Gun => {}
             Knob::Loop => self.looping = !self.looping,
             Knob::Engine => self.engine = !self.engine,
             Knob::MovingCamera => self.accumulate_moving = !self.accumulate_moving,
+            Knob::EffectsAuthored => set_review_smoke(1.0, None),
             Knob::MaterialsGame => {
                 self.wear = None;
                 self.snow = None;
@@ -1361,7 +1421,9 @@ impl Range {
                 let (hull_eye, hull_forward) = (inv.transform_point3(self.eye), inv.transform_vector3(self.forward()).normalize_or_zero());
                 let name = camera_name(hull_eye, hull_forward);
                 self.cameras.push(SavedCam { name: name.clone(), eye: self.eye.to_array(), yaw: self.yaw, pitch: self.pitch,
-                    focal_mm: self.focal_mm, hull_eye: Some(hull_eye.to_array()), hull_forward: Some(hull_forward.to_array()) });
+                    focal_mm: self.focal_mm, hull_eye: Some(hull_eye.to_array()), hull_forward: Some(hull_forward.to_array()),
+                    section: Some(SavedSection { on: self.section.on, yaw: self.section.yaw, pitch: self.section.pitch,
+                        offset: self.section.offset }) });
                 self.camera_at = Some(self.cameras.len() - 1);
                 self.save_cameras();
                 self.status = format!("CAMERA {} SAVED: {} (KEY {})", self.cameras.len(), name.to_uppercase(), self.cameras.len());
@@ -1438,6 +1500,8 @@ impl Range {
             Knob::RunLength => self.scene.run_s,
             Knob::TimeSpeed => self.time_speed,
             Knob::Wear(k) => self.r.wear[k],
+            Knob::SmokeDensity => review_smoke_density(),
+            Knob::SmokeDelay => review_smoke_delay(),
             Knob::SnowTank => self.r.player_snow_load,
             Knob::SnowWorld => self.r.world_snow_load,
             Knob::Focal => self.focal_mm,
@@ -1463,6 +1527,7 @@ impl Range {
             Knob::Forward => t.forward,
             Knob::Outward => t.outward,
             Knob::Reach => t.active_reach_m,
+            Knob::Spread => t.spread,
             Knob::Landing => t.landing_breakup,
             _ => 0.0,
         }
@@ -1488,6 +1553,10 @@ impl Range {
                 self.wear = Some(w);
                 self.r.wear = w;
             }
+            Knob::SmokeDensity => set_review_smoke(if (v - 1.0).abs() < 0.02 { 1.0 } else { v },
+                Some(review_smoke_delay()).filter(|d| *d != super::weapon_vfx::IMPACT_SMOKE_DELAY_S)),
+            Knob::SmokeDelay => set_review_smoke(review_smoke_density(),
+                Some(v).filter(|d| (d - super::weapon_vfx::IMPACT_SMOKE_DELAY_S).abs() > 0.005)),
             Knob::SnowTank | Knob::SnowWorld => {
                 let mut sn = self.snow.unwrap_or([self.r.player_snow_load, self.r.world_snow_load]);
                 sn[if knob == Knob::SnowTank { 0 } else { 1 }] = v;
@@ -1517,6 +1586,7 @@ impl Range {
             Knob::Forward => self.tuning.forward = v,
             Knob::Outward => self.tuning.outward = v,
             Knob::Reach => self.tuning.active_reach_m = v,
+            Knob::Spread => self.tuning.spread = v,
             Knob::Landing => self.tuning.landing_breakup = v,
             _ => {}
         }
@@ -1552,6 +1622,9 @@ impl Range {
                 }
             }
             self.focal_mm = c.focal_mm;
+            if let Some(sec) = c.section {
+                self.section = Section { on: sec.on, yaw: sec.yaw, pitch: sec.pitch, offset: sec.offset };
+            }
             self.camera_at = Some(i);
             self.status = format!("CAMERA {}: {} ({:.0} MM)", i + 1, c.name.to_uppercase(), c.focal_mm);
         } else {
@@ -1600,7 +1673,7 @@ impl Range {
     // ── Per-frame ──────────────────────────────────────────────────────────────────────────────
 
     /// Advance the simulation by one window frame of `dt` seconds while it plays, at the time
-    /// speed: the run's frames (their pictures kept for the timeline), looping over the clip or
+    /// speed: the run's frames, looping over the clip or
     /// the run when LOOP is on, stopping at a clip's end without it, and real time past the run.
     fn tick(&mut self, dt: f32) {
         self.captured = false;
@@ -1611,6 +1684,12 @@ impl Range {
                 self.sky.day += 1;
             }
         }
+        // A casualty's tissue solving on its worker (`Game::casualty_tissue_pending`): the
+        // simulation waits for it without holding the window (the next step would block on it).
+        if self.g.casualty_tissue_pending() {
+            self.status = "A BODY'S TISSUE IS SOLVING (THE SIMULATION WAITS FOR IT)".into();
+            return;
+        }
         if self.playing && self.mode == Mode::Live {
             if self.next_run_frame().is_some() {
                 self.play_clock += self.time_speed;
@@ -1619,7 +1698,7 @@ impl Range {
                     self.play_clock -= 1.0;
                     frames += 1;
                     let Some(k) = self.next_run_frame() else { break };
-                    self.run_frame(k, true);
+                    self.run_frame(k);
                     if self.at_play_end(k) {
                         break;
                     }
@@ -1628,9 +1707,12 @@ impl Range {
             } else if self.looping && self.run.is_some() {
                 self.loop_back();
             } else {
+                // While recording, a frame is 1/30 s of game time whatever the window's frame rate,
+                // so the file plays at true speed.
+                let dt = if self.recorder.is_some() { TICK * REAL_TICKS_PER_FRAME as f32 } else { dt };
                 self.play_clock += dt * self.time_speed;
                 let mut steps = 0;
-                while self.play_clock >= TICK && steps < 4 {
+                while self.play_clock >= TICK && steps < if self.recorder.is_some() { 64 } else { 4 } {
                     self.play_clock -= TICK;
                     self.step(TICK);
                     self.shot_t += TICK;
@@ -1661,22 +1743,23 @@ impl Range {
         true
     }
 
+    /// Space: the run (or its clip) again from its start, playing.
+    fn replay(&mut self) {
+        if self.run.is_some() {
+            let start = self.clip.map_or(0, |c| c.0);
+            self.seek(start);
+            self.playing = true;
+            self.status = format!("REPLAY FROM {:.4} S (THE SHOT RE-RUN; TISSUE DETAIL CAN DIFFER)", self.shot_t);
+        } else {
+            self.status = "NO RUN TO REPLAY: ENTER RUNS, F FIRES".into();
+        }
+    }
+
     /// Back to the clip's start (or the run's), by re-running the shot to it.
     fn loop_back(&mut self) {
         let start = self.clip.map_or(0, |c| c.0);
         self.seek(start);
         self.status = format!("LOOP: BACK TO {:.4} S (THE SHOT RE-RUN; TISSUE DETAIL CAN DIFFER)", self.shot_t);
-    }
-
-    /// Show recorded frame `i` in the frame image (uploaded once per change).
-    fn show_frame(&mut self, i: usize) {
-        if self.shown_frame == Some(i) {
-            return;
-        }
-        let Some(frame) = self.frames.get(i) else { return };
-        let (rgba, w, h) = (frame.rgba.clone(), frame.w, frame.h);
-        self.upload_image(&rgba, w, h);
-        self.shown_frame = Some(i);
     }
 
     // ── The interface ──────────────────────────────────────────────────────────────────────────
@@ -1697,6 +1780,10 @@ impl Range {
     /// The shot's gizmo (its line in from 6 m out, the entry and aim points) and the section's
     /// outline and rotation handle, over the viewport.
     fn draw_gizmos(&mut self) {
+        if let Some(p) = self.orbit_pivot.and_then(|p| self.project(p)) {
+            self.dot(p, 0.008, INK);
+            self.dot(p, 0.005, BLACK);
+        }
         let (aim, dir) = self.aim_line();
         let entry = self.entry();
         let start = entry.map_or(aim, |(p, _)| p);
@@ -1704,27 +1791,32 @@ impl Range {
         if let Some(p) = self.project(aim) {
             self.dot(p, 0.010, INK);
         }
-        // The shot's handle: a point on a sphere about the aim point, on the line the round comes
-        // in along; dragged over the sphere, it turns the shot.
-        let handle = aim - dir * SHOT_HANDLE_M;
-        self.line(handle, aim, [0.75, 0.75, 0.75, 0.9]);
-        let f = self.forward();
-        let u = f.cross(Vec3::Y).normalize_or_zero();
-        let v = u.cross(f).normalize_or_zero();
-        for k in 0..48 {
-            let a = k as f32 / 48.0 * std::f32::consts::TAU;
-            if let Some(p) = self.project(aim + (u * a.cos() + v * a.sin()) * SHOT_HANDLE_M) {
-                self.dot(p, 0.0015, [0.5, 0.5, 0.5, 0.5]);
+        // The shot's two handles about the aim point: on a ring flat in the hull's horizontal plane
+        // (green, the bearing it comes from) and on an arc in the shot's vertical plane (red, its
+        // elevation); each slides along its own curve.
+        let ((az_point, el_point), (h, up, x_axis, z_axis)) = self.shot_frames(aim, dir);
+        self.line(el_point, aim, [0.75, 0.75, 0.75, 0.9]);
+        let ring = [0.35, 0.9, 0.3, 0.45];
+        let arc = [0.95, 0.22, 0.18, 0.45];
+        for k in 0..64 {
+            let a = k as f32 / 64.0 * std::f32::consts::TAU;
+            if let Some(p) = self.project(aim + (x_axis * a.sin() + z_axis * a.cos()) * SHOT_HANDLE_M) {
+                self.dot(p, 0.0015, ring);
             }
         }
-        if let Some(p) = self.project(handle) {
-            self.dot(p, 0.010, INK);
-            self.dot(p, 0.005, BLACK);
-            let aspect = self.win[0] / self.win[1].max(1.0);
-            if ((self.cursor[0] - p[0]) * aspect).hypot(self.cursor[1] - p[1]) < HANDLE_NEAR {
-                self.text("SHOT", p[0], p[1] + 0.016, TEXT * 0.65, INK, crate::ui::Align::Center);
+        for k in 0..=28 {
+            let e = (-60.0f32 + 140.0 * k as f32 / 28.0).to_radians();
+            if let Some(p) = self.project(aim + (h * e.cos() + up * e.sin()) * SHOT_HANDLE_M) {
+                self.dot(p, 0.0015, arc);
             }
-            self.shot_handle_at = Some(p);
+        }
+        self.shot_az_at = self.project(az_point);
+        self.shot_el_at = self.project(el_point);
+        for (at, colour) in [(self.shot_az_at, GREEN), (self.shot_el_at, RED)] {
+            if let Some(p) = at {
+                self.dot(p, 0.010, colour);
+                self.dot(p, 0.005, BLACK);
+            }
         }
         if let Some((e, n)) = entry {
             if let Some(p) = self.project(e) {
@@ -1753,32 +1845,50 @@ impl Range {
         }
     }
 
-    fn shot_handle_hit(&self, c: [f32; 2]) -> bool {
-        let aspect = self.win[0] / self.win[1].max(1.0);
-        self.shot_handle_at.is_some_and(|p| ((c[0] - p[0]) * aspect).hypot(c[1] - p[1]) < 0.012)
+    /// The shot's handle points (bearing on the ring, elevation on the arc) and the frames they
+    /// move in: the horizontal from-direction, the hull's up, X and Z (world).
+    fn shot_frames(&self, aim: Vec3, dir: Vec3) -> ((Vec3, Vec3), (Vec3, Vec3, Vec3, Vec3)) {
+        let hull = self.g.player.hull_model();
+        let up = hull.transform_vector3(Vec3::Y).normalize_or_zero();
+        let (x_axis, z_axis) = (hull.transform_vector3(Vec3::X).normalize_or_zero(), hull.transform_vector3(Vec3::Z).normalize_or_zero());
+        let from = -dir;
+        let h = (from - up * from.dot(up)).try_normalize().unwrap_or(z_axis);
+        ((aim + h * SHOT_HANDLE_M, aim + from * SHOT_HANDLE_M), (h, up, x_axis, z_axis))
     }
 
-    /// The shot's handle dragged to `c`: the point of its sphere (about the aim point) under the
-    /// cursor, the near side's, or the sphere's outline nearest the ray when it misses; the round
-    /// comes in from there toward the aim point.
-    fn drag_shot_handle(&mut self, c: [f32; 2]) {
-        let (aim, _) = self.aim_line();
+    /// Which of the shot's handles is under `c`: 0 the bearing, 1 the elevation.
+    fn shot_handle_hit(&self, c: [f32; 2]) -> Option<usize> {
+        let aspect = self.win[0] / self.win[1].max(1.0);
+        let near = |p: Option<[f32; 2]>| p.is_some_and(|p| ((c[0] - p[0]) * aspect).hypot(c[1] - p[1]) < 0.012);
+        if near(self.shot_el_at) { Some(1) } else if near(self.shot_az_at) { Some(0) } else { None }
+    }
+
+    /// A shot handle dragged to `c`: the bearing from where the cursor's ray meets the hull's
+    /// horizontal plane through the aim point, or the elevation from where it meets the shot's
+    /// vertical plane.
+    fn drag_shot_handle(&mut self, which: usize, c: [f32; 2]) {
+        let (aim, dir) = self.aim_line();
+        let (_, (h, up, _, _)) = self.shot_frames(aim, dir);
         let (o, d) = self.ray(c);
-        let to = aim - o;
-        let along = to.dot(d);
-        let closest = o + d * along;
-        let off = closest - aim;
-        let r2 = SHOT_HANDLE_M * SHOT_HANDLE_M;
-        let point = if off.length_squared() <= r2 {
-            o + d * (along - (r2 - off.length_squared()).sqrt())
-        } else {
-            aim + off.normalize_or_zero() * SHOT_HANDLE_M
-        };
-        let dir = (aim - point).normalize_or_zero();
-        if dir != Vec3::ZERO {
-            self.shot.set_dir_hull(self.g.player.hull_model().inverse().transform_vector3(dir));
-            self.status = format!("SHOT FROM BEARING {:+.0}, ELEVATION {:+.0}", self.shot.from_az, self.shot.from_el);
+        let normal = if which == 0 { up } else { h.cross(up).normalize_or_zero() };
+        let denom = d.dot(normal);
+        if denom.abs() < 1.0e-4 {
+            return;
         }
+        let t = (aim - o).dot(normal) / denom;
+        if t <= 0.0 {
+            return;
+        }
+        let v = o + d * t - aim;
+        if which == 0 {
+            let local = self.g.player.hull_model().inverse().transform_vector3(v);
+            if local.x.hypot(local.z) > 1.0e-3 {
+                self.shot.from_az = local.x.atan2(local.z).to_degrees();
+            }
+        } else {
+            self.shot.from_el = v.dot(up).atan2(v.dot(h).max(1.0e-3)).to_degrees().clamp(-60.0, 80.0);
+        }
+        self.status = format!("SHOT FROM BEARING {:+.0}, ELEVATION {:+.0}", self.shot.from_az, self.shot.from_el);
     }
 
     /// The section in the shot's plane: vertical, through the aim point and along the shot's line,
@@ -1892,9 +2002,10 @@ impl Range {
         }).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(role, _)| role)
     }
 
-    /// The viewport's height (the whole window while the panel is hidden).
+    /// The viewport's height: the whole window, the panel laid over its foot (hiding the panel
+    /// uncovers the view; it does not change it).
     fn view_h(&self) -> f32 {
-        if self.hide_ui { 1.0 } else { 1.0 - PANEL_H }
+        1.0
     }
 
     /// Whether `c` is on the panel's hide (or show) button.
@@ -1910,15 +2021,17 @@ impl Range {
 
     /// The timeline line's height (the panel's top edge, or the window's bottom when hidden).
     fn timeline_y(&self) -> f32 {
-        self.view_h()
+        if self.hide_ui { 1.0 } else { 1.0 - PANEL_H }
     }
 
     /// Frame the Tiger: the camera keeps its direction and stands 10 m from the hull's middle.
     fn frame_tiger(&mut self) {
         let target = self.g.player.hull_model().transform_point3(SECTION_PIVOT);
         self.eye = target - self.forward() * 10.0;
+        self.orbit_pivot = Some(target);
+        self.keep_above_ground();
         self.camera_at = None;
-        self.status = "FRAMED THE TIGER".into();
+        self.status = "CENTRED ON THE TIGER (THE ORBIT POINT ITS MIDDLE)".into();
     }
 
     /// Every dial's value as the editor starts (right-click resets a dial to it).
@@ -1949,7 +2062,7 @@ impl Range {
             "sky": {"day": self.sky.day, "local_h": self.sky.local_h, "weather": self.sky.weather, "exposure": self.sky.exposure,
                 "running": self.sky.running, "rate": self.sky.rate},
             "tissue": {"tear_j_m3": t.tear_j_m3, "critical_stretch": t.critical_stretch, "forward": t.forward,
-                "outward": t.outward, "active_reach_m": t.active_reach_m, "landing_breakup": t.landing_breakup},
+                "outward": t.outward, "active_reach_m": t.active_reach_m, "landing_breakup": t.landing_breakup, "spread": t.spread},
             "look": {"look": self.r.look, "grade": self.r.display_grade, "dither": self.r.display_dither_pattern,
                 "palette_levels": d.palette_levels, "ordered_dither": d.ordered_dither, "ldr_dither": d.ldr_dither,
                 "retro": d.retro_strength, "white_balance": d.ambient_white_balance,
@@ -1958,7 +2071,7 @@ impl Range {
             "engine": self.engine, "accumulate_moving": self.accumulate_moving, "wear": self.wear, "snow": self.snow,
             "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm},
             "tiger": {"at": self.tiger_at.to_array(), "heading": self.tiger_heading},
-            "tab": self.tab,
+            "open": self.open,
         })
     }
 
@@ -2012,6 +2125,7 @@ impl Range {
         if let Some(x) = f(&t["outward"]) { self.tuning.outward = x; }
         if let Some(x) = f(&t["active_reach_m"]) { self.tuning.active_reach_m = x; }
         if let Some(x) = f(&t["landing_breakup"]) { self.tuning.landing_breakup = x; }
+        if let Some(x) = f(&t["spread"]) { self.tuning.spread = x; }
         self.apply_tuning();
         let l = &v["look"];
         if let Some(x) = f(&l["look"]) { self.r.look = x; }
@@ -2030,7 +2144,6 @@ impl Range {
         self.fog = f(&l["fog"]);
         if let Some(x) = f(&v["lamp_gain"]) { set_review_lamp_gain(x.max(1.0)); }
         if let Some(x) = f(&v["time_speed"]) { self.time_speed = x; }
-        if let Some(x) = v["looping"].as_bool() { self.looping = x; }
         if let Some(x) = v["engine"].as_bool() { self.engine = x; }
         if let Some(x) = v["accumulate_moving"].as_bool() { self.accumulate_moving = x; }
         self.wear = arr4(&v["wear"]);
@@ -2045,8 +2158,31 @@ impl Range {
             self.tiger_at = Vec2::new(f(&a[0]).unwrap_or(TIGER_AT.x), f(&a[1]).unwrap_or(TIGER_AT.y));
         }
         if let Some(x) = f(&v["tiger"]["heading"]) { self.tiger_heading = x; }
-        if let Some(t) = v["tab"].as_u64() { self.tab = (t as usize).min(GROUPS.len() - 1); }
+        if let Some(o) = v["open"].as_array().filter(|o| o.len() == GROUPS.len()) {
+            for (slot, x) in self.open.iter_mut().zip(o) { *slot = x.as_bool().unwrap_or(*slot); }
+        }
         self.status = format!("SETTINGS FROM THE LAST LAUNCH ({STATE_PATH})");
+    }
+
+    /// The camera never below the snow: at least 0.15 m above the terrain under it.
+    fn keep_above_ground(&mut self) {
+        let floor = self.g.hf.height_at(self.eye.x, self.eye.z) + 0.15;
+        if self.eye.y < floor {
+            self.eye.y = floor;
+        }
+    }
+
+    /// The point orbit, pan and dolly work about: the one set by a double click, else the point
+    /// under the cursor.
+    fn orbit_point(&self, c: [f32; 2]) -> Vec3 {
+        self.orbit_pivot.unwrap_or_else(|| self.pivot_at(c))
+    }
+
+    /// Double click: the orbit point on the vehicle or ground under the cursor.
+    fn set_orbit_point(&mut self, c: [f32; 2]) {
+        let p = self.pivot_at(c);
+        self.orbit_pivot = Some(p);
+        self.status = format!("ORBIT POINT SET ({:.1}, {:.1}, {:.1}); DOUBLE-CLICK AGAIN TO MOVE IT", p.x, p.y, p.z);
     }
 
     /// The point a camera drag turns about or moves toward: the vehicle's surface under the
@@ -2079,6 +2215,7 @@ impl Range {
         }
         self.eye = pivot + q * (self.eye - pivot);
         self.set_view_forward(q * f);
+        self.keep_above_ground();
         self.camera_at = None;
     }
 
@@ -2091,6 +2228,7 @@ impl Range {
         let span = 2.0 * depth * (self.fov_deg().to_radians() * 0.5).tan();
         let aspect = self.win[0] / (self.view_h() * self.win[1].max(1.0));
         self.eye += (-right * dx * aspect + up * dy / self.view_h()) * span;
+        self.keep_above_ground();
         self.camera_at = None;
     }
 
@@ -2103,6 +2241,7 @@ impl Range {
         }
         let step = ((dx + dy) * 3.0 * d).min(d - 0.2);
         self.eye += to / d * step;
+        self.keep_above_ground();
         self.camera_at = None;
     }
 
@@ -2125,9 +2264,39 @@ impl Range {
         let dist = self.eye.distance(target).clamp(6.0, 60.0);
         self.eye = target - view * dist;
         self.set_view_forward(view);
+        self.keep_above_ground();
         self.snapped = Some((axis, positive));
         self.camera_at = None;
         self.status = format!("VIEW ALONG THE HULL'S {}{} AXIS", if positive { "+" } else { "-" }, ["X", "Y", "Z"][axis]);
+    }
+
+    /// The five crew as a plan of the tank seen from above, front up (the tank's left on the
+    /// left): each man at his seat, white alive, amber wounded, dim amber out cold, red with a
+    /// cross dead.
+    fn draw_crew_plan(&mut self, at: [f32; 2], height: f32) {
+        let aspect = self.win[0] / self.win[1].max(1.0);
+        let w = height * 0.55 / aspect;
+        let px = 1.0 / self.win[1].max(1.0);
+        let outline = [0.35, 0.35, 0.35, 1.0];
+        let frame = |r: &mut Renderer, x: f32, y: f32, fw: f32, fh: f32| {
+            r.fill_rect(x, y, fw, px, outline);
+            r.fill_rect(x, y + fh, fw, px, outline);
+            r.fill_rect(x, y, px / aspect, fh, outline);
+            r.fill_rect(x + fw, y, px / aspect, fh, outline);
+        };
+        frame(&mut self.r, at[0], at[1], w, height);
+        frame(&mut self.r, at[0] + w * 0.18, at[1] + height * 0.30, w * 0.64, height * 0.44);
+        let seats = [(CrewRole::Driver, 0.30, 0.15, "D"), (CrewRole::Radioman, 0.70, 0.15, "R"), (CrewRole::Gunner, 0.36, 0.40, "G"),
+            (CrewRole::Commander, 0.34, 0.63, "C"), (CrewRole::Loader, 0.67, 0.52, "L")];
+        for (role, u, v, letter) in seats {
+            let man = self.g.crew_solo.man(role);
+            let colour = if man.dead { RED } else if man.unconscious_s > 0.0 { [0.45, 0.2, 0.02, 1.0] }
+                else if !man.wounds.is_empty() { AMBER } else { INK };
+            let c = [at[0] + w * u, at[1] + height * v];
+            let d = height * 0.16;
+            self.r.fill_rect(c[0] - d * 0.5 / aspect, c[1] - d * 0.5, d / aspect, d, colour);
+            self.text_bold(if man.dead { "X" } else { letter }, c[0], c[1], TEXT * 0.6, BLACK, crate::ui::Align::Center);
+        }
     }
 
     /// The hull's axes as the camera sees them (X red, Y green, Z blue), in the viewport's corner;
@@ -2138,7 +2307,7 @@ impl Range {
         let right = f.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(f).normalize_or_zero();
         // On the panel, right of the buttons; with the panel hidden, the viewport's corner.
-        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [LEFT_X + LEFT_W + 0.03 / aspect + 0.012, 1.0 - PANEL_H + 0.07] };
+        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [LEFT_X + LEFT_W - 0.06 / aspect, 1.0 - PANEL_H + 0.085] };
         let hull = self.g.player.hull_model();
         for (axis, colour, name) in [(Vec3::X, RED, "X"), (Vec3::Y, GREEN, "Y"), (Vec3::Z, BLUE, "Z")] {
             let d = hull.transform_vector3(axis).normalize_or_zero();
@@ -2187,7 +2356,7 @@ impl Range {
     fn draw_handle(&mut self, centre: Vec3) {
         let aspect = self.win[0] / self.win[1].max(1.0);
         let margin = (HANDLE_REACH + HANDLE_BOX) / aspect;
-        let view_h = self.view_h();
+        let view_h = self.timeline_y();
         let at = self.project(centre).filter(|p| p[0] > margin && p[0] < 1.0 - margin
             && p[1] > HANDLE_REACH + HANDLE_BOX && p[1] < view_h - HANDLE_REACH - 2.0 * HANDLE_BOX)
             .unwrap_or([1.0 - margin - 0.01, view_h - HANDLE_REACH - 2.0 * HANDLE_BOX]);
@@ -2231,12 +2400,38 @@ impl Range {
         lines
     }
 
-    /// The chosen group's rows: each with its column's left edge and its centre's height.
-    fn rows(&self) -> Vec<(Knob, f32, f32)> {
+    /// The open groups laid out as one flow down and across the columns: each group's name, then
+    /// its rows, ROW_H a line, as far as the columns reach (no space left between groups).
+    fn layout(&self) -> (Vec<(Knob, f32, f32)>, Vec<(usize, f32, f32)>) {
         let top = 1.0 - PANEL_H + 0.042;
-        group_rows(self.tab).into_iter().enumerate().map(|(i, k)| {
-            (k, GROUPS_X + (i / ROWS_PER_COL) as f32 * COLS_W, top + ((i % ROWS_PER_COL) as f32 + 0.5) * ROW_H)
-        }).collect()
+        let (mut rows, mut headers) = (Vec::new(), Vec::new());
+        let mut line = 0usize;
+        let place = |line: usize| (GROUPS_X + (line / ROWS_PER_COL) as f32 * COLS_W, top + ((line % ROWS_PER_COL) as f32 + 0.5) * ROW_H);
+        for g in (0..GROUPS.len()).filter(|&g| self.open[g]) {
+            // A group's name never ends a column.
+            if line % ROWS_PER_COL == ROWS_PER_COL - 1 {
+                line += 1;
+            }
+            let (x, y) = place(line);
+            if x + COLS_W > RIGHT_X + 0.002 {
+                break;
+            }
+            headers.push((g, x, y));
+            line += 1;
+            for k in group_rows(g) {
+                let (x, y) = place(line);
+                if x + COLS_W > RIGHT_X + 0.002 {
+                    return (rows, headers);
+                }
+                rows.push((k, x, y));
+                line += 1;
+            }
+        }
+        (rows, headers)
+    }
+
+    fn rows(&self) -> Vec<(Knob, f32, f32)> {
+        self.layout().0
     }
 
     /// The row under `c`, with its column's left edge.
@@ -2251,7 +2446,7 @@ impl Range {
     /// The tabs' rectangles (x, y, w, h), one a group.
     fn tab_rects(&self) -> Vec<[f32; 4]> {
         let size = TEXT * 0.8;
-        let mut x = GROUPS_X;
+        let mut x = GROUPS_X + 0.004;
         GROUPS.iter().map(|name| {
             let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.012;
             let rect = [x, 1.0 - PANEL_H + 0.008, w, 0.022];
@@ -2286,18 +2481,13 @@ impl Range {
         self.cursor = cursor;
         self.r.ui_reset();
         self.handle_at = None;
-        self.shot_handle_at = None;
+        self.shot_az_at = None;
+        self.shot_el_at = None;
         let scrubbing = matches!(self.mode, Mode::Scrub(_));
         // The viewport: a dragged timeline's stored frame, or the live frame captured this frame
         // for the timeline (or, headless, the live frame); otherwise `render` blits the live view.
-        let shown = match self.mode {
-            Mode::Scrub(i) => Some(i),
-            Mode::Live => None,
-        };
-        if let Some(i) = shown {
-            self.show_frame(i);
-        }
-        if shown.is_some() || self.captured || self.live_image {
+        // The timeline keeps no pictures: dragging it moves only the playhead; the view stays live.
+        if self.captured || self.live_image {
             self.r.draw_image(self.frame_image, 0.0, 0.0, 1.0, self.view_h(), [1.0, 1.0, 1.0, 1.0]);
         }
         if self.hide_ui {
@@ -2315,41 +2505,53 @@ impl Range {
         self.draw_axes_gizmo();
         // The left block: title and time, the buttons, the status.
         let mode = match (self.mode, self.run) {
-            (Mode::Scrub(i), _) => format!("PREVIEW {}", i + 1),
+            (Mode::Scrub(i), _) => format!("TO FRAME {}", i + 1),
             (Mode::Live, _) if !self.playing => "PAUSED".into(),
             (Mode::Live, Some(run)) if !self.past_run => format!("RUN {}/{}", self.frame_at.map_or(0, |f| f + 1), run.total),
             (Mode::Live, _) => "REAL TIME".into(),
         };
         let t = match self.mode {
-            Mode::Scrub(i) => self.frames.get(i).map_or(0.0, |f| f.t),
+            Mode::Scrub(i) => self.frame_time(i as u32),
             _ => self.shot_t,
         };
         self.label_box("FEA RANGE", LEFT_X, top + 0.018, TEXT * 0.85);
         self.text(&format!("{mode}  T {:.4} S", t), LEFT_X + LEFT_W, top + 0.018, TEXT * 0.8, INK, crate::ui::Align::Right);
+        self.text(&format!("{:.0} FPS  SIM {:.0} MS  DRAW {:.0} MS", 1.0 / self.perf[0].max(1.0e-4), self.perf[1], self.perf[2]),
+            LEFT_X + LEFT_W, top + 0.035, TEXT * 0.65, DIM, crate::ui::Align::Right);
+        self.draw_crew_plan([LEFT_X, top + 0.036], 0.09);
         for (label, col, row) in BUTTONS {
             let [x, y, w, h] = button_rect(col, row);
-            let lit = (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some());
+            let lit = (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some()) || (label == "LOOP" && self.looping);
             let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
-            self.r.fill_rect(x, y, w, h, if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX });
+            let fill = if label == "FIRE" { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
+                else if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX };
+            self.r.fill_rect(x, y, w, h, fill);
             let rec_label = self.recorder.as_ref().map(|r| format!("REC {:.0} S", r.frames as f32 / 30.0));
+            let loop_label = match (self.looping, self.clip) {
+                (true, Some(_)) => "LOOP: CLIP",
+                (true, None) => "LOOP: RUN",
+                (false, _) => "LOOP OFF",
+            };
             let text = match label {
                 "PLAY" if self.playing => "PAUSE",
+                "LOOP" => loop_label,
                 "REC" if rec_label.is_some() => rec_label.as_deref().unwrap_or("REC"),
                 other => other,
             };
             self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.85, if lit { BLACK } else { INK }, crate::ui::Align::Center);
         }
-        let alive = CrewRole::ALL.iter().filter(|&&role| !self.g.crew_solo.man(role).dead).count();
         let mut notes: Vec<(String, [f32; 4])> = vec![(self.status.to_uppercase(), INK)];
-        notes.push((format!("CREW ALIVE {alive}/5. {}", self.last_chain.to_uppercase()), DIM));
+        if !self.last_chain.is_empty() {
+            notes.push((self.last_chain.to_uppercase(), DIM));
+        }
         if self.section.on {
             notes.push(("SECTION FOR THE CAMERA ONLY: LIGHT AND PHYSICS SEE THE WHOLE TANK".into(), DIM));
         }
         if scrubbing {
-            notes.push(("PREVIEW: LET GO OF THE TIMELINE TO GO LIVE AT THIS FRAME".into(), INK));
+            notes.push(("LET GO OF THE TIMELINE TO TAKE THE SIMULATION TO THIS FRAME".into(), INK));
         }
         let chars = ((GROUPS_X - LEFT_X - 0.01) * self.win[0] / (0.45 * TEXT * 0.72 * self.win[1])).max(10.0) as usize;
-        let mut y = top + 0.112;
+        let mut y = top + 0.142;
         'notes: for (text, colour) in notes {
             for line in Self::wrap(&text, chars).into_iter().take(3) {
                 if y > 0.992 {
@@ -2361,11 +2563,16 @@ impl Range {
         }
         // The tabs and the hide button.
         for (g, [x, y, w, h]) in self.tab_rects().into_iter().enumerate() {
-            let chosen = g == self.tab;
+            let chosen = self.open[g];
             if chosen {
                 self.r.fill_rect(x, y, w, h, INK);
             }
             self.text_bold(GROUPS[g], x + w * 0.5, y + h * 0.5, TEXT * 0.8, if chosen { BLACK } else { DIM }, crate::ui::Align::Center);
+        }
+        let (_, headers) = self.layout();
+        for (g, x, y) in headers {
+            self.text_bold(GROUPS[g], x + 0.004, y, TEXT * 0.72, DIM, crate::ui::Align::Left);
+            self.r.fill_rect(x + 0.004, y + ROW_H * 0.42, COLS_W - 0.02, 1.0 / self.win[1].max(1.0), [0.2, 0.2, 0.2, 1.0]);
         }
         let [x, y, w, h] = hide_rect(false);
         self.r.fill_rect(x, y, w, h, BOX);
@@ -2377,13 +2584,14 @@ impl Range {
             let right = cx + COLS_W - 0.012;
             let minus = right - 2.0 * BTN_W - 0.003;
             let plus = right - BTN_W;
-            let value_x = cx + 0.074;
+            let value_x = cx + 0.064;
             if cursor[0] >= cx && cursor[0] <= right && (cursor[1] - y).abs() <= ROW_H * 0.5 {
                 self.r.fill_rect(cx - 0.003, y - ROW_H * 0.5, right - cx + 0.006, ROW_H, [0.05, 0.05, 0.05, 1.0]);
             }
             let (label, value) = self.knob_label(knob);
             self.text(&label, cx + 0.004, y, TEXT * 0.8, DIM, crate::ui::Align::Left);
             match kind(knob) {
+                Kind::Info => self.text(&value, value_x, y, TEXT * 0.72, DIM, crate::ui::Align::Left),
                 Kind::Stepper => {
                     self.text(&value, value_x, y, TEXT * 0.8, INK, crate::ui::Align::Left);
                     for (x, sign) in [(minus, "<"), (plus, ">")] {
@@ -2415,14 +2623,14 @@ impl Range {
         if self.help {
             let lines = [
                 "RMB HOLD: LOOK    WASD/QE: FLY    SHIFT: FAST    CTRL: SLOW    WHEEL: FLY SPEED    [ ]: FOCAL LENGTH",
-                "ALT+LMB: ORBIT    ALT+MMB (OR MMB): PAN    ALT+RMB: DOLLY    CLICK X/Y/Z (PANEL): VIEW ALONG IT, AGAIN TO FLIP",
+                "ALT+LMB: ORBIT    ALT+MMB (OR MMB): PAN    ALT+RMB: DOLLY    DOUBLE-CLICK: THE ORBIT POINT    CLICK X/Y/Z: VIEW ALONG IT",
                 "LMB ON THE TANK: AIM (DIRECTION FROM THE CAMERA)    CTRL+LMB: AIM, KEEP DIRECTION",
-                "DRAG THE SHOT HANDLE (OR SHIFT+LMB DRAG): TURN THE SHOT",
+                "SHOT HANDLES: GREEN ON THE RING SETS THE BEARING, RED ON THE ARC THE ELEVATION (SHIFT+LMB DRAG: BOTH)",
                 "C: SECTION ON/OFF    V: FACING THE CAMERA    G: IN THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 45",
-                "PANEL: TABS PICK A GROUP; DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL ON A VALUE STEPS, RMB ON A DIAL RESETS",
+                "PANEL: A TAB OPENS/CLOSES ITS GROUP (SHIFT: ALONE); DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
-                "F: FIRE THE SHOT NOW (INTO THE PRESENT STATE)    ENTER: RUN ON A FRESH TIGER    . : FRAME THE TIGER",
-                "SPACE: PAUSE/PLAY (THE SIMULATION ALWAYS PLAYS UNLESS PAUSED)    BACKSPACE: RESET",
+                "F: FIRE THE SHOT NOW (INTO THE PRESENT STATE)    ENTER: RUN ON A FRESH TIGER    Z (OR .): CENTRE ON THE TIGER",
+                "SPACE: REPLAY THE RUN (OR CLIP) FROM ITS START    SHIFT+SPACE: PAUSE/PLAY    BACKSPACE: RESET",
                 "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
                 "BACK IN TIME RE-RUNS THE SAME SHOTS TO THAT FRAME (A FEW SECONDS; TISSUE DETAIL CAN DIFFER)",
                 "TAB OR HIDE: THE PANEL    R: RECORD THE VIEWPORT    F12: FULL-FRAME STILL 5120X2880    SETTINGS AND CAMERAS KEPT",
@@ -2451,15 +2659,19 @@ impl Range {
                 Mode::Live => self.frame_at.map_or(0.0, |f| f as f32 + 1.0),
             };
             let x = |k: f32| 0.0 + (1.0 - 0.0) * k / n;
+            self.r.fill_rect(0.0, base - thick, x(at) - 0.0, thick, INK);
+            // The clip over the line, its ends ticked.
             if let Some((a, b)) = self.clip {
                 self.r.fill_rect(x(a as f32), base - thick, x(b as f32 + 1.0) - x(a as f32), thick, AMBER);
+                for edge in [a as f32, b as f32 + 1.0] {
+                    self.r.fill_rect(x(edge) - 1.0 / self.win[0], base - 5.0 * thick, 2.0 / self.win[0], 5.0 * thick, AMBER);
+                }
             }
-            self.r.fill_rect(0.0, base - thick, x(at) - 0.0, thick, INK);
             if hovered {
                 let head = x(at);
                 self.r.fill_rect(head - 1.0 / self.win[0], base - 4.0 * thick, 2.0 / self.win[0], 4.0 * thick, INK);
                 let t = match self.mode {
-                    Mode::Scrub(i) => self.frames.get(i).map_or(0.0, |f| f.t),
+                    Mode::Scrub(i) => self.frame_time(i as u32),
                     _ => self.shot_t,
                 };
                 let clip = self.clip.map_or(String::new(), |(a, b)| format!("  CLIP {}-{}{}", a + 1, b + 1, if self.looping { " LOOP" } else { "" }));
@@ -2490,7 +2702,17 @@ impl Range {
             }
         }
         if let Some(g) = self.tab_rects().iter().position(|[x, y, w, h]| cursor[0] >= *x && cursor[0] <= x + w && cursor[1] >= *y && cursor[1] <= y + h) {
-            self.tab = g;
+            // A tab opens or closes its group; Shift opens it alone.
+            if coarse {
+                self.open = [false; GROUPS.len()];
+                self.open[g] = true;
+            } else {
+                self.open[g] = !self.open[g];
+            }
+            let shown: std::collections::HashSet<_> = self.rows().iter().map(|r| format!("{:?}", r.0)).collect();
+            if self.open[g] && group_rows(g).iter().any(|k| !shown.contains(&format!("{k:?}"))) {
+                self.status = "MORE GROUPS OPEN THAN FIT: CLOSE ONE (SHIFT-CLICK A TAB OPENS IT ALONE)".into();
+            }
             return Click::Used;
         }
         if let Some((knob, cx)) = self.row_at(cursor) {
@@ -2503,6 +2725,7 @@ impl Range {
                     self.adjust(knob, dir, fine, coarse);
                 }
                 Kind::Toggle | Kind::Action => self.adjust(knob, 1.0, fine, coarse),
+                Kind::Info => {}
             }
         }
         if let Some(axis) = self.axis_hit(cursor) {
@@ -2511,12 +2734,13 @@ impl Range {
         Click::Used
     }
 
-    /// The wheel on the panel: on a row it steps the row; elsewhere it changes the tab.
+    /// The wheel on the panel: on a row it steps the row.
     fn wheel_ui(&mut self, cursor: [f32; 2], dy: f32, fine: bool, coarse: bool) {
+        let _ = &dy;
         match self.row_at(cursor) {
-            Some((knob, _)) if kind(knob) != Kind::Action => self.adjust(knob, dy.signum(), fine, coarse),
+            Some((knob, _)) if !matches!(kind(knob), Kind::Action | Kind::Info) => self.adjust(knob, dy.signum(), fine, coarse),
             Some(_) => {}
-            None => self.tab = (self.tab as i32 - dy.signum() as i32).rem_euclid(GROUPS.len() as i32) as usize,
+            None => {}
         }
     }
 
@@ -2532,6 +2756,7 @@ impl Range {
             "RUN" => self.run(),
             "PLAY" => self.playing = !self.playing,
             "FIRE" => self.fire_now(),
+            "LOOP" => self.looping = !self.looping,
             "REC" => self.toggle_recording(),
             "STILL" => self.still(),
             _ => {}
@@ -2545,7 +2770,7 @@ impl Range {
         if forward {
             for _ in 0..count {
                 match self.next_run_frame() {
-                    Some(k) => self.run_frame(k, true),
+                    Some(k) => self.run_frame(k),
                     None => {
                         for _ in 0..REAL_TICKS_PER_FRAME {
                             self.step(TICK);
@@ -2636,7 +2861,7 @@ impl Range {
     /// heightfield, metre steps to 2 km).
     fn ground_at(&self, cursor: [f32; 2]) -> Option<Vec3> {
         let (from, dir) = self.ray(cursor);
-        (1..2000).map(|k| from + dir * k as f32).find(|p| p.y < self.g.hf.height_at(p.x, p.z))
+        (1..8000).map(|k| from + dir * (k as f32 * 0.25)).find(|p| p.y < self.g.hf.height_at(p.x, p.z))
     }
 
     /// Move the Tiger (a fresh one, with its crew) to the snow under `cursor`.
@@ -2687,8 +2912,8 @@ enum Drag {
     Track,
     /// RMB on the timeline: marking a clip from the frame first pressed.
     Clip(usize),
-    /// LMB on the shot's handle: moved over its sphere about the aim point.
-    ShotHandle,
+    /// LMB on a shot handle: 0 the bearing ring, 1 the elevation arc.
+    ShotHandle(usize),
     /// LMB on a dial: the dial, its position when taken and the cursor's height then.
     Dial(Knob, f32, f32),
     /// LMB on the section handle's pad: 45° steps per `HANDLE_DRAG_STEP` of motion (the motion
@@ -2724,6 +2949,9 @@ struct App {
     error: Option<String>,
     /// When the settings were last saved.
     saved: Option<std::time::Instant>,
+    /// The last plain click in the viewport (a double click sets the orbit point): when, where,
+    /// and the shot before it aimed.
+    last_click: Option<(std::time::Instant, [f32; 2], ShotSetup)>,
 }
 
 impl App {
@@ -2753,7 +2981,8 @@ impl App {
             }
             KeyCode::Enter | KeyCode::NumpadEnter => rg.run(),
             KeyCode::Backspace => rg.reset(),
-            KeyCode::Space => rg.button("PLAY"),
+            KeyCode::Space if self.input.shift => rg.button("PLAY"),
+            KeyCode::Space => rg.replay(),
             KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::ArrowUp | KeyCode::ArrowDown if self.input.alt => {
                 let step = match code { KeyCode::ArrowLeft => (-1, 0), KeyCode::ArrowRight => (1, 0), KeyCode::ArrowUp => (0, 1), _ => (0, -1) };
                 rg.rotate_section(step.0, step.1);
@@ -2774,7 +3003,7 @@ impl App {
             KeyCode::KeyG => rg.adjust(Knob::SnapToShot, 1.0, false, false),
             KeyCode::Tab => rg.hide_ui = !rg.hide_ui,
             KeyCode::KeyF => rg.fire_now(),
-            KeyCode::Period | KeyCode::NumpadDecimal => rg.frame_tiger(),
+            KeyCode::Period | KeyCode::NumpadDecimal | KeyCode::KeyZ => rg.frame_tiger(),
             KeyCode::KeyC => rg.section.on = !rg.section.on,
             KeyCode::KeyV => {
                 let n = rg.g.player.hull_model().inverse().transform_vector3(-rg.forward());
@@ -2840,7 +3069,10 @@ impl App {
         }
         let boost = if input.shift { 4.0 } else if input.ctrl { 0.25 } else { 1.0 };
         rg.eye += v.normalize_or_zero() * rg.speed * boost * dt;
+        rg.keep_above_ground();
+        let sim_started = std::time::Instant::now();
         rg.tick(dt);
+        let sim_ms = sim_started.elapsed().as_secs_f32() * 1000.0;
         let frame = match st.surface.get_current_texture() {
             Ok(f) => f,
             Err(_) => {
@@ -2849,7 +3081,13 @@ impl App {
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let render_started = std::time::Instant::now();
         rg.render(&view, st.config.format, st.config.width, st.config.height, input.cursor);
+        // Frame rate and where the time goes (smoothed): the simulation's step, the renderer's frame.
+        let render_ms = render_started.elapsed().as_secs_f32() * 1000.0;
+        let k = 0.1;
+        rg.perf = [rg.perf[0] + (dt.max(1.0e-4) - rg.perf[0]) * k, rg.perf[1] + (sim_ms - rg.perf[1]) * k,
+            rg.perf[2] + (render_ms - rg.perf[2]) * k];
         frame.present();
     }
 }
@@ -2973,7 +3211,7 @@ impl ApplicationHandler for App {
                                 return;
                             }
                         }
-                        Drag::ShotHandle => rg.drag_shot_handle(c),
+                        Drag::ShotHandle(which) => rg.drag_shot_handle(which, c),
                         Drag::Clip(a) => {
                             if let Some(b) = rg.track_hit([c[0], rg.timeline_y()]) {
                                 rg.clip = (a != b).then(|| (a.min(b) as u32, a.max(b) as u32));
@@ -3024,13 +3262,13 @@ impl ApplicationHandler for App {
                     MouseButton::Right if pressed && self.input.alt => {
                         let c = self.input.cursor;
                         if let Some(st) = self.state.as_ref() {
-                            self.input.drag = Some((Drag::Dolly(st.range.pivot_at(c)), c));
+                            self.input.drag = Some((Drag::Dolly(st.range.orbit_point(c)), c));
                         }
                     }
                     MouseButton::Middle if pressed => {
                         let c = self.input.cursor;
                         if let Some(st) = self.state.as_ref() {
-                            self.input.drag = Some((Drag::Pan(st.range.pivot_at(c)), c));
+                            self.input.drag = Some((Drag::Pan(st.range.orbit_point(c)), c));
                         }
                     }
                     MouseButton::Middle | MouseButton::Right if !pressed
@@ -3069,8 +3307,8 @@ impl ApplicationHandler for App {
                             rg.mode = Mode::Scrub(i);
                             rg.playing = false;
                             self.input.drag = Some((Drag::Track, c));
-                        } else if rg.shot_handle_hit(c) {
-                            self.input.drag = Some((Drag::ShotHandle, c));
+                        } else if let Some(which) = rg.shot_handle_hit(c) {
+                            self.input.drag = Some((Drag::ShotHandle(which), c));
                         } else if let Some(step) = rg.handle_hit(c).filter(|_| rg.mode == Mode::Live) {
                             if step == (0, 0) {
                                 self.input.drag = Some((Drag::Rotate([0.0, 0.0]), c));
@@ -3084,11 +3322,22 @@ impl ApplicationHandler for App {
                         } else if let Some(axis) = rg.axis_hit(c) {
                             rg.snap_view(axis);
                         } else if alt {
-                            self.input.drag = Some((Drag::Orbit(rg.pivot_at(c)), c));
+                            self.input.drag = Some((Drag::Orbit(rg.orbit_point(c)), c));
                         } else if shift {
                             self.input.drag = Some((Drag::Turn, c));
                         } else {
-                            rg.pick(c, ctrl);
+                            // A second click within 0.35 s on the same spot: the orbit point
+                            // there, and the first click's aim taken back.
+                            let double = self.last_click.as_ref().filter(|(t, at, _)| t.elapsed().as_secs_f32() < 0.35
+                                && ((at[0] - c[0]).hypot(at[1] - c[1])) < 0.01).map(|(_, _, shot)| *shot);
+                            if let Some(shot) = double {
+                                rg.shot = shot;
+                                rg.set_orbit_point(c);
+                                self.last_click = None;
+                            } else {
+                                self.last_click = Some((std::time::Instant::now(), c, rg.shot));
+                                rg.pick(c, ctrl);
+                            }
                         }
                     }
                     MouseButton::Left => {
@@ -3150,6 +3399,8 @@ impl ApplicationHandler for App {
 }
 
 fn prepare_environment() {
+    // The FEA session's review tune (`KESSEL_TISSUE_TUNE`) is honoured here as in `fea-film`.
+    super::crew_tissue::allow_review_tune();
     // The shipping renderer and the owner's review look, unless chosen otherwise.
     if std::env::var_os("KESSEL_RENDERER").is_none() {
         std::env::set_var("KESSEL_RENDERER", "raymarch");
@@ -3169,7 +3420,7 @@ pub fn run(shots: Option<&str>) -> anyhow::Result<()> {
     }
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App { state: None, input: Input::default(), last: None, active: None, escape: None, error: None, saved: None };
+    let mut app = App { state: None, input: Input::default(), last: None, active: None, escape: None, error: None, saved: None, last_click: None };
     event_loop.run_app(&mut app)?;
     if let Some(e) = app.error {
         anyhow::bail!(e);
@@ -3264,7 +3515,7 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
             let (mut step_s, captures_before, capture_before) = (0.0, rg.rewind.captures, rg.rewind.capture_s);
             for k in 0..total {
                 let started = std::time::Instant::now();
-                rg.run_frame(k, false);
+                rg.run_frame(k);
                 step_s += started.elapsed().as_secs_f32();
                 frames.push(prints(&rg));
             }
@@ -3310,7 +3561,7 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         let started = std::time::Instant::now();
         let mut marks = Vec::new();
         for k in 0..total {
-            rg.run_frame(k, false);
+            rg.run_frame(k);
             if (k + 1) % 30 == 0 || k + 1 == total {
                 marks.push(format!("{:.2} s: {:.0} MB", rg.shot_t, rg.rewind.bytes as f64 / 1.0e6));
             }
@@ -3331,21 +3582,41 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    // KESSEL_FEA_RANGE_PROBE=flight: a round in flight seen from beside its path, close up.
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("flight") {
+        rg.shot.shell = 9; // 122 mm BR-471
+        rg.fire_now();
+        rg.playing = false;
+        for _ in 0..3 {
+            rg.step_frame(true, 1);
+        }
+        let Some((pos, velocity)) = rg.g.projectiles.iter().find(|p| p.small_arm.is_none()).map(|p| (p.pos, p.velocity)) else {
+            println!("[fea-range] flight probe: no round in flight");
+            return Ok(());
+        };
+        let dir = velocity.normalize_or_zero();
+        let side = dir.cross(Vec3::Y).normalize_or_zero();
+        rg.look_at(pos + side * 1.5 - dir * 0.3 + Vec3::Y * 0.2, pos - dir * 0.4);
+        rg.focal_mm = 50.0;
+        rg.hide_ui = true;
+        still(&mut rg, "flight", true)?;
+        println!("[fea-range] flight probe: round at {pos:?}, {:.0} m/s", velocity.length());
+        return Ok(());
+    }
     // KESSEL_FEA_RANGE_PROBE=ui: the interface on two tabs, then stop.
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("ui") {
-        rg.tab = 0;
         still(&mut rg, "ui_shot", true)?;
-        rg.tab = 5;
+        rg.open = [false, false, false, false, false, true, true, true, false];
         rg.section.on = true;
         still(&mut rg, "ui_look", false)?;
         return Ok(());
     }
     // 1. Live, the default shot (57 mm at the loader through the right turret side), help shown.
     rg.help = true;
-    rg.tab = 0;
+    rg.open = [true, true, false, true, false, false, false, false, false];
     let p1 = still(&mut rg, "live", true)?;
     rg.help = false;
-    rg.tab = 3;
+    rg.open = [false, true, true, true, false, false, false, false, false];
     // 2. The section: the top cut 1.9 m above the ground, the eye above the left side, the cabin
     // lamps at 32 times their power (the review dial), the eye's own exposure.
     rg.section = Section { on: true, yaw: 0.0, pitch: 90.0, offset: 0.5 };
@@ -3371,9 +3642,9 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     }
     rg.playing = false;
     let run_s = started.elapsed().as_secs_f32();
-    println!("[fea-range] run: {} frames in {run_s:.1} s; {}", rg.frames.len(), rg.last_chain);
-    checks.push(serde_json::json!({"check": "run played live, its previews kept", "pass": rg.frames.len() as u32 == total,
-        "frames": rg.frames.len(), "wall_s": run_s}));
+    println!("[fea-range] run: {total} frames in {run_s:.1} s; {}", rg.last_chain);
+    checks.push(serde_json::json!({"check": "run played live to its end", "pass": rg.frame_at == Some(total - 1),
+        "frames": total, "wall_s": run_s}));
     rg.mode = Mode::Scrub(probe as usize);
     let p3 = still(&mut rg, "timeline", false)?;
     // 4. Back to that frame (let go of the timeline) with the checkpoints off: the run repeated
@@ -3461,6 +3732,17 @@ mod tests {
             }
         }
         assert_eq!(setters, vec!["game_fea_range.rs".to_string()]);
+        assert_eq!(super::review_smoke_density(), 1.0);
+        assert_eq!(super::review_smoke_delay(), super::super::weapon_vfx::IMPACT_SMOKE_DELAY_S);
+        let needle = ["set_review", "_smoke("].concat();
+        let mut smoke_setters = Vec::new();
+        for entry in std::fs::read_dir("src").unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "rs") && std::fs::read_to_string(&path).unwrap().contains(&needle) {
+                smoke_setters.push(path.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+        assert_eq!(smoke_setters, vec!["game_fea_range.rs".to_string()]);
         let game = std::fs::read_to_string("src/game.rs").unwrap();
         assert!(game.contains("let practical_gain = power * game_fea_range::review_lamp_gain();"));
     }
