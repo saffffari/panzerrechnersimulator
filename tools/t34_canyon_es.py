@@ -105,9 +105,11 @@ def july_mask():
     return m
 
 
-# The house rule for GPU jobs (2026-11-02): while the owner's game is running, one episode at a
-# time; otherwise at most `--workers` (two). Checked before every episode starts.
-OWNER_GAME = "demo-20261101/target/release/panzerrechnersystem$"
+# The owner's standing rule (2026-11-03): before any compute, check that his game or editor is not
+# live; while it is, start nothing. Otherwise at most `--workers` (two) episodes at once. Checked
+# right before every episode starts.
+# The bracketed first letters keep the pattern from matching a command line that merely spells it.
+OWNER_GAME = r"release/[p]anzerrechnersystem( fea-range| edit)?$|[l]aunch_demo"
 _gpu = threading.Condition()
 _running = 0
 
@@ -119,7 +121,7 @@ def owner_playing():
 def episode(args, path, seed):
     global _running
     with _gpu:
-        while _running >= (1 if owner_playing() else args.workers):
+        while owner_playing() or _running >= args.workers:
             _gpu.wait(timeout=5.0)
         _running += 1
     try:
