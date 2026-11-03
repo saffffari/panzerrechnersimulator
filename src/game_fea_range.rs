@@ -590,6 +590,8 @@ struct Range {
     hide_ui: bool,
     /// Every dial's value as the editor started.
     dial_defaults: Vec<(Knob, f32)>,
+    /// Smoothed frame time (s), simulation and render time (ms) a frame, for the readout.
+    perf: [f32; 3],
     /// The orbit point set by a double click.
     orbit_pivot: Option<Vec3>,
     /// The cursor as of the last interface drawn (window 0..1).
@@ -694,6 +696,7 @@ impl Range {
             axis_labels: [[-1.0, -1.0]; 3],
             cursor: [0.5, 0.5],
             orbit_pivot: None,
+            perf: [1.0 / 60.0, 0.0, 0.0],
             hide_ui: false,
             recorder: None,
             last_rgba: None,
@@ -1584,9 +1587,12 @@ impl Range {
             } else if self.looping && self.run.is_some() {
                 self.loop_back();
             } else {
+                // While recording, a frame is 1/30 s of game time whatever the window's frame rate,
+                // so the file plays at true speed.
+                let dt = if self.recorder.is_some() { TICK * REAL_TICKS_PER_FRAME as f32 } else { dt };
                 self.play_clock += dt * self.time_speed;
                 let mut steps = 0;
-                while self.play_clock >= TICK && steps < 4 {
+                while self.play_clock >= TICK && steps < if self.recorder.is_some() { 64 } else { 4 } {
                     self.play_clock -= TICK;
                     self.step(TICK);
                     self.shot_t += TICK;
@@ -2379,6 +2385,8 @@ impl Range {
         };
         self.label_box("FEA RANGE", LEFT_X, top + 0.018, TEXT * 0.85);
         self.text(&format!("{mode}  T {:.4} S", t), LEFT_X + LEFT_W, top + 0.018, TEXT * 0.8, INK, crate::ui::Align::Right);
+        self.text(&format!("{:.0} FPS  SIM {:.0} MS  DRAW {:.0} MS", 1.0 / self.perf[0].max(1.0e-4), self.perf[1], self.perf[2]),
+            LEFT_X + LEFT_W, top + 0.035, TEXT * 0.65, DIM, crate::ui::Align::Right);
         self.draw_crew_plan([LEFT_X, top + 0.036], 0.09);
         for (label, col, row) in BUTTONS {
             let [x, y, w, h] = button_rect(col, row);
@@ -2919,7 +2927,9 @@ impl App {
         let boost = if input.shift { 4.0 } else if input.ctrl { 0.25 } else { 1.0 };
         rg.eye += v.normalize_or_zero() * rg.speed * boost * dt;
         rg.keep_above_ground();
+        let sim_started = std::time::Instant::now();
         rg.tick(dt);
+        let sim_ms = sim_started.elapsed().as_secs_f32() * 1000.0;
         let frame = match st.surface.get_current_texture() {
             Ok(f) => f,
             Err(_) => {
@@ -2928,7 +2938,13 @@ impl App {
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let render_started = std::time::Instant::now();
         rg.render(&view, st.config.format, st.config.width, st.config.height, input.cursor);
+        // Frame rate and where the time goes (smoothed): the simulation's step, the renderer's frame.
+        let render_ms = render_started.elapsed().as_secs_f32() * 1000.0;
+        let k = 0.1;
+        rg.perf = [rg.perf[0] + (dt.max(1.0e-4) - rg.perf[0]) * k, rg.perf[1] + (sim_ms - rg.perf[1]) * k,
+            rg.perf[2] + (render_ms - rg.perf[2]) * k];
         frame.present();
     }
 }
