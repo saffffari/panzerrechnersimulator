@@ -3355,6 +3355,27 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         println!("[fea-range] {}", rg.status);
         return Ok(());
     }
+    // KESSEL_FEA_RANGE_PROBE=flight: a round in flight seen from beside its path, close up.
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("flight") {
+        rg.shot.shell = 9; // 122 mm BR-471
+        rg.fire_now();
+        rg.playing = false;
+        for _ in 0..3 {
+            rg.step_frame(true, 1);
+        }
+        let Some((pos, velocity)) = rg.g.projectiles.iter().find(|p| p.small_arm.is_none()).map(|p| (p.pos, p.velocity)) else {
+            println!("[fea-range] flight probe: no round in flight");
+            return Ok(());
+        };
+        let dir = velocity.normalize_or_zero();
+        let side = dir.cross(Vec3::Y).normalize_or_zero();
+        rg.look_at(pos + side * 1.5 - dir * 0.3 + Vec3::Y * 0.2, pos - dir * 0.4);
+        rg.focal_mm = 50.0;
+        rg.hide_ui = true;
+        still(&mut rg, "flight", true)?;
+        println!("[fea-range] flight probe: round at {pos:?}, {:.0} m/s", velocity.length());
+        return Ok(());
+    }
     // KESSEL_FEA_RANGE_PROBE=ui: the interface on two tabs, then stop.
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("ui") {
         still(&mut rg, "ui_shot", true)?;

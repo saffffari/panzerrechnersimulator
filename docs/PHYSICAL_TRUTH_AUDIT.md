@@ -1310,7 +1310,10 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   `Impact`, `ArmorImpact` and `PenetrationSmoke` bursts in every path: none for 0.12 s, a smooth
   build over 0.5 s, 0.4 of the earlier density (earlier: full within 0.08 s). Authored, not
   combustion or dust modelling. The range's EFFECTS dials scale it (review-only; test pins the
-  setter). No depth of field:
+  setter). Cannon rounds in flight (2026-11-03, the owner: the tracer was wider than the
+  shell and hid it): drawn as their penetrator body (`drive_lodged_rounds`, the lodged rounds' own
+  pools: APCR as its core alone, named), nose at the round's point; the tracer's glow a third of the
+  calibre across (authored), its streak from the body's base. No depth of field:
   the renderer has no lens model, and a screen-space blur would not be one.
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
   game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
