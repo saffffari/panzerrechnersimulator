@@ -8462,7 +8462,6 @@ const N_BLOOD_BATCHES: usize = 4;
 const BLOOD_GRAINS_PER_BATCH: usize = N_BLOOD_CUBES / N_BLOOD_BATCHES;
 /// Every transient blood body is the same sand-grain voxel. Severity changes only how many grains
 /// launch and how fast they travel; it never hides the effect inside a few oversized chunks.
-const BLOOD_GRAIN_SIZE: f32 = surface_blood::GRAIN_M;
 const N_BLOOD_STAINS: usize = surface_blood::MAX_CELLS;
 const BLOOD_STAINS_PER_BATCH: usize = N_BLOOD_STAINS.div_ceil(N_BLOOD_BATCHES);
 const TURRET_BLOOD_WALL_R: f32 = 1.04;
@@ -24387,7 +24386,7 @@ impl Game {
             "wall_cells": d.wall_cells, "render_runs": d.render_runs,
             "rejected_cells": d.rejected_cells, "capacity_rejections": d.capacity_rejections,
             "timed_out_airborne": d.timed_out_airborne,
-            "grain_m": surface_blood::GRAIN_M, "cell_m": surface_blood::CELL_M,
+            "droplet_m": [surface_blood::droplet_m(0), surface_blood::droplet_m(1)], "cell_m": surface_blood::CELL_M,
             "cell_capacity": surface_blood::MAX_CELLS
         })
     }
@@ -32474,10 +32473,11 @@ impl Game {
         // Preserve tiny physical droplets but give their raster silhouette a readable minimum.
         // This changes only instance scale, never contact radii, particle count or simulation work.
         for mat in grain_mats.iter_mut().flatten() {
+            let own = mat.x_axis.truncate().length().max(1.0e-5);
             let distance = mat.transform_point3(Vec3::ZERO).distance(r.camera.pos);
             let pixel_m = 2.0 * distance * (r.camera.fov_y * 0.5).tan() / r.ih as f32;
-            let size = (pixel_m * 1.4).clamp(BLOOD_GRAIN_SIZE, 0.018);
-            *mat *= Mat4::from_scale(Vec3::splat(size / BLOOD_GRAIN_SIZE));
+            let size = (pixel_m * 1.4).clamp(own, 0.018).max(own);
+            *mat *= Mat4::from_scale(Vec3::splat(size / own));
         }
         for (batch, mats) in self.slots.blood_cube_batch.into_iter().zip(grain_mats.iter()) {
             assert!(mats.len() <= BLOOD_GRAINS_PER_BATCH);
@@ -37779,15 +37779,14 @@ mod tests {
         assert!(samples[2] > 12_000 && samples[3] > 25_000);
         assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
         assert_eq!(N_BLOOD_CUBES, N_BLOOD_BATCHES * BLOOD_GRAINS_PER_BATCH);
-        assert_eq!(BLOOD_GRAIN_SIZE, 0.004);
         let requests = [32, 128, 256, 640].map(visual_blood_request);
         assert_eq!(requests, [2048, 8192, 16384, 32768]);
         let allocation = allocate_blood_cube_budget(&requests, N_BLOOD_CUBES / 4);
         assert_eq!(allocation.iter().sum::<usize>(), N_BLOOD_CUBES / 4);
         assert_eq!(visual_blood_request(usize::MAX), N_BLOOD_CUBES);
         assert!(
-            BLOOD_GRAIN_SIZE <= 0.004,
-            "droplets must stay uniformly small"
+            (0..1000).all(|seed| surface_blood::droplet_m(seed) <= 0.006),
+            "droplets must stay small"
         );
         assert_eq!(
             N_BLOOD_STAINS,

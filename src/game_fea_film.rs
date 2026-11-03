@@ -33,8 +33,28 @@ use serde_json::json;
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 
-const W: u32 = 1920;
-const H: u32 = 1080;
+/// Frames are shot at the renderer's own grid (`KESSEL_INTERNAL_RES`) and the file takes them
+/// scaled exactly `film_scale()` times by nearest neighbour (the owner's settings, 2026-11-02:
+/// 1024x576 x5 for a 5120x2880 display, 4:4:4 chroma so the one-pixel dither survives).
+static FRAME: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+
+fn frame() -> (u32, u32) {
+    *FRAME.get().unwrap_or(&(1920, 1080))
+}
+
+/// `KESSEL_FEA_FILM_SCALE`, default 5.
+fn film_scale() -> u32 {
+    std::env::var("KESSEL_FEA_FILM_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(5u32).clamp(1, 8)
+}
+
+/// A still as PNG, scaled `film_scale()` times by nearest neighbour.
+fn save_still(path: &str, rgba: &[u8]) -> anyhow::Result<()> {
+    let (w, h) = frame();
+    let image = image::RgbaImage::from_raw(w, h, rgba.to_vec()).ok_or_else(|| anyhow::anyhow!("still of the wrong size"))?;
+    let k = film_scale();
+    image::imageops::resize(&image, w * k, h * k, image::imageops::FilterType::Nearest).save(path)?;
+    Ok(())
+}
 const FPS: u32 = 30;
 /// Slow motion: one fixed hot-fragment step per film frame (1/16 speed at 30 fps).
 const SLOW_DT: f32 = 1.0 / 480.0;
@@ -134,7 +154,8 @@ impl Ctx<'_> {
             r.fill_rect(0.015, 0.026, 0.0105 * banner.len() as f32 + 0.03, 0.048, [0.0, 0.0, 0.0, 0.62]);
             r.draw_text(banner, 0.026, 0.050, 0.020, [0.88, 0.86, 0.80, 1.0], crate::ui::Align::Left);
         }
-        r.render_to_rgba_with_hud(self.device, self.queue, W, H)
+        let (w, h) = frame();
+        r.render_to_rgba_with_hud(self.device, self.queue, w, h)
     }
 
     /// The exposure re-metered on the present scene from `view` by the eye's own meter and then
@@ -171,12 +192,15 @@ impl Clip {
     fn start(prefix: &str, name: &str) -> anyhow::Result<Self> {
         let path = format!("{prefix}_{name}.mp4");
         let picture = format!("{prefix}_{name}_picture.mp4");
-        let size = format!("{W}x{H}");
+        let (w, h) = frame();
+        let size = format!("{w}x{h}");
         let rate = FPS.to_string();
+        let k = film_scale();
+        let scale = format!("scale=iw*{k}:ih*{k}:flags=neighbor");
         let encoder = Command::new("nice")
             .args(["-n", "10", "ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pixel_format", "rgba",
-                "-video_size", &size, "-framerate", &rate, "-i", "pipe:0", "-an", "-c:v", "libx264", "-preset",
-                "medium", "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart", &picture])
+                "-video_size", &size, "-framerate", &rate, "-i", "pipe:0", "-an", "-vf", &scale, "-c:v", "libx264", "-preset",
+                "medium", "-crf", "8", "-pix_fmt", "yuv444p", "-movflags", "+faststart", &picture])
             .stdin(Stdio::piped())
             .spawn()?;
         println!("[fea-film] recording {name}");
@@ -428,7 +452,7 @@ fn casualty_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, s
     let still = |ctx: &mut Ctx, g: &Game, r: &mut Renderer, view: View, tag: &str| -> anyhow::Result<()> {
         let rgba = ctx.shoot(g, r, view, None)?;
         let path = format!("{prefix}_{}_{tag}.png", study.name);
-        image::save_buffer(&path, &rgba, W, H, image::ColorType::Rgba8)?;
+        save_still(&path, &rgba)?;
         println!("[fea-film] wrote {path}");
         Ok(())
     };
@@ -618,6 +642,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let _ = FRAME.set((r.iw, r.ih));
+    println!("[fea-film] frames at the renderer's grid {}x{}, written scaled x{} by nearest neighbour", r.iw, r.ih, film_scale());
     let clock = ephemeris::UtcInstant::parse_iso("1942-12-21T10:30:00Z")?;
     let mut ctx = Ctx { device: &device, queue: &queue, audio_debt: 0.0, clock, all_crew: false, banner: None,
         last_camera: None };
@@ -1116,7 +1142,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         if std::env::var("KESSEL_FEA_FILM_SECTION_STILL").as_deref() == Ok("1") {
             let rgba = ctx.shoot(&g, &mut r, view, None)?;
             let still = format!("{prefix}_engine_section_still.png");
-            image::save_buffer(&still, &rgba, W, H, image::ColorType::Rgba8)?;
+            save_still(&still, &rgba)?;
             println!("[fea-film] wrote {still} ({} meshes cut, exposure {held:.0}; crew drawn {})", cut_meshes.len(),
                 g.debug_crew_solo_visible_figures(&r));
             return Ok(());
@@ -1412,7 +1438,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
 
     let receipt = json!({
         "clips": clips,
-        "film": {"size": [W, H], "fps": FPS, "slow_motion": "1/16 speed: one 1/480 s fragment step per frame, silent",
+        "film": {"grid": [frame().0, frame().1], "scaled": film_scale(), "fps": FPS, "slow_motion": "1/16 speed: one 1/480 s fragment step per frame, silent",
             "audio": "real-time stretches: the ordinary gameplay audio sinks recorded offline on the simulation clock; slow motion and time-lapse silent"},
         "disclosed": "station and on-foot placement set directly; toolbox put in hand and set down by state; the loader's lid opened by state; cabin fires put out between clips; the sky clock held at 10:30; head turns are interpolated head yaw and pitch",
         "wall_s": started.elapsed().as_secs_f32(),

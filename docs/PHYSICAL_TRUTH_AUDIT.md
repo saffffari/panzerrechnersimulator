@@ -1117,15 +1117,37 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   bounding radius about their centre (named: not their cells), with no rotational response to a
   contact (named), restitution 0.25 and tangential keep 0.55 (authored: wet tissue), and rest on a
   face turned up below 0.35 m/s or after ten bounces; at most 4,096 cells in pieces (the oldest at
-  rest go first). All of it is ordinary moving instanced geometry (one page per colour, 6,144
-  boxes each, allocated at start so a save's draw layout keeps its shape): it casts shadows and is
-  in the ray-traced scene, in both presets. Limits (named): the parts are rigid segments, so at a
+  rest go first). A piece that lands harder than its own bonds hold (half its mass times the
+  square of its speed into the surface, against the breaking energy of its intact bonds) breaks
+  into single grains, each leaving with the piece's motion at its place plus a hashed scatter of up
+  to 0.3 m/s (authored); a falling piece also meets the grains already at rest (each a sphere of
+  half a cell) and rests on them, so grains pile. Every visible cell is drawn as its own closed
+  cube of one colour (cells of one colour blend; only cells with a face open to air or to a wound
+  are submitted, about 3,600 for a whole man); cells within 3.5 cells of a joint are drawn
+  between the two segments' poses (linear blend skinning of the drawn cell only; the lattice and
+  the ragdoll do not see it; named), and only while that joint holds. All of it is ordinary moving
+  instanced geometry (one page per colour, 8,192 cubes each, allocated at start so a save's draw
+  layout keeps its shape): it casts shadows and is in the ray-traced scene, in both presets. The
+  old under-body pool slabs are not drawn for a solved body (its blood is the droplets' film). Limits (named): the parts are rigid segments, so at a
   bent joint two parts' cells interpenetrate at an angle; a helmet cell is a 2 cm block standing
   for a 1 mm shell (its mass is the helmet's, shared); cells finer than 2 cm (a small fragment's
   track) are not resolved; only the strike that kills a man is solved on him; the living crew's
   wounds keep the existing rules; the couch co-op renderer draws a part whole or as bone as before;
   the solved state is not saved (a restored body is whole); dragging and picking a body still use
   its whole flesh triangles.
+- **Blood droplets and film** (2026-11-02, `surface_blood`; the owner: droplets too large, and
+  blood should form a continuous film where enough lands). A droplet's edge comes from its seed,
+  1.5–6 mm with most under 3 mm (an authored distribution, not a measured spatter one), and the
+  film it leaves is its own volume over a fresh stain's thickness of 0.3 mm (authored): one 5 mm
+  cell for the smallest, about nine (1.5 cm) for a 4 mm one, at most about 29. Before, every
+  droplet grew a fixed 49-cell (3.5 cm) square. Film that lands on film joins it, so where enough
+  collects it is continuous. On a face steeper than about 45° a pool spreads downhill first (an
+  authored flow bias, not a fluid solve), so collected blood runs down a wall. The film now
+  carries over an edge onto a neighbouring face turned by less than 25° (a curved wall is flat
+  facets; the film used to stop at every facet edge, leaving lines of clean paint along the mesh):
+  that one cell stands on its own centre's probe and may overhang the edge by up to half a cell
+  (named). A flying droplet is still drawn at least 1.4 pixels across (the existing readable
+  minimum, now from its own size).
 - **Steel in hand** (`game_fea::fea_grab_fragment`): at the loader's station a resting fragment
   under the crosshair within 2.2 m can be taken with the left button when it is no hotter than
   343 K (a gloved hand, named) and, if embedded, when one man's 400 N pull beats its grip (the

@@ -1,43 +1,42 @@
-//! Drawing the casualties' voxel bodies (`crew_tissue`) in the solo corpse renderer. A dead man
-//! with a solved body is drawn wholly as his cells (equal runs merged into boxes, one instanced
-//! page per colour) instead of the figure's triangles and the skeleton page; the pieces that came
-//! away are drawn the same way where they fly and lie. Every page is allocated here at build,
+//! Drawing the casualties' voxel bodies (`crew_tissue`) in the solo corpse renderer, and moving
+//! the grains that come away from them. A dead man with a solved body is drawn as his cells, each
+//! cell its own closed cube (one instanced page per colour), never as the figure's triangles or the
+//! skeleton page; only cells with a face open to air or to a wound are submitted. Cells near a joint
+//! are drawn between the two segments' poses so a bent joint stays closed (`TissueModel::blend`).
+//! The pieces that came away fly, break into single grains on a hard landing, and come to rest on
+//! the tank's surfaces and on grains already lying there. Every page is allocated here at build,
 //! before any casualty, so the retained draw layout that saves record never changes shape.
 use super::*;
-use super::crew_tissue::{self, CasualtyTissue, ChunkBody, Strike, TissueModel, VoxelBox};
+use super::crew_tissue::{self, CasualtyTissue, ChunkBody, Strike, TissueModel};
 
 const APPEARANCES: usize = 5;
 const PARTS: usize = crew_physics::CREW_BODY_PART_COUNT;
-/// Boxes per colour page; more are dropped with one report (a named bound).
-const BOXES_PER_LABEL: usize = 6_144;
+/// Cubes per colour page; more are dropped with one report (a named bound).
+const CUBES_PER_LABEL: usize = 8_192;
 /// Cells in pieces kept at once; past it the oldest pieces at rest go (a named bound).
 const CHUNK_CELLS: usize = 4_096;
 /// Muscle albedo (sRGB) and roughness: two shades of dark red, authored game-level colours (not
 /// measured), wet enough to take a highlight.
 const MUSCLE: [[u8; 3]; 2] = [[118, 26, 22], [96, 18, 16]];
 const MUSCLE_ROUGHNESS: f32 = 0.42;
+/// Grains at rest are found by a hash of this size (m).
+const REST_HASH_M: f32 = 0.04;
 
 struct Actor {
     peer: u32,
     tissue: CasualtyTissue,
-    /// (tissue revision, face) the cached boxes were made for.
-    cache: [Option<(u32, usize, Vec<VoxelBox>)>; PARTS],
-}
-
-struct Piece {
-    body: ChunkBody,
-    /// (face, boxes about the piece's centre, figure frame).
-    boxes: Option<(usize, Vec<VoxelBox>)>,
+    /// (tissue revision, face) the cached cells were listed for, and the cells drawn by part.
+    cache: Option<(u32, usize, [Vec<(u32, u8)>; PARTS])>,
 }
 
 pub(super) struct TissueDraw {
     model: std::sync::Arc<TissueModel>,
-    box_pages: [usize; crew_tissue::LABELS],
+    cube_pages: [usize; crew_tissue::LABELS],
     /// Skin colour label per face and cell.
     skin_labels: Vec<Vec<u8>>,
     actors: Vec<Actor>,
-    pieces: Vec<Piece>,
-    box_lists: [Vec<Mat4>; crew_tissue::LABELS],
+    pieces: Vec<ChunkBody>,
+    cube_lists: [Vec<Mat4>; crew_tissue::LABELS],
     overflow_reported: bool,
 }
 
@@ -79,6 +78,20 @@ fn nearest(centres: &[[f32; 3]], c: [f32; 3]) -> usize {
         let d = |i: usize| (0..3).map(|n| (centres[i][n] - c[n]).powi(2)).sum::<f32>();
         d(a).total_cmp(&d(b))
     }).unwrap_or(0)
+}
+
+/// A unit cube of one colour: neighbouring cells of one colour blend into one surface (the owner,
+/// 2026-11-02: no outlines).
+fn cell_cube(colour: [u8; 3], roughness: f32) -> CpuMesh {
+    let mut mesh = box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), colour);
+    mesh.roughness_factor = roughness;
+    mesh.metallic_factor = 0.0;
+    mesh
+}
+
+fn hash01(n: u32) -> f32 {
+    let h = n.wrapping_mul(2_654_435_761) ^ (n >> 15).wrapping_mul(2_246_822_519);
+    (h >> 8) as f32 / (1u32 << 24) as f32
 }
 
 impl TissueDraw {
@@ -125,8 +138,8 @@ impl TissueDraw {
                 .fold([0.0f32; 3], |a, c| [a[0] + c[0], a[1] + c[1], a[2] + c[2]]);
             sum.map(|s| (s / helmet.vertices.len().max(1) as f32) as u8)
         });
-        let mut box_pages = [0usize; crew_tissue::LABELS];
-        for (index, page) in box_pages.iter_mut().enumerate() {
+        let mut cube_pages = [0usize; crew_tissue::LABELS];
+        for (index, page) in cube_pages.iter_mut().enumerate() {
             let label = index as u8 + 1;
             let (colour, roughness) = if label <= crew_tissue::SKIN_LABELS {
                 (colours[index].map(|c| c.round().clamp(0.0, 255.0) as u8), figures[0].roughness_factor)
@@ -137,19 +150,16 @@ impl TissueDraw {
             } else {
                 (MUSCLE[(label - crew_tissue::MUSCLE_LABELS[0]) as usize], MUSCLE_ROUGHNESS)
             };
-            let mut mesh = box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), colour);
-            mesh.roughness_factor = roughness;
-            mesh.metallic_factor = 0.0;
-            let prototype = r.register_instanced_prototype(device, queue, &mesh);
-            *page = r.add_moving_instanced_pool(device, prototype, BOXES_PER_LABEL)
-                .ok_or_else(|| anyhow::anyhow!("tissue box page"))?;
+            let prototype = r.register_instanced_prototype(device, queue, &cell_cube(colour, roughness));
+            *page = r.add_moving_instanced_pool(device, prototype, CUBES_PER_LABEL)
+                .ok_or_else(|| anyhow::anyhow!("tissue cube page"))?;
         }
         let count = |t| model.cells.iter().filter(|c| c.tissue == t).count();
         println!("[crew] voxel bodies: {} cells of {:.0} mm (skin {}, muscle {}, bone {} from the skeleton's triangles, helmet {}) in {cells_ms:.0} ms; {} pages",
             model.cell_count(), crew_tissue::CELL_M * 1000.0, count(crew_tissue::Tissue::Skin), count(crew_tissue::Tissue::Muscle),
-            count(crew_tissue::Tissue::Bone), count(crew_tissue::Tissue::Steel), box_pages.len());
-        Ok(Self { model, box_pages, skin_labels, actors: Vec::new(), pieces: Vec::new(),
-            box_lists: std::array::from_fn(|_| Vec::new()), overflow_reported: false })
+            count(crew_tissue::Tissue::Bone), count(crew_tissue::Tissue::Steel), cube_pages.len());
+        Ok(Self { model, cube_pages, skin_labels, actors: Vec::new(), pieces: Vec::new(),
+            cube_lists: std::array::from_fn(|_| Vec::new()), overflow_reported: false })
     }
 
     pub(super) fn reset(&mut self) {
@@ -165,7 +175,7 @@ impl TissueDraw {
         let index = match self.actors.iter().position(|a| a.peer == peer) {
             Some(index) => index,
             None => {
-                self.actors.push(Actor { peer, tissue: CasualtyTissue::new(&model), cache: std::array::from_fn(|_| None) });
+                self.actors.push(Actor { peer, tissue: CasualtyTissue::new(&model), cache: None });
                 self.actors.len() - 1
             }
         };
@@ -178,92 +188,243 @@ impl TissueDraw {
         println!("[crew] body of actor {peer} solved on its cells: {} strikes, {} bonds broken, {torn} cells torn away ({bone} bone) in {} pieces, {} fragments stopped in him, {} steps in {:.0} ms",
             strikes.len(), solve.bonds_broken, solve.chunks.len(), solve.lodged, solve.steps, started.elapsed().as_secs_f32() * 1000.0);
         let shares = std::array::from_fn(|i| actor.tissue.soft_share(&model, crew_physics::CrewBodyPart::ALL[i]));
-        for body in crew_tissue::chunk_bodies(&model, ragdoll, solve.chunks) {
-            self.pieces.push(Piece { body, boxes: None });
-        }
-        // Bounded: the oldest pieces at rest go first, then the oldest in flight.
-        let mut cells: usize = self.pieces.iter().map(|p| p.body.cells.len()).sum();
+        self.pieces.extend(crew_tissue::chunk_bodies(&model, ragdoll, solve.chunks));
+        self.bound_pieces();
+        shares
+    }
+
+    /// The oldest pieces at rest go first, then the oldest in flight, past `CHUNK_CELLS`.
+    fn bound_pieces(&mut self) {
+        let mut cells: usize = self.pieces.iter().map(|p| p.cells.len()).sum();
         while cells > CHUNK_CELLS && !self.pieces.is_empty() {
-            let oldest = self.pieces.iter().position(|p| p.body.settled).unwrap_or(0);
-            cells -= self.pieces[oldest].body.cells.len();
+            let oldest = self.pieces.iter().position(|p| p.settled).unwrap_or(0);
+            cells -= self.pieces[oldest].cells.len();
             self.pieces.remove(oldest);
         }
-        shares
     }
 
     pub(super) fn has_body(&self, peer: u32) -> bool {
         self.actors.iter().any(|a| a.peer == peer)
     }
 
-    pub(super) fn pieces_mut(&mut self) -> impl Iterator<Item = &mut ChunkBody> {
-        self.pieces.iter_mut().map(|p| &mut p.body)
+    /// Advance the pieces by `dt`: gravity; the vehicle's own surfaces (`FragmentWorld`) and the
+    /// grains already at rest, each met by a sphere of the piece's bounding radius about its
+    /// centre (named: not its cells), with no rotational response to a contact (named). A piece
+    /// that lands harder than its own bonds hold (half its mass times the square of its speed
+    /// into the surface, against the breaking energy of its intact bonds) breaks into single
+    /// grains, each leaving with the piece's motion at its own place. A piece rests on a face
+    /// turned up (or on grains) when slow or past its bounces; 12 m from its frame's origin it has
+    /// left the vehicle and stops being moved.
+    pub(super) fn integrate(&mut self, world: &FragmentWorld, player: &Tank, dt: f32) {
+        if !(dt > 0.0) || self.pieces.iter().all(|p| p.settled) {
+            return;
+        }
+        let model = self.model.clone();
+        let key = |frame: BloodFrame, p: Vec3| {
+            let g = (p / REST_HASH_M).floor().as_ivec3();
+            (matches!(frame, BloodFrame::Turret) as u8, [g.x, g.y, g.z])
+        };
+        let mut resting: std::collections::HashMap<(u8, [i32; 3]), Vec<(Vec3, f32)>> = std::collections::HashMap::new();
+        for piece in self.pieces.iter().filter(|p| p.settled) {
+            let m = piece.local_model();
+            for &c in &piece.cells {
+                let p = m.transform_point3(model.cells[c as usize].at);
+                resting.entry(key(piece.frame, p)).or_default().push((p, 0.5 * crew_tissue::CELL_M * piece.scale));
+            }
+        }
+        let mut born: Vec<ChunkBody> = Vec::new();
+        let mut broken: Vec<usize> = Vec::new();
+        for (n, piece) in self.pieces.iter_mut().enumerate().filter(|(_, p)| !p.settled) {
+            let parent_inverse = blood_parent_model(player, piece.frame).inverse();
+            let gravity = parent_inverse.transform_vector3(Vec3::new(0.0, -9.81, 0.0));
+            let up = parent_inverse.transform_vector3(Vec3::Y).normalize_or_zero();
+            let steps = (piece.vel.length() * dt / 0.03).ceil().clamp(1.0, 48.0) as usize;
+            let h = dt / steps as f32;
+            for _ in 0..steps {
+                piece.vel += gravity * h;
+                let travel = piece.vel * h;
+                let length = travel.length();
+                let ahead = travel + travel.normalize_or_zero() * piece.radius;
+                let mut contact = world.first_surface(piece.frame, piece.pos, piece.pos + ahead)
+                    .map(|(fraction, normal)| (fraction * ahead.length(), normal));
+                // Grains at rest along the way: the nearest whose sphere the piece's would enter.
+                if length > 0.0 {
+                    let dir = travel / length;
+                    let samples = (length / REST_HASH_M).ceil() as usize + 1;
+                    let mut seen = std::collections::HashSet::new();
+                    for k in 0..=samples {
+                        let p = piece.pos + dir * (length * k as f32 / samples as f32);
+                        let g = key(piece.frame, p);
+                        for dz in -1..=1 {
+                            for dy in -1..=1 {
+                                for dx in -1..=1 {
+                                    let cellkey = (g.0, [g.1[0] + dx, g.1[1] + dy, g.1[2] + dz]);
+                                    if !seen.insert(cellkey) {
+                                        continue;
+                                    }
+                                    for &(q, r) in resting.get(&cellkey).into_iter().flatten() {
+                                        let reach = piece.radius + r;
+                                        let to = q - piece.pos;
+                                        let along = to.dot(dir);
+                                        let off2 = to.length_squared() - along * along;
+                                        if along < 0.0 || off2 > reach * reach {
+                                            continue;
+                                        }
+                                        let at = along - (reach * reach - off2).sqrt();
+                                        if at <= length && contact.is_none_or(|(d, _)| at < d) {
+                                            let hit = piece.pos + dir * at.max(0.0);
+                                            contact = Some((at.max(0.0), (hit - q).normalize_or_zero()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                match contact {
+                    Some((distance, normal)) if normal != Vec3::ZERO => {
+                        let dir = travel.normalize_or_zero();
+                        piece.pos += dir * (distance - piece.radius).max(0.0).min(length);
+                        let vn = piece.vel.dot(normal);
+                        if vn < 0.0 {
+                            let mass: f32 = piece.cells.iter().map(|&c| model.mass(c as usize)).sum();
+                            piece.vel = (piece.vel - normal * vn) * crew_tissue::PIECE_TANGENT_KEEP
+                                - normal * (vn * crew_tissue::PIECE_RESTITUTION);
+                            if piece.cells.len() > 1 && 0.5 * mass * vn * vn > piece.cohesion_j {
+                                broken.push(n);
+                                break;
+                            }
+                        }
+                        piece.spin *= 0.5;
+                        piece.bounces = piece.bounces.saturating_add(1);
+                        if normal.dot(up) > 0.5
+                            && (piece.vel.length() < crew_tissue::PIECE_REST_MPS || piece.bounces >= crew_tissue::PIECE_BOUNCES) {
+                            piece.vel = Vec3::ZERO;
+                            piece.spin = Vec3::ZERO;
+                            piece.settled = true;
+                            break;
+                        }
+                    }
+                    _ => piece.pos += travel,
+                }
+                piece.rot = (Quat::from_scaled_axis(piece.spin * h) * piece.rot).normalize();
+            }
+            if piece.pos.length() > 12.0 {
+                piece.settled = true;
+            }
+            if broken.last() == Some(&n) {
+                // Into single grains: each at its own place with the piece's motion there.
+                let m = piece.local_model();
+                for &c in &piece.cells {
+                    let at = model.cells[c as usize].at;
+                    let pos = m.transform_point3(at);
+                    let seed = c.wrapping_mul(0x9E37_79B9) ^ piece.actor;
+                    let scatter = Vec3::new(hash01(seed) - 0.5, hash01(seed ^ 0x51) - 0.5, hash01(seed ^ 0xA3) - 0.5) * 0.6;
+                    born.push(ChunkBody {
+                        actor: piece.actor,
+                        frame: piece.frame,
+                        cells: vec![c],
+                        centre: at,
+                        scale: piece.scale,
+                        pos,
+                        rot: piece.rot,
+                        vel: piece.vel + piece.spin.cross(pos - piece.pos) + scatter,
+                        spin: scatter * 20.0,
+                        radius: 0.5 * crew_tissue::CELL_M * 3f32.sqrt() * piece.scale,
+                        cohesion_j: 0.0,
+                        bounces: piece.bounces,
+                        settled: false,
+                    });
+                }
+            }
+        }
+        for &n in broken.iter().rev() {
+            self.pieces.remove(n);
+        }
+        self.pieces.extend(born);
+        self.bound_pieces();
     }
 
     pub(super) fn begin_frame(&mut self) {
-        for list in &mut self.box_lists {
+        for list in &mut self.cube_lists {
             list.clear();
         }
     }
 
-    fn push(&mut self, model: Mat4, b: &VoxelBox) {
-        let list = &mut self.box_lists[b.label as usize - 1];
-        if list.len() < BOXES_PER_LABEL {
-            list.push(model * Mat4::from_scale_rotation_translation(b.size, Quat::IDENTITY, b.centre));
+    fn push(&mut self, label: u8, transform: Mat4) {
+        let list = &mut self.cube_lists[label as usize - 1];
+        if list.len() < CUBES_PER_LABEL {
+            list.push(transform);
         } else if !self.overflow_reported {
             self.overflow_reported = true;
-            eprintln!("[crew] voxel bodies: more than {BOXES_PER_LABEL} boxes of one colour in view; the rest are not drawn");
+            eprintln!("[crew] voxel bodies: more than {CUBES_PER_LABEL} cubes of one colour in view; the rest are not drawn");
         }
     }
 
-    /// Draw one part of a solved body with `model` (the part's own pose, or its anchor's once it
-    /// left the articulated simulation).
-    pub(super) fn add_part(&mut self, peer: u32, face: usize, part: crew_physics::CrewBodyPart, model: Mat4) {
+    /// Draw a solved body: `models` are its parts' poses (each part's own, or its anchor's once
+    /// it left the articulated simulation); `joined[i]` whether part i is still joined to its
+    /// anatomical parent (cells are drawn blended only across a joint that holds).
+    pub(super) fn add_body(&mut self, peer: u32, face: usize, models: &[Mat4; PARTS], joined: &[bool; PARTS]) {
         let Some(index) = self.actors.iter().position(|a| a.peer == peer) else { return };
         let face = face.min(APPEARANCES - 1);
-        let i = part.index();
         let revision = self.actors[index].tissue.revision;
-        if !matches!(&self.actors[index].cache[i], Some((rev, f, _)) if *rev == revision && *f == face) {
+        if !matches!(&self.actors[index].cache, Some((rev, f, _)) if *rev == revision && *f == face) {
             let tissue = &self.actors[index].tissue;
             let labels = &self.skin_labels[face];
-            let cells: Vec<([u16; 3], u8)> = self.model.part_cells[i].iter().filter(|&&c| tissue.present[c as usize])
-                .map(|&c| (self.model.cells[c as usize].ijk, crew_tissue::label(&self.model.cells[c as usize], labels[c as usize])))
-                .collect();
-            let boxes = crew_tissue::merge_boxes(&self.model, &cells);
-            self.actors[index].cache[i] = Some((revision, face, boxes));
+            let lists: [Vec<(u32, u8)>; PARTS] = std::array::from_fn(|i| self.model.part_cells[i].iter()
+                .filter(|&&c| tissue.present[c as usize] && self.model.exposed(&tissue.present, c as usize))
+                .map(|&c| (c, crew_tissue::label(&self.model.cells[c as usize], labels[c as usize])))
+                .collect());
+            self.actors[index].cache = Some((revision, face, lists));
         }
-        let boxes = self.actors[index].cache[i].as_ref().map(|(_, _, b)| b.clone()).unwrap_or_default();
-        for b in &boxes {
-            self.push(model, b);
+        let poses: [(Vec3, Quat, Vec3); PARTS] = std::array::from_fn(|i| models[i].to_scale_rotation_translation());
+        let model = self.model.clone();
+        let Some((_, _, lists)) = self.actors[index].cache.take() else { return };
+        for (i, cells) in lists.iter().enumerate() {
+            let (scale, rot, _) = poses[i];
+            for &(c, label) in cells {
+                let at = model.cells[c as usize].at;
+                let mut p = models[i].transform_point3(at);
+                let mut r = rot;
+                let part = model.cells[c as usize].part;
+                if let Some((other, w)) = model.blend[c as usize] {
+                    // The joint between them belongs to the child: blend only while it holds.
+                    let child = if crew_anatomical_parent(part) == Some(other) { part } else { other };
+                    if joined[child.index()] {
+                        p = p.lerp(models[other.index()].transform_point3(at), w);
+                        r = rot.slerp(poses[other.index()].1, w);
+                    }
+                }
+                self.push(label, Mat4::from_scale_rotation_translation(Vec3::splat(crew_tissue::CELL_M * scale.x), r, p));
+            }
         }
+        self.actors[index].cache = Some((revision, face, lists));
     }
 
     /// Draw every piece where it is (`face_of` gives each actor's face).
     pub(super) fn add_pieces(&mut self, player: &Tank, face_of: &dyn Fn(u32) -> usize) {
-        for n in 0..self.pieces.len() {
-            let face = face_of(self.pieces[n].body.actor).min(APPEARANCES - 1);
-            if !matches!(&self.pieces[n].boxes, Some((f, _)) if *f == face) {
-                let labels = &self.skin_labels[face];
-                let cells: Vec<([u16; 3], u8)> = self.pieces[n].body.cells.iter()
-                    .map(|&c| (self.model.cells[c as usize].ijk, crew_tissue::label(&self.model.cells[c as usize], labels[c as usize])))
-                    .collect();
-                self.pieces[n].boxes = Some((face, crew_tissue::merge_boxes(&self.model, &cells)));
-            }
-            let model = blood_parent_model(player, self.pieces[n].body.frame) * self.pieces[n].body.local_model();
-            let boxes = self.pieces[n].boxes.as_ref().map(|(_, b)| b.clone()).unwrap_or_default();
-            for b in &boxes {
-                self.push(model, b);
+        let model = self.model.clone();
+        let pieces = std::mem::take(&mut self.pieces);
+        for piece in &pieces {
+            let face = face_of(piece.actor).min(APPEARANCES - 1);
+            let m = blood_parent_model(player, piece.frame) * piece.local_model();
+            for &c in &piece.cells {
+                let cell = &model.cells[c as usize];
+                let label = crew_tissue::label(cell, self.skin_labels[face][c as usize]);
+                self.push(label, m * Mat4::from_scale_rotation_translation(Vec3::splat(crew_tissue::CELL_M), Quat::IDENTITY, cell.at));
             }
         }
+        self.pieces = pieces;
     }
 
     pub(super) fn end_frame(&self, r: &mut Renderer) {
-        for (page, list) in self.box_pages.iter().zip(&self.box_lists) {
+        for (page, list) in self.cube_pages.iter().zip(&self.cube_lists) {
             r.set_moving_instanced_mats(*page, list);
         }
     }
 
     pub(super) fn hide(&self, r: &mut Renderer) {
-        for &page in &self.box_pages {
+        for &page in &self.cube_pages {
             r.set_moving_instanced_mats(page, &[]);
         }
     }
@@ -278,9 +439,10 @@ impl TissueDraw {
                 "bonds_broken": a.tissue.broken.iter().filter(|b| **b).count(),
             })).collect::<Vec<_>>(),
             "pieces": self.pieces.len(),
-            "pieces_at_rest": self.pieces.iter().filter(|p| p.body.settled).count(),
-            "piece_cells": self.pieces.iter().map(|p| p.body.cells.len()).sum::<usize>(),
-            "boxes_drawn_last_frame": self.box_lists.iter().map(Vec::len).collect::<Vec<_>>(),
+            "grains": self.pieces.iter().filter(|p| p.cells.len() == 1).count(),
+            "pieces_at_rest": self.pieces.iter().filter(|p| p.settled).count(),
+            "piece_cells": self.pieces.iter().map(|p| p.cells.len()).sum::<usize>(),
+            "cubes_drawn_last_frame": self.cube_lists.iter().map(Vec::len).collect::<Vec<_>>(),
         })
     }
 }

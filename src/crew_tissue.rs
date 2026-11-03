@@ -118,9 +118,23 @@ pub(super) struct TissueModel {
     bond_start: Vec<u32>,
     bond_list: Vec<u32>,
     pub soft_cells: [usize; PARTS],
+    /// Cells near a joint: the segment across it and how far toward it the cell is drawn (linear
+    /// blend skinning of the drawn cell only, so a bent joint stays closed; named).
+    pub blend: Vec<Option<(crew_physics::CrewBodyPart, f32)>>,
 }
 
 impl TissueModel {
+    pub(super) fn mass(&self, cell: usize) -> f32 {
+        self.mass_kg[cell]
+    }
+
+    /// Whether a cell can be seen: one of its six faces is open to air or to a cell gone.
+    pub(super) fn exposed(&self, present: &[bool], cell: usize) -> bool {
+        let [x, y, z] = self.cells[cell].ijk.map(i32::from);
+        [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].iter()
+            .any(|o| self.lookup([x + o[0], y + o[1], z + o[2]]).is_none_or(|n| !present[n]))
+    }
+
     fn lookup(&self, ijk: [i32; 3]) -> Option<usize> {
         if ijk.iter().zip(self.dims).any(|(&v, d)| v < 0 || v as usize >= d) {
             return None;
@@ -307,7 +321,34 @@ pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS], h
     // Bonds: each pair's energy to break is its weaker cell's tearing energy over a full
     // neighbourhood; its stiffness follows from that energy at that cell's critical stretch.
     let mut model = TissueModel { origin, dims, grid, cells, mass_kg, part_cells, bonds: Vec::new(), bond_start: Vec::new(),
-        bond_list: Vec::new(), soft_cells };
+        bond_list: Vec::new(), soft_cells, blend: Vec::new() };
+    // Joints: a cell within 3.5 cells of the segment across a joint (parent or child) is drawn
+    // pulled toward it, half way at the boundary, nothing at 3.5 cells.
+    const BLEND_CELLS: f32 = 3.5;
+    let reach = BLEND_CELLS.ceil() as i32;
+    let joint = |a: crew_physics::CrewBodyPart, b: crew_physics::CrewBodyPart|
+        crew_anatomical_parent(a) == Some(b) || crew_anatomical_parent(b) == Some(a);
+    model.blend = model.cells.iter().map(|cell| {
+        let [x, y, z] = cell.ijk.map(i32::from);
+        let mut best: Option<(crew_physics::CrewBodyPart, f32)> = None;
+        for dz in -reach..=reach {
+            for dy in -reach..=reach {
+                for dx in -reach..=reach {
+                    let d = ((dx * dx + dy * dy + dz * dz) as f32).sqrt();
+                    if d > BLEND_CELLS || best.is_some_and(|(_, b)| b <= d) {
+                        continue;
+                    }
+                    if let Some(n) = model.lookup([x + dx, y + dy, z + dz]) {
+                        let other = model.cells[n].part;
+                        if other != cell.part && joint(cell.part, other) {
+                            best = Some((other, d));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|(other, d)| (other, 0.5 * (1.0 - (d - 1.0).max(0.0) / (BLEND_CELLS - 1.0)).clamp(0.0, 1.0)))
+    }).collect();
     let mut bonds = Vec::new();
     for (a, cell) in model.cells.iter().enumerate() {
         let [x, y, z] = cell.ijk.map(i32::from);
@@ -363,6 +404,8 @@ pub(super) struct Chunk {
     pub centre: Vec3,
     pub velocity: Vec3,
     pub spin: Vec3,
+    /// The energy its own intact bonds hold it together with (J).
+    pub cohesion_j: f32,
 }
 
 /// What one solve did: the pieces that came away, fragments that stopped in him, bonds broken.
@@ -553,7 +596,17 @@ impl CasualtyTissue {
                 for &c in &cells {
                     self.present[c as usize] = false;
                 }
-                out.chunks.push(Chunk { part, cells, centre, velocity, spin: momentum / inertia.max(1.0e-9) });
+                let inside: std::collections::HashSet<u32> = cells.iter().copied().collect();
+                // Each intact bond inside it once (from the cell that owns it), at its breaking energy.
+                let cohesion_j: f32 = cells.iter().flat_map(|&c| model.bonds_of(c as usize).iter().map(move |&b| (c, b)))
+                    .filter(|&(c, b)| {
+                        let bond = model.bonds[b as usize];
+                        !self.broken[b as usize] && bond.a == c && inside.contains(&bond.b)
+                    }).map(|(_, b)| {
+                        let bond = model.bonds[b as usize];
+                        0.5 * bond.stiffness * (bond.critical * bond.rest_m).powi(2)
+                    }).sum();
+                out.chunks.push(Chunk { part, cells, centre, velocity, spin: momentum / inertia.max(1.0e-9), cohesion_j });
             }
         }
         if !out.chunks.is_empty() {
@@ -662,14 +715,6 @@ impl CasualtyTissue {
     }
 }
 
-/// A run of equal cells drawn as one box (relaxed figure frame).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct VoxelBox {
-    pub centre: Vec3,
-    pub size: Vec3,
-    pub label: u8,
-}
-
 /// The drawing label of a cell (`skin_label` gives a skin cell its colour, 1..=SKIN_LABELS).
 pub(super) fn label(cell: &Cell, skin_label: u8) -> u8 {
     match cell.tissue {
@@ -682,64 +727,6 @@ pub(super) fn label(cell: &Cell, skin_label: u8) -> u8 {
         Tissue::Bone => BONE_LABEL,
         Tissue::Steel => STEEL_LABEL,
     }
-}
-
-/// Merge labelled cells (grid coordinates) into boxes: runs along x, then rows along z, then
-/// slabs along y, of one label. Only a cell with a face open to air or to another label can be
-/// seen, but whole runs are merged, so the solid inside costs few boxes.
-pub(super) fn merge_boxes(model: &TissueModel, cells: &[([u16; 3], u8)]) -> Vec<VoxelBox> {
-    if cells.is_empty() {
-        return Vec::new();
-    }
-    let (mut lo, mut hi) = ([u16::MAX; 3], [0u16; 3]);
-    for (ijk, _) in cells {
-        for a in 0..3 {
-            lo[a] = lo[a].min(ijk[a]);
-            hi[a] = hi[a].max(ijk[a]);
-        }
-    }
-    let size = [0, 1, 2].map(|a| (hi[a] - lo[a]) as usize + 1);
-    let at = |x: usize, y: usize, z: usize| (y * size[2] + z) * size[0] + x;
-    let mut labels = vec![0u8; size[0] * size[1] * size[2]];
-    for (ijk, label) in cells {
-        let [x, y, z] = [0, 1, 2].map(|a| (ijk[a] - lo[a]) as usize);
-        labels[at(x, y, z)] = *label;
-    }
-    let mut boxes = Vec::new();
-    for y in 0..size[1] {
-        for z in 0..size[2] {
-            for x in 0..size[0] {
-                let label = labels[at(x, y, z)];
-                if label == 0 {
-                    continue;
-                }
-                let mut x1 = x + 1;
-                while x1 < size[0] && labels[at(x1, y, z)] == label {
-                    x1 += 1;
-                }
-                let row = |z: usize, y: usize| (x..x1).all(|xi| labels[at(xi, y, z)] == label);
-                let mut z1 = z + 1;
-                while z1 < size[2] && row(z1, y) {
-                    z1 += 1;
-                }
-                let mut y1 = y + 1;
-                while y1 < size[1] && (z..z1).all(|zi| row(zi, y1)) {
-                    y1 += 1;
-                }
-                for yi in y..y1 {
-                    for zi in z..z1 {
-                        for xi in x..x1 {
-                            labels[at(xi, yi, zi)] = 0;
-                        }
-                    }
-                }
-                let min = model.origin + Vec3::new((lo[0] as usize + x) as f32, (lo[1] as usize + y) as f32, (lo[2] as usize + z) as f32) * CELL_M;
-                let extent = Vec3::new((x1 - x) as f32, (y1 - y) as f32, (z1 - z) as f32) * CELL_M;
-                boxes.push(VoxelBox { centre: min + extent * 0.5, size: extent, label });
-            }
-        }
-    }
-    boxes
 }
 
 /// The strikes one killing event delivers to a casualty, in the relaxed figure's frame: every
@@ -785,6 +772,8 @@ pub(super) struct ChunkBody {
     pub vel: Vec3,
     pub spin: Vec3,
     pub radius: f32,
+    /// What holds its cells together (J): a hit harder than this breaks it into single grains.
+    pub cohesion_j: f32,
     pub bounces: u8,
     pub settled: bool,
 }
@@ -815,6 +804,7 @@ pub(super) fn chunk_bodies(model: &TissueModel, ragdoll: &CrewRagdoll, chunks: V
             vel: segment.vel + segment.rot * chunk.velocity,
             spin: segment.angular_vel + segment.rot * chunk.spin,
             radius,
+            cohesion_j: chunk.cohesion_j,
             cells: chunk.cells,
             bounces: 0,
             settled: false,
@@ -832,58 +822,19 @@ pub(super) fn carve_casualty_tissue(corpses: &std::cell::RefCell<Option<crew_cor
     std::array::from_fn(|i| solo && shares.is_some_and(|shares| shares[i] >= KEEP_SOFT_SHARE))
 }
 
-/// Restitution and tangential keep of a piece meeting a surface (authored: wet tissue), the speed
-/// below which a piece on a face turned up rests, and its bounce budget.
-const PIECE_RESTITUTION: f32 = 0.25;
-const PIECE_TANGENT_KEEP: f32 = 0.55;
-const PIECE_REST_MPS: f32 = 0.35;
-const PIECE_BOUNCES: u8 = 10;
+/// Restitution and tangential keep of a piece meeting a surface or another grain (authored: wet
+/// tissue), the speed below which a piece resting on a face turned up (or on grains) stops, and its
+/// bounce budget.
+pub(super) const PIECE_RESTITUTION: f32 = 0.25;
+pub(super) const PIECE_TANGENT_KEEP: f32 = 0.55;
+pub(super) const PIECE_REST_MPS: f32 = 0.35;
+pub(super) const PIECE_BOUNCES: u8 = 10;
 
-/// Advance the pieces of solved bodies by `dt`: gravity, and the vehicle's own surfaces
-/// (`FragmentWorld`) met by a sphere of each piece's bounding radius about its centre (named: not
-/// its cells), with no rotational response to a contact (named). A piece 12 m from its frame's
-/// origin has left the vehicle and stops being moved.
+/// Advance the pieces of solved bodies by `dt` (`crew_corpse_tissue::TissueDraw::integrate`).
 pub(super) fn integrate_chunks(corpses: &std::cell::RefCell<Option<crew_corpse_render::Corpses>>, world: &FragmentWorld,
     player: &Tank, dt: f32) {
-    if !(dt > 0.0) {
-        return;
-    }
-    let mut corpses = corpses.borrow_mut();
-    let Some(pieces) = corpses.as_mut().and_then(|c| c.tissue_pieces_mut()) else { return };
-    for piece in pieces.filter(|p| !p.settled) {
-        let parent_inverse = blood_parent_model(player, piece.frame).inverse();
-        let gravity = parent_inverse.transform_vector3(Vec3::new(0.0, -9.81, 0.0));
-        let up = parent_inverse.transform_vector3(Vec3::Y).normalize_or_zero();
-        let steps = (piece.vel.length() * dt / 0.05).ceil().clamp(1.0, 32.0) as usize;
-        let h = dt / steps as f32;
-        for _ in 0..steps {
-            piece.vel += gravity * h;
-            let travel = piece.vel * h;
-            let ahead = travel + travel.normalize_or_zero() * piece.radius;
-            match world.first_surface(piece.frame, piece.pos, piece.pos + ahead) {
-                Some((fraction, normal)) => {
-                    let contact = piece.pos + ahead * fraction;
-                    piece.pos = contact + normal * piece.radius;
-                    let vn = piece.vel.dot(normal);
-                    if vn < 0.0 {
-                        piece.vel = (piece.vel - normal * vn) * PIECE_TANGENT_KEEP - normal * (vn * PIECE_RESTITUTION);
-                    }
-                    piece.spin *= 0.5;
-                    piece.bounces = piece.bounces.saturating_add(1);
-                    if normal.dot(up) > 0.5 && (piece.vel.length() < PIECE_REST_MPS || piece.bounces >= PIECE_BOUNCES) {
-                        piece.vel = Vec3::ZERO;
-                        piece.spin = Vec3::ZERO;
-                        piece.settled = true;
-                        break;
-                    }
-                }
-                None => piece.pos += travel,
-            }
-            piece.rot = (Quat::from_scaled_axis(piece.spin * h) * piece.rot).normalize();
-        }
-        if piece.pos.length() > 12.0 {
-            piece.settled = true;
-        }
+    if let Some(corpses) = corpses.borrow_mut().as_mut() {
+        corpses.integrate_tissue(world, player, dt);
     }
 }
 
@@ -982,13 +933,20 @@ mod tests {
     }
 
     #[test]
-    fn boxes_cover_exactly_the_cells_they_merge() {
+    fn only_cells_open_to_air_or_a_wound_are_drawn() {
         let model = toy();
-        let cells: Vec<([u16; 3], u8)> = model.cells.iter().map(|c| (c.ijk, label(c, 1))).collect();
-        let boxes = merge_boxes(&model, &cells);
-        let volume: f32 = boxes.iter().map(|b| b.size.x * b.size.y * b.size.z).sum();
-        assert!((volume / CELL_M.powi(3) - cells.len() as f32).abs() < 0.5);
-        assert!(boxes.len() < cells.len() / 2, "{} boxes for {} cells", boxes.len(), cells.len());
+        let mut tissue = CasualtyTissue::new(&model);
+        let shell = (0..model.cells.len()).filter(|&c| model.exposed(&tissue.present, c)).count();
+        // A 6 x 10 x 6 block: everything but its 4 x 8 x 4 core.
+        assert_eq!(shell, 6 * 10 * 6 - 4 * 8 * 4);
+        let part = crew_physics::CrewBodyPart::Torso;
+        let solve = tissue.solve(&model, &[Strike { part, at: Vec3::new(0.07, 1.1, 0.03), dir: Vec3::NEG_X,
+            work_j: 0.5 * 0.01 * 600.0 * 600.0, speed_mps: 600.0 }]);
+        assert!(!solve.chunks.is_empty());
+        let after = (0..model.cells.len()).filter(|&c| tissue.present[c] && model.exposed(&tissue.present, c)).count();
+        assert!(after > shell - solve.chunks.iter().map(|c| c.cells.len()).sum::<usize>(), "the wound's walls are drawn");
+        assert!(solve.chunks.iter().all(|c| c.cohesion_j >= 0.0));
+        assert!(model.blend.iter().all(|b| b.is_none()), "one part: no joint");
     }
 
     /// Measures the real crew figure: cells by tissue, bonds, boxes for a whole body, build time.
@@ -1002,16 +960,15 @@ mod tests {
         let model = build_tissue(&figure, &bones, helmet.as_ref());
         println!("built {} cells, {} bonds in {:.0} ms, grid {:?}", model.cell_count(), model.bonds.len(),
             start.elapsed().as_secs_f32() * 1000.0, model.dims);
-        let mut boxes = 0;
+        let present = vec![true; model.cells.len()];
+        let mut drawn = 0;
         for part in crew_physics::CrewBodyPart::ALL {
-            let cells: Vec<([u16; 3], u8)> = model.part_cells[part.index()].iter()
-                .map(|&c| (model.cells[c as usize].ijk, label(&model.cells[c as usize], 1))).collect();
-            let part_boxes = merge_boxes(&model, &cells).len();
-            boxes += part_boxes;
+            let part_drawn = model.part_cells[part.index()].iter().filter(|&&c| model.exposed(&present, c as usize)).count();
+            drawn += part_drawn;
             let t = |kind: Tissue| model.part_cells[part.index()].iter().filter(|&&c| model.cells[c as usize].tissue == kind).count();
-            println!("{part:?}: skin {} muscle {} bone {} steel {}, {part_boxes} boxes", t(Tissue::Skin), t(Tissue::Muscle), t(Tissue::Bone), t(Tissue::Steel));
+            println!("{part:?}: skin {} muscle {} bone {} steel {}, {part_drawn} cubes drawn", t(Tissue::Skin), t(Tissue::Muscle), t(Tissue::Bone), t(Tissue::Steel));
         }
-        println!("whole body: {boxes} boxes (one skin colour)");
+        println!("whole body: {drawn} cubes drawn; {} cells blended at joints", model.blend.iter().filter(|b| b.is_some()).count());
         // A 57 mm shot's 3.1 kg at 377 m/s through the torso, and a 20 g fragment at 700 m/s.
         let part = crew_physics::CrewBodyPart::Torso;
         let centre = part.rest_center();

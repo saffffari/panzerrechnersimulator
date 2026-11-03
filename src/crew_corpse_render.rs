@@ -121,9 +121,9 @@ impl Corpses {
     pub(super) fn strike_tissue(&mut self,ragdoll:&CrewRagdoll,strikes:&[crew_tissue::Strike])->Option<[f32;PARTS]> {
         self.tissue.as_mut().map(|tissue|tissue.strike(ragdoll,strikes))
     }
-    /// The pieces of solved bodies, for their flight (`crew_tissue::integrate_chunks`).
-    pub(super) fn tissue_pieces_mut(&mut self)->Option<impl Iterator<Item=&mut crew_tissue::ChunkBody>> {
-        self.tissue.as_mut().map(|tissue|tissue.pieces_mut())
+    /// Move the pieces of solved bodies (`crew_tissue::integrate_chunks`).
+    pub(super) fn integrate_tissue(&mut self,world:&FragmentWorld,player:&Tank,dt:f32) {
+        if let Some(tissue)=self.tissue.as_mut() {tissue.integrate(world,player,dt);}
     }
     pub(super) fn reset_tissue(&mut self) {
         if let Some(tissue)=self.tissue.as_mut() {tissue.reset();}
@@ -165,14 +165,21 @@ impl Corpses {
             // the skeleton page (the skeleton is voxelised among them).
             let peer=body.casualty.peer_id;
             let voxel=self.tissue.as_ref().is_some_and(|tissue|tissue.has_body(peer));
+            if voxel {
+                let models=crew_physics::CrewBodyPart::ALL.map(|part|crew_ragdoll_bone_segment_model(player,body,part));
+                // A part is joined to its parent while both are in the articulated simulation and
+                // its own joint has not come apart.
+                let joined=crew_physics::CrewBodyPart::ALL.map(|part|{
+                    let s=body.segments[part.index()];
+                    s.present&&!s.detached&&crew_anatomical_parent(part).is_none_or(|p|body.segments[p.index()].present)
+                });
+                if let Some(tissue)=self.tissue.as_mut() {tissue.add_body(peer,appearance,&models,&joined);}
+            }
             for part in crew_physics::CrewBodyPart::ALL {
                 let i=part.index();
                 if voxel {
                     show(r,pages.flesh[i],None);
                     show(r,pages.bones[i],None);
-                    if let Some(tissue)=self.tissue.as_mut() {
-                        tissue.add_part(peer,appearance,part,crew_ragdoll_bone_segment_model(player,body,part));
-                    }
                     continue;
                 }
                 let (flesh,bone)=casualty_anatomy_visibility(body.segments[i].present);
@@ -181,7 +188,9 @@ impl Corpses {
             }
             // A solved body's helmet is among its cells.
             show(r,pages.helmet,(!voxel).then(||crew_ragdoll_helmet_model(player,body)).flatten());
-            show(r,pages.gore,(body.settled&&!living.contains(&body.casualty.peer_id)).then(||crew_ragdoll_gore_model(player,body)));
+            // A solved body's blood is the droplets and their film (`surface_blood`), not the old
+            // under-body pool slabs, which float at odd angles off a body that lies on uneven parts.
+            show(r,pages.gore,(!voxel&&body.settled&&!living.contains(&body.casualty.peer_id)).then(||crew_ragdoll_gore_model(player,body)));
         }
         if let Some(tissue)=self.tissue.as_mut() {
             let faces:Vec<(u32,usize)>=self.pages.iter().enumerate().filter_map(|(i,p)|
