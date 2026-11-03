@@ -242,6 +242,60 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, ndv: f32) -> vec3<f32> {
     return f0 * ab.x + ab.y;
 }
 
+// Bank light beyond the froxel grid, front to back over the view ray's [t_near, t_far]: each
+// bank the ray crosses is marched in six samples, lit by the key beam (no cascades out here: the cloud
+// deck's shadow and the banks' own transmittance) through the drops' phase, and by the diffuse
+// light above. Overlapping banks are taken in the order of their entry (up to eight crossings).
+struct RmLowFar { radiance: vec3<f32>, transmittance: f32 };
+fn rm_low_cloud_far(o: vec3<f32>, d: vec3<f32>, t_near: f32, t_far: f32) -> RmLowFar {
+    var out = RmLowFar(vec3(0.0), 1.0);
+    let n = rm_low_count();
+    if (n == 0u) { return out; }
+    var spans: array<vec3<f32>, 8>;
+    var count = 0u;
+    for (var i = 0u; i < n; i += 1u) {
+        let span = rm_low_span(o, d, i);
+        let t0 = max(span.x, t_near);
+        let t1 = min(span.y, t_far);
+        if (t1 > t0 && count < 8u) { spans[count] = vec3(t0, t1, f32(i)); count += 1u; }
+    }
+    if (count == 0u) { return out; }
+    let g = fr.low_cloud.y;
+    let albedo = fr.low_cloud.z;
+    var done = 0u;
+    var last = -1.0;
+    for (var crossing = 0u; crossing < count; crossing += 1u) {
+        // The next crossing by entry.
+        var best = 0u;
+        var best_t = 1.0e30;
+        for (var j = 0u; j < count; j += 1u) {
+            if (spans[j].x > last && spans[j].x < best_t) { best_t = spans[j].x; best = j; }
+        }
+        if (best_t >= 1.0e30) { break; }
+        last = best_t;
+        let span = spans[best];
+        let i = u32(span.z);
+        let dt = (span.y - span.x) / 6.0;
+        for (var k = 0u; k < 6u; k += 1u) {
+            let p = o + d * (span.x + (f32(k) + 0.5) * dt);
+            let sigma = rm_low_bank_density(p, i);
+            if (sigma <= 0.0) { continue; }
+            let deck = rm_cloud_shadow(p);
+            let tau = rm_low_tau(p);
+            let diffuse = rm_low_cloud_diffuse(deck, tau);
+            var source = rm_sky_isotropic() * diffuse.x + diffuse.yzw;
+            if (fr.sun_radiance.w > 0.5) {
+                source += fr.sun_radiance.rgb * deck * exp(-tau.x) * rm_phase_dense(dot(d, fr.sun_dir.xyz), g, sigma);
+            }
+            let t_step = exp(-sigma * dt);
+            out.radiance += out.transmittance * albedo * source * (1.0 - t_step);
+            out.transmittance *= t_step;
+        }
+        if (out.transmittance < 0.003) { break; }
+    }
+    return out;
+}
+
 struct Fog { radiance: vec3<f32>, transmittance: f32 };
 // Integrated froxel medium to `distance_m`, then the homogeneous weather layer beyond the grid.
 fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
@@ -252,6 +306,12 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
     var transmittance = v.a;
     let far = fr.vol_range.y;
     if (distance_m > far) {
+        // The map's low cloud banks beyond the grid, each crossing marched (rm_low_cloud_far),
+        // composited ahead of the weather layer's march (named approximation: the haze between
+        // the grid's edge and a bank is applied behind the bank, not in front of it).
+        let banks = rm_low_cloud_far(fr.cam_pos.xyz, ray, far, min(distance_m, far + 8000.0));
+        radiance += transmittance * banks.radiance;
+        transmittance *= banks.transmittance;
         // Beyond the grid: six steps through the world medium (the weather layer and its fog
         // banks), each lit by the sky and by the key beam through the cloud layer above it; no
         // geometric occlusion (named approximation).
@@ -508,6 +568,9 @@ fn fs(in: VsOut) -> ShadeOut {
         let v = -ray;
         let f0 = mix(vec3(0.04), albedo, metallic);
         let diffuse = albedo * (1.0 - metallic) / RM_PI;
+        // The low cloud banks' optical depth toward the key body: the beam's shadow below (a beam
+        // through a hatch crossed a bank too) and the banks' diffuse light outside.
+        let tau_low = rm_low_tau(world);
         // Key beam.
         if (fr.sun_radiance.w > 0.5) {
             // Grass is dead straw: thin, two-sided, lit through; the beam wraps round a blade
@@ -515,7 +578,7 @@ fn fs(in: VsOut) -> ShadeOut {
             let ndl = select(dot(n, fr.sun_dir.xyz), max(dot(n, fr.sun_dir.xyz), 0.35 * abs(dot(n, fr.sun_dir.xyz)) + 0.15), grass);
             if (ndl > 0.0) {
                 let bias = select(select(0.03, 0.35, terrain), 0.12, grass) + 0.25 * (1.0 - ndl);
-                var vis = rm_sun_visibility(world, bias);
+                var vis = rm_sun_visibility_tau(world, bias, tau_low.x);
                 if (vis > 0.001 && !terrain && !grass) {
                     vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, still));
                 }
@@ -563,7 +626,13 @@ fn fs(in: VsOut) -> ShadeOut {
         if (receiver_in_cabin && !rays_used) { sky_vis = rm_cabin_sky_visibility(world, n); }
         let up = clamp(n.y, -1.0, 1.0);
         let sky_band = mix(fr.sky_horizon.rgb, fr.sky_zenith.rgb, clamp(up, 0.0, 1.0));
-        let hemisphere = mix(fr.sky_ground.rgb * 0.5, sky_band, 0.5 + 0.5 * up);
+        var hemisphere = mix(fr.sky_ground.rgb * 0.5, sky_band, 0.5 + 0.5 * up);
+        // Under a low cloud bank: the sky through its two-stream diffuse transmission, plus the
+        // key beam it diffuses (rm_low_cloud_diffuse, named approximation; not in the cabin).
+        if (!receiver_in_cabin && rm_low_count() > 0u) {
+            let low = rm_low_cloud_diffuse(rm_cloud_shadow(world), tau_low);
+            hemisphere = hemisphere * low.x + low.yzw;
+        }
         // The environment radiance the surface sees: sky through the open share, the frame's
         // bounce through the covered share. Lambert takes albedo x that; the GGX lobe takes its
         // directional albedo x that, less the share the screen-space reflection pass draws

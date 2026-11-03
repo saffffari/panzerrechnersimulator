@@ -49,6 +49,16 @@ struct Frame {
     // The film/review section plane (Renderer::set_film_section): world normal xyz into the
     // removed half, offset w; zeros when none. Camera passes only (G-buffer, glass, patches).
     section: vec4<f32>,
+    // The map's low cloud and mist banks (src/low_clouds.rs): x count, y drop asymmetry g,
+    // z drop single-scattering albedo.
+    low_cloud: vec4<f32>,
+    // Per bank (RM_LOW_BANKS): centre xyz + core extinction /m, semi-axes xyz + yaw,
+    // seed + bounding reach m.
+    low_banks: array<vec4<f32>, 96>,
+    // The banks' optical-depth grid round the eye (rm_low_clouds.wgsl): its min corner xyz,
+    // w 1 when filled this frame; its texel size xyz, w the refresh (2 all, 0/1 that z parity).
+    low_vol_min: vec4<f32>,
+    low_vol_cell: vec4<f32>,
 };
 // True where a camera pass must leave `world` out: beyond the film's section plane.
 fn rm_beyond_section(world: vec3<f32>) -> bool {
@@ -262,4 +272,113 @@ fn rm_snow_lying(local: vec3<f32>, n: vec3<f32>, load: f32) -> f32 {
     let threshold = 1.0 - load;
     let covered = smoothstep(threshold - 0.18, threshold + 0.12, breakup * 0.55 + lie * 0.30 + load * 0.15);
     return clamp(lie * covered, 0.0, 1.0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Low cloud and mist banks (2026-11-02, src/low_clouds.rs). Liquid-water volumes inside the
+// playable space: extinction 3 W / (2 rho_w r_e) from the authored liquid water content and drop
+// radius (computed on the CPU per bank), Mie scattering of the drops as a g = 0.85 lobe with
+// albedo 0.9999. Each bank is an ellipsoid flattened below its centre (a base), its edge broken by
+// a slowly churning two-scale noise in the bank's own frame (authored shape, named approximation).
+// Every key-beam query multiplies in the banks' transmittance toward the key body
+// (rm_sun_visibility), so they shadow the ground, the tanks, the medium and themselves.
+const RM_LOW_BANKS: u32 = 32u;
+const RM_LOW_REACH: f32 = 1.35;
+// Samples per bank crossing: toward the key body (shadows, self-shadowing) and straight up (the
+// diffuse skylight's optical depth, which varies slowly and takes fewer).
+const RM_LOW_SHADOW_STEPS: u32 = 8u;
+const RM_LOW_UP_STEPS: u32 = 5u;
+
+fn rm_low_count() -> u32 { return min(u32(fr.low_cloud.x), RM_LOW_BANKS); }
+
+// The bank's local frame: semi-axis units, yaw removed.
+fn rm_low_local(rel: vec3<f32>, b: vec4<f32>) -> vec3<f32> {
+    let c = cos(b.w);
+    let s = sin(b.w);
+    return vec3(c * rel.x - s * rel.z, rel.y, s * rel.x + c * rel.z) / max(b.xyz, vec3(0.5));
+}
+// Extinction of bank `i` at world point `p`, /m.
+fn rm_low_bank_density(p: vec3<f32>, i: u32) -> f32 {
+    let a = fr.low_banks[i * 3u];
+    let b = fr.low_banks[i * 3u + 1u];
+    let c = fr.low_banks[i * 3u + 2u];
+    let rel = p - a.xyz;
+    if (dot(rel, rel) > c.y * c.y) { return 0.0; }
+    let local = rm_low_local(rel, b);
+    let q = vec3(local.x, select(local.y, local.y * 1.6, local.y < 0.0), local.z);
+    let r = length(q);
+    if (r >= RM_LOW_REACH) { return 0.0; }
+    let seed = u32(c.x);
+    // Churn: the noise drifts slowly through the bank's frame (about a semi-axis in 20 minutes).
+    let churn = vec3(0.37, 0.21, -0.29) * fr.cam_pos.w * 0.0008;
+    // Lobes at the bank's own scale, and turrets and clefts of about 20 m whatever its size
+    // (in world metres, so a large bank is not a magnified small one).
+    let billow = rm_fbm(local * 1.9 + churn + vec3(f32(seed & 255u) * 0.37, f32(seed >> 8u) * 0.53, 0.0), 101u + (seed & 7u));
+    let metric = rm_fbm(rel * vec3(0.045, 0.07, 0.045) + churn * 40.0 + vec3(5.1, f32(seed & 63u), 2.3), 107u);
+    let edge = r + (0.5 - billow) * 0.8 + (0.5 - metric) * 0.45;
+    return a.w * (1.0 - smoothstep(0.4, 1.0, edge)) * (0.45 + 1.1 * metric);
+}
+fn rm_low_cloud_density(p: vec3<f32>) -> f32 {
+    let n = rm_low_count();
+    var sum = 0.0;
+    for (var i = 0u; i < n; i += 1u) { sum += rm_low_bank_density(p, i); }
+    return sum;
+}
+// The parametric span [t0, t1] where the ray o + t d crosses bank i's bounding ellipsoid
+// (RM_LOW_REACH semi-axes, the base's compression ignored: the bound is loose below).
+fn rm_low_span(o: vec3<f32>, d: vec3<f32>, i: u32) -> vec2<f32> {
+    let a = fr.low_banks[i * 3u];
+    let b = fr.low_banks[i * 3u + 1u];
+    let lo = rm_low_local(o - a.xyz, b) / RM_LOW_REACH;
+    let ld = rm_low_local(d, b) / RM_LOW_REACH;
+    let aa = dot(ld, ld);
+    let bb = dot(lo, ld);
+    let cc = dot(lo, lo) - 1.0;
+    let disc = bb * bb - aa * cc;
+    if (disc <= 0.0 || aa <= 1.0e-12) { return vec2(1.0, -1.0); }
+    let h = sqrt(disc);
+    return vec2((-bb - h) / aa, (-bb + h) / aa);
+}
+// Optical depth of every bank from `o` along unit `d` up to `max_t`, each crossing marched in
+// `steps` midpoint samples.
+fn rm_low_cloud_tau(o: vec3<f32>, d: vec3<f32>, max_t: f32, steps: u32) -> f32 {
+    let n = rm_low_count();
+    var tau = 0.0;
+    for (var i = 0u; i < n; i += 1u) {
+        let span = rm_low_span(o, d, i);
+        let t0 = max(span.x, 0.0);
+        let t1 = min(span.y, max_t);
+        if (t1 <= t0) { continue; }
+        let dt = (t1 - t0) / f32(steps);
+        for (var k = 0u; k < steps; k += 1u) {
+            tau += rm_low_bank_density(o + d * (t0 + (f32(k) + 0.5) * dt), i) * dt;
+        }
+    }
+    return tau;
+}
+// The banks' optical depth toward the key body from `world` (0 without banks or below the horizon).
+fn rm_low_cloud_sun_tau(world: vec3<f32>) -> f32 {
+    if (rm_low_count() == 0u || fr.sun_dir.y <= -0.05) { return 0.0; }
+    return rm_low_cloud_tau(world, fr.sun_dir.xyz, 4000.0, RM_LOW_SHADOW_STEPS);
+}
+// The banks' transmittance of the key beam at `world`.
+fn rm_low_cloud_sun(world: vec3<f32>) -> f32 { return exp(-rm_low_cloud_sun_tau(world)); }
+// Diffuse light under and inside the banks (named approximation): the two-stream transmission
+// of a conservative scattering layer, T = 1 / (1 + 3/4 (1 - g) tau) (Bohren 1987). x: the factor
+// on the sky's radiance (tau straight up); yzw: the key beam's diffused share,
+// (T - exp(-tau)) along the beam, as an isotropic radiance (horizontal irradiance over pi), the
+// beam taken through `deck`, the cloud deck's transmittance above the point (rm_cloud_shadow).
+// `tau`: the banks' optical depths there toward the key body (x) and straight up (y)
+// (rm_visibility.wgsl rm_low_tau).
+fn rm_low_cloud_diffuse(deck: f32, tau: vec2<f32>) -> vec4<f32> {
+    if (rm_low_count() == 0u) { return vec4(1.0, 0.0, 0.0, 0.0); }
+    let k = 0.75 * (1.0 - fr.low_cloud.y);
+    let tau_sun = tau.x;
+    let tau_up = tau.y;
+    var sun = vec3(0.0);
+    if (fr.sun_radiance.w > 0.5 && fr.sun_dir.y > 0.0 && tau_sun > 0.0) {
+        let diffused = max(1.0 / (1.0 + k * tau_sun) - exp(-tau_sun), 0.0);
+        sun = fr.sun_radiance.rgb * deck * fr.sun_dir.y * diffused / RM_PI;
+    }
+    return vec4(1.0 / (1.0 + k * tau_up), sun);
 }

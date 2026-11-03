@@ -1549,6 +1549,26 @@ are presented as ray tracing, GI or a combustion/solver result:
   boundary-layer solve; beyond 320 m the medium is marched in six steps without geometric
   occlusion. The cloud does not shadow the skylight. Gate: `KESSEL_SHOWCASE_SET=clouds` with and
   without `KESSEL_RM_SKIP=131072`.
+- Low cloud and mist banks inside the map (2026-11-02; `src/low_clouds.rs`, a map's
+  `manifest_edits.json` `low_clouds` block, `rm_common.wgsl` `rm_low_*`, `rm_low_clouds.wgsl`,
+  docs/RAYMARCHING_ENGINE.md "Low cloud and mist banks inside the map"). Computed: extinction from
+  the authored liquid water content and effective drop radius, sigma = 3 W / (2 rho_w r_e)
+  (extinction efficiency 2, Hansen and Travis 1974; Stephens 1978); Mie albedo 0.9999 and
+  asymmetry 0.85 of water drops; the banks are a term of the one world medium, lit in the froxel
+  grid, and every key-beam query takes their transmittance, so they shadow ground, vehicles, the
+  medium and themselves. Named approximations: the shape is an authored ellipsoid with a noise
+  edge (no condensation, growth or decay); multiple scattering is the two-stream transmission of
+  a conservative layer, T = 1 / (1 + 3/4 (1 - g) tau) (Bohren 1987), added as isotropic sky and
+  diffused key-beam radiance (no angular structure, no exchange between banks, lamps scatter once);
+  optical depths and extinction come from a 176 x 64 x 176 grid of 4 m texels round the eye,
+  trilinearly interpolated, half its slabs refreshed a frame while it holds still (update
+  cadence); beyond 320 m six samples per bank crossing, the weather haze between the grid's edge
+  and a bank applied behind it; the drift is the world wind times the gust, integrated per frame,
+  wrapping in the authored area with a one-radius fade at its edge; the base follows the mean
+  ground under the footprint. Open: the simulation (AI sight, perception) does not read the
+  banks; the shader and physical backends draw none (the editor shows them with
+  `KESSEL_RENDERER=raymarch`). Gate: `KESSEL_RM_SKIP=4194304` (debug A/B, removes the banks);
+  `cargo test -- low_clouds` (extinction law, absent block, round trip, drift, optical depth).
 - Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`, `rm_gbuffer.wgsl`
   `apply_wear`, the shade pass's worn edges and cavity grime, the glass film): four scalar loads,
   mechanical wear (+0.4 % of the remainder per round), interior grime (toward full over 40 min

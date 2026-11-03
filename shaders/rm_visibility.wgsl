@@ -22,6 +22,9 @@ struct Light { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, };
 @group(1) @binding(10) var sky_cache_samp: sampler;
 // The cloud layer's transmittance toward the key body by ground position (rm_cloud_shadow.wgsl).
 @group(1) @binding(11) var cloud_shadow_tex: texture_2d<f32>;
+// The low cloud banks' optical depths round the eye (rm_low_clouds.wgsl): r toward the key
+// body, g straight up.
+@group(1) @binding(15) var low_tau_tex: texture_3d<f32>;
 // The player's cabin air (cabin_medium.rs): per rigid frame (hull, turret, cupola) a 2 cm grid of
 // source floor-to-roof intervals, moving with the vehicle.
 @group(1) @binding(12) var cabin_air_columns: texture_2d_array<f32>;
@@ -152,7 +155,38 @@ fn rm_pcf_near(uv: vec2<f32>, ref_depth: f32) -> f32 {
 // Key-light visibility: the depth maps' occlusion times the cloud layer's transmittance above
 // the point (the frame's beam is the clear-sky one when cloud shadows are on).
 fn rm_sun_visibility(world: vec3<f32>, bias_m: f32) -> f32 {
-    return rm_sun_visibility_maps(world, bias_m) * rm_cloud_shadow(world);
+    return rm_sun_visibility_maps(world, bias_m) * rm_cloud_shadow(world) * exp(-rm_low_tau(world).x);
+}
+// Where `world` falls in the banks' grid round the eye: 0 outside it (evaluate the field
+// directly), 1 inside (sample it), 2 over its top (no bank stands there: all zero).
+fn rm_low_grid(world: vec3<f32>) -> vec4<f32> {
+    if (fr.low_vol_min.w < 0.5) { return vec4(0.0); }
+    let dims = vec3<f32>(textureDimensions(low_tau_tex));
+    let uvw = (world - fr.low_vol_min.xyz) / (fr.low_vol_cell.xyz * dims);
+    if (any(uvw.xz < vec2(0.0)) || any(uvw.xz > vec2(1.0)) || uvw.y < 0.0) { return vec4(0.0); }
+    if (uvw.y > 1.0) { return vec4(uvw, 2.0); }
+    return vec4(uvw, 1.0);
+}
+// The low cloud banks' optical depths at `world`, toward the key body (x) and straight up (y).
+fn rm_low_tau(world: vec3<f32>) -> vec2<f32> {
+    if (rm_low_count() == 0u) { return vec2(0.0); }
+    let g = rm_low_grid(world);
+    if (g.w > 1.5) { return vec2(0.0); }
+    if (g.w > 0.5) { return textureSampleLevel(low_tau_tex, sky_cache_samp, g.xyz, 0.0).rg; }
+    return vec2(rm_low_cloud_sun_tau(world), rm_low_cloud_tau(world, vec3(0.0, 1.0, 0.0), 2000.0, RM_LOW_UP_STEPS));
+}
+// The low cloud banks' extinction at `world`, /m.
+fn rm_low_density(world: vec3<f32>) -> f32 {
+    if (rm_low_count() == 0u) { return 0.0; }
+    let g = rm_low_grid(world);
+    if (g.w > 1.5) { return 0.0; }
+    if (g.w > 0.5) { return textureSampleLevel(low_tau_tex, sky_cache_samp, g.xyz, 0.0).b; }
+    return rm_low_cloud_density(world);
+}
+// As rm_sun_visibility with the low cloud banks' optical depth already marched (`tau_low`), for
+// passes that also need it for the banks' diffuse light.
+fn rm_sun_visibility_tau(world: vec3<f32>, bias_m: f32, tau_low: f32) -> f32 {
+    return rm_sun_visibility_maps(world, bias_m) * rm_cloud_shadow(world) * exp(-tau_low);
 }
 fn rm_cloud_shadow(world: vec3<f32>) -> f32 {
     if (fr.cloud.w < 0.5) { return 1.0; }

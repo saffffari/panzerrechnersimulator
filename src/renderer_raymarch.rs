@@ -230,7 +230,21 @@ struct FrameUniform {
     /// The film/review section plane (`Renderer::set_film_section`): world normal xyz into the
     /// removed half, offset w; zeros when none. Only the G-buffer, glass and patch passes read it.
     section: [f32; 4],
+    /// The map's low cloud and mist banks (`low_clouds.rs`; rm_common.wgsl `rm_low_*`): x the bank
+    /// count, y the drops' asymmetry g, z their single-scattering albedo.
+    low_cloud: [f32; 4],
+    /// Per bank: centre xyz + core extinction /m, semi-axes xyz + yaw, seed + bounding reach m.
+    low_banks: [[f32; 4]; crate::low_clouds::MAX_BANKS * 3],
+    /// The banks' optical-depth grid (rm_low_clouds.wgsl): min corner + filled, texel size.
+    low_vol_min: [f32; 4],
+    low_vol_cell: [f32; 4],
 }
+
+/// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
+/// up (y), along z; it reaches `LOW_TAU_HALF_M` each way from the eye (the froxel grid's 320 m and a
+/// margin), from the lowest ground there to the highest bank's top.
+const LOW_TAU_DIMS: [u32; 3] = [176, 64, 176];
+const LOW_TAU_HALF_M: f32 = 352.0;
 
 /// Where the section bit sits in the push's `scars.w` (bytes 0-2 carry the running gear's snow).
 const SECTION_BIT_SHIFT: u32 = 24;
@@ -246,6 +260,8 @@ pub(super) const MAX_APERTURES: usize = 24;
 /// `KESSEL_RM_SKIP` bit: no daylight through the panes (the apertures' term in rm_shade.wgsl and
 /// rm_volume.wgsl), for the A/B.
 const SKIP_APERTURES: u32 = 2097152;
+/// `KESSEL_RM_SKIP` bit: no low cloud or mist banks (`low_clouds.rs`), for the A/B.
+const SKIP_LOW_CLOUDS: u32 = 4194304;
 /// Frames between measures of the apertures (rm_aperture.wgsl): about 200 ray queries per pane
 /// on one thread each cost 1.07 ms a frame measured every frame (gfxbench, 2 November 2026); the
 /// panes' openness changes only as the turret traverses against the hull.
@@ -445,6 +461,8 @@ pub struct Stats {
     pub scar_patches: usize,
     pub scar_holes: usize,
     pub scar_leaks: usize,
+    /// Low cloud banks the frame carries (`low_clouds.rs`).
+    pub low_banks: usize,
 }
 
 struct Target { _tex: wgpu::Texture, view: wgpu::TextureView }
@@ -596,6 +614,18 @@ pub(super) struct Backend {
     /// (`collect_lights`), for the eye's meter (`exposure.wgsl` veil lanes).
     pub(super) point_veil: [f32; 2],
     heat_integrated: Target,
+    /// The low cloud banks' optical depths round the eye (rm_low_clouds.wgsl) and its pass.
+    low_tau: Target,
+    low_tau_bind: wgpu::BindGroup,
+    low_tau_pipe: wgpu::ComputePipeline,
+    /// Whether this frame carries banks (the grid is filled only then).
+    low_tau_on: bool,
+    /// The grid's min corner when it was last filled (`None`: not filled); while it holds still,
+    /// each frame refreshes alternate z-slabs (an update cadence; a moved grid is filled whole).
+    low_tau_origin: Option<[f32; 3]>,
+    low_tau_cell_y: f32,
+    /// This frame's refresh: true for the whole grid, false for half its z-slabs.
+    low_tau_full: bool,
     linear_sampler: wgpu::Sampler,
     sky_sampler: wgpu::Sampler,
     cmp_sampler: wgpu::Sampler,
@@ -786,6 +816,7 @@ fn rm_source(name: &str) -> String {
         "rm_glass.wgsl" => include_str!("../shaders/rm_glass.wgsl"),
         "rm_rt.wgsl" => include_str!("../shaders/rm_rt.wgsl"),
         "rm_cloud_shadow.wgsl" => include_str!("../shaders/rm_cloud_shadow.wgsl"),
+        "rm_low_clouds.wgsl" => include_str!("../shaders/rm_low_clouds.wgsl"),
         "rm_rt_stub.wgsl" => include_str!("../shaders/rm_rt_stub.wgsl"),
         "rm_aperture.wgsl" => include_str!("../shaders/rm_aperture.wgsl"),
         "rm_sky_cache.wgsl" => include_str!("../shaders/rm_sky_cache.wgsl"),
@@ -1129,6 +1160,7 @@ impl Backend {
                 tex2d_entry(12, vis_stages, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array),
                 readonly_storage(13, vis_stages),
                 readonly_storage(14, vis_stages),
+                tex3d(15, vis_stages),
             ],
         });
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1264,6 +1296,21 @@ impl Backend {
         });
         let volume_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("rm-volume"), layout: Some(&volume_pl), module: &volume_shader, entry_point: Some("cs"), compilation_options: Default::default(), cache: None,
+        });
+        let low_tau = volume_target(device, "rm-low-cloud-tau", LOW_TAU_DIMS, wgpu::TextureFormat::Rgba16Float);
+        let low_tau_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-low-cloud-tau-bgl"), entries: &[uniform_entry(0, S::COMPUTE), storage3d(1, wgpu::TextureFormat::Rgba16Float)],
+        });
+        let low_tau_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-low-cloud-tau"), layout: &low_tau_bgl, entries: &[entry(0, frame_buf.as_entire_binding()),
+                entry(1, wgpu::BindingResource::TextureView(&low_tau.view))],
+        });
+        let low_tau_shader = rm_shader(device, "rm-low-cloud-tau", &["rm_common.wgsl", "rm_low_clouds.wgsl"]);
+        let low_tau_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-low-cloud-tau-pl"), bind_group_layouts: &[&low_tau_bgl], push_constant_ranges: &[],
+        });
+        let low_tau_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("rm-low-cloud-tau"), layout: Some(&low_tau_pl), module: &low_tau_shader, entry_point: Some("cs"), compilation_options: Default::default(), cache: None,
         });
         let integrate_shader = rm_shader(device, "rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]);
         let integrate_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1472,7 +1519,7 @@ impl Backend {
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             aperture_measure_buf, aperture_bind, aperture_pipe, aperture_count: 0, aperture_measured: Cell::new(None),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
-            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, linear_sampler, cmp_sampler,
+            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, low_tau, low_tau_bind, low_tau_pipe, low_tau_on: false, low_tau_origin: None, low_tau_cell_y: 0.0, low_tau_full: true, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
@@ -1577,6 +1624,7 @@ impl Backend {
                 entry(13, self.aperture_measure_buf.as_entire_binding()),
                 // The main view's eye: the pixel stars' ceiling (rm_shade.wgsl rm_display_white).
                 entry(14, r.exp_bufs[0].as_entire_binding()),
+                entry(15, wgpu::BindingResource::TextureView(&self.low_tau.view)),
             ],
         });
         let volume = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2009,6 +2057,38 @@ impl Backend {
         });
         let (apertures, aperture_count) = self.aperture_records(r, vehicle);
         self.aperture_count = aperture_count;
+        // The map's low cloud banks drift with the same wind the frame's medium moves with.
+        let (low_banks, low_count) = match &r.low_clouds {
+            Some(field) if self.debug_skip & SKIP_LOW_CLOUDS == 0 => {
+                field.advance(r.time, wind);
+                field.pack()
+            }
+            _ => ([[0.0; 4]; crate::low_clouds::MAX_BANKS * 3], 0),
+        };
+        self.stats.low_banks = low_count as usize;
+        // The banks' optical-depth grid: centred on the eye (snapped to its texels), from the
+        // lowest ground under it to the highest bank's top.
+        self.low_tau_on = low_count > 0;
+        let (low_vol_min, low_vol_cell) = match (&r.low_clouds, self.low_tau_on) {
+            (Some(field), true) => {
+                let (bottom, top) = field.vertical_span(glam::Vec2::new(eye.x, eye.z), LOW_TAU_HALF_M);
+                let cell_xz = 2.0 * LOW_TAU_HALF_M / LOW_TAU_DIMS[0] as f32;
+                let cell_y = ((top - bottom) / LOW_TAU_DIMS[1] as f32).max(0.5);
+                let snap = |v: f32| (v / cell_xz).floor() * cell_xz;
+                if std::env::var("KESSEL_LOW_CLOUDS_LIST").as_deref() == Ok("1") && r.frame % 60 == 1 {
+                    println!("[low-clouds] grid eye {:.0?} y {:.1}..{:.1} m, texel {:.2} x {:.2} m", eye, bottom, top, cell_xz, cell_y);
+                }
+                let origin = [snap(eye.x) - LOW_TAU_HALF_M, (bottom / cell_y).floor() * cell_y, snap(eye.z) - LOW_TAU_HALF_M];
+                // Cadence (KESSEL_RM_SKIP-free; the banks drift a few cm a frame): a grid that has
+                // not moved refreshes half its z-slabs a frame, alternating; a moved one all (w 2).
+                let refresh = if self.low_tau_origin == Some(origin) && (cell_y - self.low_tau_cell_y).abs() < 1e-3 { (r.frame & 1) as f32 } else { 2.0 };
+                self.low_tau_origin = Some(origin);
+                self.low_tau_cell_y = cell_y;
+                self.low_tau_full = refresh > 1.5;
+                ([origin[0], origin[1], origin[2], 1.0], [cell_xz, cell_y, cell_xz, refresh])
+            }
+            _ => { self.low_tau_origin = None; ([0.0; 4], [1.0, 1.0, 1.0, 2.0]) }
+        };
         let frame = FrameUniform {
             view_proj: rel_vp.to_cols_array_2d(),
             inv_view_proj: rel_vp.inverse().to_cols_array_2d(),
@@ -2064,6 +2144,10 @@ impl Backend {
             worn: std::array::from_fn(|i| r.worn_vehicles.get(i).copied().unwrap_or([[0.0; 4]; 2])),
             apertures,
             section: r.film_section().unwrap_or([0.0; 4]),
+            low_cloud: [low_count as f32, crate::low_clouds::DROP_ASYMMETRY, crate::low_clouds::DROP_ALBEDO, 0.0],
+            low_banks,
+            low_vol_min,
+            low_vol_cell,
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -3172,6 +3256,17 @@ impl Backend {
                 work.compute_passes += 1;
             }
         }
+        // 3b. The low cloud banks' optical depths round the eye (only when the map has banks).
+        if self.low_tau_on {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rm-low-cloud-tau"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("rm-low-cloud-tau")),
+            });
+            cpass.set_pipeline(&self.low_tau_pipe);
+            cpass.set_bind_group(0, &self.low_tau_bind, &[]);
+            let slabs = if self.low_tau_full { LOW_TAU_DIMS[2] } else { LOW_TAU_DIMS[2].div_ceil(2) };
+            cpass.dispatch_workgroups(LOW_TAU_DIMS[0].div_ceil(4), LOW_TAU_DIMS[1].div_ceil(4), slabs.div_ceil(4));
+            work.compute_passes += 1;
+        }
         // 4. Froxel media: light every cell, then integrate each column front to back.
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -3553,6 +3648,7 @@ mod shader_tests {
             ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_gbuffer.wgsl"]),
             ("rm-scar-patch", &["rm_common.wgsl", "rm_scars.wgsl", "rm_scar_patch.wgsl"]),
             ("rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]),
+            ("rm-low-cloud-tau", &["rm_common.wgsl", "rm_low_clouds.wgsl"]),
             ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),
             ("rm-points", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_points.wgsl"]),
             ("rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]),
