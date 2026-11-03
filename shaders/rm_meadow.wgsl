@@ -26,6 +26,18 @@ struct View {
 // Bodies pushing the grass aside (meadow.rs PushGrid): tip displacement of a reference blade;
 // the grid's origin rides in lod.w (x) and air.w (z).
 @group(0) @binding(7) var push_tex: texture_2d<f32>;
+// The ground's exposure to the season's sun and sky (meadow.rs sun_exposure): 1 on open flat
+// ground, more on sun-facing slopes, less on the far slopes and in the shade of trees.
+@group(0) @binding(8) var exposure_tex: texture_2d<f32>;
+fn md_exposure(p: vec2<f32>) -> f32 {
+    let half = mv.map.z;
+    return textureSampleLevel(exposure_tex, cover_samp, clamp(p / (2.0 * half) + vec2(0.5), vec2(0.0), vec2(1.0)), 0.0).r * 2.0;
+}
+// The exposure's share of senescent straw: shaded stands stay green, exposed ones dry
+// (meadow.rs EXPOSURE_DRY_*).
+fn md_exposure_dry(p: vec2<f32>) -> f32 {
+    return smoothstep(MD_EXPOSURE_GREEN, MD_EXPOSURE_TAN, md_exposure(p)) * MD_EXPOSURE_DRY_MAX;
+}
 
 const MD_TAU: f32 = 6.2831853;
 
@@ -354,7 +366,7 @@ fn vs_blade(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsO
     // Leaf state: fresh and paler blades in world-fixed 9 m / 31 m patches, senescent straw on the
     // thin (tan) ground and toward some old tips; each blade's vigour scales its reflectance.
     let pale = clamp(MD_PALE_BASE + smoothstep(0.30, 0.75, field) * 0.5 + (md_unit(md_hash(ch ^ 0x13u)) - 0.5) * 0.5, 0.0, 1.0);
-    let dry = select(max(smoothstep(0.95, 0.60, cv.x) * 0.75, t * t * (0.05 + 0.35 * r6)), 1.0, litter);
+    let dry = select(max(max(smoothstep(0.95, 0.60, cv.x) * 0.75, md_exposure_dry(root2)), t * t * (0.05 + 0.35 * r6)), 1.0, litter);
     var rho = mix(mix(MD_LEAF_RHO_FRESH, MD_LEAF_RHO_PALE, pale), MD_LEAF_RHO_DRY, dry) * (0.85 + 0.30 * r1);
     var tau = mix(mix(MD_LEAF_TAU_FRESH, MD_LEAF_TAU_PALE, pale), MD_LEAF_TAU_DRY, dry);
     let canopy = md_canopy(cv);
@@ -463,7 +475,7 @@ fn vs_slab(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsOu
     let field = md_noise(p.x / 31.0, p.y / 31.0, 0x600du) * 0.75 + md_noise(p.x / 9.0, p.y / 9.0, 0x601du) * 0.25;
     // The stand's mean leaf state, as the blades' (litter share, pale share, dry tips).
     let pale = clamp(MD_PALE_BASE + smoothstep(0.30, 0.75, field) * 0.5, 0.0, 1.0);
-    let dry = MD_LITTER_SHARE + (1.0 - MD_LITTER_SHARE) * (smoothstep(0.95, 0.60, cv.x) * 0.75 + 0.05);
+    let dry = MD_LITTER_SHARE + (1.0 - MD_LITTER_SHARE) * (max(smoothstep(0.95, 0.60, cv.x) * 0.75, md_exposure_dry(p)) + 0.05);
     var rho = mix(mix(MD_LEAF_RHO_FRESH, MD_LEAF_RHO_PALE, pale), MD_LEAF_RHO_DRY, dry);
     var tau = mix(mix(MD_LEAF_TAU_FRESH, MD_LEAF_TAU_PALE, pale), MD_LEAF_TAU_DRY, dry);
     // The flowers' share of the canopy's top: each species' heads per m^2 here times a head's
