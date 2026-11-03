@@ -1245,6 +1245,9 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     # near-ground haze layer; the far hills go blue through Rayleigh and the aerosol's own slope.
     edits['environment_lighting'] = dict(enabled=True, fog_density=0.0010, overcast=0.06, storm=0.0,
         aerosol=dict(aod_550=0.2, angstrom=1.6, scale_height_m=1500),
+        # The owner, 2 Nov: the dusk "should be like the whole night". Each twilight (Sun -6 to
+        # +8 deg) lasts 25 play minutes, full night 3; only the clock's rate, never the Sun's place.
+        day_cycle=dict(night_s=180, twilight_s=1500, day_s=300),
         schema='kessel.environment-authoring', utc='1943-05-12T14:10:00Z', version=2)
     # Low cloud and mist banks inside the map (src/low_clouds.rs): liquid-water volumes lit and
     # shadowed through the raymarch transport, drifting with the wind (the owner, 2 Nov 2026).

@@ -2791,6 +2791,8 @@ pub struct Renderer {
     pub day_night_cycle: bool,
     /// Real seconds the Sun spends at night, in twilight and in full day over the current date.
     day_phase_seconds: Option<[f64; 3]>,
+    /// The map's pacing (play seconds of night, each twilight, full day); `None` is the campaign's.
+    pub day_cycle_play_s: Option<[f32; 3]>,
     weather_offset: glam::Vec3,
     pub(crate) theatre_weather: bool,
     pub weather_override: Option<f32>,
@@ -6213,6 +6215,7 @@ impl Renderer {
             sky_time_scale: 1.0,
             day_night_cycle: day_night_cycle_enabled(),
             day_phase_seconds: None,
+            day_cycle_play_s: None,
             weather_offset: glam::Vec3::ZERO,
             theatre_weather: false,
             weather_override: None,
@@ -6547,6 +6550,7 @@ impl Renderer {
         }
         self.fog_density = tuning.fog_density;
         self.aerosol = tuning.aerosol;
+        self.day_cycle_play_s = tuning.day_cycle;
         self.overcast = tuning.overcast;
         self.storm = tuning.storm;
         self.twilight = 0.0;
@@ -6580,6 +6584,7 @@ impl Renderer {
         self.weather_seed = (act_id as u32).wrapping_mul(0x9e37_79b9);
         self.fog_density = profile.ground_extinction_m_inv;
         self.aerosol = None;
+        self.day_cycle_play_s = None;
         self.set_sky_clock(crate::celestial_sky::SkyClock::for_act(act_id, phase.clock_phase()));
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
     }
@@ -6640,7 +6645,8 @@ impl Renderer {
         let scale = day_cycle_scale();
         let mean = 86_400.0 / ((FULL_DAY_S + 2.0 * TWILIGHT_S + NIGHT_S) * scale);
         let rate = |phase: usize, play_s: f64| if phases[phase] > 60.0 { phases[phase] / (play_s * scale) } else { mean };
-        let rates = [rate(0, NIGHT_S), rate(1, 2.0 * TWILIGHT_S), rate(2, FULL_DAY_S)];
+        let [night_s, twilight_s, day_s] = self.day_cycle_play_s.map_or([NIGHT_S, TWILIGHT_S, FULL_DAY_S], |c| c.map(f64::from));
+        let rates = [rate(0, night_s), rate(1, 2.0 * twilight_s), rate(2, day_s)];
         // Blend across a degree at each boundary so the clock never jumps.
         let altitude = self.celestial.sun_altitude_deg();
         let ramp = |edge: f64| ((altitude - edge) / 1.0 + 0.5).clamp(0.0, 1.0);

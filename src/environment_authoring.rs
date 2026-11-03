@@ -293,6 +293,12 @@ pub struct LightingTuning {
     /// surfaces' aerial perspective) and sets the spectrum of the local `fog_density` layer.
     #[serde(default)]
     pub aerosol: Option<AerosolTuning>,
+    /// The map's pacing of the accelerated day (`"day_cycle": {"night_s", "twilight_s",
+    /// "day_s"}`): play seconds of the night, of each twilight (Sun -6 to +8 deg) and of full
+    /// day. Only the clock's rate changes; the Sun and Moon stand where the ephemeris puts them.
+    /// `None` keeps the campaign's 300 / 150 / 300.
+    #[serde(default)]
+    pub day_cycle: Option<[f32; 3]>,
 }
 
 /// One aerosol population as a map authors it. Optical depth at 550 nm through the whole column,
@@ -364,6 +370,7 @@ impl Default for LightingTuning {
             overcast: 0.90,
             storm: 0.72,
             aerosol: None,
+            day_cycle: None,
         }
     }
 }
@@ -382,6 +389,7 @@ impl LightingTuning {
             overcast: overcast.clamp(0.0, 1.0),
             storm: storm.clamp(0.0, 1.0),
             aerosol: None,
+            day_cycle: None,
         }
     }
 
@@ -409,6 +417,12 @@ impl LightingTuning {
         anyhow::ensure!((0.0..=1.0).contains(&self.overcast));
         anyhow::ensure!((0.0..=1.0).contains(&self.storm));
         if let Some(aerosol) = self.aerosol { aerosol.validate()?; }
+        if let Some(cycle) = self.day_cycle {
+            for (name, s) in ["night_s", "twilight_s", "day_s"].iter().zip(cycle) {
+                anyhow::ensure!(s.is_finite() && (10.0..=36_000.0).contains(&s),
+                    "day_cycle {name} {s} is outside 10..36000 play seconds");
+            }
+        }
         Ok(())
     }
 
@@ -424,6 +438,9 @@ impl LightingTuning {
         });
         if let Some(aerosol) = self.aerosol {
             record["aerosol"] = aerosol.to_json();
+        }
+        if let Some([night, twilight, day]) = self.day_cycle {
+            record["day_cycle"] = serde_json::json!({ "night_s": night, "twilight_s": twilight, "day_s": day });
         }
         record
     }
@@ -453,6 +470,15 @@ impl LightingTuning {
             overcast: json_f32_or(&value["overcast"], 0.90),
             storm: json_f32_or(&value["storm"], 0.72),
             aerosol: AerosolTuning::from_json(&value["aerosol"])?,
+            day_cycle: match &value["day_cycle"] {
+                serde_json::Value::Null => None,
+                serde_json::Value::Object(_) => Some([
+                    json_f32_or(&value["day_cycle"]["night_s"], 300.0),
+                    json_f32_or(&value["day_cycle"]["twilight_s"], 150.0),
+                    json_f32_or(&value["day_cycle"]["day_s"], 300.0),
+                ]),
+                other => anyhow::bail!("environment_lighting day_cycle must be an object, not {other}"),
+            },
         };
         tuning.validate()?;
         Ok(tuning)
@@ -2846,6 +2872,23 @@ mod tests {
         assert_eq!(edits[LIGHTING_KEY]["utc"], "1942-12-21T12:00:00Z");
         assert_eq!(edits[LIGHTING_KEY]["version"], 2);
         assert_eq!(LightingTuning::from_edits(Some(&edits)).unwrap(), dated);
+    }
+
+    #[test]
+    fn a_map_day_cycle_round_trips_and_is_validated() {
+        let mut edits = serde_json::json!({});
+        edits[LIGHTING_KEY] = serde_json::json!({"schema": SCHEMA, "version": 2, "enabled": true,
+            "fog_density": 0.001, "overcast": 0.1, "storm": 0.0,
+            "day_cycle": {"night_s": 120, "twilight_s": 1500, "day_s": 300}});
+        let tuning = LightingTuning::from_edits(Some(&edits)).unwrap();
+        assert_eq!(tuning.day_cycle, Some([120.0, 1500.0, 300.0]));
+        let mut again = serde_json::json!({});
+        again[LIGHTING_KEY] = tuning.to_json();
+        assert_eq!(LightingTuning::from_edits(Some(&again)).unwrap(), tuning);
+        edits[LIGHTING_KEY]["day_cycle"]["night_s"] = serde_json::json!(1.0);
+        assert!(LightingTuning::from_edits(Some(&edits)).is_err());
+        edits[LIGHTING_KEY].as_object_mut().unwrap().remove("day_cycle");
+        assert_eq!(LightingTuning::from_edits(Some(&edits)).unwrap().day_cycle, None);
     }
 
     #[test]

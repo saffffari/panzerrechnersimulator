@@ -264,6 +264,7 @@ impl Scene {
                 overcast: 0.25,
                 storm: 0.0,
                 aerosol: None,
+                day_cycle: None,
             },
         }
     }

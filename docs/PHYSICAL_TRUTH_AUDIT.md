@@ -3750,6 +3750,13 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   times faster). Its phase, rising, setting, distance and illuminance stay consistent with each
   other and with the Sun; only the month is shorter, as the day already is (`KESSEL_DAY_CYCLE_SCALE`).
   A named approximation of the day cycle's kind, tested against the real ephemeris at the real month.
+- **A map may pace its own day** (`environment_lighting.day_cycle` {night_s, twilight_s, day_s},
+  `Renderer::day_cycle_play_s`; absent is the campaign's 300 / 150 / 300 play seconds): the
+  sky clock's rate in each phase is the date's real seconds in that phase over its play seconds,
+  as before. The spring bridge map runs each twilight (Sun -6 to +8 deg) for 1,500 play seconds
+  and the night for 180 (owner, 2 Nov 2026: the dusk "should be like the whole night"). The Sun
+  and the Moon stand where the ephemeris puts them at every instant; only the clock's rate
+  changes, and with it the eye's pigment rate. A pacing choice that changes no light.
 - **The discs are 1.6 times their angular size** (`celestial_sky::DISC_DISPLAY_SCALE`,
   `KESSEL_DISC_SCALE`; 1 is the real sky): the irradiance is untouched, so the light on the ground
   and the disc's total light are unchanged, the disc's radiance falls by the square of the scale
