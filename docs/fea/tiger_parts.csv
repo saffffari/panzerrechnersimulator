@@ -1,0 +1,1519 @@
+game_node,kit_number,kit_name,kit_assembly,kit_match,phys_material,fea_group,armour_nominal_mm,volume_m3,mass_kg,centroid_m,triangles
+Breech,02U03,ROOM,0C02_88 Barrel Base Unit,exact,steel_gun,component:gun_breech,,0.064329,504.98,-0.001 -0.320 2.338,2874
+Breech Cover,02J54,BLOCK,0C02_88 Barrel Base Unit,exact,steel_gun,gun,,0.004536,35.6,-0.000 -0.153 2.095,1024
+Drivers Hatch Pivot,34D10,HOLDER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.002012,15.79,1.400 -1.869 1.817,10624
+GLASS RIGHT PORT,04S95,VIEWER,0C10_Armor Unit,piece_of,glass_laminated,fitting,,0.00012,0.3,-1.014 -0.424 2.459,12
+GUN LEVER,,,,game_authored,steel_structural,fitting,,0.002514,19.73,-0.213 -0.037 2.219,2184
+Gun wheel1,05J55,ROLLOR,0C05_Room Unit,exact,steel_cast,running_gear,,0.000611,4.8,0.249 -0.333 1.738,4330
+Gun_0001,01A31,BARREL,0C01_88 Barrel Unit,piece_of,steel_gun,gun,,0.090221,708.24,-0.001 -3.517 2.344,9798
+Gun_0007,01A04,BARREL,0C01_88 Barrel Unit,exact,steel_gun,gun,,0.057884,454.39,-0.001 -2.112 2.344,844
+Gun_0008,01A03,SHIELD,0C01_88 Barrel Unit,exact,armour_rolled_homogeneous,armour:mantlet,100-110,0.181698,1426.33,0.053 -1.529 2.345,3226
+Gun_0009,13A17,PLATE,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.002885,22.65,0.054 -1.351 2.586,796
+Gun_0010,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.007206,56.57,-0.193 -1.002 1.758,30
+Gun_0013,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.002085,16.37,-0.188 -0.995 1.716,34
+Gun_0015,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.002295,18.01,-0.197 -0.995 1.800,34
+Gun_0017,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001182,9.28,-0.193 -0.987 1.758,60
+Gun_0018,01A33,BASE,0C01_88 Barrel Unit,exact,steel_gun,gun,,0.058605,460.05,0.057 -1.336 2.343,2278
+Gun_0021,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.00449,35.25,-0.188 -0.973 1.712,30
+Gun_0022,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.00498,39.09,-0.198 -0.973 1.803,30
+Gun_0023,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.00117,9.18,-0.193 -0.958 1.758,54
+Gun_0025,03J69,COVER,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.010798,84.76,0.055 -1.188 2.392,5792
+Gun_0027,02J50,OIL BOTTLE,0C02_88 Barrel Base Unit,exact,steel_gun,component:gun_cradle,,0.014827,116.39,0.254 -0.890 2.340,1182
+Gun_0028,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.062991,494.48,-0.189 -0.736 1.716,38
+Gun_0029,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.070212,551.16,-0.197 -0.735 1.800,30
+Gun_0035,02J07,BASE,0C02_88 Barrel Base Unit,exact,steel_gun,component:gun_cradle,,0.0425,333.62,-0.007 -0.961 2.345,3112
+Gun_0036,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001153,9.05,-0.115 -0.622 1.738,5
+Gun_0037,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.002818,22.12,-0.121 -0.608 1.719,2
+Gun_0038,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,7.7e-05,0.61,-0.085 -0.608 1.739,2
+Gun_0039,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.00219,17.19,-0.112 -0.608 1.758,2
+Gun_0040,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001099,8.63,-0.115 -0.593 1.738,5
+Gun_0042,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.000625,4.9,-0.193 -0.512 1.758,54
+Gun_0043,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.00449,35.25,-0.188 -0.497 1.712,30
+Gun_0046,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.00498,39.09,-0.198 -0.497 1.803,30
+Gun_0047,02J91,POST,0C02_88 Barrel Base Unit,exact,steel_gun,gun,,0.004749,37.28,-0.001 -0.663 2.068,1976
+Gun_0048,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.000589,4.62,-0.193 -0.482 1.758,54
+Gun_0052,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.009175,72.02,-0.188 -0.450 1.716,28
+Gun_0053,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.010096,79.25,-0.197 -0.450 1.800,28
+Gun_0055,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.00051,4.01,-0.193 -0.418 1.758,54
+Gun_0062,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.011225,88.12,-0.188 -0.382 1.712,30
+Gun_0063,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.012449,97.73,-0.198 -0.382 1.803,30
+Gun_0091,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001085,8.51,-0.193 -0.345 1.758,34
+Gun_0101,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001612,12.65,-0.215 -0.331 1.720,2
+Gun_0102,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001837,14.42,-0.171 -0.331 1.720,2
+Gun_0103,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.000276,2.17,-0.237 -0.331 1.758,2
+Gun_0104,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.000174,1.37,-0.149 -0.331 1.758,2
+Gun_0105,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001939,15.22,-0.215 -0.331 1.796,2
+Gun_0106,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001714,13.46,-0.171 -0.331 1.796,2
+Gun_0108,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001339,10.51,-0.193 -0.316 1.758,22
+Gun_0110,02J50,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.010594,83.16,0.199 -0.634 1.748,208
+Gun_0114,13J60,BLACKET,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.003019,23.7,-0.001 -0.355 2.716,2776
+Gun_0115,13J103,HOOK,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.00044,3.45,-0.204 -0.356 2.559,3564
+Gun_0116,13J103,HOOK,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.00044,3.45,0.203 -0.356 2.559,3564
+Gun_0119,02J51,OIL BOTTLE,0C02_88 Barrel Base Unit,piece_of,steel_gun,component:gun_cradle,,0.001356,10.64,-0.303 -0.611 2.752,370
+Hatch_02,,,,game_authored,steel_structural,fitting,,0.00056,4.4,-0.460 -0.055 2.721,372
+Hull_0001,18D06,RING,0B16_Base Unit,exact,steel_structural,fitting,,0.002451,19.24,-1.026 -3.435 0.902,2874
+Hull_0002,18D06,RING,0B16_Base Unit,exact,steel_structural,fitting,,0.002451,19.24,1.017 -3.434 0.902,2874
+Hull_0003,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -3.334 0.841,5426
+Hull_0004,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -3.339 0.745,5426
+Hull_0005,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -3.333 0.889,5426
+Hull_0006,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.335 0.792,704
+Hull_0007,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -3.325 0.699,5426
+Hull_0008,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.317 0.797,704
+Hull_0009,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.315 0.933,704
+Hull_0010,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.313 0.651,704
+Hull_0011,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -3.306 0.604,5426
+Hull_0012,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -3.293 0.977,5426
+Hull_0013,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.295 0.663,704
+Hull_0014,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.292 0.930,704
+Hull_0015,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -3.281 0.563,5426
+Hull_0016,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -3.276 1.022,5426
+Hull_0017,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.261 0.518,704
+Hull_0018,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -3.240 0.757,376
+Hull_0019,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -3.240 0.757,376
+Hull_0020,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -3.237 0.746,376
+Hull_0021,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -3.237 0.746,376
+Hull_0022,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.245 1.057,704
+Hull_0023,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.244 0.534,704
+Hull_0024,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -3.236 0.859,376
+Hull_0025,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -3.236 0.859,376
+Hull_0026,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -3.235 0.870,376
+Hull_0027,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -3.235 0.870,376
+Hull_0028,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -3.239 0.476,5426
+Hull_0029,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.226 1.052,704
+Hull_0030,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -3.212 0.638,376
+Hull_0031,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -3.212 0.638,376
+Hull_0032,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -3.206 0.629,376
+Hull_0033,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -3.206 0.629,376
+Hull_0034,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -3.217 1.098,5426
+Hull_0035,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -3.203 0.445,5426
+Hull_0036,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -3.195 0.961,376
+Hull_0037,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -3.195 0.961,376
+Hull_0038,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -3.191 0.971,376
+Hull_0039,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -3.191 0.971,376
+Hull_0040,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -3.190 1.139,5426
+Hull_0041,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -3.161 0.538,376
+Hull_0042,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -3.161 0.538,376
+Hull_0043,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -3.153 0.531,376
+Hull_0044,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -3.153 0.531,376
+Hull_0045,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.165 0.414,704
+Hull_0046,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.158 0.429,704
+Hull_0047,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.152 1.165,704
+Hull_0048,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -3.125 1.060,376
+Hull_0049,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -3.125 1.060,376
+Hull_0050,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.136 1.151,704
+Hull_0051,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -3.119 1.069,376
+Hull_0052,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -3.119 1.069,376
+Hull_0053,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -3.129 0.384,5426
+Hull_0054,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -3.083 0.368,5426
+Hull_0055,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -3.109 1.189,5426
+Hull_0056,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -3.080 0.471,376
+Hull_0057,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -3.080 0.471,376
+Hull_0058,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -3.070 0.467,376
+Hull_0059,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -3.070 0.467,376
+Hull_0060,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -3.068 1.215,5426
+Hull_0061,18-23,COVER,0B16_Base Unit,exact,steel_structural,component:final_drive_right,,0.035356,277.54,-1.040 -3.089 0.877,4180
+Hull_0062,18-22,COVER,0B16_Base Unit,exact,steel_structural,component:final_drive_left,,0.035352,277.51,1.031 -3.089 0.877,4178
+Hull_0063,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -3.041 1.116,376
+Hull_0064,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -3.041 1.116,376
+Hull_0065,20K25,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.001338,10.5,0.725 -3.053 0.870,156
+Hull_0066,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -3.031 1.122,376
+Hull_0067,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -3.031 1.122,376
+Hull_0068,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.036 0.371,704
+Hull_0069,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.036 0.350,704
+Hull_0070,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -3.022 1.223,704
+Hull_0071,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -3.009 1.203,704
+Hull_0072,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.998 0.322,5426
+Hull_0073,21K44,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.001999,15.69,-0.584 -2.971 1.101,1624
+Hull_0074,21K44,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.001999,15.69,0.575 -2.971 1.101,1624
+Hull_0075,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.951 0.310,5426
+Hull_0076,36F03,COVER,0B25_Front Armor,exact,armour_rolled_homogeneous,armour:hull_driver_front,100,0.156701,1230.1,-0.005 -2.915 1.387,25780
+Hull_0077,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.955 0.412,376
+Hull_0078,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.955 0.412,376
+Hull_0079,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.944 0.410,376
+Hull_0080,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.944 0.410,376
+Hull_0081,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.973 1.234,5426
+Hull_0082,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.927 1.249,5426
+Hull_0083,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.925 1.146,376
+Hull_0084,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.925 1.146,376
+Hull_0085,21K51,BOX,0B16_Base Unit,exact,steel_structural,component:steering_unit,,0.148814,1168.19,-0.004 -2.946 1.009,7884
+Hull_0086,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.915 1.149,376
+Hull_0087,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.915 1.149,376
+Hull_0088,20K84,PEDAL,0B16_Base Unit,exact,steel_structural,fitting,,0.000596,4.68,0.633 -2.879 0.766,560
+Hull_0089,18B55,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.002512,19.72,0.962 -2.959 0.564,1912
+Hull_0090,18B54,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.002512,19.72,-0.970 -2.959 0.564,1916
+Hull_0091,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.904 0.316,704
+Hull_0092,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.903 0.292,704
+Hull_0093,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.880 1.245,704
+Hull_0094,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.873 1.226,704
+Hull_0095,30D44,ROLLAR,0B19_Drive Rollar,exact,steel_cast,running_gear,,0.031685,248.73,1.242 -2.871 0.786,21104
+Hull_0096,30D44,ROLLAR,0B19_Drive Rollar,exact,steel_cast,running_gear,,0.031685,248.73,-1.250 -2.871 0.786,21104
+Hull_0097,30D46,ROLLAR,0B19_Drive Rollar,piece_of,steel_cast,running_gear,,0.038774,304.38,-1.598 -2.871 0.786,26596
+Hull_0098,30D46,ROLLAR,0B19_Drive Rollar,piece_of,steel_cast,running_gear,,0.038774,304.38,1.590 -2.871 0.786,26596
+Hull_0099,29D52,PIN,0B19_Drive Rollar,exact,steel_cast,running_gear,,0.005235,41.09,-1.515 -2.871 0.786,3888
+Hull_0100,29D52,PIN,0B19_Drive Rollar,exact,steel_cast,running_gear,,0.005235,41.09,1.506 -2.871 0.786,3888
+Hull_0101,29D49,RING,0B19_Drive Rollar,exact,steel_cast,running_gear,,0.000711,5.58,-1.419 -2.871 0.786,416
+Hull_0102,29D49,RING,0B19_Drive Rollar,exact,steel_cast,running_gear,,0.000711,5.58,1.410 -2.871 0.786,416
+Hull_0103,29D56,DRIVER,0B16_Base Unit,exact,steel_structural,component:final_drive_right,,0.033813,265.44,-1.216 -2.863 0.795,11184
+Hull_0104,29D56,DRIVER,0B16_Base Unit,exact,steel_structural,component:final_drive_left,,0.033813,265.44,1.207 -2.862 0.793,11184
+Hull_0105,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.865 0.264,5426
+Hull_0106,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.818 0.252,5426
+Hull_0107,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.822 0.354,376
+Hull_0108,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.822 0.354,376
+Hull_0109,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.812 0.351,376
+Hull_0110,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.812 0.351,376
+Hull_0111,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.803 1.152,376
+Hull_0112,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.803 1.152,376
+Hull_0113,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.831 1.248,5426
+Hull_0114,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.783 1.252,5426
+Hull_0115,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.792 1.153,376
+Hull_0116,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.792 1.153,376
+Hull_0117,21K55,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.007065,55.46,0.051 -2.757 1.263,2362
+Hull_0118,20P26,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,4.9e-05,0.38,0.630 -2.774 0.748,484
+Hull_0119,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.771 0.258,704
+Hull_0120,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.770 0.234,704
+Hull_0121,37D37,COVER,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.001145,8.99,-0.001 -2.764 1.868,2422
+Hull_0122,20K16,PEDAL,0B16_Base Unit,exact,steel_structural,fitting,,0.001128,8.86,0.508 -2.760 0.623,732
+Hull_0123,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.738 1.239,704
+Hull_0124,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.736 1.219,704
+Hull_0125,37T04,LIGHT,0B25_Front Armor,exact,lamp_steel_glass,fitting,,0.000638,2.55,-0.001 -2.723 1.872,1070
+Hull_0126,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.732 0.206,5426
+Hull_0127,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.685 0.194,5426
+Hull_0128,36B17,BLOCK,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.006026,47.3,0.542 -2.709 1.491,744
+Hull_0129,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.689 0.296,376
+Hull_0130,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.689 0.296,376
+Hull_0131,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.679 0.293,376
+Hull_0132,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.679 0.293,376
+Hull_0133,20K11,PEDAL,0B16_Base Unit,exact,steel_structural,fitting,,0.000574,4.5,0.779 -2.708 0.642,840
+Hull_0134,21K48,GUIDE,0B16_Base Unit,exact,steel_structural,fitting,,0.003427,26.9,0.564 -2.687 1.270,4644
+Hull_0135,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.692 1.127,376
+Hull_0136,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.692 1.127,376
+Hull_0137,21K59,COVER,0B16_Base Unit,exact,steel_structural,component:steering_unit,,0.049802,390.95,-0.904 -2.659 0.952,13784
+Hull_0138,21K59,COVER,0B16_Base Unit,exact,steel_structural,component:steering_unit,,0.049802,390.95,0.895 -2.659 0.951,13784
+Hull_0139,37D39,BLACKET,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.000861,6.76,-0.019 -2.678 1.694,1336
+Hull_0140,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.681 1.125,376
+Hull_0141,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.681 1.125,376
+Hull_0142,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.690 1.227,5426
+Hull_0143,37D38,BASE,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.001903,14.94,-0.001 -2.672 1.865,2184
+Hull_0144,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.643 1.217,5426
+Hull_0145,21K54,BOX,0B16_Base Unit,exact,steel_structural,component:steering_unit,,0.08227,645.82,0.010 -2.647 0.945,6254
+Hull_0146,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.638 0.200,704
+Hull_0147,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.637 0.175,704
+Hull_0148,37V30,BLACKET,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.000292,2.29,-0.004 -2.600 1.612,8
+Hull_0149,37V29,BLACKET,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.001098,8.62,-0.004 -2.560 1.755,398
+Hull_0150,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.607 1.162,704
+Hull_0151,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.603 1.191,704
+Hull_0152,17P06,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.000169,1.32,-0.242 -2.576 0.538,700
+Hull_0153,17P06,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.000169,1.32,-0.242 -2.576 0.538,700
+Hull_0154,17P06,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.000169,1.32,0.233 -2.576 0.538,700
+Hull_0155,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.599 0.148,5426
+Hull_0156,31B22,COVER,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.003582,28.12,-0.602 -2.577 1.708,4100
+Hull_0157,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.552 0.136,5426
+Hull_0158,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.557 0.238,376
+Hull_0159,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.557 0.238,376
+Hull_0160,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.573 1.066,376
+Hull_0161,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.573 1.066,376
+Hull_0162,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.546 0.235,376
+Hull_0163,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.546 0.235,376
+Hull_0164,31B25,COVER,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.018411,144.52,0.542 -2.553 1.650,960
+Hull_0165,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.562 1.062,376
+Hull_0166,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.562 1.062,376
+Hull_0167,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.560 1.165,5426
+Hull_0168,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.514 1.150,5426
+Hull_0169,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.506 0.142,704
+Hull_0170,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.504 0.117,704
+Hull_0171,28B-B04,COVER,0B25_Front Armor,exact,armour_rolled_homogeneous,armour:hull_front,100,0.131224,1030.11,-0.037 -2.475 1.670,4036
+Hull_0172,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.478 1.120,704
+Hull_0173,37Z24,HOLDER,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.000439,3.44,-0.178 -2.486 1.850,2828
+Hull_0174,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.476 1.094,704
+Hull_0175,28B-K47,GUIDE,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.003793,29.78,-0.596 -2.460 1.674,3200
+Hull_0176,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.466 0.089,5426
+Hull_0177,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.419 0.077,5426
+Hull_0178,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.424 0.180,376
+Hull_0179,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.424 0.180,376
+Hull_0180,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.435 1.001,376
+Hull_0181,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.435 1.001,376
+Hull_0182,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.413 0.177,376
+Hull_0183,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.413 0.177,376
+Hull_0184,21K70,ROLLAR,0B16_Base Unit,exact,steel_cast,running_gear,,0.001545,12.13,0.585 -2.443 1.274,376
+Hull_0185,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.424 0.998,376
+Hull_0186,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.424 0.998,376
+Hull_0187,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.429 1.100,5426
+Hull_0188,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.383 1.089,5426
+Hull_0189,28B-T03,GLASS,0B25_Front Armor,exact,glass_laminated,fitting,,0.003178,7.95,0.542 -2.404 1.644,968
+Hull_0190,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.373 0.083,704
+Hull_0191,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.371 0.059,704
+Hull_0192,28B-K31,CASE,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.0076,59.66,0.534 -2.372 1.574,3678
+Hull_0193,28B-P11,BLACKET,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.000272,2.13,-1.406 -2.346 1.773,44
+Hull_0194,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.344 1.061,704
+Hull_0195,28B-K81,GUN,0B25_Front Armor,exact,steel_gun,component:hull_mg,,0.002875,22.57,-0.641 -2.273 1.671,2928
+Hull_0196,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.340 1.036,704
+Hull_0197,19K15,Hydraulic,0B16_Base Unit,exact,hydraulic_steel_oil,fitting,,0.01354,67.7,-0.872 -2.246 0.885,2308
+Hull_0198,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.333 0.031,5426
+Hull_0199,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.287 0.019,5426
+Hull_0200,28B-K10,HOLDER,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.001612,12.65,-0.557 -2.333 1.681,1328
+Hull_0201,18D57,ROLLAR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,-0.793 -2.342 0.515,1416
+Hull_0202,20K82,ARM,0B16_Base Unit,exact,steel_structural,fitting,,0.00167,13.11,0.895 -2.305 0.804,690
+Hull_0203,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.291 0.122,376
+Hull_0204,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.291 0.122,376
+Hull_0205,28B-K46,COVER,0B25_Front Armor,exact,armour_rolled_homogeneous,armour:hull_front,100,0.079184,621.59,0.023 -2.405 1.634,4128
+Hull_0206,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.280 0.119,376
+Hull_0207,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.280 0.119,376
+Hull_0208,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.290 0.947,376
+Hull_0209,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.290 0.947,376
+Hull_0210,21M08,AMMO,0B25_Front Armor,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.576 -2.273 1.688,3352
+Hull_0211,21M08,AMMO,0B25_Front Armor,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.406 -2.273 1.688,3352
+Hull_0212,21M08,AMMO,0B25_Front Armor,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.237 -2.273 1.688,3352
+Hull_0213,28B-K41,SPINNER,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.000245,1.92,0.321 -2.273 1.479,16284
+Hull_0214,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.294 1.046,5426
+Hull_0215,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.279 0.945,376
+Hull_0216,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.279 0.945,376
+Hull_0217,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.246 1.039,5426
+Hull_0218,B76,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000341,2.68,0.350 -2.261 1.934,1406
+Hull_0219,B76,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000341,2.68,0.856 -2.261 1.934,1406
+Hull_0220,21K40,WHELL,0B16_Base Unit,exact,steel_cast,fitting,,0.000498,3.91,0.209 -2.269 1.206,1816
+Hull_0221,28B-K19,PANEL,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.00091,7.14,1.247 -2.260 1.775,736
+Hull_0222,19K66,CASE,0B16_Base Unit,exact,steel_structural,fitting,,0.003471,27.24,-1.300 -2.242 1.485,400
+Hull_0223,,TG_RM5010-34Z49,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000423,3.32,-0.286 -2.229 1.936,658
+Hull_0224,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.240 0.003,704
+Hull_0225,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.240 0.025,704
+Hull_0226,17K71,ARM,0B16_Base Unit,exact,steel_structural,fitting,,0.010353,81.27,0.110 -2.127 0.545,1236
+Hull_0227,35O21,HAMMER,0B26_Cover Unit,exact,tool_steel_wood,fitting,,0.002042,6.13,0.420 -2.246 1.940,236
+Hull_0228,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.206 1.015,704
+Hull_0229,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.198 0.991,704
+Hull_0230,21P02,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,8.3e-05,0.65,0.210 -2.215 1.223,238
+Hull_0231,34B21,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.007061,55.43,-0.004 -2.192 1.951,988
+Hull_0232,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.181 0.086,376
+Hull_0233,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.181 0.086,376
+Hull_0234,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.196 -0.013,5426
+Hull_0235,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.147 -0.011,5426
+Hull_0236,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.170 0.087,376
+Hull_0237,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.170 0.087,376
+Hull_0238,21U41,WHELL,0B16_Base Unit,exact,steel_cast,fitting,,0.000715,5.61,0.586 -2.166 1.385,3686
+Hull_0239,28B-K83,ROLLAR,0B25_Front Armor,exact,steel_cast,running_gear,,0.000366,2.87,-0.390 -2.159 1.707,264
+Hull_0240,20K22,SCAN,0B16_Base Unit,piece_of,glass_laminated,fitting,,0.007443,18.61,1.117 -2.010 1.519,2694
+Hull_0241,28B-K09,VIEW,0B25_Front Armor,exact,glass_laminated,fitting,,0.001085,2.71,-0.464 -2.189 1.647,1086
+Hull_0242,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.140 0.907,376
+Hull_0243,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.140 0.907,376
+Hull_0244,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.154 1.006,5426
+Hull_0245,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.106 1.004,5426
+Hull_0246,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.129 0.907,376
+Hull_0247,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.129 0.907,376
+Hull_0248,30C06,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.046073,331.73,1.861 -2.124 0.444,10398
+Hull_0249,29C02,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047065,338.87,1.373 -2.124 0.444,9940
+Hull_0250,30D48,WASHER,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,1.589 -2.124 0.444,384
+Hull_0251,29C04,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.040692,292.98,1.506 -2.124 0.444,8776
+Hull_0252,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.105 0.009,704
+Hull_0253,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.097 -0.008,704
+Hull_0254,29C04,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.040692,292.98,-1.515 -2.077 0.444,8776
+Hull_0255,30C06,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.046073,331.73,-1.870 -2.077 0.444,10398
+Hull_0256,30D48,WASHER,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,-1.598 -2.077 0.444,384
+Hull_0257,29C02,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047065,338.87,-1.382 -2.077 0.444,9940
+Hull_0258,28B-K06,BASE,0B25_Front Armor,piece_of,steel_structural_plate,fitting,,0.000573,4.5,-0.604 -2.068 1.551,474
+Hull_0259,19K02,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.001012,7.95,-1.293 -2.064 1.437,64
+Hull_0260,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -2.063 0.984,704
+Hull_0261,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.601 -2.054 1.702,2124
+Hull_0262,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.590 -2.054 1.699,2124
+Hull_0263,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.579 -2.054 1.695,2124
+Hull_0264,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.568 -2.054 1.690,2124
+Hull_0265,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.558 -2.054 1.684,2124
+Hull_0266,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.548 -2.054 1.677,2124
+Hull_0267,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.539 -2.054 1.669,2124
+Hull_0268,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.530 -2.054 1.661,2124
+Hull_0269,28B-K42,CHAIN,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.000287,2.26,-0.546 -2.061 1.637,348
+Hull_0270,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.522 -2.053 1.652,2124
+Hull_0271,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.515 -2.053 1.642,2124
+Hull_0272,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.509 -2.053 1.632,2124
+Hull_0273,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.504 -2.053 1.621,2124
+Hull_0274,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.500 -2.053 1.610,2124
+Hull_0275,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.497 -2.053 1.599,2124
+Hull_0276,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.494 -2.052 1.587,2124
+Hull_0277,,GUN_MG34_01,0B25_Front Armor,exact,steel_gun,gun,,4e-06,0.03,-0.493 -2.052 1.575,2124
+Hull_0278,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -2.054 0.961,704
+Hull_0279,19K01,CASE,0B16_Base Unit,exact,steel_structural,fitting,,0.004757,37.34,-1.295 -2.056 1.534,5320
+Hull_0280,20K65,CHAIR,0B16_Base Unit,exact,seat_steel_leather,component:driver_seat,,0.003459,5.19,0.560 -2.050 0.661,4016
+Hull_0281,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -2.048 0.082,376
+Hull_0282,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -2.048 0.082,376
+Hull_0283,03J30,CASE,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.003574,28.05,-0.641 -2.054 1.400,822
+Hull_0284,03J30,CASE,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.003574,28.05,-0.532 -2.054 1.400,822
+Hull_0285,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -2.051 -0.018,5426
+Hull_0286,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -2.037 0.084,376
+Hull_0287,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -2.037 0.084,376
+Hull_0288,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.003 -0.010,5426
+Hull_0289,28B-K08,GUN,0B25_Front Armor,exact,steel_gun,gun,,0.00219,17.19,-0.517 -1.935 1.629,7474
+Hull_0290,28A-D51,BLACKET,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000459,3.61,0.580 -2.004 1.979,2786
+Hull_0291,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.988 0.882,376
+Hull_0292,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.988 0.882,376
+Hull_0293,34D07,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.00109,8.56,-0.929 -1.987 2.002,1548
+Hull_0294,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -2.011 0.980,5426
+Hull_0295,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.962 0.982,5426
+Hull_0296,34D07,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.00109,8.56,0.923 -1.982 2.002,1548
+Hull_0297,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.977 0.883,376
+Hull_0298,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.977 0.883,376
+Hull_0299,13T02,GLASS,0B26_Cover Unit,exact,glass_laminated,fitting,,0.002452,6.13,-0.926 -1.986 1.836,280
+Hull_0300,13T02,GLASS,0B26_Cover Unit,exact,glass_laminated,fitting,,0.002452,6.13,0.920 -1.981 1.836,280
+Hull_0301,28B-K39,BUFFER,0B25_Front Armor,exact,steel_structural_plate,fitting,,0.000775,6.09,-0.376 -1.979 1.686,6944
+Hull_0302,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.963 0.014,704
+Hull_0303,20K67,CHAIR,0B16_Base Unit,exact,seat_steel_leather,component:driver_seat,,0.00988,14.82,0.560 -1.917 0.851,6712
+Hull_0304,28A-D54,BLOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.004284,33.63,0.411 -1.997 1.944,6390
+Hull_0305,19K02,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.001012,7.95,-1.293 -1.955 1.429,64
+Hull_0306,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.952 -0.008,704
+Hull_0307,19K01,CASE,0B16_Base Unit,exact,steel_structural,fitting,,0.004757,37.34,-1.295 -1.948 1.525,5320
+Hull_0308,34B40,BOX,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.018991,149.08,-0.436 -1.917 1.967,3684
+Hull_0309,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.918 0.966,704
+Hull_0310,28B-K07,GUN,0B25_Front Armor,exact,steel_gun,component:hull_mg,,0.001585,12.44,-0.642 -1.935 1.651,1164
+Hull_0311,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.908 0.943,704
+Hull_0312,21K21,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.001472,11.55,-0.131 -1.904 1.447,1146
+Hull_0313,18D57,ROLLAR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,0.784 -1.860 0.515,1416
+Hull_0314,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.903 0.082,376
+Hull_0315,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.903 0.082,376
+Hull_0316,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.906 -0.018,5426
+Hull_0317,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.892 0.084,376
+Hull_0318,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.892 0.084,376
+Hull_0319,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.858 -0.010,5426
+Hull_0322,34B26,DOOR,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.009919,77.86,0.986 -1.868 1.922,5274
+Hull_0323,34B27,DOOR,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.009924,77.91,-0.995 -1.868 1.922,5274
+Hull_0324,34D32,ARM,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.001378,10.82,1.267 -1.869 1.799,902
+Hull_0325,34D14,LOCKARM,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000429,3.37,-0.944 -1.869 1.866,1810
+Hull_0326,34D14,LOCKARM,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000429,3.37,0.935 -1.869 1.866,1810
+Hull_0327,34D31,HOLDER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000593,4.66,-1.141 -1.869 1.893,704
+Hull_0328,34D31,HOLDER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000593,4.66,1.132 -1.869 1.893,704
+Hull_0329,34D32,ARM,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.001378,10.82,-1.276 -1.869 1.799,902
+Hull_0330,28A-D51,BLACKET,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000459,3.61,0.307 -1.857 1.979,2786
+Hull_0331,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.838 0.869,376
+Hull_0332,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.838 0.869,376
+Hull_0333,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.866 0.965,5426
+Hull_0334,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.818 0.969,5426
+Hull_0335,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.827 0.870,376
+Hull_0336,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.827 0.870,376
+Hull_0337,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.818 0.014,704
+Hull_0338,17P05,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001324,10.4,-0.380 -1.847 0.562,1438
+Hull_0339,17P04,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001061,8.33,0.371 -1.754 0.572,1404
+Hull_0340,20K53,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.026026,204.31,1.497 -1.805 1.605,2674
+Hull_0341,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.807 -0.008,704
+Hull_0342,21K49,BOX,0B16_Base Unit,exact,steel_structural,component:gearbox,,0.288935,2268.14,-0.050 -1.737 0.953,9178
+Hull_0343,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.773 0.956,704
+Hull_0344,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.762 0.934,704
+Hull_0345,20P24,SPRING,0B16_Base Unit,exact,steel_spring,fitting,,0.000114,0.9,0.560 -1.756 0.951,16628
+Hull_0346,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.758 0.082,376
+Hull_0347,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.758 0.082,376
+Hull_0348,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.761 -0.018,5426
+Hull_0349,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.747 0.084,376
+Hull_0350,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.747 0.084,376
+Hull_0351,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.713 -0.010,5426
+Hull_0352,18D57,ROLLAR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,-0.793 -1.770 0.515,1416
+Hull_0353,20H65,Hydraulic,0B16_Base Unit,exact,hydraulic_steel_oil,fitting,,0.011342,56.71,0.864 -1.737 0.870,2332
+Hull_0354,19K18,CASE,0B16_Base Unit,exact,steel_structural,fitting,,0.00166,13.03,-0.963 -1.700 1.128,152
+Hull_0355,21K57,BOX,0B16_Base Unit,exact,steel_structural,component:radio,,0.068134,534.85,-0.017 -1.690 1.543,10946
+Hull_0356,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.690 0.862,376
+Hull_0357,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.690 0.862,376
+Hull_0358,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.721 0.957,5426
+Hull_0359,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.673 0.963,5426
+Hull_0360,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.679 0.863,376
+Hull_0361,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.679 0.863,376
+Hull_0362,19K02,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.001012,7.95,-1.431 -1.682 1.407,64
+Hull_0363,19K02,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.001012,7.95,-1.322 -1.682 1.407,64
+Hull_0364,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.673 0.014,704
+Hull_0365,19K01,CASE,0B16_Base Unit,exact,steel_structural,fitting,,0.004757,37.34,-1.431 -1.677 1.504,5320
+Hull_0366,19K01,CASE,0B16_Base Unit,exact,steel_structural,fitting,,0.004757,37.34,-1.322 -1.677 1.504,5320
+Hull_0367,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.662 -0.008,704
+Hull_0368,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.545 -1.645 1.704,3352
+Hull_0369,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.627 0.951,704
+Hull_0370,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.616 0.930,704
+Hull_0371,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.613 0.082,376
+Hull_0372,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.613 0.082,376
+Hull_0373,35D17,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000349,2.74,1.420 -1.592 1.960,1174
+Hull_0374,B76,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000341,2.68,-0.191 -1.588 1.934,1406
+Hull_0375,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.616 -0.018,5426
+Hull_0376,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.602 0.084,376
+Hull_0377,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.602 0.084,376
+Hull_0378,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.568 -0.010,5426
+Hull_0379,34O26,SHOVEL,0B26_Cover Unit,exact,tool_steel_wood,fitting,,0.001821,5.46,0.147 -1.585 1.945,1402
+Hull_0380,34O26,SHOVEL,0B26_Cover Unit,piece_of,tool_steel_wood,fitting,,1e-06,0.0,0.228 -1.581 1.968,18752
+Hull_0381,34O26,SHOVEL,0B26_Cover Unit,piece_of,tool_steel_wood,fitting,,1e-06,0.0,0.158 -1.581 1.967,14136
+Hull_0382,19K79,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.004103,32.21,-0.943 -1.573 0.851,5968
+Hull_0383,29C01,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047223,340.01,1.254 -1.552 0.444,10006
+Hull_0384,30C05,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045623,328.49,1.735 -1.552 0.444,10538
+Hull_0385,29C03,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045496,327.57,1.621 -1.552 0.444,10550
+Hull_0386,30D48,WASHER,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,1.589 -1.552 0.444,384
+Hull_0387,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.576 0.953,5426
+Hull_0388,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.543 0.859,376
+Hull_0389,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.543 0.859,376
+Hull_0390,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.528 0.961,5426
+Hull_0391,19P12,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,9.6e-05,0.75,-1.628 -1.546 1.776,44
+Hull_0392,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.532 0.861,376
+Hull_0393,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.532 0.861,376
+Hull_0394,19K28,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.028322,222.32,-0.657 -1.568 0.736,11808
+Hull_0395,17P07,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001579,12.4,0.011 -1.535 0.541,288
+Hull_0396,35D17,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000349,2.74,-1.386 -1.526 1.960,1174
+Hull_0397,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.528 0.014,704
+Hull_0398,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.517 -0.008,704
+Hull_0399,32O12,AXE,0B26_Cover Unit,exact,tool_steel_wood,fitting,,0.002782,8.35,-0.411 -1.466 1.932,80
+Hull_0400,29C03,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045496,327.57,-1.630 -1.505 0.444,10550
+Hull_0401,29C01,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047223,340.01,-1.263 -1.505 0.444,10006
+Hull_0402,30D48,WASHER,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,-1.598 -1.505 0.444,384
+Hull_0403,30C05,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045623,328.49,-1.744 -1.505 0.444,10538
+Hull_0404,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.545 -1.493 1.704,3352
+Hull_0405,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.482 0.950,704
+Hull_0406,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.471 0.928,704
+Hull_0407,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.468 0.082,376
+Hull_0408,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.468 0.082,376
+Hull_0409,B76,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000341,2.68,-0.425 -1.444 1.934,1406
+Hull_0410,B76,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000341,2.68,0.140 -1.444 1.934,1406
+Hull_0411,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.471 -0.018,5426
+Hull_0412,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.457 0.084,376
+Hull_0413,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.457 0.084,376
+Hull_0414,19K05,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.001484,11.65,-0.639 -1.449 1.171,3998
+Hull_0415,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.423 -0.010,5426
+Hull_0416,20K29,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.024067,188.92,0.616 -1.421 0.721,17238
+Hull_0417,19K12A,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001635,12.83,-0.844 -1.396 1.141,1600
+Hull_0418,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.431 0.952,5426
+Hull_0419,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.397 0.858,376
+Hull_0420,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.397 0.858,376
+Hull_0421,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.383 0.959,5426
+Hull_0422,35D17,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000349,2.74,1.615 -1.393 1.960,1174
+Hull_0423,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.386 0.860,376
+Hull_0424,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.386 0.860,376
+Hull_0425,35D17,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000349,2.74,-1.604 -1.378 1.960,1174
+Hull_0426,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.383 0.014,704
+Hull_0427,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.372 -0.008,704
+Hull_0428,19K04,CASE,0B16_Base Unit,exact,steel_structural,fitting,,0.00484,37.99,-1.285 -1.359 1.417,472
+Hull_0429,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.337 0.949,704
+Hull_0430,34D09,HOOK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.001134,8.9,-0.983 -1.335 1.922,4518
+Hull_0431,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.326 0.927,704
+Hull_0432,18D57,ROLLAR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,0.784 -1.288 0.515,1416
+Hull_0433,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.426 -1.323 1.680,3352
+Hull_0434,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.298 -1.323 1.680,3352
+Hull_0435,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.169 -1.323 1.680,3352
+Hull_0436,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.003265,9.8,-1.041 -1.323 1.680,3352
+Hull_0437,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.323 0.082,376
+Hull_0438,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.323 0.082,376
+Hull_0439,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.326 -0.018,5426
+Hull_0440,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.312 0.084,376
+Hull_0441,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.312 0.084,376
+Hull_0442,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.278 -0.010,5426
+Hull_0443,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.286 0.951,5426
+Hull_0444,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.253 0.856,376
+Hull_0445,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.253 0.856,376
+Hull_0446,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.238 0.958,5426
+Hull_0447,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.242 0.858,376
+Hull_0448,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.242 0.858,376
+Hull_0449,34B62,Wire Hook,0B26_Cover Unit,exact,copper_cable,fitting,,0.004405,26.43,1.434 -1.278 1.936,2674
+Hull_0450,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.238 0.014,704
+Hull_0451,19K75,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.007396,58.06,-0.015 -1.254 0.523,574
+Hull_0452,26P13,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.000103,0.81,-1.232 -1.240 1.753,44
+Hull_0453,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.227 -0.008,704
+Hull_0454,19K32,ARM,0B16_Base Unit,exact,steel_structural,fitting,,0.001023,8.03,-0.280 -1.222 0.951,1670
+Hull_0455,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.192 0.947,704
+Hull_0456,22K45,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.040835,320.56,-0.267 -1.188 1.617,3314
+Hull_0457,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.182 0.925,704
+Hull_0458,34B62,Wire Hook,0B26_Cover Unit,exact,copper_cable,fitting,,0.004405,26.43,-1.418 -1.214 1.936,2674
+Hull_0459,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.178 0.082,376
+Hull_0460,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.178 0.082,376
+Hull_0461,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.181 -0.018,5426
+Hull_0462,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.167 0.084,376
+Hull_0463,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.167 0.084,376
+Hull_0464,18D57,ROLLAR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,-0.793 -1.197 0.515,1416
+Hull_0465,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.133 -0.010,5426
+Hull_0466,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.109 0.853,376
+Hull_0467,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.109 0.853,376
+Hull_0468,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -1.141 0.948,5426
+Hull_0469,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.093 0.954,5426
+Hull_0470,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.098 0.854,376
+Hull_0471,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.098 0.854,376
+Hull_0472,21K13,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.008266,64.89,-0.004 -1.126 0.690,1130
+Hull_0473,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.093 0.014,704
+Hull_0474,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.082 -0.008,704
+Hull_0475,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -1.047 0.942,704
+Hull_0476,34B62,Wire Hook,0B26_Cover Unit,exact,copper_cable,fitting,,0.004405,26.43,1.641 -1.081 1.936,2674
+Hull_0477,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -1.037 0.920,704
+Hull_0478,34B62,Wire Hook,0B26_Cover Unit,exact,copper_cable,fitting,,0.004405,26.43,-1.636 -1.066 1.936,2674
+Hull_0479,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -1.033 0.082,376
+Hull_0480,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -1.033 0.082,376
+Hull_0481,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -1.036 -0.018,5426
+Hull_0482,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -1.022 0.084,376
+Hull_0483,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -1.022 0.084,376
+Hull_0484,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.988 -0.010,5426
+Hull_0485,30D48,WASHER,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,1.589 -0.980 0.444,384
+Hull_0486,29C04,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.040692,292.98,1.506 -0.980 0.444,8776
+Hull_0487,30C06,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.046073,331.73,1.861 -0.980 0.444,10398
+Hull_0488,29C02,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047065,338.87,1.373 -0.980 0.444,9940
+Hull_0489,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.965 0.848,376
+Hull_0490,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.965 0.848,376
+Hull_0491,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.996 0.943,5426
+Hull_0492,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.948 0.949,5426
+Hull_0493,17P08,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001706,13.39,-0.004 -0.963 0.545,248
+Hull_0494,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.954 0.849,376
+Hull_0495,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.954 0.849,376
+Hull_0496,25H28,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.018645,146.36,-0.481 -0.952 0.860,28
+Hull_0497,25H28,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.018645,146.36,0.472 -0.952 0.860,28
+Hull_0498,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.948 0.014,704
+Hull_0499,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.937 -0.008,704
+Hull_0500,29C02,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047065,338.87,-1.382 -0.933 0.444,9940
+Hull_0501,29C04,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.040692,292.98,-1.515 -0.933 0.444,8776
+Hull_0502,30C06,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.046073,331.73,-1.870 -0.933 0.444,10398
+Hull_0503,30D48,WASHER,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,-1.598 -0.933 0.444,384
+Hull_0504,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.903 0.937,704
+Hull_0505,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.892 0.915,704
+Hull_0506,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.888 0.082,376
+Hull_0507,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.888 0.082,376
+Hull_0508,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.891 -0.018,5426
+Hull_0509,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.877 0.084,376
+Hull_0510,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.877 0.084,376
+Hull_0511,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.843 -0.010,5426
+Hull_0512,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.821 0.842,376
+Hull_0513,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.821 0.842,376
+Hull_0514,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.851 0.938,5426
+Hull_0515,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.803 0.943,5426
+Hull_0516,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.810 0.844,376
+Hull_0517,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.810 0.844,376
+Hull_0518,17P18,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.002282,17.91,-0.520 -0.779 0.592,1584
+Hull_0519,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.803 0.014,704
+Hull_0520,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.792 -0.008,704
+Hull_0521,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.758 0.931,704
+Hull_0522,18D57,ROLLAR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,0.784 -0.715 0.515,1416
+Hull_0523,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.747 0.909,704
+Hull_0524,22K80,SHAFT,0B16_Base Unit,exact,iron_cast_machinery,fitting,,0.002284,16.44,-0.194 -0.743 0.762,1924
+Hull_0525,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.743 0.082,376
+Hull_0526,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.743 0.082,376
+Hull_0527,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.746 -0.018,5426
+Hull_0528,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.732 0.084,376
+Hull_0529,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.732 0.084,376
+Hull_0530,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.698 -0.010,5426
+Hull_0531,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.676 0.836,376
+Hull_0532,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.676 0.836,376
+Hull_0533,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.706 0.932,5426
+Hull_0534,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.658 0.937,5426
+Hull_0535,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.665 0.838,376
+Hull_0536,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.665 0.838,376
+Hull_0537,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.658 0.014,704
+Hull_0538,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.647 -0.008,704
+Hull_0539,17P17,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.002171,17.04,0.511 -0.696 0.583,1302
+Hull_0540,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.613 0.925,704
+Hull_0541,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.602 0.903,704
+Hull_0542,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.598 0.082,376
+Hull_0543,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.598 0.082,376
+Hull_0544,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.556 -0.524 1.784,6276
+Hull_0545,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.565 -0.524 1.784,6276
+Hull_0546,18D57,ROLLAR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,-0.793 -0.625 0.515,1416
+Hull_0547,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.556 -0.523 1.652,6276
+Hull_0548,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.565 -0.523 1.652,6276
+Hull_0549,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.556 -0.522 1.515,6276
+Hull_0550,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.565 -0.522 1.515,6276
+Hull_0551,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.556 -0.521 1.383,6276
+Hull_0552,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.565 -0.521 1.383,6276
+Hull_0553,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.601 -0.018,5426
+Hull_0554,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.587 0.084,376
+Hull_0555,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.587 0.084,376
+Hull_0556,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.553 -0.010,5426
+Hull_0557,23H06,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.032415,254.46,-0.849 -0.546 0.927,336
+Hull_0558,23H05,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.032414,254.45,0.844 -0.546 0.927,336
+Hull_0559,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_right_front,,0.003739,29.35,-1.378 -0.582 1.743,788
+Hull_0560,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_left_front,,0.003739,29.35,1.369 -0.582 1.743,788
+Hull_0561,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_right_front,,0.003739,29.35,-1.378 -0.582 1.612,788
+Hull_0562,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_left_front,,0.003739,29.35,1.369 -0.582 1.612,788
+Hull_0563,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_right_front,,0.003739,29.35,-1.378 -0.581 1.476,788
+Hull_0564,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_left_front,,0.003739,29.35,1.369 -0.581 1.476,788
+Hull_0565,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_right_front,,0.003739,29.35,-1.378 -0.581 1.345,788
+Hull_0566,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_left_front,,0.003739,29.35,1.369 -0.581 1.345,788
+Hull_0567,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.531 0.831,376
+Hull_0568,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.531 0.831,376
+Hull_0569,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.561 0.926,5426
+Hull_0570,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.513 0.932,5426
+Hull_0571,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.520 0.832,376
+Hull_0572,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.520 0.832,376
+Hull_0573,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.513 0.014,704
+Hull_0574,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.502 -0.008,704
+Hull_0575,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.468 0.920,704
+Hull_0576,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.457 0.897,704
+Hull_0577,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.453 0.082,376
+Hull_0578,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.453 0.082,376
+Hull_0579,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.456 -0.018,5426
+Hull_0580,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.442 0.084,376
+Hull_0581,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.442 0.084,376
+Hull_0582,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.408 -0.010,5426
+Hull_0583,29C01,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047223,340.01,1.254 -0.408 0.444,10006
+Hull_0584,30C05,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045623,328.49,1.735 -0.408 0.444,10538
+Hull_0585,29C03,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045496,327.57,1.621 -0.408 0.444,10550
+Hull_0586,30D48,WASHER,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,1.589 -0.408 0.444,384
+Hull_0587,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.385 0.826,376
+Hull_0588,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.385 0.826,376
+Hull_0589,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.416 0.921,5426
+Hull_0590,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.368 0.927,5426
+Hull_0591,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.374 0.827,376
+Hull_0592,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.374 0.827,376
+Hull_0593,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.368 0.014,704
+Hull_0594,30D48,WASHER,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,-1.598 -0.361 0.444,384
+Hull_0595,30C05,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045623,328.49,-1.744 -0.361 0.444,10538
+Hull_0596,29C01,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047223,340.01,-1.263 -0.361 0.444,10006
+Hull_0597,29C03,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045496,327.57,-1.630 -0.361 0.444,10550
+Hull_0598,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.356 -0.008,704
+Hull_0599,17P09,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001817,14.27,-0.007 -0.390 0.555,328
+Hull_0600,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.323 0.915,704
+Hull_0601,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.312 0.893,704
+Hull_0602,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.308 0.082,376
+Hull_0603,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.308 0.082,376
+Hull_0604,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.311 -0.018,5426
+Hull_0605,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.297 0.084,376
+Hull_0606,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.297 0.084,376
+Hull_0607,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.263 -0.010,5426
+Hull_0608,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.271 0.917,5426
+Hull_0609,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.239 0.822,376
+Hull_0610,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.239 0.822,376
+Hull_0611,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.223 0.923,5426
+Hull_0612,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.228 0.824,376
+Hull_0613,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.228 0.824,376
+Hull_0614,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.223 0.014,704
+Hull_0615,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.211 -0.008,704
+Hull_0616,22K38,CAM,0B16_Base Unit,exact,steel_structural,fitting,,0.002886,22.65,-0.194 -0.213 0.780,880
+Hull_0617,23M03-A-00,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-0.440 -0.125 0.758,6276
+Hull_0618,23M03-A-00,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,0.431 -0.125 0.758,6276
+Hull_0619,16LH01,BASE,0B16_Base Unit,exact,armour_rolled_homogeneous,armour:hull_lower,100 nose / 60 lower side / 25 belly,2.1076,16544.66,-0.004 -0.056 0.875,66798
+Hull_0620,18D57,ROLLAR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,0.784 -0.143 0.515,1416
+Hull_0621,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.178 0.912,704
+Hull_0622,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.167 0.890,704
+Hull_0623,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.163 0.082,376
+Hull_0624,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.163 0.082,376
+Hull_0625,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.166 -0.018,5426
+Hull_0626,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.152 0.084,376
+Hull_0627,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.152 0.084,376
+Hull_0628,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.118 -0.010,5426
+Hull_0629,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 -0.126 0.914,5426
+Hull_0630,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.093 0.820,376
+Hull_0631,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.093 0.820,376
+Hull_0632,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.078 0.921,5426
+Hull_0633,22K35,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.005868,46.06,-0.157 -0.098 0.543,778
+Hull_0634,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.082 0.821,376
+Hull_0635,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.082 0.821,376
+Hull_0636,34Z17,BLACKET,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.004074,31.98,-1.597 -0.058 1.933,1844
+Hull_0637,23K61,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.0272,213.52,-0.574 -0.063 0.756,108
+Hull_0638,23K62,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.0272,213.52,0.565 -0.063 0.756,108
+Hull_0639,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.078 0.014,704
+Hull_0640,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.066 -0.008,704
+Hull_0641,22K30,BASE,0B16_Base Unit,exact,steel_structural,fitting,,0.013051,102.45,-0.105 0.011 0.679,760
+Hull_0642,34Z18,BLACKET,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.004346,34.11,1.588 -0.026 1.932,1812
+Hull_0643,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 -0.033 0.910,704
+Hull_0644,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 -0.022 0.888,704
+Hull_0645,22H49,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.010054,78.92,1.305 -0.016 1.497,1082
+Hull_0646,22H49,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.010054,78.92,-1.314 -0.016 1.497,1082
+Hull_0647,18D57,ROLLAR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,-0.793 -0.053 0.515,1416
+Hull_0648,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 -0.018 0.082,376
+Hull_0649,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 -0.018 0.082,376
+Hull_0650,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 -0.021 -0.018,5426
+Hull_0651,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 -0.007 0.084,376
+Hull_0652,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 -0.007 0.084,376
+Hull_0653,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.027 -0.010,5426
+Hull_0654,25K33,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.00681,53.46,-0.006 0.008 1.003,4368
+Hull_0655,23K72,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.010178,79.89,-0.771 -0.122 0.942,3856
+Hull_0656,23K73,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.010178,79.89,0.762 -0.122 0.942,3856
+Hull_0657,23M03-A-00,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-0.705 -0.033 0.758,6276
+Hull_0658,23M03-A-00,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,0.572 -0.033 0.758,6276
+Hull_0659,23M03-A-00,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-0.580 -0.033 0.758,6276
+Hull_0660,23M03-A-00,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,0.696 -0.033 0.758,6276
+Hull_0661,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.019 0.912,5426
+Hull_0662,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.052 0.818,376
+Hull_0663,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.052 0.818,376
+Hull_0664,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.067 0.919,5426
+Hull_0665,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.063 0.820,376
+Hull_0666,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.063 0.820,376
+Hull_0667,22K63,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.008657,67.96,-0.134 0.029 0.828,1772
+Hull_0668,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.067 0.014,704
+Hull_0669,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.079 -0.008,704
+Hull_0670,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.113 0.909,704
+Hull_0671,25K74,ROLLAR,0B16_Base Unit,exact,steel_cast,running_gear,,0.020701,162.51,-0.004 0.111 0.867,4992
+Hull_0672,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.124 0.887,704
+Hull_0673,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.127 0.082,376
+Hull_0674,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.127 0.082,376
+Hull_0675,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.124 -0.018,5426
+Hull_0676,17P10,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001791,14.06,-0.008 0.180 0.556,212
+Hull_0677,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.138 0.084,376
+Hull_0678,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.138 0.084,376
+Hull_0679,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.172 -0.010,5426
+Hull_0680,30C06,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.046073,331.73,1.861 0.164 0.444,10398
+Hull_0681,29C02,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047065,338.87,1.373 0.164 0.444,9940
+Hull_0682,29C04,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.040692,292.98,1.506 0.164 0.444,8776
+Hull_0683,30D48,WASHER,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,1.589 0.164 0.444,384
+Hull_0684,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.164 0.911,5426
+Hull_0685,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.198 0.817,376
+Hull_0686,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.198 0.817,376
+Hull_0687,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.212 0.918,5426
+Hull_0688,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.208 0.819,376
+Hull_0689,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.208 0.819,376
+Hull_0690,29C04,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.040692,292.98,-1.515 0.211 0.444,8776
+Hull_0691,29C02,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047065,338.87,-1.382 0.211 0.444,9940
+Hull_0692,30C06,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.046073,331.73,-1.870 0.211 0.444,10398
+Hull_0693,30D48,WASHER,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,-1.598 0.211 0.444,384
+Hull_0694,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.212 0.014,704
+Hull_0695,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.224 -0.008,704
+Hull_0696,37F33,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.091889,721.33,-1.880 0.242 1.340,2084
+Hull_0697,37F34,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.091889,721.33,1.871 0.242 1.340,2084
+Hull_0698,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.258 0.908,704
+Hull_0699,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.269 0.886,704
+Hull_0700,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.272 0.082,376
+Hull_0701,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.272 0.082,376
+Hull_0702,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.270 -0.018,5426
+Hull_0703,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.283 0.084,376
+Hull_0704,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.283 0.084,376
+Hull_0705,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.317 -0.010,5426
+Hull_0706,29Z29,COVER,0B16_Base Unit,exact,armour_rolled_homogeneous,armour:hull_upper_side_left,80,0.189983,1491.37,-1.728 0.470 1.566,2812
+Hull_0707,29Z30,COVER,0B16_Base Unit,exact,armour_rolled_homogeneous,armour:hull_upper_side_right,80,0.189949,1491.1,1.721 0.474 1.572,3124
+Hull_0708,33B01,COVER,0B26_Cover Unit,exact,armour_rolled_homogeneous,armour:hull_roof,25,0.655397,5144.86,-0.002 0.122 1.882,46960
+Hull_0709,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.309 0.910,5426
+Hull_0710,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.343 0.816,376
+Hull_0711,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.343 0.816,376
+Hull_0712,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.357 0.918,5426
+Hull_0713,36Z53,WIRE,0B16_Base Unit,piece_of,copper_cable,fitting,,0.012835,77.01,1.768 0.545 1.730,28116
+Hull_0714,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.354 0.818,376
+Hull_0715,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.354 0.818,376
+Hull_0716,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.357 0.014,704
+Hull_0717,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.369 -0.008,704
+Hull_0718,18D57,ROLLAR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,0.784 0.429 0.515,1416
+Hull_0719,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.403 0.907,704
+Hull_0720,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.414 0.885,704
+Hull_0721,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.417 0.082,376
+Hull_0722,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.417 0.082,376
+Hull_0723,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.415 -0.018,5426
+Hull_0724,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.428 0.084,376
+Hull_0725,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.428 0.084,376
+Hull_0726,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.462 -0.010,5426
+Hull_0727,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.454 0.910,5426
+Hull_0728,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.488 0.816,376
+Hull_0729,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.488 0.816,376
+Hull_0730,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.502 0.917,5426
+Hull_0731,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.499 0.817,376
+Hull_0732,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.499 0.817,376
+Hull_0733,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.503 0.014,704
+Hull_0734,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.514 -0.008,704
+Hull_0735,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_right_rear,,0.003739,29.35,-1.378 0.546 1.747,788
+Hull_0736,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_left_rear,,0.003739,29.35,1.369 0.546 1.747,788
+Hull_0737,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_right_rear,,0.003739,29.35,-1.378 0.546 1.603,788
+Hull_0738,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_left_rear,,0.003739,29.35,1.369 0.546 1.603,788
+Hull_0739,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_right_rear,,0.003739,29.35,-1.378 0.546 1.456,788
+Hull_0740,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_left_rear,,0.003739,29.35,1.369 0.546 1.456,788
+Hull_0741,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_right_rear,,0.003739,29.35,-1.378 0.547 1.313,788
+Hull_0742,25M06-0A,BLACET,25M06-0A-1_BLACET,exact,steel_structural,component:ammo_sponson_left_rear,,0.003739,29.35,1.369 0.547 1.313,788
+Hull_0743,23H05,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.032414,254.45,-0.849 0.513 0.927,336
+Hull_0744,23H06,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.032415,254.46,0.844 0.513 0.927,336
+Hull_0745,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.548 0.907,704
+Hull_0746,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.556 0.489 1.789,6276
+Hull_0747,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.565 0.489 1.789,6276
+Hull_0748,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.556 0.489 1.646,6276
+Hull_0749,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.565 0.489 1.646,6276
+Hull_0750,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.556 0.489 1.499,6276
+Hull_0751,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.565 0.489 1.499,6276
+Hull_0752,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.556 0.490 1.356,6276
+Hull_0753,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.565 0.490 1.356,6276
+Hull_0754,18D57,ROLLAR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,-0.793 0.519 0.515,1416
+Hull_0755,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.559 0.885,704
+Hull_0756,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.562 0.082,376
+Hull_0757,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.562 0.082,376
+Hull_0758,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.560 -0.018,5426
+Hull_0759,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.573 0.084,376
+Hull_0760,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.573 0.084,376
+Hull_0761,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.607 -0.010,5426
+Hull_0762,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.599 0.909,5426
+Hull_0763,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.633 0.815,376
+Hull_0764,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.633 0.815,376
+Hull_0765,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.647 0.916,5426
+Hull_0766,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.643 0.817,376
+Hull_0767,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.643 0.817,376
+Hull_0768,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.648 0.014,704
+Hull_0769,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.659 -0.008,704
+Hull_0770,24H37,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.06746,529.56,0.287 0.670 0.823,3512
+Hull_0771,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.693 0.906,704
+Hull_0772,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.703 0.884,704
+Hull_0773,35C45CM-L,WIRE,0B26_Cover Unit,exact,copper_cable,fitting,,0.019466,116.8,1.450 0.891 1.952,15320
+Hull_0774,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.707 0.082,376
+Hull_0775,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.707 0.082,376
+Hull_0776,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.705 -0.018,5426
+Hull_0777,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.718 0.084,376
+Hull_0778,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.718 0.084,376
+Hull_0779,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.752 -0.010,5426
+Hull_0780,35C45CM-R,WIRE,0B26_Cover Unit,exact,copper_cable,fitting,,0.018895,113.37,-1.458 0.906 1.951,13196
+Hull_0781,30C05,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045623,328.49,1.735 0.736 0.444,10538
+Hull_0782,29C01,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047223,340.01,1.254 0.736 0.444,10006
+Hull_0783,29C03,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045496,327.57,1.621 0.736 0.444,10550
+Hull_0784,30D48,WASHER,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,1.589 0.736 0.444,384
+Hull_0785,24H37,BOX,0B16_Base Unit,exact,steel_structural,fitting,,0.06746,529.56,-0.296 0.740 0.823,3512
+Hull_0786,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.744 0.908,5426
+Hull_0787,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.777 0.814,376
+Hull_0788,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.777 0.814,376
+Hull_0789,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.792 0.915,5426
+Hull_0790,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.788 0.815,376
+Hull_0791,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.788 0.815,376
+Hull_0792,30C05,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045623,328.49,-1.744 0.784 0.444,10538
+Hull_0793,29C01,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047223,340.01,-1.263 0.784 0.444,10006
+Hull_0794,29C03,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045496,327.57,-1.630 0.784 0.444,10550
+Hull_0795,30D48,WASHER,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,-1.598 0.784 0.444,384
+Hull_0796,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.793 0.014,704
+Hull_0797,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.804 -0.008,704
+Hull_0798,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.838 0.904,704
+Hull_0799,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.848 0.882,704
+Hull_0800,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.852 0.082,376
+Hull_0801,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.852 0.082,376
+Hull_0802,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.850 -0.018,5426
+Hull_0803,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.863 0.084,376
+Hull_0804,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.863 0.084,376
+Hull_0805,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.897 -0.010,5426
+Hull_0806,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 0.889 0.906,5426
+Hull_0807,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 0.922 0.812,376
+Hull_0808,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 0.922 0.812,376
+Hull_0809,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.937 0.913,5426
+Hull_0810,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.933 0.813,376
+Hull_0811,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.933 0.813,376
+Hull_0812,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.938 0.014,704
+Hull_0813,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.949 -0.008,704
+Hull_0814,18D57,ROLLAR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,0.784 1.001 0.515,1416
+Hull_0815,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 0.983 0.902,704
+Hull_0816,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 0.993 0.880,704
+Hull_0817,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 0.997 0.082,376
+Hull_0818,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 0.997 0.082,376
+Hull_0819,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 0.995 -0.018,5426
+Hull_0820,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.008 0.084,376
+Hull_0821,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.008 0.084,376
+Hull_0822,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.042 -0.010,5426
+Hull_0823,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.034 0.904,5426
+Hull_0824,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.067 0.810,376
+Hull_0825,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.067 0.810,376
+Hull_0826,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.082 0.911,5426
+Hull_0827,34D41,BASE,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.00057,4.47,-1.561 1.065 1.933,1100
+Hull_0828,34D36,ANTENNA,0B26_Cover Unit,exact,copper_cable,fitting,,0.000288,1.73,-1.561 1.065 2.014,1298
+Hull_0829,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.078 0.811,376
+Hull_0830,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.078 0.811,376
+Hull_0831,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.083 0.014,704
+Hull_0832,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.094 -0.008,704
+Hull_0833,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.128 0.900,704
+Hull_0834,18D57,ROLLAR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,-0.793 1.091 0.515,1416
+Hull_0835,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.138 0.878,704
+Hull_0836,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.142 0.082,376
+Hull_0837,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.142 0.082,376
+Hull_0838,25H27,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.032787,257.38,0.041 1.178 0.853,1650
+Hull_0839,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.140 -0.018,5426
+Hull_0840,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.153 0.084,376
+Hull_0841,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.153 0.084,376
+Hull_0842,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.187 -0.010,5426
+Hull_0843,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.179 0.902,5426
+Hull_0844,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.212 0.808,376
+Hull_0845,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.212 0.808,376
+Hull_0846,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.227 0.909,5426
+Hull_0847,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.223 0.809,376
+Hull_0848,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.223 0.809,376
+Hull_0849,25K43,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.197547,1550.74,-0.013 1.199 1.242,24675
+Hull_0850,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.228 0.014,704
+Hull_0851,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.239 -0.008,704
+Hull_0852,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.273 0.898,704
+Hull_0853,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.284 0.876,704
+Hull_0854,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.287 0.082,376
+Hull_0855,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.287 0.082,376
+Hull_0856,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.285 -0.018,5426
+Hull_0857,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.298 0.084,376
+Hull_0858,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.298 0.084,376
+Hull_0859,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.332 -0.010,5426
+Hull_0860,29C04,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.040692,292.98,1.506 1.309 0.444,8776
+Hull_0861,29C02,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047065,338.87,1.373 1.309 0.444,9940
+Hull_0862,30D48,WASHER,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,1.589 1.308 0.444,384
+Hull_0863,30C06,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.046073,331.73,1.861 1.308 0.444,10398
+Hull_0864,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.324 0.900,5426
+Hull_0865,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.357 0.806,376
+Hull_0866,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.357 0.806,376
+Hull_0867,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.372 0.907,5426
+Hull_0868,30D48,WASHER,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,-1.598 1.356 0.444,384
+Hull_0869,30C06,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.046073,331.73,-1.870 1.356 0.444,10398
+Hull_0870,29C04,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.040692,292.98,-1.515 1.355 0.444,8776
+Hull_0871,29C02,ROLLOR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047065,338.87,-1.382 1.355 0.444,9940
+Hull_0872,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.368 0.807,376
+Hull_0873,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.368 0.807,376
+Hull_0874,34D42,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.001107,8.69,-1.151 1.369 1.930,1928
+Hull_0875,34D42,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.001107,8.69,1.142 1.369 1.930,1928
+Hull_0876,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.373 0.014,704
+Hull_0877,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.384 -0.008,704
+Hull_0878,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.418 0.897,704
+Hull_0879,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.429 0.875,704
+Hull_0880,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.432 0.082,376
+Hull_0881,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.432 0.082,376
+Hull_0882,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.430 -0.018,5426
+Hull_0883,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.443 0.084,376
+Hull_0884,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.443 0.084,376
+Hull_0885,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.477 -0.010,5426
+Hull_0886,28U05,MAIN,0B29_EngineSystem,piece_of,iron_cast_machinery,component:engine_block,,3e-06,0.02,0.101 1.494 1.217,56
+Hull_0887,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.469 0.899,5426
+Hull_0888,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.503 0.805,376
+Hull_0889,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.503 0.805,376
+Hull_0890,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.517 0.906,5426
+Hull_0891,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.514 0.806,376
+Hull_0892,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.514 0.806,376
+Hull_0893,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.518 0.014,704
+Hull_0894,20H65,Hydraulic,0B16_Base Unit,exact,hydraulic_steel_oil,fitting,,0.011342,56.71,-0.872 1.541 0.870,2332
+Hull_0895,34D28,ARM,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000327,2.57,-0.513 1.523 1.935,2232
+Hull_0896,34D28,ARM,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000327,2.57,0.506 1.523 1.935,2232
+Hull_0897,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.529 -0.008,704
+Hull_0898,18D57,ROLLAR,0B18_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,0.784 1.573 0.515,1416
+Hull_0899,34B18,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.005658,44.42,-0.003 1.547 1.941,1972
+Hull_0900,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.563 0.896,704
+Hull_0901,27H12,BOX,0B16_Base Unit,exact,steel_structural,component:fuel_tank_right,,0.067931,533.26,-1.153 1.464 1.464,28658
+Hull_0902,27H12,BOX,0B16_Base Unit,exact,steel_structural,component:fuel_tank_left,,0.067931,533.26,1.144 1.464 1.464,28658
+Hull_0903,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.574 0.874,704
+Hull_0904,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.577 0.082,376
+Hull_0905,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.577 0.082,376
+Hull_0906,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.575 -0.018,5426
+Hull_0907,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.588 0.084,376
+Hull_0908,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.588 0.084,376
+Hull_0909,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.622 -0.010,5426
+Hull_0910,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.614 0.898,5426
+Hull_0911,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.649 0.805,376
+Hull_0912,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.649 0.805,376
+Hull_0913,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.662 0.906,5426
+Hull_0914,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.660 0.806,376
+Hull_0915,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.660 0.806,376
+Hull_0916,28U20,FILTER TANK,0B29_EngineSystem,exact,steel_sheet_tank,component:engine_air_filters,,0.03766,295.63,-0.004 1.661 1.666,5482
+Hull_0917,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.663 0.014,704
+Hull_0918,28H21,COVER,0B16_Base Unit,exact,steel_structural,component:fuel_tank_right,,0.049861,391.41,-1.152 1.689 1.557,984
+Hull_0919,28H22,COVER,0B16_Base Unit,exact,steel_structural,component:fuel_tank_left,,0.049859,391.39,1.143 1.689 1.557,996
+Hull_0920,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.674 -0.008,704
+Hull_0921,18D57,ROLLAR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,-0.793 1.663 0.515,1416
+Hull_0922,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.708 0.896,704
+Hull_0923,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.719 0.874,704
+Hull_0924,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.722 0.082,376
+Hull_0925,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.722 0.082,376
+Hull_0926,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.720 -0.018,5426
+Hull_0927,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.733 0.084,376
+Hull_0928,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.733 0.084,376
+Hull_0929,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.767 -0.010,5426
+Hull_0930,34F06,BLOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000463,3.64,-0.561 1.760 1.925,670
+Hull_0931,34F06,BLOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000463,3.64,0.554 1.760 1.925,670
+Hull_0932,34F08,LCOK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000142,1.12,-0.565 1.760 1.963,288
+Hull_0933,34F08,LCOK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000142,1.12,0.558 1.760 1.963,288
+Hull_0934,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.759 0.899,5426
+Hull_0935,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.794 0.806,376
+Hull_0936,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.794 0.806,376
+Hull_0937,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.807 0.907,5426
+Hull_0938,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.805 0.807,376
+Hull_0939,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.805 0.807,376
+Hull_0940,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.808 0.014,704
+Hull_0941,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.819 -0.008,704
+Hull_0942,37B63,ROLLOR,0B16_Base Unit,exact,steel_cast,running_gear,,0.002675,21.0,-1.727 1.817 1.922,204
+Hull_0943,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.853 0.898,704
+Hull_0944,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.865 0.876,704
+Hull_0945,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.867 0.082,376
+Hull_0946,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.867 0.082,376
+Hull_0947,30D48,WASHER,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,1.589 1.880 0.444,384
+Hull_0948,29C01,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047223,340.01,1.254 1.880 0.444,10006
+Hull_0949,30C05,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045623,328.49,1.735 1.880 0.444,10538
+Hull_0950,29C03,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045496,327.57,1.621 1.880 0.444,10550
+Hull_0951,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.865 -0.018,5426
+Hull_0952,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.878 0.084,376
+Hull_0953,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.878 0.084,376
+Hull_0954,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.912 -0.010,5426
+Hull_0955,28U23,BASE,0B29_EngineSystem,exact,steel_structural,fitting,,0.01062,83.37,-0.004 1.914 1.503,2028
+Hull_0956,28U35,BOX,0B29_EngineSystem,exact,steel_structural,fitting,,0.001554,12.2,0.439 1.927 1.481,1458
+Hull_0957,30D48,WASHER,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.00037,2.66,-1.598 1.928 0.444,384
+Hull_0958,29C01,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.047223,340.01,-1.263 1.928 0.444,10006
+Hull_0959,30C05,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045623,328.49,-1.744 1.928 0.444,10538
+Hull_0960,29C03,ROLLOR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.045496,327.57,-1.630 1.928 0.444,10550
+Hull_0961,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 1.904 0.901,5426
+Hull_0962,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 1.952 0.909,5426
+Hull_0963,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 1.940 0.808,376
+Hull_0964,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 1.940 0.808,376
+Hull_0965,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.951 0.810,376
+Hull_0966,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.951 0.810,376
+Hull_0967,28U02,COOLBOX,0B29_EngineSystem,exact,radiator_copper_brass,fitting,,0.025672,218.21,-0.361 1.927 1.389,6204
+Hull_0968,28U01,COOLBOX,0B29_EngineSystem,exact,radiator_copper_brass,fitting,,0.025726,218.67,0.352 1.969 1.389,6200
+Hull_0969,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 1.953 0.014,704
+Hull_0970,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.962 -0.000,704
+Hull_0971,28U05,MAIN,0B29_EngineSystem,exact,iron_cast_machinery,component:engine_block,,0.616537,4439.07,0.021 1.968 1.022,64684
+Hull_0972,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 1.998 0.900,704
+Hull_0973,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 1.994 0.096,376
+Hull_0974,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 1.994 0.096,376
+Hull_0975,34Z03,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.067174,527.31,-0.004 2.002 1.871,4418
+Hull_0976,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.010 0.878,704
+Hull_0977,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.005 0.100,376
+Hull_0978,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.005 0.100,376
+Hull_0979,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.009 -0.003,5426
+Hull_0980,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.054 0.013,5426
+Hull_0981,27H09,HOLDER,0B16_Base Unit,exact,steel_structural,fitting,,0.000329,2.58,-1.153 2.037 1.514,384
+Hull_0982,27H09,HOLDER,0B16_Base Unit,exact,steel_structural,fitting,,0.000329,2.58,1.144 2.037 1.514,384
+Hull_0983,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.049 0.904,5426
+Hull_0984,28H46,EXHAUST,0B29_EngineSystem,exact,steel_exhaust,fitting,,0.011638,91.36,0.466 2.140 1.204,3308
+Hull_0985,17P03,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001044,8.2,-0.520 2.070 0.605,758
+Hull_0986,17P01,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.001112,8.73,0.511 2.080 0.603,666
+Hull_0987,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.097 0.912,5426
+Hull_0988,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.086 0.811,376
+Hull_0989,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.086 0.811,376
+Hull_0990,28H43,EXHAUST,0B29_EngineSystem,exact,steel_exhaust,fitting,,0.016662,130.8,-0.433 2.046 1.170,3666
+Hull_0991,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.096 0.813,376
+Hull_0992,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.096 0.813,376
+Hull_0993,27H17,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.12594,988.63,-0.683 2.053 1.222,11420
+Hull_0994,27H20,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.12756,1001.34,0.685 1.932 1.232,12922
+Hull_0995,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.090 0.044,704
+Hull_0996,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.105 0.025,704
+Hull_0997,18D57,ROLLAR,0B17_Rollor System,exact,steel_roadwheel_rubber_tyred,running_gear,,0.018041,129.9,0.784 2.145 0.515,1416
+Hull_0998,34B67,JAR,0B26_Cover Unit,exact,steel_sheet_tank,fitting,,0.006305,49.49,-1.403 2.113 2.021,2998
+Hull_0999,34B24,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.016391,128.67,-0.003 2.138 1.964,3170
+Hull_1000,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.143 0.903,704
+Hull_1001,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.137 0.121,376
+Hull_1002,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.137 0.121,376
+Hull_1003,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.155 0.882,704
+Hull_1004,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.148 0.125,376
+Hull_1005,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.148 0.125,376
+Hull_1006,28U20,FILTER TANK,0B29_EngineSystem,exact,steel_sheet_tank,component:engine_air_filters,,0.03766,295.63,-0.004 2.167 1.666,5482
+Hull_1007,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.152 0.022,5426
+Hull_1008,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.197 0.038,5426
+Hull_1009,27K77,COOLBOX,0B16_Base Unit,exact,radiator_copper_brass,component:radiator_right,,0.164235,1395.99,-1.153 2.212 1.535,6490
+Hull_1010,27K76,COOLBOX,0B16_Base Unit,exact,radiator_copper_brass,component:radiator_left,,0.164959,1402.15,1.144 2.212 1.537,5016
+Hull_1011,34D42,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.001107,8.69,-1.151 2.206 1.948,1928
+Hull_1012,34D42,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.001107,8.69,1.142 2.206 1.948,1928
+Hull_1013,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.194 0.907,5426
+Hull_1014,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.242 0.916,5426
+Hull_1015,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.231 0.814,376
+Hull_1016,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.231 0.814,376
+Hull_1017,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.233 0.069,704
+Hull_1018,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.241 0.816,376
+Hull_1019,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.241 0.816,376
+Hull_1020,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.247 0.049,704
+Hull_1021,35D15,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000118,0.92,-0.758 2.252 2.032,1168
+Hull_1022,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.288 0.906,704
+Hull_1023,20H65,Hydraulic,0B16_Base Unit,exact,hydraulic_steel_oil,fitting,,0.011342,56.71,0.864 2.267 0.870,2332
+Hull_1024,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.280 0.146,376
+Hull_1025,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.280 0.146,376
+Hull_1026,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.300 0.885,704
+Hull_1027,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.290 0.150,376
+Hull_1028,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.290 0.150,376
+Hull_1029,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.294 0.047,5426
+Hull_1030,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.340 0.063,5426
+Hull_1031,35D15,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000118,0.92,0.764 2.356 2.032,1168
+Hull_1032,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.339 0.910,5426
+Hull_1033,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.387 0.918,5426
+Hull_1034,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.375 0.816,376
+Hull_1035,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.375 0.816,376
+Hull_1036,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.376 0.094,704
+Hull_1037,35D15,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000118,0.92,1.520 2.374 2.032,1168
+Hull_1038,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.386 0.818,376
+Hull_1039,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.386 0.818,376
+Hull_1040,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.390 0.074,704
+Hull_1041,28U05,MAIN,0B29_EngineSystem,piece_of,iron_cast_machinery,component:engine_block,,0.003961,28.52,-0.004 2.398 0.867,240
+Hull_1042,35D15,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000118,0.92,-1.536 2.396 2.032,1168
+Hull_1043,26U34,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.000839,6.58,-0.090 2.407 0.496,32
+Hull_1044,26U40,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.00144,11.3,0.083 2.420 0.496,32
+Hull_1045,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.433 0.909,704
+Hull_1046,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.423 0.171,376
+Hull_1047,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.423 0.171,376
+Hull_1048,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.433 0.175,376
+Hull_1049,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.433 0.175,376
+Hull_1050,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.444 0.887,704
+Hull_1051,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.437 0.072,5426
+Hull_1052,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.483 0.088,5426
+Hull_1053,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.484 0.912,5426
+Hull_1054,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.519 0.818,376
+Hull_1055,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.519 0.818,376
+Hull_1056,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.532 0.920,5426
+Hull_1057,34D11,BUCKLE,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000408,3.2,-1.384 2.527 1.983,678
+Hull_1058,34D11,BUCKLE,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000408,3.2,1.375 2.527 1.983,678
+Hull_1059,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.518 0.119,704
+Hull_1060,18D23,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.002046,16.06,-1.090 2.519 0.953,1144
+Hull_1061,18D23,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.002046,16.06,1.082 2.519 0.953,1144
+Hull_1062,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.530 0.820,376
+Hull_1063,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.530 0.820,376
+Hull_1064,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.533 0.099,704
+Hull_1065,28U05,MAIN,0B29_EngineSystem,piece_of,iron_cast_machinery,component:engine_block,,7e-06,0.05,-0.004 2.537 0.770,232
+Hull_1066,28U05,MAIN,0B29_EngineSystem,piece_of,iron_cast_machinery,component:engine_block,,7e-06,0.05,-0.073 2.537 0.799,232
+Hull_1067,28U05,MAIN,0B29_EngineSystem,piece_of,iron_cast_machinery,component:engine_block,,7e-06,0.05,0.064 2.537 0.799,232
+Hull_1068,34D11,BUCKLE,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000408,3.2,-0.235 2.545 1.950,678
+Hull_1069,28U10,PIPE,0B29_EngineSystem,exact,steel_exhaust,fitting,,0.002056,16.14,-0.376 2.544 1.534,888
+Hull_1070,28U09,PIPE,0B29_EngineSystem,exact,steel_exhaust,fitting,,0.002056,16.14,0.367 2.544 1.534,888
+Hull_1071,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.566 0.196,376
+Hull_1072,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.566 0.196,376
+Hull_1073,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.578 0.910,704
+Hull_1074,28U43,CARBURETOR,0B29_EngineSystem,exact,iron_cast_machinery,fitting,,0.003029,21.81,-0.096 2.582 1.681,3438
+Hull_1075,28U37,CARBURETOR,0B29_EngineSystem,exact,iron_cast_machinery,fitting,,0.003029,21.81,0.087 2.582 1.681,3438
+Hull_1076,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.586 0.892,704
+Hull_1077,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.576 0.199,376
+Hull_1078,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.576 0.199,376
+Hull_1079,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.580 0.097,5426
+Hull_1080,28U31,CONVERTER,0B29_EngineSystem,exact,iron_cast_machinery,fitting,,0.010341,74.46,-0.004 2.599 1.426,7022
+Hull_1081,27H13,COVER,0B16_Base Unit,exact,steel_structural,component:cooling_fans_right,,0.034849,273.57,-1.152 2.503 1.497,5984
+Hull_1082,27H13,COVER,0B16_Base Unit,exact,steel_structural,component:cooling_fans_left,,0.034849,273.57,1.144 2.503 1.497,5984
+Hull_1083,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.626 0.113,5426
+Hull_1084,17H29,COLLAR(R),0B16_Base Unit,exact,steel_structural,fitting,,0.020719,162.64,-0.764 2.640 0.632,2718
+Hull_1085,17H30,COLLAR(L),0B16_Base Unit,exact,steel_structural,fitting,,0.020875,163.87,0.754 2.640 0.632,2710
+Hull_1086,30D01,GUIDE,0B20_Guide Roller,exact,steel_cast,running_gear,,0.027139,213.04,1.527 2.642 0.513,6224
+Hull_1087,29D50,RING,0B20_Guide Roller,exact,steel_cast,running_gear,,0.001278,10.04,-1.639 2.642 0.513,400
+Hull_1088,16D53,ROLLAR,0B16_Base Unit,exact,steel_cast,running_gear,,0.016763,131.59,-1.283 2.642 0.558,1210
+Hull_1089,30D01,GUIDE,0B20_Guide Roller,exact,steel_cast,running_gear,,0.027139,213.04,-1.536 2.642 0.513,6224
+Hull_1090,29D02,GUIDE,0B20_Guide Roller,exact,steel_cast,running_gear,,0.031145,244.49,-1.407 2.642 0.513,7498
+Hull_1091,29D02,GUIDE,0B20_Guide Roller,exact,steel_cast,running_gear,,0.031145,244.49,1.398 2.642 0.513,7498
+Hull_1092,16D53,ROLLAR,0B16_Base Unit,exact,steel_cast,running_gear,,0.016763,131.59,1.274 2.642 0.558,1210
+Hull_1093,29D50,RING,0B20_Guide Roller,exact,steel_cast,running_gear,,0.001278,10.04,1.630 2.642 0.513,400
+Hull_1094,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.652 0.815,376
+Hull_1095,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.652 0.815,376
+Hull_1096,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.629 0.912,5426
+Hull_1097,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.677 0.915,5426
+Hull_1098,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.663 0.816,376
+Hull_1099,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.663 0.816,376
+Hull_1100,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.661 0.144,704
+Hull_1101,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.676 0.120,704
+Hull_1102,27H25,PLATE,0B16_Base Unit,exact,steel_structural,component:cooling_fans_right,,0.012133,95.24,-1.153 2.686 1.685,6242
+Hull_1103,27H25,PLATE,0B16_Base Unit,exact,steel_structural,component:cooling_fans_left,,0.012133,95.24,1.144 2.686 1.685,6242
+Hull_1104,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.696 0.220,376
+Hull_1105,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.696 0.220,376
+Hull_1106,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.706 0.225,376
+Hull_1107,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.706 0.225,376
+Hull_1108,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.721 0.899,704
+Hull_1109,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.722 0.878,704
+Hull_1110,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.723 0.124,5426
+Hull_1111,27H50,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.001748,13.72,-1.392 2.748 1.387,943
+Hull_1112,27H50,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.001748,13.72,1.383 2.748 1.387,943
+Hull_1113,27H50,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.001748,13.72,1.383 2.748 1.387,943
+Hull_1114,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.766 0.146,5426
+Hull_1115,34F13,FAN COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.021691,170.27,-1.166 2.743 1.900,3352
+Hull_1116,34F14,FAN COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.021604,169.59,1.153 2.744 1.900,3338
+Hull_1117,27H51,BLOCK,0B16_Base Unit,exact,steel_structural,fitting,,0.003207,25.17,0.899 2.769 1.361,2020
+Hull_1118,27H52,BLOCK,0B16_Base Unit,exact,steel_structural,fitting,,0.003207,25.17,-0.908 2.769 1.361,1358
+Hull_1119,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.764 0.786,376
+Hull_1120,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.764 0.786,376
+Hull_1121,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.775 0.783,376
+Hull_1122,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.775 0.783,376
+Hull_1123,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.769 0.886,5426
+Hull_1124,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.816 0.875,5426
+Hull_1125,34F12,FAN COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.01079,84.7,-1.133 2.794 1.843,1412
+Hull_1126,34F11,FAN COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.01079,84.7,1.119 2.794 1.843,1412
+Hull_1127,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.797 0.181,704
+Hull_1128,27J105,BLOCK,0B16_Base Unit,exact,steel_structural,fitting,,0.001708,13.41,-0.498 2.821 1.363,1398
+Hull_1129,27J105,BLOCK,0B16_Base Unit,exact,steel_structural,fitting,,0.001708,13.41,0.489 2.821 1.363,1398
+Hull_1130,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.812 0.164,704
+Hull_1131,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.803 0.266,376
+Hull_1132,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.803 0.266,376
+Hull_1133,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.811 0.273,376
+Hull_1134,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.811 0.273,376
+Hull_1135,28A-H40,GUIDE,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.010839,85.09,-0.210 2.824 1.479,1716
+Hull_1136,34B23,COVER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.00623,48.91,0.190 2.858 2.012,2496
+Hull_1137,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.849 0.828,704
+Hull_1138,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.854 0.848,704
+Hull_1139,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.856 0.181,5426
+Hull_1140,28A-J104,PLATE,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.009677,75.96,-0.002 2.868 1.140,6390
+Hull_1141,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.860 0.727,376
+Hull_1142,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.860 0.727,376
+Hull_1143,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.870 0.721,376
+Hull_1144,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.870 0.721,376
+Hull_1145,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.891 0.214,5426
+Hull_1146,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.889 0.338,376
+Hull_1147,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.889 0.338,376
+Hull_1148,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.895 0.820,5426
+Hull_1149,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.895 0.348,376
+Hull_1150,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.895 0.348,376
+Hull_1151,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.912 0.256,704
+Hull_1152,30B14,LOCK,0B16_Base Unit,exact,steel_structural,fitting,,0.002238,17.56,-0.004 2.893 0.575,444
+Hull_1153,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.936 0.795,5426
+Hull_1154,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.930 0.244,704
+Hull_1155,28A-B69,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.002131,16.73,-0.004 2.937 0.856,788
+Hull_1156,28A-Z16,ROLLAR,0B24_Back Cover Unit,exact,steel_cast,running_gear,,0.001828,14.35,-0.516 2.939 0.633,2366
+Hull_1157,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.928 0.643,376
+Hull_1158,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.928 0.643,376
+Hull_1159,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.935 0.634,376
+Hull_1160,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.935 0.634,376
+Hull_1161,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.945 0.430,376
+Hull_1162,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.945 0.430,376
+Hull_1163,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.946 0.441,376
+Hull_1164,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.946 0.441,376
+Hull_1165,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.953 0.742,704
+Hull_1166,18B10,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.004431,34.79,-1.019 2.940 0.906,214
+Hull_1167,18B09,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.004431,34.79,1.010 2.940 0.906,214
+Hull_1168,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 2.965 0.758,704
+Hull_1169,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.310 2.958 0.544,376
+Hull_1170,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,1.563 2.958 0.544,376
+Hull_1171,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 2.966 0.274,5426
+Hull_1172,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.572 2.961 0.533,376
+Hull_1173,15N03,PLATE,0B28_Track Unit,exact,steel_track_cast,track,,0.000165,1.3,-1.319 2.961 0.533,376
+Hull_1174,30Z02,COVER,0B24_Back Cover Unit,exact,armour_rolled_homogeneous,armour:hull_rear,80,0.333112,2614.93,-0.008 2.965 1.328,16870
+Hull_1175,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.990 0.316,5426
+Hull_1176,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 2.993 0.718,5426
+Hull_1177,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 2.996 0.363,704
+Hull_1178,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 3.016 0.357,704
+Hull_1179,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 3.019 0.625,704
+Hull_1180,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 3.023 0.680,5426
+Hull_1181,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,1.529 3.035 0.492,704
+Hull_1182,,,,game_authored,steel_structural,fitting,,0.002229,17.5,-0.642 2.277 1.675,2
+Hull_1183,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 3.037 0.635,704
+Hull_1184,28A-B68,BASE,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.001059,8.31,1.514 3.039 1.278,648
+Hull_1185,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 3.039 0.398,5426
+Hull_1186,,,,game_authored,steel_structural,fitting,,0.004446,34.9,-0.653 2.285 1.687,2
+Hull_1187,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 3.048 0.587,5426
+Hull_1188,18D06,RING,0B16_Base Unit,exact,steel_structural,fitting,,0.002451,19.24,1.017 3.052 0.919,2874
+Hull_1189,18D06,RING,0B16_Base Unit,exact,steel_structural,fitting,,0.002451,19.24,-1.026 3.052 0.919,2874
+Hull_1190,37N01,PIN,0B28_Track Unit,exact,steel_track_cast,track,,0.00038,3.0,-1.538 3.055 0.494,704
+Hull_1191,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,1.547 3.046 0.446,5426
+Hull_1192,28A-Z41,RING,0B24_Back Cover Unit,piece_of,steel_structural_plate,fitting,,0.002293,18.0,-0.703 2.732 2.025,584
+Hull_1193,28A-Z27,CHAIN,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000672,5.28,-0.655 3.078 2.379,6036
+Hull_1194,28A-Z47,PLATE,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000826,6.49,-0.957 3.080 2.149,926
+Hull_1195,15N90,TRACK,0B28_Track Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.555 3.060 0.541,5426
+Hull_1196,28A-D54,BLOCK,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.004284,33.63,0.885 3.072 1.497,6390
+Hull_1197,28A-Z37,HOLDER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000779,6.12,-1.037 3.059 2.057,930
+Hull_1198,28A-Z37,HOLDER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000779,6.12,-0.383 3.059 2.057,930
+Hull_1199,28A-D51,BLACKET,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000459,3.61,0.949 3.086 1.339,2786
+Hull_1200,28A-Z44,SCREW,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,4.2e-05,0.33,-0.441 3.090 2.122,332
+Hull_1201,28A-Z44,SCREW,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,4.2e-05,0.33,-0.983 3.091 2.124,332
+Hull_1202,28A-Z46,PLATE,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000946,7.42,-0.504 3.095 2.151,1042
+Hull_1203,28A-O34,ARM,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000489,3.84,-0.858 3.093 1.762,1852
+Hull_1204,28A-O36,BLACKET,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000404,3.17,-1.507 3.115 1.436,84
+Hull_1205,28A-O36,BLACKET,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000404,3.17,-0.863 3.115 1.436,84
+Hull_1206,28A-D51,BLACKET,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000459,3.61,0.949 3.130 1.646,2786
+Hull_1207,28A-D26,EXHAUST,0B24_Back Cover Unit,exact,steel_exhaust,fitting,,0.060943,478.4,0.423 3.172 1.412,2274
+Hull_1208,28A-D22,EXHAUST,0B24_Back Cover Unit,exact,steel_exhaust,fitting,,0.060911,478.15,-0.432 3.172 1.412,2280
+Hull_1209,28A,HOLDER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000932,7.32,-1.565 3.161 1.505,2016
+Hull_1210,28A,HOLDER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000932,7.32,-0.950 3.161 1.505,2016
+Hull_1211,28A-O32,BLOCK,0B30_JACK Unit,exact,steel_structural,fitting,,0.001039,8.16,-1.062 3.146 1.510,3950
+Hull_1212,28A-V33,BLACKET,0B30_JACK Unit,exact,steel_structural,fitting,,4.8e-05,0.37,-0.861 3.151 1.554,2826
+Hull_1213,28A-V33,BLACKET,0B30_JACK Unit,exact,steel_structural,fitting,,4.8e-05,0.37,-1.564 3.151 1.554,2826
+Hull_1214,28A-O33,BASE,0B30_JACK Unit,exact,steel_structural,fitting,,0.001432,11.24,-1.681 3.151 1.521,1232
+Hull_1215,28A-D03,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.030012,235.59,-0.433 3.199 1.249,3714
+Hull_1216,28A-D03,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.030012,235.59,0.423 3.199 1.249,3714
+Hull_1217,28A-O31,ROLLAR,0B24_Back Cover Unit,exact,steel_cast,running_gear,,0.000505,3.96,-1.035 3.231 1.624,3322
+Hull_1218,30F25,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.016488,129.43,-1.524 3.198 1.068,8136
+Hull_1219,30F32,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.016492,129.46,1.516 3.198 1.068,8096
+Hull_1220,28A-O38,BLACKET,0B30_JACK Unit,exact,steel_structural,fitting,,0.009849,77.32,-1.273 3.176 1.493,13406
+Hull_1221,28A-O39,TURN,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.002981,23.4,-1.302 3.225 1.559,5482
+Hull_1222,,TG_RM5010-28A-Z25-BOLCK,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.004911,38.55,-0.001 3.197 1.649,3554
+Hull_1223,28A-D05,HOOK,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000118,0.92,-0.671 3.214 1.304,486
+Hull_1224,28A-D05,HOOK,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000118,0.92,-0.194 3.214 1.304,486
+Hull_1225,28A-D05,HOOK,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000118,0.92,0.185 3.214 1.304,486
+Hull_1226,28A-D05,HOOK,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.000118,0.92,0.662 3.214 1.304,486
+Hull_1227,28A-D27,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.002827,22.19,0.424 3.268 2.045,1092
+Hull_1228,28A-D27,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.002827,22.19,-0.433 3.268 2.045,1092
+Hull_1229,28A-F15,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.032027,251.41,-0.425 3.338 1.506,4338
+Hull_1230,28A-F16,COVER,0B24_Back Cover Unit,exact,steel_structural_plate,fitting,,0.032027,251.41,0.416 3.338 1.506,4340
+Ignition Button,20K22,SCAN,0B16_Base Unit,piece_of,glass_laminated,fitting,,0.001758,4.4,0.851 -1.568 1.175,716
+Left Port Glass,04S95,VIEWER,0C10_Armor Unit,piece_of,glass_laminated,fitting,,0.000138,0.34,0.988 -0.557 2.444,12
+Loader Periscope.001,13T02,GLASS,0C13_Top Cover Unit,exact,glass_laminated,fitting,,0.002436,6.09,-0.709 -0.415 2.670,296
+MG Operater,34D10,HOLDER,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.002012,15.79,-1.409 -1.869 1.817,10624
+Round in the chamber,,,,game_authored,ammunition_88mm,fitting,,0.007195,21.59,-0.002 -0.649 2.367,6276
+TPZ dial indicator,10J49,TURN,0C10_Armor Unit,piece_of,steel_structural_plate,fitting,,5e-06,0.04,0.875 -0.630 2.197,12
+TURRET FLOOR,05U25,BASE,0C05_Room Unit,exact,steel_structural,fitting,,0.070153,550.7,-0.021 -0.001 1.037,12948
+Turret_0001,10D29,PIN,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000414,3.25,1.079 -1.297 2.344,472
+Turret_0002,10D29,PIN,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000414,3.25,-0.971 -1.297 2.344,472
+Turret_0003.017,,,,game_authored,glass_laminated,fitting,,0.000567,1.42,0.364 -0.403 1.785,82
+Turret_0003.172,,,,game_authored,glass_laminated,fitting,,0.000599,1.5,0.374 -0.403 1.835,82
+Turret_0003.232,01J18,VIEWER,0C01_88 Barrel Unit,piece_of,glass_laminated,component:gunner_sight,,0.043782,109.46,0.428 -0.970 1.905,5020
+Turret_0004,10P27,BLACKET,0C05_Room Unit,exact,steel_structural,fitting,,0.000604,4.74,-0.780 -0.964 2.166,36
+Turret_0005,03J19,GUN,0C03_Gun Unit,exact,steel_gun,component:coax_mg,,0.010585,83.09,-0.495 -0.919 2.371,4582
+Turret_0006,32O20,PLIERS,0B26_Cover Unit,exact,tool_steel_wood,fitting,,0.00084,2.52,-1.249 -0.830 1.932,3644
+Turret_0007,25H11,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.027381,214.94,-0.004 -0.882 1.023,3772
+Turret_0008,10J49,TURN,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.008432,66.19,0.765 -0.738 2.207,3054
+Turret_0009,12O05,GUN,0C09_Gun Unit,exact,steel_gun,gun,,0.001869,14.67,0.560 -0.605 3.259,30716
+Turret_0010,06J09,COVER,0C05_Room Unit,exact,steel_structural,fitting,,0.014793,116.13,0.427 -0.770 1.524,1374
+Turret_0011,03J15,GEAR,0C02_88 Barrel Base Unit,exact,steel_gun,gun,,0.003361,26.39,-0.335 -0.702 2.075,1672
+Turret_0012,B76,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000341,2.68,-1.286 -0.692 1.934,1406
+Turret_0013,03J33,CHAIN,0C03_Gun Unit,exact,steel_gun,gun,,0.000265,2.08,-0.432 -0.678 2.374,348
+Turret_0014,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.384 -0.670 2.319,2124
+Turret_0015,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.385 -0.670 2.329,2124
+Turret_0016,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.387 -0.670 2.340,2124
+Turret_0017,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.390 -0.670 2.350,2124
+Turret_0018,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.394 -0.670 2.360,2124
+Turret_0019,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.398 -0.670 2.369,2124
+Turret_0020,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.404 -0.670 2.378,2124
+Turret_0021,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.410 -0.670 2.387,2124
+Turret_0022,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.416 -0.670 2.395,2124
+Turret_0023,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.423 -0.670 2.402,2124
+Turret_0024,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.431 -0.670 2.409,2124
+Turret_0025,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.440 -0.670 2.416,2124
+Turret_0026,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.449 -0.670 2.421,2124
+Turret_0027,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.458 -0.670 2.426,2124
+Turret_0028,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.468 -0.670 2.430,2124
+Turret_0029,,GUN_MG34_01,0C03_Gun Unit,exact,steel_gun,gun,,4e-06,0.03,-0.478 -0.670 2.433,2124
+Turret_0030,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,0.000129,1.02,-0.434 -0.658 2.712,32
+Turret_0031,03J30,CASE,0C03_Gun Unit,exact,steel_gun,gun,,0.003574,28.05,-0.532 -0.675 2.144,822
+Turret_0032,03J30,CASE,0C03_Gun Unit,exact,steel_gun,gun,,0.003574,28.05,-0.423 -0.675 2.144,822
+Turret_0033,13J64,PLATE,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.001346,10.57,0.391 -0.637 2.637,546
+Turret_0034,06U38,COVER,0C05_Room Unit,exact,steel_structural,fitting,,0.009583,75.23,-0.820 -0.617 2.117,792
+Turret_0035,03J17,BASE,0C03_Gun Unit,piece_of,steel_gun,gun,,0.001239,9.72,-0.468 -0.633 2.301,1546
+Turret_0036,06U39,HAND,0C05_Room Unit,exact,steel_structural,fitting,,0.00084,6.6,-0.379 -0.623 1.358,1042
+Turret_0037,23H08,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.004547,35.69,-0.886 -0.607 1.232,1260
+Turret_0038,23H07,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.004527,35.54,0.881 -0.607 1.232,1260
+Turret_0039,06J81,HOLDER,0C05_Room Unit,exact,steel_structural,fitting,,0.002031,15.94,-0.319 -0.570 1.928,468
+Turret_0042,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.191 -0.524 1.784,6276
+Turret_0043,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.441 -0.524 1.784,6276
+Turret_0044,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.307 -0.524 1.784,6276
+Turret_0045,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.183 -0.524 1.784,6276
+Turret_0046,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.316 -0.524 1.784,6276
+Turret_0047,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.432 -0.524 1.784,6276
+Turret_0048,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.191 -0.523 1.652,6276
+Turret_0049,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.441 -0.523 1.652,6276
+Turret_0050,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.307 -0.523 1.652,6276
+Turret_0051,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.183 -0.523 1.652,6276
+Turret_0052,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.316 -0.523 1.652,6276
+Turret_0053,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.432 -0.523 1.652,6276
+Turret_0054,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.191 -0.522 1.515,6276
+Turret_0055,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.183 -0.522 1.515,6276
+Turret_0056,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.441 -0.522 1.515,6276
+Turret_0057,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.307 -0.522 1.515,6276
+Turret_0058,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.316 -0.522 1.515,6276
+Turret_0059,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.432 -0.522 1.515,6276
+Turret_0060,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.191 -0.521 1.383,6276
+Turret_0061,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.183 -0.521 1.383,6276
+Turret_0062,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.441 -0.521 1.383,6276
+Turret_0063,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.307 -0.521 1.383,6276
+Turret_0064,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_front,,0.007195,21.59,-1.316 -0.521 1.383,6276
+Turret_0065,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_front,,0.007195,21.59,1.432 -0.521 1.383,6276
+Turret_0066,12Z05,HOLDER,0C09_Gun Unit,exact,steel_gun,gun,,0.00016,1.25,0.560 -0.580 3.205,384
+Turret_0067,13J87,ARM,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.001475,11.58,-0.434 -0.499 2.683,576
+Turret_0068,05J26,PEDLAL,0C05_Room Unit,exact,steel_structural,fitting,,0.001595,12.52,0.190 -0.572 1.163,1574
+Turret_0069,04S95,VIEWER,0C10_Armor Unit,piece_of,glass_laminated,fitting,,0.00387,9.68,1.033 -0.567 2.444,484
+Turret_0070,06U28,COVER,0C05_Room Unit,exact,steel_structural,fitting,,0.012306,96.6,-0.546 -0.563 1.876,4100
+Turret_0071,06U30,HAND,0C05_Room Unit,exact,steel_structural,fitting,,0.002296,18.02,-0.374 -0.578 1.733,296
+Turret_0072,05J21,MOUNT,0C05_Room Unit,exact,steel_structural,fitting,,0.00194,15.23,0.369 -0.523 1.287,236
+Turret_0073,B76,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,0.000341,2.68,1.372 -0.511 1.934,1406
+Turret_0074,05J37,SEAT,0C05_Room Unit,exact,seat_steel_leather,fitting,,0.008984,13.48,0.437 -0.453 1.195,464
+Turret_0075,13J88,COLLAR,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.001311,10.29,-0.548 -0.455 2.685,582
+Turret_0076,35D12,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,3.1e-05,0.24,-1.462 -0.456 2.011,1346
+Turret_0077,35D12,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,3.1e-05,0.24,1.453 -0.456 2.011,1346
+Turret_0078,12Z57,COVER,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.001333,10.47,-0.709 -0.446 2.839,236
+Turret_0079,04S95,VIEWER,0C10_Armor Unit,piece_of,glass_laminated,fitting,,0.004026,10.07,-1.051 -0.433 2.448,302
+Turret_0080,12O41,CASE,0C09_Gun Unit,exact,steel_gun,gun,,0.001059,8.31,0.649 -0.416 3.261,11046
+Turret_0082,10P21,BLACKET,0C05_Room Unit,exact,steel_structural,fitting,,0.000603,4.74,0.971 -0.374 2.166,344
+Turret_0083,12Z22,HOLDER,0C09_Gun Unit,exact,steel_gun,gun,,0.000934,7.33,0.601 -0.370 3.079,2310
+Turret_0084,06J56,BLOCK,0C05_Room Unit,exact,steel_structural,fitting,,0.001182,9.28,0.193 -0.353 1.662,2142
+Turret_0085,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,1.5e-05,0.12,-0.548 -0.346 2.724,200
+Turret_0086,06U19,HAND,0C05_Room Unit,exact,steel_structural,fitting,,0.006919,54.31,0.406 -0.293 1.676,2942
+Turret_0088,06J75,SEAT,0C05_Room Unit,exact,seat_steel_leather,fitting,,0.000966,1.45,-0.642 -0.307 2.025,1670
+Turret_0089,06U36,PLATE,0C05_Room Unit,exact,steel_structural,fitting,,0.001991,15.63,-0.927 -0.244 2.022,1138
+Turret_0090,06U42,ROLLAR,0C05_Room Unit,exact,steel_cast,running_gear,,0.000285,2.24,-0.861 -0.227 1.922,1038
+Turret_0092,06J20B,SEAT,0C05_Room Unit,exact,seat_steel_leather,component:gunner_seat,,0.011563,17.34,0.579 -0.219 1.604,5892
+Turret_0093,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.437 -0.170 2.183,376
+Turret_0094,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.437 -0.170 2.436,376
+Turret_0095,12O40,GUN,0C09_Gun Unit,exact,steel_gun,gun,,0.002932,23.02,0.560 -0.110 3.234,4394
+Turret_0096,15N90,TRACK,0C10_Armor Unit,exact,steel_track_cast,track,,0.006538,51.65,1.338 -0.185 2.419,5426
+Turret_0097,15F37,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000583,4.57,1.307 -0.160 2.844,1364
+Turret_0098,,,,game_authored,steel_structural,fitting,,0.000115,0.91,-0.709 0.264 2.918,2264
+Turret_0099,04S01,COVER,0C10_Armor Unit,exact,armour_rolled_homogeneous,armour:turret_front,100,0.222959,1750.23,0.045 0.134 2.383,1350
+Turret_0101,10S03,ARMOR,0C10_Armor Unit,exact,armour_rolled_homogeneous,armour:turret_walls,80,0.368469,2892.48,0.038 -0.098 2.275,7094
+Turret_0102,15F35,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000884,6.94,1.344 -0.084 2.295,430
+Turret_0103,12Z23,HOLDER,0C09_Gun Unit,exact,steel_gun,gun,,0.002509,19.69,0.560 -0.089 3.056,1016
+Turret_0105,12Z01,COVER,0C13_Top Cover Unit,exact,armour_rolled_homogeneous,armour:turret_roof,25,0.229682,1803.01,-0.000 -0.174 2.767,11832
+Turret_0107,,,,game_authored,steel_structural,fitting,,0.000338,2.66,-0.709 0.135 2.789,4524
+Turret_0108,,,,game_authored,steel_structural,fitting,,0.000115,0.91,-0.913 0.135 2.787,2264
+Turret_0109,,,,game_authored,steel_structural,fitting,,0.000115,0.91,-0.505 0.135 2.787,2264
+Turret_0110,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,0.0,0.0,-0.419 -0.017 2.751,240
+Turret_0111,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,0.0,0.0,-0.345 -0.017 2.751,240
+Turret_0112,05U13,MOTOR,0C05_Room Unit,exact,iron_cast_machinery,component:turret_traverse_motor,,0.042322,304.72,0.396 -0.000 1.257,5706
+Turret_0113,10A12,GEAR,0C10_Armor Unit,exact,iron_cast_machinery,fitting,,0.102884,740.76,-0.006 0.003 1.943,10856
+Turret_0115,12Z36,COVER,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.004195,32.93,-0.024 0.003 2.874,1990
+Turret_0116,12Z34,COVER,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.002611,20.5,-0.024 0.003 2.940,1150
+Turret_0117,06U12,HOLDER,0C05_Room Unit,exact,steel_structural,fitting,,0.119443,937.63,-0.010 0.010 2.010,14258
+Turret_0118,13Z59,FILTER,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.002854,22.4,-0.023 0.003 2.745,13880
+Turret_0119,05J36,HOLDER,0C05_Room Unit,exact,steel_structural,fitting,,0.006637,52.1,0.811 0.004 1.919,2320
+Turret_0120,15F35,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000884,6.94,-1.355 0.006 2.295,430
+Turret_0121,10P22,BLACKET,0C05_Room Unit,exact,steel_structural,fitting,,0.001163,9.13,-0.983 0.025 2.168,224
+Turret_0122,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,7e-05,0.55,-0.322 0.015 2.742,118
+Turret_0123,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,0.000227,1.78,-0.382 0.015 2.767,12
+Turret_0124,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,2.9e-05,0.23,-0.382 0.015 2.747,12
+Turret_0125,32O06,TOOL,0B26_Cover Unit,exact,tool_steel_wood,fitting,,0.002452,7.36,1.366 0.117 1.941,2176
+Turret_0126,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,0.0,0.0,-0.419 0.046 2.751,240
+Turret_0127,12Z01,COVER,0C13_Top Cover Unit,piece_of,armour_rolled_homogeneous,armour:turret_roof,25,0.0,0.0,-0.345 0.046 2.751,240
+Turret_0128,15N90,TRACK,0C10_Armor Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.353 0.106 2.419,5426
+Turret_0129,12T07,GLASS,0C13_Top Cover Unit,exact,glass_laminated,fitting,,0.001271,3.18,0.560 0.080 2.879,80
+Turret_0130,15F37,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000583,4.57,-1.321 0.083 2.844,1364
+Turret_0131,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,-1.451 0.088 2.436,376
+Turret_0132,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,-1.451 0.088 2.183,376
+Turret_0133,15F37,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000583,4.57,1.313 0.096 2.844,1364
+Turret_0134,15N90,TRACK,0C10_Armor Unit,exact,steel_track_cast,track,,0.006538,51.65,1.348 0.078 2.419,5426
+Turret_0135,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.443 0.110 2.183,376
+Turret_0136,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.443 0.110 2.436,376
+Turret_0137,05J27,MOTOR,0C05_Room Unit,exact,iron_cast_machinery,fitting,,0.020876,150.3,0.918 0.151 2.159,3722
+Turret_0138,15F35,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000884,6.94,1.335 0.178 2.295,430
+Turret_0139,12T07,GLASS,0C13_Top Cover Unit,exact,glass_laminated,fitting,,0.001271,3.18,0.291 0.210 2.879,80
+Turret_0140,12T07,GLASS,0C13_Top Cover Unit,exact,glass_laminated,fitting,,0.001271,3.18,0.829 0.210 2.879,80
+Turret_0141,15F35,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000884,6.94,-1.328 0.271 2.295,430
+Turret_0142,05J73,ARM,0C05_Room Unit,exact,steel_structural,fitting,,0.001262,9.91,0.946 0.305 2.329,378
+Turret_0143,,,,game_authored,steel_structural,fitting,,0.001163,9.13,0.974 0.333 2.977,576
+Turret_0144,13Z54,HOLDER,0C12_Door Unit,exact,steel_structural_plate,fitting,,0.001294,10.16,0.960 0.339 2.573,2742
+Turret_0145,15F37,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000583,4.57,-1.280 0.340 2.844,1364
+Turret_0146,15F37,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000583,4.57,1.269 0.348 2.844,1364
+Turret_0147,15N90,TRACK,0C10_Armor Unit,exact,steel_track_cast,track,,0.006538,51.65,-1.307 0.370 2.419,5426
+Turret_0148,15N90,TRACK,0C10_Armor Unit,exact,steel_track_cast,track,,0.006538,51.65,1.307 0.336 2.419,5426
+Turret_0149,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,-1.407 0.371 2.183,376
+Turret_0150,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,-1.407 0.371 2.436,376
+Turret_0151,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.394 0.385 2.183,376
+Turret_0152,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.394 0.385 2.436,376
+Turret_0153,35D12,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,3.1e-05,0.24,-1.462 0.400 2.011,1346
+Turret_0154,35D12,LOCK,0B26_Cover Unit,exact,steel_structural_plate,fitting,,3.1e-05,0.24,1.453 0.400 2.011,1346
+Turret_0156,12Z10,PLATE,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.001395,10.95,0.401 0.299 3.046,842
+Turret_0157,15F35,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000884,6.94,1.277 0.432 2.295,430
+Turret_0158,12Z20,RING,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.00171,13.43,0.560 0.424 2.880,480
+Turret_0159,12Z06,COVER,0C13_Top Cover Unit,exact,steel_structural_plate,fitting,,0.043273,339.69,0.553 0.425 2.918,4884
+Turret_0160,,,,game_authored,steel_structural,fitting,,0.00015,1.18,0.963 0.197 2.588,336
+Turret_0162,,,,game_authored,steel_structural,fitting,,0.002639,20.72,0.369 0.579 1.509,930
+Turret_0163,12T07,GLASS,0C13_Top Cover Unit,exact,glass_laminated,fitting,,0.001271,3.18,0.224 0.501 2.879,80
+Turret_0164,12T07,GLASS,0C13_Top Cover Unit,exact,glass_laminated,fitting,,0.001271,3.18,0.895 0.501 2.879,80
+Turret_0169,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.441 0.489 1.789,6276
+Turret_0170,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.191 0.489 1.789,6276
+Turret_0171,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.307 0.489 1.789,6276
+Turret_0172,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.316 0.489 1.789,6276
+Turret_0173,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.432 0.489 1.789,6276
+Turret_0174,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.183 0.489 1.789,6276
+Turret_0175,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.441 0.489 1.646,6276
+Turret_0176,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.191 0.489 1.646,6276
+Turret_0177,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.307 0.489 1.646,6276
+Turret_0178,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.316 0.489 1.646,6276
+Turret_0179,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.432 0.489 1.646,6276
+Turret_0180,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.183 0.489 1.646,6276
+Turret_0181,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.441 0.489 1.499,6276
+Turret_0182,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.307 0.489 1.499,6276
+Turret_0183,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.191 0.489 1.499,6276
+Turret_0184,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.316 0.489 1.499,6276
+Turret_0185,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.432 0.489 1.499,6276
+Turret_0186,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.183 0.489 1.499,6276
+Turret_0187,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.191 0.490 1.356,6276
+Turret_0188,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.441 0.490 1.356,6276
+Turret_0189,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.307 0.490 1.356,6276
+Turret_0190,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.007195,21.59,-1.316 0.490 1.356,6276
+Turret_0191,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.432 0.490 1.356,6276
+Turret_0192,23M03-A-00,AMMO,25M06-0A-1_BLACET,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.007195,21.59,1.183 0.490 1.356,6276
+Turret_0193,23H07,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.004527,35.54,-0.886 0.574 1.232,1260
+Turret_0194,23H08,COVER,0B16_Base Unit,exact,steel_structural,fitting,,0.004547,35.69,0.881 0.574 1.232,1260
+Turret_0197,15F37,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000583,4.57,1.175 0.598 2.844,1364
+Turret_0198,15N90,TRACK,0C10_Armor Unit,exact,steel_track_cast,track,,0.006538,51.65,1.215 0.595 2.419,5426
+Turret_0199,10P23,BLACKET,0C05_Room Unit,exact,steel_structural,fitting,,0.000543,4.26,0.797 0.655 2.156,228
+Turret_0200,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.289 0.662 2.183,376
+Turret_0201,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.289 0.662 2.436,376
+Turret_0202,15F35,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000884,6.94,1.163 0.682 2.295,430
+Turret_0204,25H10,PLATE,0B16_Base Unit,exact,steel_structural,fitting,,0.024417,191.67,-0.006 0.858 1.023,3570
+Turret_0205,12T07,GLASS,0C13_Top Cover Unit,exact,glass_laminated,fitting,,0.001271,3.18,0.411 0.734 2.879,80
+Turret_0206,12T07,GLASS,0C13_Top Cover Unit,exact,glass_laminated,fitting,,0.001271,3.18,0.709 0.734 2.879,80
+Turret_0208,05U26,CASE,0C05_Room Unit,exact,steel_structural,fitting,,0.01307,102.6,0.413 0.780 1.752,429
+Turret_0209,,,,game_authored,steel_structural,fitting,,0.018672,146.57,0.444 0.836 2.147,1216
+Turret_0210,05J25,RAIL,0C05_Room Unit,exact,steel_structural,fitting,,0.002983,23.41,-0.429 0.738 1.621,2478
+Turret_0211,14D33,BLACKET,0C14_Cover Unit,exact,steel_structural_plate,fitting,,0.000722,5.66,-0.821 0.820 2.224,1508
+Turret_0212,14D33,BLACKET,0C14_Cover Unit,exact,steel_structural_plate,fitting,,0.000722,5.66,-0.826 0.824 2.633,1508
+Turret_0213,15F37,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000583,4.57,1.026 0.829 2.844,1364
+Turret_0214,15N90,TRACK,0C10_Armor Unit,exact,steel_track_cast,track,,0.006538,51.65,1.065 0.834 2.419,5426
+Turret_0215,14A16,PLATE,0C14_Cover Unit,exact,steel_structural_plate,fitting,,0.001477,11.59,-0.850 0.848 2.428,288
+Turret_0216,15F35,BROCK,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000884,6.94,0.997 0.909 2.295,430
+Turret_0218,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.124 0.915 2.183,376
+Turret_0219,15N03,PLATE,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.000165,1.29,1.124 0.915 2.436,376
+Turret_0220,14A13,BLOCKET,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.001923,15.09,-0.927 0.926 2.017,628
+Turret_0221,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.003265,9.8,0.293 0.998 1.286,3352
+Turret_0222,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.003265,9.8,0.422 0.998 1.286,3352
+Turret_0223,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.003265,9.8,0.550 0.998 1.286,3352
+Turret_0224,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.003265,9.8,-0.139 1.020 1.299,3352
+Turret_0225,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.003265,9.8,-0.010 1.020 1.299,3352
+Turret_0226,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.003265,9.8,0.118 1.020 1.299,3352
+Turret_0227,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.003265,9.8,-1.011 1.020 1.688,3352
+Turret_0228,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_right_rear,,0.003265,9.8,-0.882 1.020 1.688,3352
+Turret_0229,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.003265,9.8,0.688 1.020 1.688,3352
+Turret_0230,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.003265,9.8,0.817 1.020 1.688,3352
+Turret_0231,21M08,AMMO,0B16_Base Unit,exact,ammunition_88mm,component:ammo_sponson_left_rear,,0.003265,9.8,0.945 1.020 1.688,3352
+Turret_0232,25H57,Extinguisher,0B16_Base Unit,exact,steel_sheet_tank,fitting,,0.006565,51.53,-0.355 1.035 1.487,1296
+Turret_0233,10P25,BLACKET,0C05_Room Unit,exact,steel_structural,fitting,,0.000858,6.74,-0.080 1.019 2.166,332
+Turret_0234,25K69,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.000749,5.88,0.439 1.098 1.371,488
+Turret_0235,26P15,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,8.8e-05,0.69,-0.018 1.104 1.371,44
+Turret_0236,26P14,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,6.7e-05,0.53,-0.948 1.106 1.761,44
+Turret_0237,26P16,BLACKET,0B16_Base Unit,exact,steel_structural,fitting,,0.000103,0.81,0.842 1.103 1.761,44
+Turret_0238,14A18,PIN,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.00031,2.44,-0.004 1.330 2.699,512
+Turret_0239,15A44,COVER,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.137742,1081.28,-0.004 1.427 2.443,43968
+Turret_0240,15A21,COVER,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.006034,47.37,0.461 1.451 2.812,1452
+Turret_0241,15A20,COVER,0C10_Armor Unit,exact,steel_structural_plate,fitting,,0.006034,47.37,-0.470 1.451 2.813,1444
+cupola hatch disc,,,,game_authored,steel_structural,fitting,,0.005304,41.64,0.560 0.424 2.990,2488
+cupola hatch handle,,,,game_authored,steel_structural,fitting,,0.000115,0.91,0.795 0.370 3.094,1716
+cupola hatch hinge,,,,game_authored,steel_structural,fitting,,0.003325,26.1,0.881 0.351 2.926,1778
+escape hatch,14Z11,COVER,0C14_Cover Unit,exact,steel_structural_plate,fitting,,0.025422,199.56,-0.895 0.893 2.414,1526
+gunner sight lens,,,,game_authored,glass_laminated,fitting,,2.2e-05,0.05,0.492 -0.539 2.414,164
+gunner_hatch,,,,game_authored,steel_structural,fitting,,0.012737,99.98,-0.709 0.126 2.850,6646
+turret position indicator backing,,,,game_authored,instrument,fitting,,0.000124,0.37,0.879 -0.635 2.177,124
+wheel2,05J55,ROLLOR,0C05_Room Unit,exact,steel_cast,running_gear,,0.000611,4.8,0.909 0.385 2.368,4330
