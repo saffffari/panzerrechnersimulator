@@ -20,6 +20,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +38,7 @@ SHOTS = {
         'Yevgeny Khaldei, May 1945 (public domain): the west front from the rubble of Koenigsplatz, west-north-west '
         'of the building, looking east-south-east. The north-west tower large at left (flat-topped since the 1941 '
         'flak conversion), the portico centre-right, the south-west tower at right, the dome frame behind.'),
-    'reichstag_south_bu8922': ((20.0, 2.0, -250.0), (0.0, 24.0, 0.0),
+    'reichstag_south_bu8922': ((66.0, 2.0, -168.0), (0.0, 24.0, 0.0),
         'IWM BU 8922, Capt Malindine, AFPU, 12 July 1945 (public domain): the south front with both south towers '
         '(flat-topped) and the dome frame, seen from the south across a wide paved road with tram tracks near the '
         'Brandenburg Gate.'),
@@ -65,8 +66,20 @@ SHOTS = {
 }
 
 
+def ground(H, x, n):
+    """Bilinear terrain height at map (x, n) on the workshop's grid (centred, square)."""
+    res = H.shape[0]
+    half = 900.0
+    sp = 2*half/(res-1)
+    fx, fz = (x+half)/sp, (-n+half)/sp
+    i, j = int(min(max(math.floor(fx), 0), res-2)), int(min(max(math.floor(fz), 0), res-2))
+    tx, tz = fx-i, fz-j
+    return float(H[j, i]*(1-tx)*(1-tz)+H[j, i+1]*tx*(1-tz)+H[j+1, i]*(1-tx)*tz+H[j+1, i+1]*tx*tz)
+
+
 def angles(eye, target):
-    dx, dy, dz = target[0]-eye[0], target[1]-eye[1], -(target[2]-eye[2])
+    """Engine recon yaw/pitch (yaw 0 looks along -Z, north; 90 along +X, east)."""
+    dx, dy, dz = target[0]-eye[0], target[1]-eye[1], target[2]-eye[2]
     yaw = math.degrees(math.atan2(dx, -dz))
     pitch = math.degrees(math.atan2(dy, math.hypot(dx, dz)))
     return yaw, pitch
@@ -102,19 +115,24 @@ def main():
     root = Path(os.environ.get('KESSEL_ASSET_ROOT', '/windows/shop/panzerrechnersystem'))
     a.out.mkdir(parents=True, exist_ok=True)
     names = a.shots.split(',') if a.shots else list(SHOTS)
+    heights = np.load(root/WORKSHOP.replace('manifest.v1.json', 'heights.npy'))
     for name in names:
         eye, target, text = SHOTS[name]
         # the map's (x, height, n) to the engine's (x, y, z)
-        e = (eye[0], eye[1], -eye[2])
-        t = (target[0], target[1], -target[2])
+        # heights are above the ground at the eye and at the target
+        e = (eye[0], ground(heights, eye[0], eye[2])+eye[1], -eye[2])
+        t = (target[0], ground(heights, target[0], target[2])+target[1], -target[2])
         yaw, pitch = angles(e, t)
         out = a.out/f'berlin1945_{a.tag}_{name}.png'
         env = dict(os.environ, KESSEL_ASSET_ROOT=str(root), KESSEL_RECON_MANIFEST=str(root/WORKSHOP),
-                   KESSEL_SHOT_CANYON='1', KESSEL_INTERNAL_RES=a.res, XDG_RUNTIME_DIR='/run/user/1000')
+                   KESSEL_SHOT_CANYON='1', KESSEL_INTERNAL_RES=a.res,
+                   # seed 19: the run's clock offset is zero (src/canyon.rs variation), so every still is at
+                   # the authored 1945-04-30T15:30Z
+                   KESSEL_CANYON_SEED='19', XDG_RUNTIME_DIR='/run/user/1000')
         env.pop('KESSEL_CAPTURES_DIR', None)
         env.pop('KESSEL_CAPTURE_4K_JPG', None)
         cmd = ['nice', '-n', '10', str(a.bin), 'screenshot', str(out), str(e[0]), str(e[1]), str(e[2]),
-               f'{yaw:.2f}', f'{pitch:.2f}', a.fog]
+               f'{yaw:.2f}', f'{pitch:.2f}', '0.00005' if name.startswith('aerial') else a.fog]
         log = out.with_suffix('.log')
         with log.open('w') as f:
             r = subprocess.run(cmd, cwd=ROOT, env=env, stdout=f, stderr=subprocess.STDOUT)
