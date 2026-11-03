@@ -751,7 +751,7 @@ impl Range {
             yaw: 0.0,
             pitch: 0.0,
             focal_mm: 35.0,
-            speed: 4.0,
+            speed: 1.5,
             frame_tex,
             frame_image,
             shown_frame: None,
@@ -2254,7 +2254,7 @@ impl Range {
                 "local_eye": self.r.local_adaptation()},
             "lamp_gain": review_lamp_gain(), "time_speed": self.time_speed, "looping": self.looping,
             "engine": self.engine, "accumulate_moving": self.accumulate_moving, "wear": self.wear, "snow": self.snow,
-            "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm},
+            "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm, "speed": self.speed},
             "tiger": {"at": self.tiger_at.to_array(), "heading": self.tiger_heading},
             "battle": {"on": self.battle, "t34s": self.t34s.iter().map(|(p, h)| [p.x, p.y, *h]).collect::<Vec<_>>(),
                 "route": self.route.iter().map(|p| p.to_array()).collect::<Vec<_>>()},
@@ -2356,6 +2356,7 @@ impl Range {
             if let (Some(y), Some(p)) = (f(&c["yaw"]), f(&c["pitch"])) { self.yaw = y; self.pitch = p; }
         }
         if let Some(x) = f(&c["focal_mm"]) { self.focal_mm = x; }
+        if let Some(x) = f(&c["speed"]) { self.speed = x.clamp(0.05, 200.0); }
         if let Some(a) = v["tiger"]["at"].as_array().filter(|a| a.len() == 2) {
             self.tiger_at = Vec2::new(f(&a[0]).unwrap_or(TIGER_AT.x), f(&a[1]).unwrap_or(TIGER_AT.y));
         }
