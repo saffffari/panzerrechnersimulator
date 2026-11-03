@@ -17050,6 +17050,20 @@ impl ApplicationHandler for App {
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
                         // In a cook-off death the world runs on behind its outside shots.
                         let cookoff = state.game.cookoff_death();
+                        // The casualties' tissue solves run behind the fade and the black (the
+                        // world is frozen meanwhile): taken back while the screen is black, and
+                        // waited for before any view of the world returns.
+                        if state.game.casualty_tissue_pending() {
+                            let shot = card.filter(|card| card.is_silent()).map(|card| death_shot_for(cookoff,
+                                state.game.replay_has_impact(), card, nt, state.game.last_fatal.is_some()));
+                            match shot {
+                                Some(DeathShot::Fade) => {}
+                                Some(DeathShot::Black) => state.game.settle_casualty_tissue(false),
+                                None if nt < DEATH_FADE => {}
+                                None if nt < DEATH_END - 0.25 => state.game.settle_casualty_tissue(false),
+                                _ => state.game.settle_casualty_tissue(true),
+                            }
+                        }
                         if cookoff && card.is_some_and(|card| matches!(cookoff_shot(card, nt), DeathShot::Throw(_) | DeathShot::Crew(_))) {
                             state.game.update_realtime(&TankInput::default(), dt, &mut state.renderer);
                         }
@@ -17060,6 +17074,7 @@ impl ApplicationHandler for App {
                                 state.game.death_score_finished()) == death_card::Phase::Finished
                         });
                         if finished {
+                            state.game.settle_casualty_tissue(true);
                             // However long the last frame took, the dead Game ends silent.
                             state.game.set_audio_silenced(true);
                             // Acts 1/2 restore their entrance checkpoint. Act 3 has spent its single

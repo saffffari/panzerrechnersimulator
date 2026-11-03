@@ -35,6 +35,23 @@ struct Actor {
     helmet: Option<HelmetBody>,
 }
 
+/// A body's solve started on a worker (`TissueDraw::begin_strike`), finished in order by
+/// `TissueDraw::finish_strike`.
+pub(super) struct StrikeJob {
+    pub(super) peer: u32,
+    strikes: usize,
+    helmet_impulse: Vec3,
+    helmet_at: Vec3,
+    started: std::time::Instant,
+    handle: std::thread::JoinHandle<(CasualtyTissue, crew_tissue::Solve)>,
+}
+
+impl StrikeJob {
+    pub(super) fn is_finished(&self) -> bool {
+        self.handle.is_finished()
+    }
+}
+
 pub(super) struct TissueDraw {
     model: std::sync::Arc<TissueModel>,
     helmet: HelmetShape,
@@ -179,26 +196,47 @@ impl TissueDraw {
     /// each part's soft cells that remain. His helmet, while on his head, meets the strikes first;
     /// it comes away when its momentum against the head tears the strap or his head is mostly gone.
     pub(super) fn strike(&mut self, ragdoll: &CrewRagdoll, strikes: &[Strike]) -> [f32; PARTS] {
-        let model = self.model.clone();
+        let job = self.begin_strike(ragdoll, strikes);
+        self.finish_strike(job, ragdoll)
+    }
+
+    /// Start a body's solve on a worker: his helmet meets the strikes first, then his cells' own
+    /// state goes to the worker until `finish_strike` takes it back (no other strike on him may
+    /// come between: the caller finishes his earlier job first).
+    pub(super) fn begin_strike(&mut self, ragdoll: &CrewRagdoll, strikes: &[Strike]) -> StrikeJob {
         let peer = ragdoll.casualty.peer_id;
         let index = match self.actors.iter().position(|a| a.peer == peer) {
             Some(index) => index,
             None => {
-                self.actors.push(Actor { peer, tissue: CasualtyTissue::new(&model), cache: None, helmet: None });
+                self.actors.push(Actor { peer, tissue: CasualtyTissue::new(&self.model), cache: None, helmet: None });
                 self.actors.len() - 1
             }
         };
-        let actor = &mut self.actors[index];
-        let head = crew_physics::CrewBodyPart::Head;
-        let head_segment = ragdoll.segments[head.index()];
+        let actor = &self.actors[index];
+        let head_segment = ragdoll.segments[crew_physics::CrewBodyPart::Head.index()];
         let (strikes, helmet_impulse, helmet_at) = if actor.helmet.is_none() {
             self.helmet.through_shell(strikes, head_segment.rot.conjugate() * head_segment.vel)
         } else {
             (strikes.to_vec(), Vec3::ZERO, self.helmet.com)
         };
-        let strikes = &strikes[..];
-        let started = std::time::Instant::now();
-        let solve = actor.tissue.solve(&model, strikes);
+        let mut tissue = actor.tissue.clone();
+        let model = self.model.clone();
+        let count = strikes.len();
+        let handle = std::thread::spawn(move || {
+            let solve = tissue.solve(&model, &strikes);
+            (tissue, solve)
+        });
+        StrikeJob { peer, strikes: count, helmet_impulse, helmet_at, started: std::time::Instant::now(), handle }
+    }
+
+    /// Take a body's solve back (waiting for it if it is still running) and throw what came away.
+    pub(super) fn finish_strike(&mut self, job: StrikeJob, ragdoll: &CrewRagdoll) -> [f32; PARTS] {
+        let model = self.model.clone();
+        let peer = job.peer;
+        let (tissue, solve) = job.handle.join().expect("a body's tissue solve");
+        let Some(actor) = self.actors.iter_mut().find(|a| a.peer == peer) else { return [1.0; PARTS] };
+        actor.tissue = tissue;
+        let head = crew_physics::CrewBodyPart::Head;
         let torn: usize = solve.chunks.iter().map(|c| c.cells.len()).sum();
         let bone: usize = solve.chunks.iter().flat_map(|c| c.cells.iter())
             .filter(|&&c| model.cells[c as usize].tissue == crew_tissue::Tissue::Bone).count();
@@ -206,12 +244,12 @@ impl TissueDraw {
         let largest = solve.chunks.iter().map(|c| c.cells.len()).max().unwrap_or(0);
         let fastest = solve.chunks.iter().map(|c| c.velocity.length()).fold(0.0f32, f32::max);
         println!("[crew] body of actor {peer} solved on its cells: {} strikes, {} bonds broken, {} crushed in the track, {torn} cells torn away ({bone} bone) in {} pieces ({single} single, largest {largest}, fastest {fastest:.0} m/s), {} fragments stopped in him, {} steps in {:.0} ms",
-            strikes.len(), solve.bonds_broken, solve.crushed, solve.chunks.len(), solve.lodged, solve.steps, started.elapsed().as_secs_f32() * 1000.0);
+            job.strikes, solve.bonds_broken, solve.crushed, solve.chunks.len(), solve.lodged, solve.steps, job.started.elapsed().as_secs_f32() * 1000.0);
         let shares: [f32; PARTS] = std::array::from_fn(|i| actor.tissue.soft_share(&model, crew_physics::CrewBodyPart::ALL[i]));
-        if actor.helmet.is_none() && (HelmetBody::strap_tears(helmet_impulse) || shares[head.index()] < crew_tissue::KEEP_SOFT_SHARE) {
-            let body = HelmetBody::release(&self.helmet, ragdoll, helmet_impulse, helmet_at);
+        if actor.helmet.is_none() && (HelmetBody::strap_tears(job.helmet_impulse) || shares[head.index()] < crew_tissue::KEEP_SOFT_SHARE) {
+            let body = HelmetBody::release(&self.helmet, ragdoll, job.helmet_impulse, job.helmet_at);
             println!("[crew] helmet of actor {peer} came away at {:.1} m/s ({:.2} N·s against the head, head soft share {:.2})",
-                body.vel.length(), helmet_impulse.length(), shares[head.index()]);
+                body.vel.length(), job.helmet_impulse.length(), shares[head.index()]);
             actor.helmet = Some(body);
         }
         self.pieces.extend(crew_tissue::chunk_bodies(&model, ragdoll, solve.chunks));

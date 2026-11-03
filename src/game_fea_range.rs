@@ -378,7 +378,8 @@ const LEFT_X: f32 = 0.008;
 const LEFT_W: f32 = 0.15;
 const RIGHT_W: f32 = 0.15;
 const RIGHT_X: f32 = 1.0 - 0.006 - RIGHT_W;
-const BUTTONS: [(&str, usize, usize); 6] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1)];
+const BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
+    ("LOOP", 0, 2)];
 const BUTTON_H: f32 = 0.028;
 /// The groups' area: its left edge, the tabs' row and the rows' columns.
 const GROUPS_X: f32 = 0.168;
@@ -403,7 +404,12 @@ const HANDLE_DRAG_STEP: f32 = 0.04;
 fn button_rect(col: usize, row: usize) -> [f32; 4] {
     let gap = 0.004;
     let w = (RIGHT_W - 2.0 * gap) / 3.0;
-    [RIGHT_X + col as f32 * (w + gap), 1.0 - PANEL_H + 0.040 + row as f32 * (BUTTON_H + 0.005), w, BUTTON_H]
+    let y = 1.0 - PANEL_H + 0.040 + row as f32 * (BUTTON_H + 0.005);
+    // The third row is one wide button (LOOP).
+    if row == 2 {
+        return [RIGHT_X, y, RIGHT_W, BUTTON_H];
+    }
+    [RIGHT_X + col as f32 * (w + gap), y, w, BUTTON_H]
 }
 
 /// The panel's hide (or, hidden, show) button.
@@ -676,7 +682,7 @@ impl Range {
             time_speed: 1.0,
             play_clock: 0.0,
             clip: None,
-            looping: false,
+            looping: true,
             eye: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -1623,6 +1629,18 @@ impl Range {
         true
     }
 
+    /// Space: the run (or its clip) again from its start, playing.
+    fn replay(&mut self) {
+        if self.run.is_some() {
+            let start = self.clip.map_or(0, |c| c.0);
+            self.seek(start);
+            self.playing = true;
+            self.status = format!("REPLAY FROM {:.4} S (THE SHOT RE-RUN; TISSUE DETAIL CAN DIFFER)", self.shot_t);
+        } else {
+            self.status = "NO RUN TO REPLAY: ENTER RUNS, F FIRES".into();
+        }
+    }
+
     /// Back to the clip's start (or the run's), by re-running the shot to it.
     fn loop_back(&mut self) {
         let start = self.clip.map_or(0, |c| c.0);
@@ -2012,7 +2030,6 @@ impl Range {
         self.fog = f(&l["fog"]);
         if let Some(x) = f(&v["lamp_gain"]) { set_review_lamp_gain(x.max(1.0)); }
         if let Some(x) = f(&v["time_speed"]) { self.time_speed = x; }
-        if let Some(x) = v["looping"].as_bool() { self.looping = x; }
         if let Some(x) = v["engine"].as_bool() { self.engine = x; }
         if let Some(x) = v["accumulate_moving"].as_bool() { self.accumulate_moving = x; }
         self.wear = arr4(&v["wear"]);
@@ -2390,14 +2407,20 @@ impl Range {
         self.draw_crew_plan([LEFT_X, top + 0.036], 0.09);
         for (label, col, row) in BUTTONS {
             let [x, y, w, h] = button_rect(col, row);
-            let lit = (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some());
+            let lit = (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some()) || (label == "LOOP" && self.looping);
             let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
             let fill = if label == "FIRE" { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
                 else if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX };
             self.r.fill_rect(x, y, w, h, fill);
             let rec_label = self.recorder.as_ref().map(|r| format!("REC {:.0} S", r.frames as f32 / 30.0));
+            let loop_label = match (self.looping, self.clip) {
+                (true, Some(_)) => "LOOP: CLIP",
+                (true, None) => "LOOP: RUN",
+                (false, _) => "LOOP OFF",
+            };
             let text = match label {
                 "PLAY" if self.playing => "PAUSE",
+                "LOOP" => loop_label,
                 "REC" if rec_label.is_some() => rec_label.as_deref().unwrap_or("REC"),
                 other => other,
             };
@@ -2493,7 +2516,7 @@ impl Range {
                 "PANEL: A TAB OPENS/CLOSES ITS GROUP (SHIFT: ALONE); DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
                 "F: FIRE THE SHOT NOW (INTO THE PRESENT STATE)    ENTER: RUN ON A FRESH TIGER    Z (OR .): CENTRE ON THE TIGER",
-                "SPACE: PAUSE/PLAY (THE SIMULATION ALWAYS PLAYS UNLESS PAUSED)    BACKSPACE: RESET",
+                "SPACE: REPLAY THE RUN (OR CLIP) FROM ITS START    SHIFT+SPACE: PAUSE/PLAY    BACKSPACE: RESET",
                 "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
                 "BACK IN TIME RE-RUNS THE SAME SHOTS TO THAT FRAME (A FEW SECONDS; TISSUE DETAIL CAN DIFFER)",
                 "TAB OR HIDE: THE PANEL    R: RECORD THE VIEWPORT    F12: FULL-FRAME STILL 5120X2880    SETTINGS AND CAMERAS KEPT",
@@ -2522,10 +2545,14 @@ impl Range {
                 Mode::Live => self.frame_at.map_or(0.0, |f| f as f32 + 1.0),
             };
             let x = |k: f32| 0.0 + (1.0 - 0.0) * k / n;
+            self.r.fill_rect(0.0, base - thick, x(at) - 0.0, thick, INK);
+            // The clip over the line, its ends ticked.
             if let Some((a, b)) = self.clip {
                 self.r.fill_rect(x(a as f32), base - thick, x(b as f32 + 1.0) - x(a as f32), thick, AMBER);
+                for edge in [a as f32, b as f32 + 1.0] {
+                    self.r.fill_rect(x(edge) - 1.0 / self.win[0], base - 5.0 * thick, 2.0 / self.win[0], 5.0 * thick, AMBER);
+                }
             }
-            self.r.fill_rect(0.0, base - thick, x(at) - 0.0, thick, INK);
             if hovered {
                 let head = x(at);
                 self.r.fill_rect(head - 1.0 / self.win[0], base - 4.0 * thick, 2.0 / self.win[0], 4.0 * thick, INK);
@@ -2615,6 +2642,7 @@ impl Range {
             "RUN" => self.run(),
             "PLAY" => self.playing = !self.playing,
             "FIRE" => self.fire_now(),
+            "LOOP" => self.looping = !self.looping,
             "REC" => self.toggle_recording(),
             "STILL" => self.still(),
             _ => {}
@@ -2839,7 +2867,8 @@ impl App {
             }
             KeyCode::Enter | KeyCode::NumpadEnter => rg.run(),
             KeyCode::Backspace => rg.reset(),
-            KeyCode::Space => rg.button("PLAY"),
+            KeyCode::Space if self.input.shift => rg.button("PLAY"),
+            KeyCode::Space => rg.replay(),
             KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::ArrowUp | KeyCode::ArrowDown if self.input.alt => {
                 let step = match code { KeyCode::ArrowLeft => (-1, 0), KeyCode::ArrowRight => (1, 0), KeyCode::ArrowUp => (0, 1), _ => (0, -1) };
                 rg.rotate_section(step.0, step.1);
