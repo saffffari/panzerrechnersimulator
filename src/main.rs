@@ -117,6 +117,7 @@ mod radio_llm;
 mod platoon_proof;
 mod wreck_fire_review;
 mod raymarch_showcase;
+mod eye_review;
 mod fx_review;
 mod canyon_director;
 mod playtest_mode;
@@ -17387,6 +17388,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.get(1).is_some_and(|s| s == "raymarch-exhaust") {
         return raymarch_showcase::run_exhaust(&capture_arg(&args, 2, "raymarch_exhaust"));
+    }
+    if args.get(1).is_some_and(|s| s == "eye-review") {
+        return eye_review::run(&capture_arg(&args, 2, "eye_review"), args.get(3).map(String::as_str).unwrap_or("canyon"));
     }
     if args.get(1).is_some_and(|s| s == "raymarch-cabin") {
         return raymarch_showcase::run_cabin(&capture_arg(&args, 2, "raymarch_cabin"));

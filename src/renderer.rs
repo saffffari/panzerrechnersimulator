@@ -11150,6 +11150,43 @@ impl Renderer {
         Ok(state)
     }
 
+    /// Read one view's whole eye state (the 32 lanes `exposure.wgsl` documents) for the opt-in
+    /// headless eye review (`eye-review`). A pure GPU-buffer readback, as above; shipping frames
+    /// never call it.
+    pub fn debug_read_eye_lanes(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: usize,
+    ) -> anyhow::Result<[f32; EYE_STATE_LANES]> {
+        let bytes = (EYE_STATE_LANES * std::mem::size_of::<f32>()) as u64;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("eye-lanes-readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("eye-lanes-diagnostic"),
+        });
+        let view = view.min(self.exp_bufs.len().saturating_sub(1));
+        encoder.copy_buffer_to_buffer(&self.exp_bufs[view], 0, &readback, 0, bytes);
+        queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        rx.recv()??;
+        let mapped = slice.get_mapped_range();
+        let mut lanes = [0.0f32; EYE_STATE_LANES];
+        lanes.copy_from_slice(&bytemuck::cast_slice::<u8, f32>(&mapped)[..EYE_STATE_LANES]);
+        drop(mapped);
+        readback.unmap();
+        Ok(lanes)
+    }
+
     /// Re-arm the active view's first-measurement sentinel after a headless transport pre-roll.
     ///
     /// The shipping render loop never calls this. A deterministic screenshot can temporarily pause

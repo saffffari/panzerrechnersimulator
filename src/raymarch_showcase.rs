@@ -1687,6 +1687,21 @@ fn fire_until_tracer(g: &mut Game, r: &mut crate::renderer::Renderer, input: &Ta
 /// captured frame (so it follows an optic pass, as in play).
 pub(crate) fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
     capture: Option<(&str, u32, u32)>) -> anyhow::Result<()> {
+    eyepiece_frame_with(g, r, device, queue, |r| match capture {
+        Some((path, w, h)) => r.render_to_png(device, queue, path, w, h),
+        None => { r.render_offscreen(device, queue); Ok(()) }
+    })
+}
+
+/// The same composite frame, returned as RGBA8 at the internal grid (the eye review's clip
+/// statistics, `eye_review.rs`).
+pub(crate) fn eyepiece_frame_rgba(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device,
+    queue: &wgpu::Queue) -> anyhow::Result<Vec<u8>> {
+    eyepiece_frame_with(g, r, device, queue, |r| { let (w, h) = (r.iw, r.ih); r.render_to_rgba(device, queue, w, h) })
+}
+
+fn eyepiece_frame_with<T>(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
+    interior: impl FnOnce(&mut crate::renderer::Renderer) -> anyhow::Result<T>) -> anyhow::Result<T> {
     let saved = (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter);
     r.begin_coop_shadow_frame(g.player.center());
     r.weather_shelter = 1.0;
@@ -1706,10 +1721,7 @@ pub(crate) fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, de
     r.set_active_view(0);
     r.rt_skip = true;
     r.set_coop_shadow_reuse(true);
-    let result = match capture {
-        Some((path, w, h)) => r.render_to_png(device, queue, path, w, h),
-        None => { r.render_offscreen(device, queue); Ok(()) }
-    };
+    let result = interior(r);
     r.rt_skip = false;
     r.set_coop_shadow_reuse(false);
     r.end_coop_shadow_frame();
