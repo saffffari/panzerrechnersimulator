@@ -206,6 +206,13 @@ pub fn wgsl_constants() -> String {
     f("MD_WIND_REFERENCE_HEIGHT", WIND_REFERENCE_HEIGHT_M); f("MD_TRACK_CELL", TRACK_CELL_M);
     s.push_str(&format!("const MD_SALT_TILE: u32 = {}u;\nconst MD_SALT_FLOWER: u32 = {}u;\nconst MD_FLOWER_SLOTS: u32 = {}u;\nconst MD_SALT_FAR: u32 = {}u;\n",
         SALT_TILE, SALT_FLOWER, FLOWER_SLOTS, SALT_FAR));
+    // Leaf states (leaf_optics.rs, PROSPECT-D at 680 / 550 / 440 nm).
+    for (name, leaf) in [("FRESH", crate::leaf_optics::SPRING_GRASS), ("PALE", crate::leaf_optics::PALE_GRASS), ("DRY", crate::leaf_optics::DRY_GRASS)] {
+        let (rho, tau) = crate::leaf_optics::lanes(leaf);
+        s.push_str(&format!("const MD_LEAF_RHO_{name}: vec3<f32> = vec3({:?}, {:?}, {:?});\n", rho[0], rho[1], rho[2]));
+        s.push_str(&format!("const MD_LEAF_TAU_{name}: vec3<f32> = vec3({:?}, {:?}, {:?});\n", tau[0], tau[1], tau[2]));
+    }
+    s.push_str(&format!("const MD_CUTICLE_ROUGHNESS: f32 = {:?};\n", crate::leaf_optics::CUTICLE_ROUGHNESS));
     s.push_str(&format!("const MD_SPECIES: u32 = {}u;\nconst MD_TRACK_PAGE: i32 = {};\n", SPECIES.len(), TRACK_PAGE));
     // Private arrays: the shader indexes them with the species picked per flower.
     let arr = |name: &str, f: &dyn Fn(&Species) -> String| {

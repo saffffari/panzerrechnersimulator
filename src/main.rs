@@ -150,6 +150,7 @@ mod graphics;
 mod grass;
 mod meadow;
 mod meadow_fauna;
+mod leaf_optics;
 mod infantry;
 mod infantry_combat;
 mod interior_rig;
