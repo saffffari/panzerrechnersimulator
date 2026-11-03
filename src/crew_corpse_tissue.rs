@@ -202,8 +202,11 @@ impl TissueDraw {
         let torn: usize = solve.chunks.iter().map(|c| c.cells.len()).sum();
         let bone: usize = solve.chunks.iter().flat_map(|c| c.cells.iter())
             .filter(|&&c| model.cells[c as usize].tissue == crew_tissue::Tissue::Bone).count();
-        println!("[crew] body of actor {peer} solved on its cells: {} strikes, {} bonds broken, {torn} cells torn away ({bone} bone) in {} pieces, {} fragments stopped in him, {} steps in {:.0} ms",
-            strikes.len(), solve.bonds_broken, solve.chunks.len(), solve.lodged, solve.steps, started.elapsed().as_secs_f32() * 1000.0);
+        let single = solve.chunks.iter().filter(|c| c.cells.len() == 1).count();
+        let largest = solve.chunks.iter().map(|c| c.cells.len()).max().unwrap_or(0);
+        let fastest = solve.chunks.iter().map(|c| c.velocity.length()).fold(0.0f32, f32::max);
+        println!("[crew] body of actor {peer} solved on its cells: {} strikes, {} bonds broken, {} crushed in the track, {torn} cells torn away ({bone} bone) in {} pieces ({single} single, largest {largest}, fastest {fastest:.0} m/s), {} fragments stopped in him, {} steps in {:.0} ms",
+            strikes.len(), solve.bonds_broken, solve.crushed, solve.chunks.len(), solve.lodged, solve.steps, started.elapsed().as_secs_f32() * 1000.0);
         let shares: [f32; PARTS] = std::array::from_fn(|i| actor.tissue.soft_share(&model, crew_physics::CrewBodyPart::ALL[i]));
         if actor.helmet.is_none() && (HelmetBody::strap_tears(helmet_impulse) || shares[head.index()] < crew_tissue::KEEP_SOFT_SHARE) {
             let body = HelmetBody::release(&self.helmet, ragdoll, helmet_impulse, helmet_at);
@@ -327,7 +330,7 @@ impl TissueDraw {
                             let mass: f32 = piece.cells.iter().map(|&c| model.mass(c as usize)).sum();
                             piece.vel = (piece.vel - normal * vn) * crew_tissue::PIECE_TANGENT_KEEP
                                 - normal * (vn * crew_tissue::PIECE_RESTITUTION);
-                            if piece.cells.len() > 1 && 0.5 * mass * vn * vn > piece.cohesion_j {
+                            if piece.cells.len() > 1 && 0.5 * mass * vn * vn > piece.cohesion_j * crew_tissue::tune().grain {
                                 broken.push(n);
                                 break;
                             }

@@ -1481,6 +1481,17 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   volume the figure-and-skeleton build stands. Cost at 1 cm: 55,790 cells, a body built in about
   130 ms, and a killing strike's lattice solve in 0.4-0.65 s (about 25 ms at 2 cm). The solve
   holds the tick as the plate's lattice does; a worker solve is open.
+  Since 2026-11-03 a fragment's path through him is its permanent cavity: every cell within the
+  fragment's half-size plus a quarter cell of its path is crushed and drawn as gone before the
+  lattice runs (a voxel discretisation of the track, named; the lattice still tears the walls).
+  The part classification works point by point and left islands of a part bonded only to other
+  parts (the relaxed left hand on the thigh: 121 forearm cells, 103 thigh cells), which came
+  away whole and unhurt whenever their part was struck; each island now joins the part it touches
+  most (`rehome_part_islands`; test: every part of the real figure is one bonded piece).
+  `KESSEL_TISSUE_TUNE` scales the bonds' energy and stretch, the momentum shares and the landing
+  break-up for the `fea-film` range review only: the harness opens its gate and nothing else
+  does (test `the_tune_is_the_constants_unless_the_review_allows_it`), so play and both
+  shipping presets keep the constants above.
 - **A fire lit by the strike** (2026-11-02, `fea_damage::ignition`, `SpallResult::ignite`; the
   owner: a spark or a fragment meeting what burns may start a fire inside the tank, each material
   at its own chance, some never, as often as fires started in the war). It replaces the rule that
