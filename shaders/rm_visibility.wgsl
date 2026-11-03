@@ -266,6 +266,18 @@ fn rm_point_visibility(slot: u32, world: vec3<f32>, bias_m: f32) -> f32 {
     }
     return sum / 9.0;
 }
+// How far short of a light its shadow ray stops, m. A lamp sits in a fixture (a scene light, kind
+// 0, of a bulb's size: under 5 cm), so its ray stops 4 source radii short (0.15-0.3 m) of its own
+// housing. A weapon burst's light (kind 1: a blast, a cook-off, a vent, a glowing rim), a tracer's
+// head (2) and the game's explosion, flash and fire lights (kind 0, 6-35 cm sources) have no
+// housing: theirs stops at the source's radius. A blast's light beside the Tiger stopped 0.2-0.3 m
+// short, before the plate it burst against, and shone through it (the owner, 2026-11-03).
+const RM_LAMP_MAX_RADIUS_M: f32 = 0.05;
+fn rm_light_housing_m(index: u32) -> f32 {
+    let l = lights[index];
+    let lamp = l.c.z < 0.5 && l.a.w < RM_LAMP_MAX_RADIUS_M;
+    return select(l.a.w, clamp(4.0 * l.a.w, 0.15, 0.3), lamp);
+}
 fn rm_light_visibility(index: u32, world: vec3<f32>, bias_m: f32) -> f32 {
     let slot = lights[index].c.y;
     if (slot < -0.5) { return 1.0; }
