@@ -52,6 +52,147 @@ pub struct RasterOpticSpec {
     /// A telescope's eyepiece (the gunner's sight), not a vision block: its image leaves through a
     /// finite exit pupil, admitted per source fragment.
     pub eyepiece: Option<Eyepiece>,
+    /// The block's registered stops in the order an admitted ray crosses them, in the mesh's
+    /// frame, from the eye-side face of the inner window to the objective's outer face. Empty:
+    /// the port has no registered chain and its pane admits every incident direction.
+    pub relay_stops: Vec<RelayStop>,
+    /// Thickness of the closed inner window whose prism-side face carries the relay. Nonzero:
+    /// the raymarch glass pass draws that slab over the relay (Fresnel reflection of the cabin,
+    /// the second face's ghost, glints, grime, scratches) and the relay leaves its two faces'
+    /// losses to it.
+    pub window_thickness_m: f32,
+}
+
+/// Inner-window face: refracts, its losses belong to the glass pass drawn over the relay.
+pub const STOP_PANE: u32 = 0;
+/// Air/glass face of another closed window: refracts with Fresnel loss, Beer absorption inside.
+pub const STOP_WINDOW: u32 = 1;
+pub const STOP_MIRROR: u32 = 2;
+/// Ideal thin lens (the reconstructed relay prescription), slope transfer at its plane.
+pub const STOP_LENS: u32 = 3;
+pub const MAX_RELAY_STOPS: usize = 12;
+
+/// One finite optical face of a registered relay: a planar convex quad. A ray that meets its
+/// plane outside the quad has met the housing around it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RelayStop {
+    /// Ordered around the face so that (c1-c0)x(c2-c0) points along `normal`.
+    pub corners: [Vec3; 4],
+    pub normal: Vec3,
+    pub kind: u32,
+    /// Lens only: its optical centre and focal length.
+    pub center: Vec3,
+    pub focal_m: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct StopUniform {
+    // corners xyz; c0.w kind, c1.w focal length
+    corners: [[f32; 4]; 4],
+    normal: [f32; 4],
+    center: [f32; 4],
+}
+
+impl RelayStop {
+    fn uniform(&self) -> StopUniform {
+        let mut corners = self.corners.map(|c| [c.x, c.y, c.z, 0.0]);
+        corners[0][3] = self.kind as f32;
+        corners[1][3] = self.focal_m;
+        StopUniform { corners, normal: [self.normal.x, self.normal.y, self.normal.z, 0.0],
+            center: [self.center.x, self.center.y, self.center.z, 0.0] }
+    }
+}
+
+// The CPU witness of the pane's stop-chain law (raster_optics.wgsl `relay_trace`), with the glass
+// constants shared with the ray backend's periscope path (protective_glass.wgsl).
+#[cfg(test)]
+const RELAY_GLASS_IOR: f32 = 1.52;
+#[cfg(test)]
+const RELAY_GLASS_ABSORPTION_PER_M: Vec3 = Vec3::new(0.080, 0.035, 0.020);
+#[cfg(test)]
+const RELAY_MIRROR_REFLECTANCE: f32 = 0.90;
+#[cfg(test)]
+const RELAY_LENS_TRANSMITTANCE: f32 = 0.96;
+
+#[cfg(test)]
+fn dielectric_fresnel(cos_incident: f32, eta_i: f32, eta_t: f32) -> f32 {
+    let ci = cos_incident.abs().clamp(0.0, 1.0);
+    let eta = eta_i / eta_t;
+    let st2 = eta * eta * (1.0 - ci * ci).max(0.0);
+    if st2 >= 1.0 { return 1.0; }
+    let ct = (1.0 - st2).max(0.0).sqrt();
+    let rs = (eta_i * ci - eta_t * ct) / (eta_i * ci + eta_t * ct).abs().max(1e-6);
+    let rp = (eta_t * ci - eta_i * ct) / (eta_t * ci + eta_i * ct).abs().max(1e-6);
+    0.5 * (rs * rs + rp * rp)
+}
+
+/// Whether `p` (on the stop's plane) lies inside its quad.
+#[cfg(test)]
+fn inside_stop(stop: &RelayStop, p: Vec3) -> bool {
+    (0..4).all(|i| {
+        let a = stop.corners[i];
+        let b = stop.corners[(i + 1) % 4];
+        (b - a).cross(p - a).dot(stop.normal) >= 0.0
+    })
+}
+
+#[cfg(test)]
+/// A ray carried through the registered stop chain. `raster_optics.wgsl` (`relay_trace`) is the
+/// same law, step for step; the CPU copy is its test witness.
+#[derive(Clone, Copy, Debug)]
+pub struct RelayRay { pub position: Vec3, pub direction: Vec3, pub throughput: Vec3 }
+
+#[cfg(test)]
+/// Trace `origin + t*direction` through every stop in order. None: the ray left a stop's
+/// aperture (it meets the housing) or was totally internally reflected inside a window.
+pub fn relay_trace(stops: &[RelayStop], origin: Vec3, direction: Vec3) -> Option<RelayRay> {
+    let mut p = origin;
+    let mut d = direction.normalize();
+    let mut throughput = Vec3::ONE;
+    let mut in_glass = false;
+    let mut glass_from = Vec3::ZERO;
+    for stop in stops {
+        let denom = d.dot(stop.normal);
+        if denom.abs() < 1e-6 { return None; }
+        let t = (stop.corners[0] - p).dot(stop.normal) / denom;
+        if t <= 0.0 { return None; }
+        p += d * t;
+        if !inside_stop(stop, p) { return None; }
+        let n = if denom > 0.0 { -stop.normal } else { stop.normal };
+        match stop.kind {
+            STOP_MIRROR => { d = (d - 2.0 * d.dot(n) * n).normalize(); throughput *= RELAY_MIRROR_REFLECTANCE; }
+            STOP_LENS => {
+                let axis = -n;
+                let cosine = d.dot(axis);
+                if cosine < 0.05 { return None; }
+                let height = p - stop.center;
+                let tangent_height = height - axis * height.dot(axis);
+                d = (d / cosine - tangent_height / stop.focal_m).normalize();
+                throughput *= RELAY_LENS_TRANSMITTANCE;
+            }
+            _ => {
+                let (eta_i, eta_t) = if in_glass { (RELAY_GLASS_IOR, 1.0) } else { (1.0, RELAY_GLASS_IOR) };
+                let eta = eta_i / eta_t;
+                let cosine = -d.dot(n);
+                let k = 1.0 - eta * eta * (1.0 - cosine * cosine);
+                if k < 0.0 { return None; }
+                if stop.kind == STOP_WINDOW {
+                    throughput *= 1.0 - dielectric_fresnel(cosine, eta_i, eta_t);
+                    if in_glass {
+                        let length = p.distance(glass_from);
+                        throughput *= Vec3::new((-RELAY_GLASS_ABSORPTION_PER_M.x * length).exp(),
+                            (-RELAY_GLASS_ABSORPTION_PER_M.y * length).exp(), (-RELAY_GLASS_ABSORPTION_PER_M.z * length).exp());
+                    }
+                }
+                d = (eta * d + (eta * cosine - k.sqrt()) * n).normalize();
+                in_glass = !in_glass;
+                glass_from = p;
+            }
+        }
+        p += d * 1e-5;
+    }
+    (!in_glass).then_some(RelayRay { position: p, direction: d, throughput })
 }
 
 /// A telescope eyepiece seen from the cabin. Its field reaches an eye only through the exit
@@ -245,6 +386,8 @@ struct PanelUniform {
     pupil_eye_field: [f32; 4],
     pupil_center_radius: [f32; 4],
     pupil_axis_relief: [f32; 4],
+    relay_eye: [f32; 4],
+    stops: [StopUniform; MAX_RELAY_STOPS],
 }
 
 struct Layer {
@@ -301,6 +444,11 @@ struct WeatherPipelines {
 struct WeatherLayouts {
     smoke: wgpu::BindGroupLayout,
     particles: wgpu::BindGroupLayout,
+}
+
+/// The pane program: the shared wiped-glass groove field, then the relay itself.
+fn panel_shader_source() -> String {
+    format!("{}\n{}", include_str!("../shaders/glass_scratches.wgsl"), include_str!("../shaders/raster_optics.wgsl"))
 }
 
 fn optic_particle_shader_source() -> String {
@@ -452,7 +600,9 @@ fn capture_camera(
     let bounded_elevation = elevation.clamp(OFF_AXIS_ELEVATION.0, OFF_AXIS_ELEVATION.1);
     // A telescope's explicitly bounded pupil/field below owns its finite acceptance. Do not
     // replace its admitted rays with the vision-block off-axis boundary image.
-    let off_axis = spec.eyepiece.is_none() && side != Vec3::ZERO
+    // A registered stop chain owns a vision block's acceptance the same way: its capture keeps
+    // every incident direction and the pane's chain trace darkens what the housing stops.
+    let off_axis = spec.eyepiece.is_none() && spec.relay_stops.is_empty() && side != Vec3::ZERO
         && ((bounded_bearing - bearing).abs() > 1e-4 || (bounded_elevation - elevation).abs() > 1e-4
             || forward_part <= 0.0);
     if off_axis {
@@ -588,7 +738,7 @@ impl RasterOptics {
                 super::sampler_entry(2),
             ],
         });
-        let shader = super::shader(device,"raster-optic-panel",include_str!("../shaders/raster_optics.wgsl"));
+        let shader = super::shader(device,"raster-optic-panel",&panel_shader_source());
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label:Some("raster-optic-panel-pipeline-layout"),bind_group_layouts:&[&panel_layout],push_constant_ranges:&[],
         });
@@ -770,6 +920,14 @@ impl Renderer {
         }
     }
 
+    /// The closed inner windows over this frame's drawn relays, with their slab thickness: the
+    /// raymarch glass pass draws them over the relay (rm_glass.wgsl, `window_thickness_m`).
+    pub(super) fn raster_optic_window_panes(&self) -> Vec<(usize, f32)> {
+        let Some(optics)=&self.raster_optics else {return Vec::new();};
+        optics.prepared.borrow().iter().map(|view|&optics.specs[view.port])
+            .filter(|spec|spec.window_thickness_m>0.0).map(|spec|(spec.mesh,spec.window_thickness_m)).collect()
+    }
+
     pub(super) fn raster_optic_panel(&self, mesh: usize) -> bool {
         self.raster_optics.as_ref().is_some_and(|o|transmitting_panel(&o.specs,&o.blocked,mesh))
     }
@@ -833,13 +991,19 @@ impl Renderer {
                      [pupil.center.x,pupil.center.y,pupil.center.z,pupil.exit_pupil_radius_m],
                      [axis.x,axis.y,axis.z,pupil.eye_relief_m])
                 });
+            // Mesh-local eye and stops: millimetre stop outlines without world-coordinate cancellation.
+            let local_eye=mesh.model.inverse().transform_point3(self.camera.pos);
+            let relay_eye=[local_eye.x,local_eye.y,local_eye.z,0.0];
+            let mut stops=[<StopUniform as bytemuck::Zeroable>::zeroed();MAX_RELAY_STOPS];
+            for (slot,stop) in stops.iter_mut().zip(&spec.relay_stops) {*slot=stop.uniform();}
             let panel=PanelUniform {main_view_proj:camera.view_proj,model:mesh.model.to_cols_array_2d(),
                 source_direction_view_proj:(view.camera.relative_view_proj()
                     *relay_rotation(&optics.specs[view.port],mesh.model)).to_cols_array_2d(),
                 // eye.w admits a capture; the fragment pupil mask owns spatial throughput.
                 eye:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,view.radiance_scale],
-                source_eye:[view.source_eye.x,view.source_eye.y,view.source_eye.z,0.0],layer:[view.port as u32,0,view.extent[0],view.extent[1]],
-                pupil_eye_field,pupil_center_radius,pupil_axis_relief};
+                source_eye:[view.source_eye.x,view.source_eye.y,view.source_eye.z,0.0],
+                layer:[view.port as u32,spec.relay_stops.len().min(MAX_RELAY_STOPS) as u32,view.extent[0],view.extent[1]],
+                pupil_eye_field,pupil_center_radius,pupil_axis_relief,relay_eye,stops};
             queue.write_buffer(&layer.panel_buf,0,bytemuck::bytes_of(&panel));
             let smoke=super::SmokeUniform {
                 inv_view_proj:cam.inv_view_proj,cam_pos:cam.cam_pos,fog_density:self.fog_density.max(0.0),
@@ -1470,7 +1634,7 @@ mod tests {
             Vec3::new(-0.055,-0.0175,0.0),Vec3::new(0.055,-0.0175,0.0),
             Vec3::new(0.055,0.0175,0.0),Vec3::new(-0.055,0.0175,0.0)],
             entry_outward:Vec3::Z,objective:Vec3::new(0.0,0.14,0.045),objective_outward:Vec3::Z,
-            preserve_ray_direction:false,eyepiece:None}
+            preserve_ray_direction:false,eyepiece:None,relay_stops:Vec::new(),window_thickness_m:0.0}
     }
     fn viewer(distance:f32, fov:f32) -> crate::camera::Camera {
         let mut camera=crate::camera::Camera::new(16.0/9.0);
@@ -1710,13 +1874,14 @@ mod tests {
 
     #[test]
     fn raster_optic_panel_shader_has_no_ray_query_or_filter_history() {
-        let source=include_str!("../shaders/raster_optics.wgsl");
+        let composed=panel_shader_source();
+        let source=composed.as_str();
         let module=wgpu::naga::front::wgsl::parse_str(source).expect("raster optic WGSL parses");
         wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),wgpu::naga::valid::Capabilities::all())
             .validate(&module).expect("raster optic WGSL validates");
         assert!(!source.contains("rayQuery") && !source.contains("textureSample("));
-        assert_eq!(std::mem::size_of::<PanelUniform>(),288);
-        let tracer=format!("{}\n{}",source.split("struct PaneOutput").next().unwrap(),
+        assert_eq!(std::mem::size_of::<PanelUniform>(),288+16+MAX_RELAY_STOPS*96);
+        let tracer=format!("{}\n{}",include_str!("../shaders/raster_optics.wgsl").split("struct PaneOutput").next().unwrap(),
             include_str!("../shaders/weapon_tracer_panel.wgsl"));
         let module=wgpu::naga::front::wgsl::parse_str(&tracer).expect("composed tracer pupil WGSL parses");
         wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),wgpu::naga::valid::Capabilities::all())

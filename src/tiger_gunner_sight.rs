@@ -99,6 +99,8 @@ pub fn raster_optic_spec(lens: &CpuMesh, mesh: usize) -> crate::renderer::Raster
             eye_relief_m: TZF_EYE_RELIEF_M,
             half_field_rad: TZF_APPARENT_FIELD_RAD * 0.5,
         }),
+        relay_stops: Vec::new(),
+        window_thickness_m: 0.0,
     }
 }
 

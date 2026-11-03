@@ -1331,7 +1331,10 @@ mod environment_probe;
 #[path = "raster_optics.rs"] mod raster_optics;
 #[path = "raster_ssao.rs"] mod raster_ssao;
 #[path = "renderer_aa.rs"] mod renderer_aa;
-pub use raster_optics::{Eyepiece, RasterOpticSpec};
+pub use raster_optics::{Eyepiece, RasterOpticSpec, RelayStop, MAX_RELAY_STOPS,
+    STOP_LENS, STOP_MIRROR, STOP_PANE, STOP_WINDOW};
+#[cfg(test)]
+pub use raster_optics::relay_trace;
 #[path = "daylight_sampling.rs"]
 mod daylight_sampling;
 #[path = "protective_glass.rs"]
@@ -1690,6 +1693,9 @@ struct MeshGpu {
     vehicle_finish: [f32; 4],
     /// A clear cover over an instrument dial (`mark_instrument_cover`).
     instrument_cover: bool,
+    /// A direct-view vision block's closed glass slab, its measured thickness (`mark_vision_glass`;
+    /// 0: an ordinary pane).
+    vision_glass_m: f32,
     /// The source model's default metal on this mesh is painted steel (`mark_painted_steel`).
     painted_steel: bool,
     /// The player's vehicle surface model frame this mesh samples (`mark_vsm_frame`): 0 none, 1 the
@@ -3828,6 +3834,7 @@ fn make_mesh_gpu(
         running_gear: 0,
         vehicle_finish: [0.0; 4],
         instrument_cover: false,
+        vision_glass_m: 0.0,
         painted_steel: false,
         vsm_frame: 0,
         sky_visibility_excluded: false,
@@ -7123,6 +7130,11 @@ impl Renderer {
     }
     /// Flag glass mesh `idx` as a clear cover over an instrument dial: the raymarch glass pass
     /// gives it a broad sheen of the cabin's lamps and a faint fixed dust (`rm_glass.wgsl`).
+    /// A direct-view vision block's closed glass of `thickness_m`: the raymarch glass pass draws
+    /// its faces as the slab's interfaces with the wiped-glass wear (rm_glass.wgsl).
+    pub fn mark_vision_glass(&mut self, idx: usize, thickness_m: f32) {
+        if let Some(g) = self.meshes.get_mut(idx) { g.vision_glass_m = thickness_m; }
+    }
     pub fn mark_instrument_cover(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.instrument_cover = true;

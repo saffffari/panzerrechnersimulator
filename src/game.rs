@@ -11707,8 +11707,12 @@ impl Game {
         anyhow::ensure!(direct_glass[0].is_none(), "new authored hull glass needs explicit integration with the repaired driver visor");
         direct_glass[0]=Some(driver_visor_glass);
         direct_glass[1]=Some(sight.turret_glass);
+        let mut tiger_glass_m = [0.0f32; 3];
         for (k, gm) in direct_glass.into_iter().enumerate() {
             if let Some(m) = gm {
+                // The driver's visor block and the turret's side slit blocks (one mesh for both,
+                // equal blocks: tiger_side_ports tests). k 2 would be gun glass, not a vision block.
+                if k < 2 { tiger_glass_m[k] = tiger_periscopes::side_ports::slab_thickness(&m).unwrap_or(0.0); }
                 tiger_glass[k] = Some(scene.len());
                 scene.push(m);
             }
@@ -13672,6 +13676,9 @@ impl Game {
                                          // them, unlike the mirror periscopes (which get RTT screens instead).
         for s in tiger_glass.iter().flatten() {
             renderer.set_glass(*s, true);
+        }
+        for (s, thickness) in tiger_glass.iter().zip(tiger_glass_m) {
+            if let (Some(s), true) = (s, thickness > 0.0) { renderer.mark_vision_glass(*s, thickness); }
         }
         renderer.set_glass(slots.gunner_sight[1], true);
         // The RTT screens sample the periscope atlas, unlit (they ARE the light).

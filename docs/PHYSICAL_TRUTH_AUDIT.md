@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-03 (the radio sets' and driver's Braun-style panels: eleven finite panel lamps on the cabin light list, drawn-only slab fronts, glass panes; the radio operator seated on his cushion; the bow MG eyepiece relayed over its whole lens); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-03 (the radio sets' and driver's Braun-style panels: eleven finite panel lamps on the cabin light list, drawn-only slab fronts, glass panes; the radio operator seated on his cushion; the bow MG eyepiece relayed over its whole lens; vision blocks: the relay panes' finite stops, glass on the periscopes, side slits and visor); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -43,6 +43,82 @@ listed gate passes. `CLAUDE.md` owns the acceptance rule.
   field visible from anywhere in front of it), not an `Eyepiece` with an exit pupil as the
   gunner's sight; as for the TZF, a telescope's eyepiece is no cabin aperture, and no daylight
   enters through it (named, open).
+
+
+## Vision blocks: the relay panes' finite stops, and glass on every vision block, 2026-11-03 (`shaders/raster_optics.wgsl` `relay_trace`, `src/tiger_periscopes.rs` `relay_stops`, `src/tiger_side_ports.rs` `slab_thickness`, `shaders/rm_glass.wgsl`, `shaders/glass_scratches.wgsl`)
+
+The owner, in the FEA range: the periscopes "shift like a real periscope would", but read as
+screens: full frame from any angle, no glass. Before this change the raymarch backend (and the
+shader backend) drew a cupola block's relay as an opaque image on the prism-side face of its
+closed inner window, admitting every incident direction; past `OFF_AXIS_ACCEPTANCE` the pane
+showed the acceptance boundary's radiance (named vision-block debt), and no glass was drawn
+over it.
+
+Now, for the seven cupola blocks and the loader's periscope (the eight ports with registered
+stop chains):
+- Finite stops. `relay_stops` reads each block's chain off its registered parts by tracing the
+  close-view chief ray: the inner window's two faces, the lower mirror, the four relay lenses,
+  the upper mirror, the objective window's two faces, each with its finite quad. The relay pane
+  carries the eye's ray (and three more over the pixel's footprint) through them in order: Snell
+  at each glass face, the mirrors and ideal thin lenses as the ray backend's `periscope_path`
+  applies them (0.90 per mirror, 0.96 per lens, exact Fresnel and Beer absorption at the
+  objective window's faces). A ray that leaves a stop's outline has met the housing: the pane
+  shows the housing interior there. The cupola image is still sampled along the incident
+  direction (the chain preserves it: exit directions within 4e-5), so the parallax is unchanged;
+  the loader keeps its registered virtual-pupil mapping and takes only the chain's admission.
+  Chained ports' captures are no longer clamped to the acceptance boundary: the capture keeps
+  every incident direction and the chain decides.
+- Named approximation: the housing walls are not traced; a ray inside every stop is taken as
+  clear. Measured against the complete block with its housing triangles
+  (`relay_stop_chain_matches_the_complete_housing`, eyes 0-75 degrees off axis at 3, 12 and
+  45 cm, 225,792 rays): 211 disagree (0.093%), bound 0.15%.
+- Named limitation: the housing interior's radiance is not computed; the relay draws it black.
+  Light reaching the walls through the objective and the cabin is missing (a dark
+  underestimate, never a brightening). The ray backend shades that hit as a surface.
+- Result of the registered geometry, not a choice: the inner window is 4.7 cm tall, the relay
+  lenses and objective pass a 3.5 cm bundle, so even on axis part of the pane shows the housing
+  (51% of the pane admitted from 45 cm, 37% from 12 cm, 12% from 3 cm), falling to under 1% past
+  50 degrees. The relay prescription itself remains the reconstructed one (29 September entry).
+- The inner window's glass. The raymarch glass pass draws the closed 3.892 mm slab (the
+  registered window) over its relay: each face as its own interface with half the slab's path,
+  so the slab's Beer absorption counts once and both faces' Fresnel loss twice, and the second
+  face's reflection appears as a ghost offset by the glass thickness. Its reflection, glints and
+  grime are `rm_glass.wgsl`'s existing law with that pass's named approximations (screen-marched
+  reflection with a ray-query miss, Schlick Fresnel, scalar transmittance in the blend). The
+  relay takes neither face's loss again.
+- Wear on the eye-side face (`glass_scratches.wgsl`, authored, not measured): straight grit
+  grooves 4-40 um wide and 1-12 mm long, about 0.4% of the face. In the glass pass the grooves
+  reflect the sun and the cabin lamps (modeled emitters, with their visibility) into a fan across
+  each groove, and scatter back 20% of the light reaching them. In the relay a groove takes its
+  share of the image out and passes 80% of the exterior light arriving across it, integrated by
+  eight stratified taps over +-0.30 rad, each through the stop chain, from the port's own
+  capture. Named limitation: directions outside the captured field add nothing (an
+  underestimate), and the sun's disk is only found when a tap lands on it in the capture.
+- The pane's sky: a vision block's glass asks the sky-cover map from inside the compartment
+  (`rm_cabin_sky_visibility`), not the lifted open-ground test. That test reached above the
+  cupola roof and lit the glass's reflection and grime with the whole sky; the housing interior
+  read mid-grey by day (`periscope_optics_20261103a_day_*` against `..._b_noglass_*`).
+- Direct-view vision blocks (owner, same day: "lets add that same glass to the side ports as
+  well"): the turret's two side slit blocks and the driver's visor block take the same slab
+  treatment in the glass pass (each face half the slab's path, the second face's ghost, the
+  cabin sky test, the grooves on the faces toward the eye) with their measured thickness
+  (`side_ports::slab_thickness`: slits 9.7 and 11.2 mm, visor 50 mm). Before, the pass took the
+  bounding box's thinnest extent for the slit mesh (both slits in one mesh, across the turret)
+  and every face carried the whole slab's absorption. Named: one mesh carries both slits, so one
+  block's measure stands for both (1.5 mm apart, under 1% of the slab's absorption). What is
+  seen through a direct block is the rendered scene behind it, so its slit walls darken steep
+  views by their own geometry; the image through it is not laterally displaced by refraction
+  (`rm_glass.wgsl`'s existing named approximation; a parallel slab keeps directions, the shift
+  is 3-4 mm through a slit block at 45 degrees and 1.7 cm through the visor), and light turned
+  back by total reflection at the blocks' edges is not traced.
+- Not changed: radio and gunner optics, the driver's roof periscope (no registered chain; prior
+  mapping). The shader backend's pane takes the same chain and grooves but has no glass pass
+  over it.
+- Gates: `relay_stop_chain_matches_the_complete_housing`,
+  `direct_vision_glass_is_a_measured_closed_slab`, the raster optic and raymarch shader
+  validation tests, `periscope-optics PREFIX` stills (held, seat, 30 and 60 degrees off the
+  front block; the right side slit held and 50 degrees off; by day and at night with the cabin
+  lamps on).
 
 ## The player's own body seen from his own eyes, 2026-11-02 (`src/first_person_arms.rs`, `fp-body-review`)
 
