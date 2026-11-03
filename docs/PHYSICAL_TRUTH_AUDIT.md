@@ -4516,3 +4516,26 @@ owner-directed presentation of local adaptation) still runs after the local adap
 cabin's dark lifted and its ports held down by the eye itself, fewer regions reach its 2-stop knee.
 Retiring it is the owner's call. Neither changes any light: the meter, the transport and the
 emitters are untouched; the strength 0 (`KESSEL_EYE_LOCAL=0.428,0`) reproduces the single-state eye.
+
+Measured (`eye-review`, Canyon v2 seed 29 and spring-bridge-v2, 1024x576, deltap-real 15,15,7; share
+of the crushed frame at black, luma code <= 2, and at white, >= 250; "local off" is this change with
+`KESSEL_EYE_LOCAL=0.428,0`, the time course alone):
+
+| Scenario | Before | After | Local off |
+| --- | --- | --- | --- |
+| Head out of the cupola into noon snow: seconds over 10 % white / recovered | 6.3 s / 7.5 s (60, 47, 26, 11 % white at 0.25, 1, 3, 6 s) | 0.5 s / 0.6 s (27 % at 0.25 s, 0 % from 1 s) | 0.8 s / 1.2 s |
+| Head back in: peak black / recovered | 58 % / 10 s | 4 % / at once | 62 % / 12.5 s |
+| Loader's compartment by day, a hatch open: black / near black (<= 10) | 12.6 % / 41.7 % | 0.0 % / 12.1 % | 14.4 % / 46.8 % |
+| Commander buttoned by day: near black / white | 1.2 % / 1.3 % | 0.0 % / 0.06 % | 16.8 % / 0.8 % |
+| Driver's visor by day: black / near black | 4.8 % / 39.8 % | 0.2 % / 24.9 % | 25.4 % / 73.9 % |
+| TZF by day (the dark cabin round the eyepiece): black | 11.4 % | 1.9 % | 17.4 % |
+| TZF at night, a shot fired: recovered | 9.2 s (snapped to its stale noon, held dark by the bleach) | 1.2 s | - |
+| Main gun at night, head out: seconds over 50 % black / recovered | 1.45 s / 6.1 s | 1.1 s / 4.4 s | - |
+| Noon head out, four bearings: black | 0.0-1.5 % | 0.0-0.1 % | 0.0-1.5 % |
+| Blue hour, spring bridge, toward the burning town: black | 56.7 % | 55.7 % | - |
+
+By day the gun and an HE strike do not move the eye (white under 0.2 %). The blue hour is unchanged:
+below about 1 cd/m^2 the cone TVI flattens and the rods carry the picture, so the local cone term
+is small there by the law, and the dark ground beside the fires stays dark (the fires' veil, 2
+November). Cost: `eye-local` 0.012 ms a frame (gfxbench-drive, 1200 frames, KESSEL_GPU_PROFILE=1),
+`crush` +0.001 ms, `exposure` unchanged at 0.415 ms.
