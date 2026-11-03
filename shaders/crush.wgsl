@@ -41,6 +41,9 @@ struct Crush {
     real: vec4<f32>,
     // Debug only: x 1 shows the point layer (KESSEL_POINT_LAYER_VIEW, the rod pooling check).
     debug: vec4<f32>,
+    // The eye's field state, copied from its lanes every metered frame: x = the CIE 191 mesopic
+    // coefficient of the field's adaptation (lane 14). Appended lane.
+    eye: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 
@@ -117,7 +120,16 @@ fn eye_response(radiance: vec3<f32>, point: vec3<f32>, uv: vec2<f32>) -> vec3<f3
     // The lifted rod channel reaches the display's key at most (observer::rod_display): an eye
     // adapted to the moonlit field, or dark-adapted beyond it, showed the whole sight white
     // (2 November 2026); mid-grey is what a night field is to a locally adapted eye.
-    return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);
+    // The rods' share where the place is adapted to its own light (observer::local_rod_weight):
+    // ground lit by a fire and the fire itself are seen by their cones, whose colour the rods' term
+    // no longer covers; a pixel no brighter than the field keeps the whole term. Outdoors only:
+    // in a closed cabin view (eye_range_strength) the display already draws each region toward
+    // its own level (`eye_range`) and the owner's cabin lamps keep the look they were approved in
+    // (the annunciators' green, the sight lamps); the cabin's rod term is unchanged (ledger, open).
+    let photopic = dot(radiance, vec3(OBS_PHOTOPIC_R, OBS_PHOTOPIC_G, OBS_PHOTOPIC_B));
+    let scotopic_px = dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B));
+    let local_rods = mix(obs_local_rod_weight(photopic, scotopic_px, cr.eye.x), 1.0, clamp(cr.eye_range_strength, 0.0, 1.0));
+    return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;
 }
 
 // The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright
