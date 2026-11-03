@@ -773,12 +773,12 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   (2026-11-02, the owner: fires need time to build up smoke, much darker, absorbing the light).
   The soot is a uniform load in the cabin air (`Game::interior_soot`, 0-1), built at 0.38 per
   second times the burning surfaces' enclosure heat (`CabinFire::enclosure_diagnostics`) and
-  drained by the fan and an open hatch as the gun fumes are; at a full load its extinction is
+  drained linearly by the fan and an open hatch (`update_haze`); at a full load its extinction is
   1.5 /m (`SOOT_EXTINCTION_PER_M`: a lamp two metres off all but hidden), single-scattering albedo
   0.2 (fresh black carbon's order) and asymmetry 0.5, added to the cabin medium in
   `rm_medium.wgsl` inside the cabin domain only. The build rate, the extinction scale and the
-  uniform spread are authored (named: no soot transport, no stratified hot layer, no deposition);
-  the gun fumes' light haze only drains.
+  uniform spread are authored (named: no soot transport, no stratified hot layer, no deposition).
+  The gun's fumes are their own two-zone model since 2026-11-03 (`cabin_fumes`, below).
 - Spall and shrapnel carry tracers, and the solved chips glow by their temperature on the one
   law (2026-11-02; the owner). A flying fragment's tail is still a frame of its own measured
   motion (no rod drawn through a wall; a ricochet starts a new segment), now bounded at 0.45 m
@@ -4910,3 +4910,31 @@ below about 1 cd/m^2 the cone TVI flattens and the rods carry the picture, so th
 is small there by the law, and the dark ground beside the fires stays dark (the fires' veil, 2
 November). Cost: `eye-local` 0.012 ms a frame (gfxbench-drive, 1200 frames, KESSEL_GPU_PROFILE=1),
 `crush` +0.001 ms, `exposure` unchanged at 0.415 ms.
+
+## The gun's fumes in the crew compartment, 2026-11-03 (`src/cabin_fumes.rs`; `rm_medium.wgsl` `rm_fume_density`, `rm_case_plume`, `rm_gas_density`)
+
+The owner, of a range still with sunlit haze in the turret: a lighter haze should leave the breech as
+the spent case is pulled, the case should go on venting for about three seconds wherever it is, many
+shots should stack as in a real Tiger, and the fan up top should draw the haze out slowly. Before
+this a shot added a flat 0.11 of the cabin haze at the trigger (with the breech shut) and the breech's
+opening 0.035, drained linearly at 0.03 a second: one shot was gone in a few seconds and nothing
+stacked. Those kicks are removed; `interior_haze` now carries only a hit's residue.
+
+Sources. Foreign Military Studies P-002 "Tank ventilation" (via kamenn.eu): in the Tiger, roof
+ventilator drawing, hatches shut, empties left inside, carbon monoxide stood at 0.05-0.1 % after each
+shot and fell to practically nothing one to two minutes after firing stopped; lidding each case as it
+came out improved it; the powder gas is about half carbon monoxide. The turret ventilator is rated at
+12 m³ a minute (the Tiger turret manual, via tiger1.info). It runs while the engine turns, as its hum
+does (`game_acoustics`).
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| Two zones | Litres of undiluted fume in an upper layer (the turret air above 2.00 turret-frame units, a little over the breech, `LAYER_Y`) and a lower one, in the 10 m³ of free air (`fea_damage::compartment::TIGER_CREW_AIR_M3`, named there). Fresh fume is hot and rises into the upper layer; the fan's 0.2 m³/s and the hull's leakage draw from it while the same flow comes in low and rises through the interface; 0.05 m³/s exchanges the layers; an open hatch exchanges 0.05 m³/s with the outside on its layer (the cupola, loader's and escape hatches upper, driver's and radio operator's lower; open past half travel). Integrated in 50 ms steps. The upper layer's share of the air is measured from the source compartments (`cabin_medium::Medium::volume_split`). | A zone model: each layer well mixed, a fixed interface 15 cm thick, the fume a passive tracer once in a layer (no cooling of the layer, no deposition on the walls). Estimates: the interface height, the exchange 0.05 m³/s, the leakage half an air change an hour, the hatch exchange (buoyant exchange through a 0.5 m opening with Δρ/ρ 0.15, 0.035 m³/s, rounded up for wind). Test: a shot's fume is of P-002's measured carbon monoxide (0.04 % against 0.05-0.1 %, a factor of two allowed); five shots stack; the fan clears them to 5 % in 45-150 s (P-002: one to two minutes); buttoned with the engine off they stay; an open hatch clears faster; the fume is conserved until the air carries it out. |
+| The breech puff | When the block opens on a fired case, 5 L of the bore's gas leave the breech; the drawn puff (`rm_gas_density`, the shape's axes unchanged) carries the fume not yet spread, at its centre the fume over the shape's volume-weighted fill (`PUFF_PROFILE_MOMENT`, its profile integrated), at most undiluted; the fume passes to the upper layer with a 0.7 s e-folding as the puff spreads. The fan's sink flow (0.2 m³/s through a hemisphere about the intake under the roof, `sink_velocity`) carries the puff toward the intake by its age. The former fixed envelope (0.30 cap, a fade from 1.2 to 2.2 s) is removed. | Estimates: 5 L (the 8.8 cm L/56 bore, 30 L, and a 4 L chamber of gas at ambient pressure near 1,000 K is about 10 L at 293 K; half leaves rearward), the 0.7 s spreading time. The puff's shape and growth stay authored; the sink is a point sink in a flat open roof. The puffs' shared saturation at 0.6 /m (`rm_puff_extinction`) still holds it, so its first second is drawn lighter than its fume (up to 17 /m). |
+| The case venting | Each case drawn out of the breech (the loader's pull and the crew's ejection) carries 3 L of fume and vents it from its mouth with a 1 s e-folding, ended at 3.5 s, wherever its body is: in the hands, the rack, on the floor; inside the hull's box its fume joins the upper layer. It is drawn as a pure buoyant plume from the mouth (Morton, Taylor and Turner: half-width 1.2 alpha (z + z0) with alpha 0.1, centreline concentration (z0 / (z + z0))^(5/3) of the mouth's, Gaussian across), its strength at the mouth the undiluted fume's extinction times the source flux to the two-thirds, leaning with the fan's sink flow against a 0.3 m/s rise, ending where it meets the upper layer. | Estimates: 3 L (the case's 5.5 L of hot gas, about 1.6 L at 293 K, and its residue's first seconds), the 1 s e-folding (the owner's three seconds; a buoyant exchange through the 81 mm mouth is of that order), the rise speed. Similarity profiles from the mouth, a straight leaning axis; a case thrown out of the hull vents into the open, undrawn. The reload fixture (`debug_reload`) vents the breech's blowback but draws no case. |
+| Visibility | The layers and plumes add to the cabin haze's extinction inside the cabin domain (its scattering: albedo 0.8, asymmetry 0.55); the undiluted fume's extinction is 17 /m. | Estimate; no measured smoke yield of the propellant was found. The chain: 0.5 % of the Pzgr 39's 2.5 kg charge (JH.Dv. 481/60, via Wikipedia) taken as smoke-forming (the flash reducer's potassium salts and residue; flash-reducer patents note those salts make the smoke), 12.5 g a shot; the compartment's share is its 8 L of the charge's ~2,200 L of gas at 293 K, 0.36 %, about 45 mg; a fine salt smoke's mass extinction taken as 3 m²/g. A case mouth's 8 cm of fume is nearly opaque; one shot spread through the compartment is 0.014 /m, under the roof right after it about ten times that. |
+
+Not yet: the hit residue (`interior_haze`) and a fire's soot (`interior_soot`) still drain linearly
+at the old fan and hatch rates, not through this zone model; machine-gun fumes are not modelled.
+No render has checked the look yet (the owner's editor holds the GPU); `cargo run -- haze` and
+`fx-review` stills will.

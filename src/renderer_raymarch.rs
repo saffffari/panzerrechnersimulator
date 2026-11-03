@@ -278,6 +278,9 @@ struct FrameUniform {
     /// air + the slot carrying its light (1 key, 2 secondary, 0 neither); the earthlit night side's
     /// irradiance at the eye were the whole disc earthlit; the direction to the Sun.
     moon: [[f32; 4]; 4],
+    /// The gun's fumes in the crew compartment (`cabin_fumes::CabinFumes::lanes`; rm_medium.wgsl
+    /// `rm_fume_density`): the two layers, the fan's intake, the venting cases' plumes.
+    fumes: [[f32; 4]; crate::cabin_fumes::LANES],
 }
 
 /// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
@@ -2427,6 +2430,7 @@ impl Backend {
                 lanes
             }),
             moon,
+            fumes: r.cabin_fumes,
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();

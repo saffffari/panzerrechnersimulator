@@ -66,6 +66,7 @@ impl Game {
                 self.set_carry_pose(position, rotation, Vec3::ZERO, Vec3::ZERO);
                 let k = self.spawn_casing_from(position, Vec3::ZERO)
                     .expect("the extraction gate reserved an unused casing body");
+                self.cabin_fumes.case_freed(k);
                 self.casings[k].carried = true;
                 self.carried_casing = Some(k);
                 // The case drawn out: its main transient where it clears the breech.

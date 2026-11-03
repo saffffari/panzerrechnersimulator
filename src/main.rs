@@ -176,6 +176,7 @@ mod panzerfaust;
 mod pixel_particles;
 mod pressure_front;
 mod incandescence;
+mod cabin_fumes;
 mod heat_haze;
 mod world_doors;
 mod prims;
@@ -8031,7 +8032,7 @@ fn run_haze() -> anyhow::Result<()> {
     g.commander_outside = false;
     g.aim_at_enemy();
     g.update(&TankInput::default(), dt, &mut r);
-    let h0 = g.haze_level();
+    let h0 = g.gun_fume_level();
     r.render_to_png(&device, &queue, &format!("{base}/haze_clean.png"), cw, ch)?;
 
     // Fire a rapid string (debug_fire → on_fired puffs the breech each time).
@@ -8041,7 +8042,7 @@ fn run_haze() -> anyhow::Result<()> {
             g.update(&TankInput::default(), dt, &mut r);
         }
     }
-    let h_fired = g.haze_level();
+    let h_fired = g.gun_fume_level();
     g.aim_at_enemy();
     g.update(&TankInput::default(), dt, &mut r);
     r.render_to_png(&device, &queue, &format!("{base}/haze_smoked.png"), cw, ch)?;
@@ -8050,7 +8051,7 @@ fn run_haze() -> anyhow::Result<()> {
     for _ in 0..180 {
         g.update(&TankInput::default(), dt, &mut r);
     }
-    let h_fanned = g.haze_level();
+    let h_fanned = g.gun_fume_level();
 
     // Refill, then vent through the OPEN hatch (should clear far faster than the fan alone).
     for _ in 0..5 {
@@ -8059,19 +8060,19 @@ fn run_haze() -> anyhow::Result<()> {
             g.update(&TankInput::default(), dt, &mut r);
         }
     }
-    let h_refill = g.haze_level();
+    let h_refill = g.gun_fume_level();
     g.dbg_open_hatch();
     for _ in 0..90 {
         g.update(&TankInput::default(), dt, &mut r);
     } // 1.5 s vented
-    let h_vented = g.haze_level();
+    let h_vented = g.gun_fume_level();
 
     println!("[haze] ── RESULT ─────────────────────────────");
     println!(
         "[haze] start {:.2} → after 5 rounds {:.2}: rises {}",
         h0,
         h_fired,
-        if h_fired > h0 + 0.3 { "YES" } else { "NO" }
+        if h_fired > h0 + 0.004 { "YES" } else { "NO" }
     );
     println!(
         "[haze] fan drains it (3 s: {:.2} → {:.2}): {}",
@@ -8084,7 +8085,7 @@ fn run_haze() -> anyhow::Result<()> {
         h_refill,
         h_vented,
         h_refill - h_vented,
-        if h_refill - h_vented > 0.5 {
+        if h_refill - h_vented > (h_fired - h_fanned) * 0.5 {
             "YES"
         } else {
             "NO"
@@ -8154,7 +8155,7 @@ fn run_atmo(prefix: &str) -> anyhow::Result<()> {
     for _ in 0..30 {
         g.update(&input, dt, &mut r);
     }
-    let fumes = g.haze_level();
+    let fumes = g.gun_fume_level();
 
     let role = lan::LanRole::Loader;
     let (eye, forward, fov, mask, reticle) = g.coop_view_camera(role);
@@ -8203,7 +8204,7 @@ fn run_atmo(prefix: &str) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("bad atmosphere comparison image"))?
         .save(&compare_path)?;
 
-    println!("[atmo] frozen Loader view at gameplay fumes={fumes:.3}");
+    println!("[atmo] frozen Loader view at gameplay fumes={fumes:.4} /m");
     println!("[atmo] OFF  (left): {off_path}");
     println!("[atmo] ON  (right): {on_path}");
     println!("[atmo] comparison: {compare_path} ({}x{})", cw * 2, ch);
