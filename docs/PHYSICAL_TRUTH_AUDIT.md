@@ -1096,8 +1096,12 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   is placed and reset by state, enemies are banished and hold fire, the racks may be emptied, the
   cabin lamps switched, the sky clock is held at the chosen date and time, the eye's exposure may
   be held (a camera setting), and the section is the film section above (camera only, labelled on
-  screen). Recorded frames are the renderer's own frames read back; "live here" re-simulates the
-  same shot step for step (`fea-range --shots` checks its state digest against the recording's).
+  screen). Recorded frames are the renderer's own frames read back; "live here" re-runs the same
+  shot step for step on a fresh Tiger. Measured (`fea-range --shots`, 2026-11-03): the game does
+  not repeat bit for bit (the chain and scars agreed; the crew's tissue and the surface blood
+  differed between the recording and the re-run, and between two re-runs), so "live here" is a
+  sibling outcome, not a copy, and says so on screen. Cause not found (reset state or iteration
+  order are candidates).
   **Tissue knobs** (`crew_tissue::TissueTuning`): a review-only override of the crew lattice's
   authored constants (tear energies, critical stretches, momentum shares, active reach, the piece
   landing-breakup factor), set only by `fea-range` while it differs from the authored values; with

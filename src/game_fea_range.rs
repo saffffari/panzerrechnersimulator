@@ -15,8 +15,11 @@
 //! - **Run and timeline**: a run fires the shot (on a fresh Tiger unless switched off) and records
 //!   every frame it renders: the first span one fragment step (1/480 s) per frame, then real time
 //!   at 30 frames a second. The timeline scrubs the recorded frames; "live here" re-simulates the
-//!   same shot, seed and knobs to that frame so the camera and section can move about the solved
-//!   state (the run's steps are repeated exactly; `--shots` checks the result agrees).
+//!   same shot, seed and knobs on a fresh Tiger to that frame, step for step, so the camera and
+//!   section can move about a solved state. Measured 2026-11-03 (`--shots`): the game does not
+//!   repeat bit for bit, so this is a sibling of the recorded outcome, not a copy of it: the
+//!   chain and the scars agreed, the crew's tissue and the surface blood did not (a re-run differs
+//!   from the next re-run as well). The status line says so.
 //! - **Section**: the film section (`Renderer::set_film_section`), a camera-only plane through the
 //!   Tiger; shadows, light, ray queries and every simulation see the whole closed tank.
 //! - **Sky**: the renderer's sky clock held at the chosen date and local time (Stalingrad), the
@@ -509,7 +512,8 @@ impl Range {
         self.apply_tuning();
         self.mode = Mode::Live;
         self.playing = false;
-        self.status = format!("LIVE at {:.4} s after the shot (re-simulated in {:.1} s)", self.shot_t, started.elapsed().as_secs_f32());
+        self.status = format!("LIVE at {:.4} s: the same shot re-run in {:.1} s (the game does not repeat bit for bit: tissue detail can differ from the recording)",
+            self.shot_t, started.elapsed().as_secs_f32());
     }
 
     /// The camera, the section and the crew drawing for this frame.
@@ -997,7 +1001,7 @@ impl Range {
                 "SHIFT+LMB DRAG: TURN THE SHOT    ALT+LMB DRAG: SECTION (UP/DOWN OFFSET, LEFT/RIGHT YAW)",
                 "C: SECTION ON/OFF    V: SECTION FACING THE CAMERA    PANEL: CLICK - / +, OR WHEEL OVER A ROW",
                 "ENTER: RUN    BACKSPACE: RESET    SPACE: PLAY/PAUSE (OR SIM IN LIVE)    LEFT/RIGHT: FRAME    HOME/END",
-                "L: LIVE AT THIS FRAME (RE-SIMULATED)    TAB: LIVE/RECORDING    P: PRINT TISSUE KNOBS    M: MUTE",
+                "L: LIVE AT THIS FRAME (THE SHOT RE-RUN; DETAIL CAN DIFFER)    TAB: LIVE/RECORDING    P: PRINT TISSUE KNOBS    M: MUTE",
                 "F12: SCREENSHOT TO CAPTURES    H: THIS HELP    ESC TWICE: QUIT",
             ];
             self.r.fill_rect(0.30, 0.13, 0.66, 0.03 * lines.len() as f32 + 0.02, [0.0, 0.0, 0.0, 0.75]);
@@ -1528,12 +1532,16 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     rg.help = true;
     let p1 = still(&mut rg, "live", true)?;
     rg.help = false;
-    // 2. The section: the top cut 1.9 m above the ground, the eye above the left side.
-    rg.adjust(Knob::SectionPreset, 1.0, false, false);
-    rg.section.offset = 0.5;
+    // 2. The section: the top cut 1.9 m above the ground, the eye above the left side, the
+    // exposure held at six times the eye's own on the open view (the closed interior is dark
+    // beside the daylit snow; a camera's choice, as `fea-film`'s engine section).
+    rg.section = Section { on: true, yaw: 0.0, pitch: 90.0, offset: 0.5 };
     let hull = rg.g.player.hull_model();
     rg.look_at(hull.transform_point3(Vec3::new(3.0, 6.2, 0.4)), hull.transform_point3(Vec3::new(-0.25, 1.0, -0.2)));
     rg.fov_deg = 46.0;
+    rg.pose_view();
+    let metered = crate::converge_headless_screenshot(&mut rg.r, &rg.device, &rg.queue, 8)?.measured_exposure;
+    rg.sky.exposure = Some(metered.unwrap_or(1000.0) * 6.0);
     let p2 = still(&mut rg, "section", true)?;
     // 3. A short run: 0.1 s in 1/480 s steps, then real time to 0.5 s; the state's digest at a
     // middle frame.
@@ -1564,6 +1572,12 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     }
     checks.push(serde_json::json!({"check": "live here agrees with the recording", "pass": agree, "frame": probe,
         "recorded": recorded_digest, "live": live_digest}));
+    // The same re-simulation again, unrendered both times: whether the run itself repeats.
+    rg.live_at(probe);
+    let again = rg.digest();
+    let repeat = again == live_digest;
+    println!("[fea-range] {} a second re-simulation agrees with the first", if repeat { "PASS" } else { "FAIL" });
+    checks.push(serde_json::json!({"check": "live here repeats itself", "pass": repeat, "again": again}));
     let p4 = still(&mut rg, "live_here", true)?;
     // 5. The panel's tissue knobs changed and printed (review override set, then restored).
     rg.adjust(Knob::Tear(0), 1.0, false, false);
