@@ -428,7 +428,7 @@ const HIDE_W: f32 = 0.045;
 /// A dial turns through its whole range over this much vertical drag (window height).
 const DIAL_DRAG: f32 = 0.3;
 /// The shot handle's distance from the aim point (m).
-const SHOT_HANDLE_M: f32 = 2.5;
+const SHOT_HANDLE_M: f32 = 0.6;
 // The section's rotation handle: box size and the arrows' distance from its pad (window height).
 const HANDLE_BOX: f32 = 0.016;
 const HANDLE_REACH: f32 = 0.022;
@@ -2082,7 +2082,7 @@ impl Range {
     /// Which of the shot's handles is under `c`: 0 the bearing, 1 the elevation.
     fn shot_handle_hit(&self, c: [f32; 2]) -> Option<usize> {
         let aspect = self.win[0] / self.win[1].max(1.0);
-        let near = |p: Option<[f32; 2]>| p.is_some_and(|p| ((c[0] - p[0]) * aspect).hypot(c[1] - p[1]) < 0.012);
+        let near = |p: Option<[f32; 2]>| p.is_some_and(|p| ((c[0] - p[0]) * aspect).hypot(c[1] - p[1]) < 0.02);
         if near(self.shot_el_at) { Some(1) } else if near(self.shot_az_at) { Some(0) } else { None }
     }
 
