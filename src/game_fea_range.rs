@@ -307,9 +307,10 @@ const DITHERS: [&str; 4] = ["SCREEN BAYER4", "BLUE NOISE", "SPHERE BAYER8", "SCR
 
 // The sidebar (window fractions, top-left origin): every control on the left, the viewport right.
 const SIDEBAR_W: f32 = 0.17;
-/// The bottom strip (the timeline) across the whole window, and the viewport's height above it.
-const BAR_TOP: f32 = 0.955;
-const VIEW_H: f32 = BAR_TOP;
+/// The timeline shows (over the bottom of the window) while the cursor is below this height; the
+/// viewport runs to the bottom edge.
+const BAR_TOP: f32 = 0.962;
+const VIEW_H: f32 = 1.0;
 /// The timeline's line: its ends and height.
 const TL_X0: f32 = 0.012;
 const TL_X1: f32 = 0.988;
@@ -339,7 +340,7 @@ const BUTTONS_Y: f32 = 0.044;
 
 /// The groups' region (scrolled when they do not fit) and the status block under it.
 const GROUPS_TOP: f32 = BUTTONS_Y + BUTTON_H + 0.016;
-const GROUPS_BOTTOM: f32 = BAR_TOP - 0.10;
+const GROUPS_BOTTOM: f32 = 0.86;
 /// A dial turns through its whole range over this much vertical drag (window height).
 const DIAL_DRAG: f32 = 0.3;
 /// The shot handle's distance from the aim point (m).
@@ -1647,7 +1648,6 @@ impl Range {
         self.draw_axes_gizmo();
         // The sidebar.
         self.r.fill_rect(0.0, 0.0, SIDEBAR_W, 1.0, SIDEBAR_FILL);
-        self.r.fill_rect(0.0, BAR_TOP, 1.0, 1.0 - BAR_TOP, SIDEBAR_FILL);
         let mode = match (self.mode, self.run) {
             (Mode::Scrub(i), _) => format!("PREVIEW {}", i + 1),
             (Mode::Live, _) if !self.playing => "PAUSED".into(),
@@ -1673,14 +1673,19 @@ impl Range {
         // grey, a tick every ten frames, the clip thick between its ticks, the live (or dragged)
         // frame a tall tick.
         let tl_w = TL_X1 - TL_X0;
-        let caption_y = BAR_TOP + 0.012;
-        if let Some(run) = self.run {
+        let caption_y = BAR_TOP + 0.010;
+        let hovered = cursor[1] >= BAR_TOP || scrubbing;
+        if hovered {
+            // A faint backing for the captions while it shows.
+            self.r.fill_rect(0.0, BAR_TOP - 0.004, 1.0, 1.0 - BAR_TOP + 0.004, [0.0, 0.0, 0.0, 0.55]);
+        }
+        if let Some(run) = self.run.filter(|_| hovered) {
             let n = run.total.max(1) as usize;
             let slow = (self.slow_frames(&run.scene) as usize).min(n);
             let w = tl_w / n as f32;
             let px = 1.0 / self.win[1].max(1.0);
-            self.r.fill_rect(TL_X0, TL_Y - px, w * slow as f32, 2.0 * px, INK);
-            self.r.fill_rect(TL_X0 + w * slow as f32, TL_Y - px, w * (n - slow) as f32, 2.0 * px, DIM);
+            self.r.fill_rect(TL_X0, TL_Y - 0.5 * px, w * slow as f32, px, INK);
+            self.r.fill_rect(TL_X0 + w * slow as f32, TL_Y - 0.5 * px, w * (n - slow) as f32, px, DIM);
             for k in (0..=n).step_by(10) {
                 self.r.fill_rect(TL_X0 + w * k as f32, TL_Y - 0.004, 1.5 / self.win[0].max(1.0), 0.008, DIM);
             }
@@ -1705,7 +1710,7 @@ impl Range {
             self.text(&format!("{n} FRAMES, {end:.2} S{tail}{clip}"), TL_X0, caption_y, TEXT * 0.75, DIM, crate::ui::Align::Left);
             self.text("BRIGHT 1/480 S, GREY 1/30 S.  DRAG: SEEK   RMB DRAG: CLIP   LEFT/RIGHT: FRAME", TL_X1, caption_y,
                 TEXT * 0.75, DIM, crate::ui::Align::Right);
-        } else {
+        } else if hovered {
             self.r.fill_rect(TL_X0, TL_Y - 0.5 / self.win[1].max(1.0), tl_w, 1.0 / self.win[1].max(1.0), DIM);
             self.text("NO RUN YET: AIM, THEN RUN (ENTER)", TL_X0, caption_y, TEXT * 0.75, DIM, crate::ui::Align::Left);
         }
@@ -1812,7 +1817,7 @@ impl Range {
 
     /// A press in the sidebar: what it did.
     fn click_ui(&mut self, cursor: [f32; 2], fine: bool, coarse: bool) -> Click {
-        if cursor[0] > SIDEBAR_W || cursor[1] > BAR_TOP {
+        if cursor[0] > SIDEBAR_W {
             return Click::Viewport;
         }
         for (label, col, row) in BUTTONS {
