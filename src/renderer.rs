@@ -11212,6 +11212,16 @@ impl Renderer {
         Ok(state)
     }
 
+    /// The eye's local adaptation strength (`observer::LOCAL_ADAPTATION_STRENGTH` unless a review
+    /// tool such as `fea-range` sets it; 0 is the single global adaptation).
+    pub fn local_adaptation(&self) -> f32 {
+        self.eye_local.strength
+    }
+
+    pub fn set_local_adaptation(&mut self, strength: f32) {
+        self.eye_local.strength = strength.clamp(0.0, 1.0);
+    }
+
     /// The eye's local adaptation for the frame just metered (both backends call it right after
     /// the meter): pool the HDR's neighbourhood luminance (`eye_local.wgsl`) and give the crush
     /// the eye's cone adaptation (lane 12) and metered luminance (lane 15) it is drawn between.

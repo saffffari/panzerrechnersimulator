@@ -263,7 +263,50 @@ fn create_instance() -> wgpu::Instance {
         ..Default::default()
     })
 }
+/// The owner's open window (game or editor): the marker file holding its process id.
+/// `KESSEL_WINDOW_MARKER` names another path.
+fn owner_window_marker() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("KESSEL_WINDOW_MARKER") {
+        return Some(path.into());
+    }
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(std::path::PathBuf::from(home).join(".cache/panzerrechnersystem/window-live.pid"))
+}
+
+/// The process id of an open game or editor window other than this process, if one is running.
+fn owner_window_open() -> Option<u32> {
+    let pid: u32 = std::fs::read_to_string(owner_window_marker()?).ok()?.trim().parse().ok()?;
+    if pid == std::process::id() {
+        return None;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        String::from_utf8_lossy(&cmdline).contains("panzerrechnersystem").then_some(pid)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Some(pid)
+    }
+}
+
+/// The owner's standing rule (2026-11-03): no headless render, film, bench or capture runs on the
+/// GPU while his game or editor window is open. A window records itself here; every headless GPU
+/// run (an adapter with no surface) refuses while that window lives.
+fn guard_owner_window(surface: Option<&wgpu::Surface>) {
+    if surface.is_some() {
+        if let Some(path) = owner_window_marker() {
+            let _ = path.parent().map(std::fs::create_dir_all);
+            let _ = std::fs::write(&path, std::process::id().to_string());
+        }
+    } else if let Some(pid) = owner_window_open() {
+        eprintln!("[panzerrechnersystem] the owner's game/editor window is open (pid {pid}): no headless GPU runs while it is. Try again once it closes.");
+        std::process::exit(75);
+    }
+}
+
 fn request_adapter(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> wgpu::Adapter {
+    guard_owner_window(surface);
     // `KESSEL_ADAPTER=<name substring>`: run on a named GPU instead of the high-performance one
     // (measuring a laptop-class integrated GPU on a machine that also has a discrete card).
     if let Ok(wanted) = std::env::var("KESSEL_ADAPTER") {
