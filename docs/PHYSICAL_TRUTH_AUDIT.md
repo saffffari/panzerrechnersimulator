@@ -1298,6 +1298,11 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   differed between the recording and the re-run, and between two re-runs), so "live here" is a
   sibling outcome, not a copy, and says so on screen. Cause not found (reset state or iteration
   order are candidates).
+  Review-only display switches (EFFECTS, off by default in the range, the game unchanged): the
+  crewman's concussion defocus, the eye's flash afterimage and its local adaptation. With the
+  section on, a body solved on its cells also draws its inside cells within 1.5 cells of the plane
+  (`crew_corpse_tissue::set_review_section`, set by the range alone), so the cut shows cells, not
+  the inside of the drawn shell; the solve and the cells present are unchanged.
   **Tissue knobs** (`crew_tissue::TissueTuning`): a review-only override of the crew lattice's
   authored constants (tear energies, critical stretches, momentum shares, active reach, the piece
   landing-breakup factor), set only by `fea-range` while it differs from the authored values; with

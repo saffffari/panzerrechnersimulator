@@ -16,6 +16,26 @@ const APPEARANCES: usize = 5;
 const PARTS: usize = crew_physics::CREW_BODY_PART_COUNT;
 /// Cubes per colour page; more are dropped with one report (a named bound).
 const CUBES_PER_LABEL: usize = 8_192;
+
+/// Review only (`fea-range`'s camera section, world normal and distance): a body's inside cells
+/// within a cell and a half of that plane are drawn too, so a section through a body shows its
+/// cells cut solid rather than the inside of its drawn shell. None everywhere else: the game draws
+/// the cells open to air or to a wound only.
+static REVIEW_SECTION: std::sync::RwLock<Option<glam::Vec4>> = std::sync::RwLock::new(None);
+
+pub(crate) fn set_review_section(plane: Option<glam::Vec4>) {
+    if let Ok(mut section) = REVIEW_SECTION.write() {
+        *section = plane;
+    }
+}
+
+pub(crate) fn review_section_set() -> bool {
+    review_section().is_some()
+}
+
+fn review_section() -> Option<glam::Vec4> {
+    REVIEW_SECTION.read().ok().and_then(|section| *section)
+}
 /// Cells in pieces kept at once; past it the oldest pieces at rest go (a named bound; 1 cm
 /// anatomical cells are eight to a 2 cm cell).
 const CHUNK_CELLS: usize = 32_768;
@@ -475,6 +495,28 @@ impl TissueDraw {
                     }
                 }
                 self.push(label, Mat4::from_scale_rotation_translation(Vec3::splat(model.cell * scale.x), r, p));
+            }
+        }
+        if let Some(plane) = review_section() {
+            let n = plane.truncate();
+            let tissue = &self.actors[index].tissue;
+            let mut inside = Vec::new();
+            for (i, cells) in model.part_cells.iter().enumerate() {
+                let (scale, rot, _) = poses[i];
+                for &c in cells {
+                    let c = c as usize;
+                    if !tissue.present[c] || model.exposed(&tissue.present, c) {
+                        continue;
+                    }
+                    let p = models[i].transform_point3(model.cells[c].at);
+                    if (n.dot(p) - plane.w).abs() <= 1.5 * model.cell * scale.x {
+                        inside.push((crew_tissue::label(&model.cells[c], self.skin_labels[face][c]),
+                            Mat4::from_scale_rotation_translation(Vec3::splat(model.cell * scale.x), rot, p)));
+                    }
+                }
+            }
+            for (label, m) in inside {
+                self.push(label, m);
             }
         }
         self.actors[index].cache = Some((revision, face, lists));

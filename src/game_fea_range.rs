@@ -254,11 +254,11 @@ enum Tape {
 enum Knob {
     Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed,
     Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
-    MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame, SmokeDensity, SmokeDelay, EffectsAuthored,
+    MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame, SmokeDensity, SmokeDelay, EffectsAuthored, Concussion, FlashAfterimage, LocalEye,
     Focal, SavedCam, AddCam, DeleteCam, ExportCams,
     SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset,
     Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure,
-    Look, LookEv, LocalEye, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
+    Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
     WhiteBalance, WhiteBalanceStrength, Fog, LookDefaults,
     Tear(usize), Stretch(usize), Forward, Outward, Reach, Spread, Landing, TissueAuthored,
 }
@@ -279,7 +279,8 @@ fn kind(knob: Knob) -> Kind {
     match knob {
         Gun => Kind::Info,
         Shell | TargetKind | Seed | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
-        Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance => Kind::Toggle,
+        Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance
+        | Concussion | FlashAfterimage | LocalEye => Kind::Toggle,
         AddCam | DeleteCam | ExportCams | EffectsAuthored | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
         _ => Kind::Dial,
     }
@@ -298,7 +299,6 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
         RunLength => (0.1, 20.0, true),
         TimeSpeed => (0.01, 4.0, true),
         Focal => (12.0, 400.0, true),
-        LocalEye => (0.0, 1.0, false),
         SectionYaw => (-180.0, 180.0, false),
         SectionPitch => (-90.0, 90.0, false),
         SectionOffset => (-3.0, 3.0, false),
@@ -337,10 +337,10 @@ fn group_rows(group: usize) -> Vec<Knob> {
         2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams, MovingCamera],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
         4 => vec![Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure],
-        5 => vec![Look, LookEv, LocalEye, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
+        5 => vec![Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
             WhiteBalance, WhiteBalanceStrength, Fog, LookDefaults],
         6 => vec![Wear(1), Wear(0), Wear(2), Wear(3), SnowTank, SnowWorld, MaterialsGame],
-        7 => vec![SmokeDensity, SmokeDelay, EffectsAuthored],
+        7 => vec![SmokeDensity, SmokeDelay, Concussion, FlashAfterimage, LocalEye, EffectsAuthored],
         _ => {
             let mut rows: Vec<Knob> = (0..4).map(Tear).collect();
             rows.extend((0..4).map(Stretch));
@@ -502,6 +502,18 @@ impl Game {
     }
 }
 
+/// The game's effects of a crewman's eyes, which the range shows only when switched on (EFFECTS):
+/// the concussion's defocus (`crush.wgsl`: four offset copies of the frame round each pixel), the
+/// eye's flash afterimage (`observer_flash_source`), the eye's local adaptation
+/// (`observer::local_cone_gain`, the game's strength kept to restore).
+#[derive(Clone, Copy, Debug)]
+struct EyeFx {
+    concussion: bool,
+    flash: bool,
+    local_eye: bool,
+    local_eye_strength: f32,
+}
+
 /// A battle layout for level design (`BATTLE_LAYOUTS`): the Tiger's start, the T-34s and the
 /// Tiger's route.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -650,6 +662,7 @@ struct Range {
     dial_defaults: Vec<(Knob, f32)>,
     /// Smoothed frame time (s), simulation and render time (ms) a frame, for the readout.
     perf: [f32; 3],
+    eye_fx: EyeFx,
     /// BATTLE mode: the placed T-34s (x, z, heading), the Tiger's route, the Tiger's AI crew while
     /// watching, the player at the controls (and paused), the input from the window.
     battle: bool,
@@ -766,6 +779,7 @@ impl Range {
             axis_labels: [[-1.0, -1.0]; 3],
             cursor: [0.5, 0.5],
             orbit_pivot: None,
+            eye_fx: EyeFx { concussion: false, flash: false, local_eye: false, local_eye_strength: 0.5 },
             battle: false,
             t34s: Vec::new(),
             route: Vec::new(),
@@ -801,9 +815,7 @@ impl Range {
         range.dial_image = range.r.upload_image(&range.device, &range.queue, &dial_face(), DIAL_FACE, DIAL_FACE);
         range.look_start = (range.r.look, range.r.display_grade, range.r.display_dither_pattern, range.r.display_tuning,
             range.r.fog_density);
-        // The eye's local adaptation (2026-11-03, `observer::local_cone_gain`) flattens the range's
-        // review picture; the range starts with the single global adaptation (LOCAL EYE dial).
-        range.r.set_local_adaptation(0.0);
+        range.eye_fx.local_eye_strength = range.r.local_adaptation();
         range.dial_defaults = range.dial_values();
         let saved = !headless && std::path::Path::new(STATE_PATH).exists();
         if saved {
@@ -1097,10 +1109,12 @@ impl Range {
             self.g.drive_lights(&mut self.r);
             self.g.drive_armor_scars(&mut self.r);
             self.r.set_film_section(None, &[]);
+            super::crew_corpse_tissue::set_review_section(None);
             self.eye = self.r.camera.pos;
             self.yaw = self.r.camera.yaw;
             self.pitch = self.r.camera.pitch;
             self.last_pose = None;
+            self.apply_eye_fx();
             return;
         }
         self.apply_sky();
@@ -1134,6 +1148,7 @@ impl Range {
         self.r.reticle = false;
         // The game's hovered-object outline is an interaction cue for play, not for this view.
         self.r.set_hovered_meshes(&[]);
+
         // Inside the hull's box the eye keeps the compartment's light and air; outside it is
         // an observer in the open (as `fea-film`'s Inside and Outside views).
         let local = self.g.player.hull_model().inverse().transform_point3(self.eye);
@@ -1148,9 +1163,32 @@ impl Range {
             Some(plane) => {
                 let meshes = self.section_meshes();
                 self.r.set_film_section(Some(plane), &meshes);
+                // A body solved on its cells is cut solid: its inside cells at the plane drawn too
+                // (redrawn here, so a held simulation shows the plane where it is now).
+                super::crew_corpse_tissue::set_review_section(Some(plane));
+                self.g.drive_physical_crew_casualties(&mut self.r);
             }
-            None => self.r.set_film_section(None, &[]),
+            None => {
+                self.r.set_film_section(None, &[]);
+                if super::crew_corpse_tissue::review_section_set() {
+                    super::crew_corpse_tissue::set_review_section(None);
+                    self.g.drive_physical_crew_casualties(&mut self.r);
+                }
+            }
         }
+        self.apply_eye_fx();
+    }
+
+    /// The EFFECTS toggles over what the game's step left for this frame (after `drive_lights`,
+    /// which raises the flash flag): each switched off is off in the frame drawn.
+    fn apply_eye_fx(&mut self) {
+        if !self.eye_fx.concussion {
+            self.r.concussion = 0.0;
+        }
+        if !self.eye_fx.flash {
+            self.r.observer_flash_source = false;
+        }
+        self.r.set_local_adaptation(if self.eye_fx.local_eye { self.eye_fx.local_eye_strength } else { 0.0 });
     }
 
     fn section_plane(&self) -> Option<Vec4> {
@@ -1286,7 +1324,9 @@ impl Range {
             Knob::AutoExposure => ("AUTO EXPOSURE".into(), if self.sky.exposure.is_none() { "ON (EYE)" } else { "OFF (HELD)" }.into()),
             Knob::Look => ("LOOK".into(), LOOKS.iter().find(|(v, _)| (*v - self.r.look).abs() < 0.1).map_or("?", |(_, n)| *n).into()),
             Knob::LookEv => ("EXPOSURE COMP".into(), format!("{:+.2} EV", self.r.display_grade[0].max(1e-4).log2())),
-            Knob::LocalEye => ("LOCAL EYE".into(), format!("{:.2}", self.r.local_adaptation())),
+            Knob::Concussion => ("CONCUSSION BLUR".into(), if self.eye_fx.concussion { "ON (GAME)" } else { "OFF" }.into()),
+            Knob::FlashAfterimage => ("FLASH AFTERIMAGE".into(), if self.eye_fx.flash { "ON (GAME)" } else { "OFF" }.into()),
+            Knob::LocalEye => ("LOCAL EYE".into(), if self.eye_fx.local_eye { "ON (GAME)" } else { "OFF" }.into()),
             Knob::Saturation => ("SATURATION".into(), format!("{:.2}", self.r.display_grade[1])),
             Knob::Warmth => ("WARMTH".into(), format!("{:+.2}", self.r.display_grade[2])),
             Knob::Gamma => ("GAMMA".into(), format!("{:.2}", self.r.display_grade[3])),
@@ -1446,6 +1486,9 @@ impl Range {
                     self.status = format!("CAMERA {} DELETED", i + 1);
                 }
             }
+            Knob::Concussion => self.eye_fx.concussion = !self.eye_fx.concussion,
+            Knob::FlashAfterimage => self.eye_fx.flash = !self.eye_fx.flash,
+            Knob::LocalEye => self.eye_fx.local_eye = !self.eye_fx.local_eye,
             Knob::AutoExposure => {
                 self.sky.exposure = match self.sky.exposure {
                     None => Some(self.metered_exposure().unwrap_or(1000.0)),
@@ -1512,7 +1555,6 @@ impl Range {
             Knob::Weather => self.sky.weather,
             Knob::Exposure => self.sky.exposure.unwrap_or(1000.0),
             Knob::LookEv => self.r.display_grade[0],
-            Knob::LocalEye => self.r.local_adaptation(),
             Knob::Saturation => self.r.display_grade[1],
             Knob::Warmth => self.r.display_grade[2],
             Knob::Gamma => self.r.display_grade[3],
@@ -1572,7 +1614,6 @@ impl Range {
             Knob::Weather => self.sky.weather = v,
             Knob::Exposure => self.sky.exposure = Some(v),
             Knob::LookEv => self.r.display_grade[0] = v,
-            Knob::LocalEye => self.r.set_local_adaptation(v),
             Knob::Saturation => self.r.display_grade[1] = v,
             Knob::Warmth => self.r.display_grade[2] = v,
             Knob::Gamma => self.r.display_grade[3] = v,
@@ -2251,7 +2292,7 @@ impl Range {
                 "palette_levels": d.palette_levels, "ordered_dither": d.ordered_dither, "ldr_dither": d.ldr_dither,
                 "retro": d.retro_strength, "white_balance": d.ambient_white_balance,
                 "white_balance_strength": d.ambient_white_balance_strength, "tuned": self.r.display_tuning.is_some(), "fog": self.fog,
-                "local_eye": self.r.local_adaptation()},
+                "eye_fx": {"concussion": self.eye_fx.concussion, "flash": self.eye_fx.flash, "local_eye": self.eye_fx.local_eye}},
             "lamp_gain": review_lamp_gain(), "time_speed": self.time_speed, "looping": self.looping,
             "engine": self.engine, "accumulate_moving": self.accumulate_moving, "wear": self.wear, "snow": self.snow,
             "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm, "speed": self.speed},
@@ -2331,7 +2372,10 @@ impl Range {
         let l = &v["look"];
         if let Some(x) = f(&l["look"]) { self.r.look = x; }
         if let Some(x) = arr4(&l["grade"]) { self.r.display_grade = x; }
-        if let Some(x) = f(&l["local_eye"]) { self.r.set_local_adaptation(x); }
+        let fx = &l["eye_fx"];
+        if let Some(x) = fx["concussion"].as_bool() { self.eye_fx.concussion = x; }
+        if let Some(x) = fx["flash"].as_bool() { self.eye_fx.flash = x; }
+        if let Some(x) = fx["local_eye"].as_bool() { self.eye_fx.local_eye = x; }
         if let Some(x) = f(&l["dither"]) { self.r.display_dither_pattern = x; }
         if l["tuned"].as_bool() == Some(true) {
             let mut d = self.tuning_display();
@@ -2656,14 +2700,6 @@ impl Range {
             x += w + 0.006;
             rect
         }).collect()
-    }
-
-    /// A label on an inverted (white) box, like the panel headers.
-    fn label_box(&mut self, text: &str, x: f32, y: f32, size: f32) -> f32 {
-        let w = text.len() as f32 * 1.0 * size * self.win[1] / self.win[0] + 0.008;
-        self.r.fill_rect(x, y - size * 0.62, w, size * 1.24, INK);
-        self.text_bold(text, x + 0.004, y, size, BLACK, crate::ui::Align::Left);
-        w
     }
 
     /// A small dial at (`x`, `y`) (its centre), turned to `t` of its range.
@@ -4037,5 +4073,33 @@ mod tests {
         assert_eq!(smoke_setters, vec!["game_fea_range.rs".to_string()]);
         let game = std::fs::read_to_string("src/game.rs").unwrap();
         assert!(game.contains("let practical_gain = power * game_fea_range::review_lamp_gain();"));
+        // The tissue's section (inside cells drawn at a camera cut) is set by the range alone.
+        let needle = ["set_review", "_section(Some"].concat();
+        let mut section_setters = Vec::new();
+        for entry in std::fs::read_dir("src").unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "rs") && std::fs::read_to_string(&path).unwrap().contains(&needle) {
+                section_setters.push(path.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+        assert_eq!(section_setters, vec!["game_fea_range.rs".to_string()]);
+    }
+
+    /// Each EFFECTS toggle switched off reaches the frame: `apply_eye_fx` runs last in both of
+    /// `pose_view`'s paths, after the game's lights raised the flash flag.
+    #[test]
+    fn the_eye_effect_toggles_are_applied_last_in_every_view() {
+        let source = std::fs::read_to_string("src/game_fea_range.rs").unwrap();
+        let body = source.split("    fn pose_view(&mut self) {").nth(1).unwrap().split("\n    /// The EFFECTS toggles").next().unwrap();
+        assert_eq!(body.matches("self.apply_eye_fx();").count(), 2);
+        let play = body.split("return;").next().unwrap();
+        assert!(play.find("drive_lights").unwrap() < play.find("self.apply_eye_fx();").unwrap());
+        assert!(body.trim_end().trim_end_matches('}').trim_end().ends_with("self.apply_eye_fx();"));
+        let apply = source.split("    fn apply_eye_fx(&mut self) {").nth(1).unwrap().split("\n    }\n").next().unwrap();
+        for line in ["self.r.concussion = 0.0;", "self.r.observer_flash_source = false;", "self.r.set_local_adaptation("] {
+            assert!(apply.contains(line), "{line}");
+        }
+        let crush = std::fs::read_to_string("shaders/crush.wgsl").unwrap();
+        assert!(crush.contains("let concussion = clamp(cr.concussion, 0.0, 1.0);"));
     }
 }
