@@ -203,21 +203,28 @@ enum Mode {
     Scrub(usize),
 }
 
-/// The run the timeline is of: its setup (a backward seek repeats it) and its length in frames.
+/// The run the timeline is of: its schedule (the scene's slow span and length) and its length in
+/// frames.
 #[derive(Clone, Copy, Debug)]
 struct RunInfo {
-    shot: ShotSetup,
     scene: SceneSetup,
-    tuning: crew_tissue::TissueTuning,
-    fresh: bool,
     total: u32,
+}
+
+/// What the simulation has been given since the last fresh Tiger: a backward seek builds a fresh
+/// Tiger the same way and gives it the same again, up to the frame wanted.
+#[derive(Clone, Copy, Debug)]
+enum Tape {
+    Step(f32),
+    Fire(ShotSetup, crew_tissue::TissueTuning),
 }
 
 /// Every adjustable row of the sidebar.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Knob {
     Shell, Range, Velocity, FromAz, FromEl, TargetKind, Seed,
-    Racks, Lamps, LampPower, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
+    Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
+    MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame,
     Focal, SavedCam, AddCam, DeleteCam,
     SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset,
     Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure,
@@ -240,8 +247,8 @@ fn kind(knob: Knob) -> Kind {
     use Knob::*;
     match knob {
         Shell | TargetKind | Seed | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
-        Racks | Lamps | Fresh | Loop | SectionOn | SkyRunning | AutoExposure | WhiteBalance => Kind::Toggle,
-        AddCam | DeleteCam | SnapToShot | LookDefaults | TissueAuthored => Kind::Action,
+        Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance => Kind::Toggle,
+        AddCam | DeleteCam | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
         _ => Kind::Dial,
     }
 }
@@ -273,6 +280,7 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
         PaletteLevels => (2.0, 255.0, true),
         OrderedDither | LdrDither | Retro | WhiteBalanceStrength => (0.0, 1.0, false),
         Fog => (0.0001, 0.25, true),
+        Wear(_) | SnowTank | SnowWorld => (0.0, 1.0, false),
         Tear(_) => (1.0e3, 1.0e8, true),
         Stretch(_) => (0.005, 5.0, true),
         Forward | Outward => (0.0, 2.0, false),
@@ -283,18 +291,19 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
 }
 
 /// The sidebar's disclosable groups.
-const GROUPS: [&str; 7] = ["SHOT", "SCENE", "CAMERA", "SECTION", "SKY", "LOOK", "TISSUE (REVIEW)"];
+const GROUPS: [&str; 8] = ["SHOT", "SCENE", "CAMERA", "SECTION", "SKY", "LOOK", "MATERIALS", "TISSUE (REVIEW)"];
 
 fn group_rows(group: usize) -> Vec<Knob> {
     use Knob::*;
     match group {
         0 => vec![Shell, Range, Velocity, FromAz, FromEl, TargetKind, Seed],
-        1 => vec![TimeSpeed, Loop, Racks, Lamps, LampPower, Fresh, SlowSpan, RunLength],
-        2 => vec![Focal, SavedCam, AddCam, DeleteCam],
+        1 => vec![TimeSpeed, Loop, Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength],
+        2 => vec![Focal, SavedCam, AddCam, DeleteCam, MovingCamera],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
         4 => vec![Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure],
         5 => vec![Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
             WhiteBalance, WhiteBalanceStrength, Fog, LookDefaults],
+        6 => vec![Wear(1), Wear(0), Wear(2), Wear(3), SnowTank, SnowWorld, MaterialsGame],
         _ => {
             let mut rows: Vec<Knob> = (0..4).map(Tear).collect();
             rows.extend((0..4).map(Stretch));
@@ -342,12 +351,12 @@ const BTN_W: f32 = 0.011;
 const MINUS_X: f32 = PANEL_X + PANEL_W - 2.0 * BTN_W - 0.003;
 const PLUS_X: f32 = PANEL_X + PANEL_W - BTN_W;
 /// The buttons: label, column, row (three a row), under the title.
-const BUTTONS: [(&str, usize, usize); 3] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0)];
+const BUTTONS: [(&str, usize, usize); 6] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1)];
 const BUTTON_H: f32 = 0.028;
 const BUTTONS_Y: f32 = 0.044;
 
 /// The groups' region (scrolled when they do not fit) and the status block under it.
-const GROUPS_TOP: f32 = BUTTONS_Y + BUTTON_H + 0.016;
+const GROUPS_TOP: f32 = BUTTONS_Y + 2.0 * BUTTON_H + 0.021;
 const GROUPS_BOTTOM: f32 = 0.86;
 /// A dial turns through its whole range over this much vertical drag (window height).
 const DIAL_DRAG: f32 = 0.3;
@@ -400,6 +409,25 @@ fn dial_face() -> Vec<u8> {
     out
 }
 
+/// REC: the viewport's frames (no interface) piped to ffmpeg at 30 fps, scaled up by a whole factor
+/// by nearest neighbour (the internal grid's pixels kept; 4x of 1280x720 is the Studio Display's
+/// 5120x2880).
+struct Recorder {
+    path: String,
+    size: (u32, u32),
+    encoder: std::process::Child,
+    frames: u64,
+}
+
+/// The whole scale factor that brings the internal grid's height to 2880 (at least 1).
+fn display_scale(ih: u32) -> u32 {
+    (2880 / ih.max(1)).max(1)
+}
+
+fn capture_stamp() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
 /// A saved camera (`target/fea_range_cameras.json`).
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 struct SavedCam {
@@ -426,6 +454,20 @@ struct Range {
     tuning: crew_tissue::TissueTuning,
     mode: Mode,
     frames: Vec<Frame>,
+    /// Everything given to the simulation since the fresh Tiger it started from (its seed and scene),
+    /// and for each run frame how much of it had been given then.
+    tape: Vec<Tape>,
+    tape_base: (u32, SceneSetup, Vec2, f32),
+    run_tape: Vec<usize>,
+    /// The engine running (off by default: no exhaust).
+    engine: bool,
+    /// A moving camera keeps the renderer's history (accumulated, smeared) rather than restarting
+    /// it (sharp, noisier).
+    accumulate_moving: bool,
+    /// The tank's surface state held at these values (exterior grime, interior grime, glass grime,
+    /// mechanical wear; snow on the tank and on the ground), or the game's own.
+    wear: Option<[f32; 4]>,
+    snow: Option<[f32; 2]>,
     /// The run the timeline is of, the run frame the live state stands at, and whether the
     /// simulation has gone on in real time past the run's end.
     run: Option<RunInfo>,
@@ -465,6 +507,9 @@ struct Range {
     handle_at: Option<[f32; 2]>,
     /// Where the shot's handle was drawn this frame (window 0..1), if it was.
     shot_handle_at: Option<[f32; 2]>,
+    /// REC in progress, and the last viewport frame captured (what it writes).
+    recorder: Option<Recorder>,
+    last_rgba: Option<(Vec<u8>, u32, u32)>,
     /// The interface hidden (Tab): the viewport fills the window.
     hide_ui: bool,
     /// Every dial's value as the editor started.
@@ -536,6 +581,14 @@ impl Range {
             tuning: crew_tissue::TissueTuning::AUTHORED,
             mode: Mode::Live,
             frames: Vec::new(),
+            tape: Vec::new(),
+            tape_base: (0, SceneSetup { racks_loaded: false, cabin_lamps: true, fresh_each_run: true, slow_s: 0.25, run_s: 4.0 },
+                TIGER_AT, TIGER_HEADING),
+            run_tape: Vec::new(),
+            engine: false,
+            accumulate_moving: false,
+            wear: None,
+            snow: None,
             run: None,
             frame_at: None,
             past_run: false,
@@ -564,6 +617,8 @@ impl Range {
             axis_labels: [[-1.0, -1.0]; 3],
             cursor: [0.5, 0.5],
             hide_ui: false,
+            recorder: None,
+            last_rgba: None,
             dial_defaults: Vec::new(),
             snapped: None,
             last_pose: None,
@@ -572,7 +627,7 @@ impl Range {
             live_image: false,
             tiger_at: TIGER_AT,
             tiger_heading: TIGER_HEADING,
-            collapsed: [false, false, false, false, true, true, true],
+            collapsed: [false, false, false, false, true, true, true, true],
             scroll: 0.0,
             cameras: std::fs::read_to_string(CAMERAS_PATH).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
             camera_at: None,
@@ -639,7 +694,9 @@ impl Range {
     }
 
     fn step(&mut self, dt: f32) {
+        self.g.engine_on = self.engine;
         self.g.update(&TankInput::default(), dt, &mut self.r);
+        self.tape.push(Tape::Step(dt));
     }
 
     /// A fresh Tiger and crew at the review spot (`game_fea_film::fresh_tiger`), settled for a
@@ -667,6 +724,8 @@ impl Range {
         }
         self.shot_t = 0.0;
         self.last_chain.clear();
+        self.tape.clear();
+        self.tape_base = (self.shot.seed, self.scene, self.tiger_at, self.tiger_heading);
     }
 
     /// The shot's aim point and travel direction (world).
@@ -698,6 +757,7 @@ impl Range {
         let shell = self.shot.spec();
         self.g.debug_launch_round(shell, false, target, dir, self.shot.range_m, self.shot.seed);
         self.shot_t = 0.0;
+        self.tape.push(Tape::Fire(self.shot, self.tuning));
     }
 
     fn slow_frames(&self, scene: &SceneSetup) -> u32 {
@@ -731,25 +791,33 @@ impl Range {
         self.frame_at = None;
         self.past_run = false;
         self.frames.clear();
+        self.run_tape.clear();
         self.shown_frame = None;
         self.status = "RESET: a fresh Tiger and crew".into();
     }
 
+    /// RUN: the shot on a fresh Tiger (or, with FRESH EACH RUN off, into the present state).
     fn run(&mut self) {
-        self.apply_tuning();
         if self.scene.fresh_each_run {
             self.fresh();
         }
+        self.fire_now();
+    }
+
+    /// F: the shot fired into the present state at once; its run starts on the timeline.
+    fn fire_now(&mut self) {
+        self.apply_tuning();
         self.frames.clear();
         self.shown_frame = None;
-        self.run = Some(RunInfo { shot: self.shot, scene: self.scene, tuning: self.tuning, fresh: self.scene.fresh_each_run,
-            total: self.total_frames(&self.scene) });
+        let total = self.total_frames(&self.scene);
+        self.run = Some(RunInfo { scene: self.scene, total });
+        self.run_tape = vec![usize::MAX; total as usize];
         self.frame_at = None;
         self.past_run = false;
         self.fire();
         self.mode = Mode::Live;
         self.playing = true;
-        self.status = format!("RUN: {} at {:.0} m ({:.0} m/s)", self.shot.spec().name, self.shot.range_m, self.shot.impact_velocity());
+        self.status = format!("FIRED: {} at {:.0} m ({:.0} m/s)", self.shot.spec().name, self.shot.range_m, self.shot.impact_velocity());
     }
 
     /// The run frame the live simulation steps to next, if the run has one left.
@@ -764,6 +832,9 @@ impl Range {
         let Some(run) = self.run else { return };
         self.advance_frame(k, &run.scene);
         self.frame_at = Some(k);
+        if let Some(slot) = self.run_tape.get_mut(k as usize) {
+            *slot = self.tape.len();
+        }
         if capture {
             self.pose_view();
             match self.r.render_to_rgba(&self.device, &self.queue, self.r.iw, self.r.ih) {
@@ -772,6 +843,7 @@ impl Range {
                     let bytes = rgba.len() * (k as usize + 1);
                     self.upload_image(&rgba, w, h);
                     self.captured = true;
+                    self.last_rgba = Some((rgba.clone(), w, h));
                     self.frames.truncate(k as usize);
                     if bytes <= RECORD_BUDGET_BYTES && self.frames.len() == k as usize {
                         self.frames.push(Frame { t: self.shot_t, rgba, w, h });
@@ -785,10 +857,11 @@ impl Range {
         }
     }
 
-    /// The live state at run frame `index`: on from the present frame, or (backward) the run
-    /// repeated step for step on a fresh Tiger. The game does not repeat a strike bit for bit
-    /// (measured 2026-11-03: the chain and scars agree, the crew's tissue and the surface blood
-    /// can differ), so a backward seek is a re-run of the same shot, not a copy, and says so.
+    /// The live state at run frame `index`: on from the present frame, or (backward) a fresh Tiger
+    /// built the same way and given the same steps and shots again up to that frame (the tape).
+    /// The game does not repeat a strike bit for bit (measured 2026-11-03: the chain and scars
+    /// agree, the crew's tissue and the surface blood can differ), so a backward seek is a re-run,
+    /// not a copy, and says so. The camera is the editor's and is never moved by it.
     fn seek(&mut self, index: u32) {
         self.mode = Mode::Live;
         let Some(run) = self.run else { return };
@@ -804,28 +877,43 @@ impl Range {
             self.status = format!("ON TO {:.4} S", self.shot_t);
             return;
         }
-        if !run.fresh {
-            self.status = "BACK IN TIME NEEDS A RUN ON A FRESH TIGER (FRESH TIGER EACH RUN)".into();
+        let Some(&upto) = self.run_tape.get(index as usize).filter(|&&n| n != usize::MAX) else {
+            // Not reached yet in this run: step on from its start instead.
             return;
-        }
-        let (keep_shot, keep_scene, keep_tuning) = (self.shot, self.scene, self.tuning);
-        self.shot = run.shot;
-        self.scene = run.scene;
-        self.tuning = run.tuning;
-        self.apply_tuning();
+        };
         let started = std::time::Instant::now();
+        let tape = std::mem::take(&mut self.tape);
+        let (keep_shot, keep_scene, keep_tuning, keep_at, keep_heading) =
+            (self.shot, self.scene, self.tuning, self.tiger_at, self.tiger_heading);
+        let (seed, scene, at, heading) = self.tape_base;
+        self.shot.seed = seed;
+        self.scene = scene;
+        self.tiger_at = at;
+        self.tiger_heading = heading;
         self.fresh();
-        self.fire();
-        self.frame_at = None;
-        self.past_run = false;
-        for k in 0..=index {
-            self.run_frame(k, false);
+        for event in &tape[..upto.min(tape.len())] {
+            match *event {
+                Tape::Step(dt) => {
+                    self.step(dt);
+                    self.shot_t += dt;
+                }
+                Tape::Fire(shot, tuning) => {
+                    self.shot = shot;
+                    self.tuning = tuning;
+                    self.apply_tuning();
+                    self.fire();
+                }
+            }
         }
         self.shot = keep_shot;
         self.scene = keep_scene;
         self.tuning = keep_tuning;
+        self.tiger_at = keep_at;
+        self.tiger_heading = keep_heading;
         self.apply_tuning();
-        self.status = format!("BACK TO {:.4} S: THE SAME SHOT RE-RUN IN {:.1} S (TISSUE DETAIL CAN DIFFER FROM THE FIRST RUN)",
+        self.frame_at = Some(index);
+        self.past_run = false;
+        self.status = format!("BACK TO {:.4} S: RE-RUN IN {:.1} S (TISSUE DETAIL CAN DIFFER FROM THE FIRST TIME)",
             self.shot_t, started.elapsed().as_secs_f32());
     }
 
@@ -844,7 +932,14 @@ impl Range {
         // A moved camera restarts the transport's history (as `fea-film` does): the accumulator's
         // reprojection otherwise smears the view while it moves. Fewer samples, sharp frames.
         let pose = (self.eye, self.yaw, self.pitch, self.focal_mm);
-        if self.last_pose.is_some_and(|p| p != pose) {
+        if let Some(w) = self.wear {
+            self.r.wear = w;
+        }
+        if let Some([tank, world]) = self.snow {
+            self.r.player_snow_load = tank;
+            self.r.world_snow_load = world;
+        }
+        if !self.accumulate_moving && self.last_pose.is_some_and(|p| p != pose) {
             self.r.reset_history();
         }
         self.last_pose = Some(pose);
@@ -974,6 +1069,13 @@ impl Range {
             Knob::Lamps => ("CABIN LAMPS".into(), if self.scene.cabin_lamps { "ON" } else { "OFF" }.into()),
             Knob::LampPower => ("LAMP POWER".into(), format!("X{:.0}{}", review_lamp_gain(),
                 if review_lamp_gain() != 1.0 { " * (REVIEW)" } else { "" })),
+            Knob::Engine => ("ENGINE".into(), if self.engine { "ON (EXHAUST)" } else { "OFF" }.into()),
+            Knob::MovingCamera => ("MOVING CAMERA".into(), if self.accumulate_moving { "ON: ACCUMULATED (SMEARS)" } else { "OFF: SHARP" }.into()),
+            Knob::Wear(k) => (["INTERIOR GRIME", "EXTERIOR GRIME", "GLASS GRIME", "MECHANICAL WEAR"][k].into(),
+                format!("{:.2}{}", self.r.wear[k], if self.wear.is_some() { " HELD" } else { "" })),
+            Knob::SnowTank => ("SNOW ON TANK".into(), format!("{:.2}{}", self.r.player_snow_load, if self.snow.is_some() { " HELD" } else { "" })),
+            Knob::SnowWorld => ("SNOW ON GROUND".into(), format!("{:.2}{}", self.r.world_snow_load, if self.snow.is_some() { " HELD" } else { "" })),
+            Knob::MaterialsGame => ("GAME'S OWN".into(), if self.wear.is_none() && self.snow.is_none() { "IN FORCE".into() } else { "CLICK".into() }),
             Knob::TimeSpeed => ("TIME SPEED".into(), format!("X{:.2}{}", self.time_speed,
                 if self.time_speed < 1.0 { " (SLOWER)" } else if self.time_speed > 1.0 { " (FASTER)" } else { "" })),
             Knob::Loop => ("LOOP".into(), if self.looping { "ON" } else { "OFF" }.into()),
@@ -1099,6 +1201,12 @@ impl Range {
             Knob::TissueAuthored => self.tuning = crew_tissue::TissueTuning::AUTHORED,
             Knob::SnapToShot => self.snap_section_to_shot(),
             Knob::Loop => self.looping = !self.looping,
+            Knob::Engine => self.engine = !self.engine,
+            Knob::MovingCamera => self.accumulate_moving = !self.accumulate_moving,
+            Knob::MaterialsGame => {
+                self.wear = None;
+                self.snow = None;
+            }
             Knob::SkyRunning => self.sky.running = !self.sky.running,
             Knob::SavedCam => {
                 if !self.cameras.is_empty() {
@@ -1172,6 +1280,9 @@ impl Range {
             Knob::SlowSpan => self.scene.slow_s,
             Knob::RunLength => self.scene.run_s,
             Knob::TimeSpeed => self.time_speed,
+            Knob::Wear(k) => self.r.wear[k],
+            Knob::SnowTank => self.r.player_snow_load,
+            Knob::SnowWorld => self.r.world_snow_load,
             Knob::Focal => self.focal_mm,
             Knob::SectionYaw => self.section.yaw,
             Knob::SectionPitch => self.section.pitch,
@@ -1214,6 +1325,18 @@ impl Range {
             Knob::SlowSpan => self.scene.slow_s = v,
             Knob::RunLength => self.scene.run_s = v,
             Knob::TimeSpeed => self.time_speed = if (v - 1.0).abs() < 0.03 { 1.0 } else { v },
+            Knob::Wear(k) => {
+                let mut w = self.wear.unwrap_or(self.r.wear);
+                w[k] = v;
+                self.wear = Some(w);
+                self.r.wear = w;
+            }
+            Knob::SnowTank | Knob::SnowWorld => {
+                let mut sn = self.snow.unwrap_or([self.r.player_snow_load, self.r.world_snow_load]);
+                sn[if knob == Knob::SnowTank { 0 } else { 1 }] = v;
+                self.snow = Some(sn);
+                [self.r.player_snow_load, self.r.world_snow_load] = sn;
+            }
             Knob::Focal => self.focal_mm = v,
             Knob::SectionYaw => { self.section.yaw = v; self.section.on = true; }
             Knob::SectionPitch => { self.section.pitch = v; self.section.on = true; }
@@ -1514,6 +1637,83 @@ impl Range {
         self.status = "SECTION IN THE SHOT'S PLANE (THE CAMERA'S SIDE CUT AWAY)".into();
     }
 
+    /// REC: start or stop writing the viewport to a video in the captures folder.
+    fn toggle_recording(&mut self) {
+        if let Some(mut rec) = self.recorder.take() {
+            drop(rec.encoder.stdin.take());
+            let ok = rec.encoder.wait().is_ok_and(|s| s.success());
+            self.status = format!("RECORDED {:.1} S TO {}{}", rec.frames as f32 / 30.0, rec.path, if ok { "" } else { " (ENCODER FAILED)" });
+            println!("[fea-range] {}", self.status);
+            return;
+        }
+        let (_, w, h) = self.crop_rgba(&vec![0u8; (self.r.iw * self.r.ih * 4) as usize]);
+        let k = display_scale(self.r.ih);
+        let path = crate::capture_target(&format!("fea_range_rec_{}.mp4", capture_stamp()));
+        let size = format!("{w}x{h}");
+        let scale = format!("scale=iw*{k}:ih*{k}:flags=neighbor,crop=trunc(iw/2)*2:trunc(ih/2)*2");
+        match std::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pixel_format", "rgba",
+                "-video_size", &size, "-framerate", "30", "-i", "pipe:0", "-an", "-vf", &scale, "-c:v", "libx264", "-preset",
+                "medium", "-crf", "10", "-pix_fmt", "yuv444p", "-movflags", "+faststart", &path])
+            .stdin(std::process::Stdio::piped())
+            .spawn() {
+            Ok(encoder) => {
+                self.status = format!("RECORDING THE VIEWPORT TO {path} ({}x{}, x{k} NEAREST)", w * k, h * k);
+                self.recorder = Some(Recorder { path, size: (w, h), encoder, frames: 0 });
+            }
+            Err(e) => self.status = format!("REC: FFMPEG DID NOT START: {e}"),
+        }
+    }
+
+    /// The present viewport frame into the recording (captured now if this frame has none).
+    fn record_frame(&mut self) {
+        let Some(size) = self.recorder.as_ref().map(|r| r.size) else { return };
+        if !self.captured {
+            self.pose_view();
+            if let Ok(rgba) = self.r.render_to_rgba(&self.device, &self.queue, self.r.iw, self.r.ih) {
+                let (rgba, w, h) = self.crop_rgba(&rgba);
+                self.upload_image(&rgba, w, h);
+                self.captured = true;
+                self.last_rgba = Some((rgba, w, h));
+            }
+        }
+        let Some((rgba, w, h)) = &self.last_rgba else { return };
+        if (*w, *h) != size {
+            self.toggle_recording();
+            self.status = "REC STOPPED: THE VIEWPORT CHANGED SIZE".into();
+            return;
+        }
+        use std::io::Write;
+        let ok = self.recorder.as_mut().is_some_and(|rec| {
+            let written = rec.encoder.stdin.as_mut().is_some_and(|i| i.write_all(rgba).is_ok());
+            rec.frames += written as u64;
+            written
+        });
+        if !ok {
+            self.toggle_recording();
+        }
+    }
+
+    /// STILL: the present state held while the renderer's own transport converges (48 frames from
+    /// a restarted history, the eye's exposure metered), then the whole internal frame written at
+    /// the Studio Display's size by nearest neighbour (game pixels kept).
+    fn still(&mut self) {
+        self.pose_view();
+        self.r.reset_history();
+        let started = std::time::Instant::now();
+        if let Err(e) = crate::converge_headless_screenshot(&mut self.r, &self.device, &self.queue, 48) {
+            self.status = format!("STILL FAILED: {e:#}");
+            return;
+        }
+        let k = display_scale(self.r.ih);
+        let path = crate::capture_target(&format!("fea_range_still_{}.png", capture_stamp()));
+        self.status = match self.r.render_to_png(&self.device, &self.queue, &path, self.r.iw * k, self.r.ih * k) {
+            Ok(()) => format!("STILL {}x{} TO {path} ({:.1} S)", self.r.iw * k, self.r.ih * k, started.elapsed().as_secs_f32()),
+            Err(e) => format!("STILL FAILED: {e:#}"),
+        };
+        println!("[fea-range] {}", self.status);
+    }
+
     /// The sidebar's width (none while the interface is hidden).
     fn side(&self) -> f32 {
         if self.hide_ui { 0.0 } else { SIDEBAR_W }
@@ -1561,6 +1761,7 @@ impl Range {
                 "retro": d.retro_strength, "white_balance": d.ambient_white_balance,
                 "white_balance_strength": d.ambient_white_balance_strength, "tuned": self.r.display_tuning.is_some(), "fog": self.fog},
             "lamp_gain": review_lamp_gain(), "time_speed": self.time_speed, "looping": self.looping,
+            "engine": self.engine, "accumulate_moving": self.accumulate_moving, "wear": self.wear, "snow": self.snow,
             "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm},
             "tiger": {"at": self.tiger_at.to_array(), "heading": self.tiger_heading},
             "collapsed": self.collapsed,
@@ -1636,6 +1837,10 @@ impl Range {
         if let Some(x) = f(&v["lamp_gain"]) { set_review_lamp_gain(x.max(1.0)); }
         if let Some(x) = f(&v["time_speed"]) { self.time_speed = x; }
         if let Some(x) = v["looping"].as_bool() { self.looping = x; }
+        if let Some(x) = v["engine"].as_bool() { self.engine = x; }
+        if let Some(x) = v["accumulate_moving"].as_bool() { self.accumulate_moving = x; }
+        self.wear = arr4(&v["wear"]);
+        self.snow = v["snow"].as_array().filter(|a| a.len() == 2).map(|a| [f(&a[0]).unwrap_or(0.0), f(&a[1]).unwrap_or(0.0)]);
         let c = &v["camera"];
         if let Some(e) = c["eye"].as_array().filter(|e| e.len() == 3) {
             self.eye = Vec3::new(f(&e[0]).unwrap_or(0.0), f(&e[1]).unwrap_or(0.0), f(&e[2]).unwrap_or(0.0));
@@ -1939,10 +2144,15 @@ impl Range {
         // Buttons.
         for (label, col, row) in BUTTONS {
             let [x, y, w, h] = button_rect(col, row);
-            let lit = label == "PLAY" && !self.playing;
+            let lit = (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some());
             let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
             self.r.fill_rect(x, y, w, h, if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX });
-            let text = match label { "PLAY" if self.playing => "PAUSE", other => other };
+            let rec_label = self.recorder.as_ref().map(|r| format!("REC {:.0} S", r.frames as f32 / 30.0));
+            let text = match label {
+                "PLAY" if self.playing => "PAUSE",
+                "REC" if rec_label.is_some() => rec_label.as_deref().unwrap_or("REC"),
+                other => other,
+            };
             self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.9, if lit { BLACK } else { INK }, crate::ui::Align::Center);
         }
         self.draw_timeline(cursor);
@@ -2036,8 +2246,10 @@ impl Range {
                 "ENTER: RUN    BACKSPACE: RESET    SPACE: PAUSE/PLAY (THE SIMULATION ALWAYS PLAYS UNLESS PAUSED)",
                 "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
                 "BACK IN TIME RE-RUNS THE SAME SHOT TO THAT FRAME (A FEW SECONDS; TISSUE DETAIL CAN DIFFER)",
-                "TAB: HIDE THE INTERFACE    F: FRAME THE TIGER    RMB ON A DIAL: RESET IT    SETTINGS KEPT BETWEEN LAUNCHES",
-                "P: PRINT TISSUE KNOBS    M: MUTE    F12: SCREENSHOT TO CAPTURES    H: THIS HELP    ESC TWICE: QUIT",
+                "F: FIRE THE SHOT NOW (INTO THE PRESENT STATE)    ENTER: RUN ON A FRESH TIGER    . : FRAME THE TIGER",
+                "TAB: HIDE THE INTERFACE    RMB ON A DIAL: RESET IT    SETTINGS AND CAMERAS KEPT BETWEEN LAUNCHES",
+                "R: RECORD THE VIEWPORT (AGAIN STOPS)    F12: FULL-FRAME STILL AT 5120X2880, CONVERGED    TO CAPTURES",
+                "P: PRINT TISSUE KNOBS    M: MUTE    H: THIS HELP    ESC TWICE: QUIT",
             ];
             let x = self.side() + 0.01;
             self.r.fill_rect(x, 0.02, 0.98 - x, 0.03 * lines.len() as f32 + 0.02, [0.0, 0.0, 0.0, 0.85]);
@@ -2134,6 +2346,9 @@ impl Range {
             "RESET" => self.reset(),
             "RUN" => self.run(),
             "PLAY" => self.playing = !self.playing,
+            "FIRE" => self.fire_now(),
+            "REC" => self.toggle_recording(),
+            "STILL" => self.still(),
             _ => {}
         }
     }
@@ -2257,6 +2472,9 @@ impl Range {
     /// sidebar over it.
     fn render(&mut self, view: &wgpu::TextureView, format: wgpu::TextureFormat, w: u32, h: u32, cursor: [f32; 2]) {
         self.win = [w as f32, h as f32];
+        if self.recorder.is_some() && self.mode == Mode::Live {
+            self.record_frame();
+        }
         if self.mode == Mode::Live && !self.captured {
             self.pose_view();
             self.r.set_active_view(0);
@@ -2339,6 +2557,9 @@ impl App {
             KeyCode::Escape => {
                 if self.escape.is_some_and(|t| t.elapsed().as_secs_f32() < 2.0) {
                     rg.save_state();
+                    if rg.recorder.is_some() {
+                        rg.toggle_recording();
+                    }
                     event_loop.exit();
                 } else {
                     self.escape = Some(std::time::Instant::now());
@@ -2367,7 +2588,8 @@ impl App {
             }
             KeyCode::KeyG => rg.adjust(Knob::SnapToShot, 1.0, false, false),
             KeyCode::Tab => rg.hide_ui = !rg.hide_ui,
-            KeyCode::KeyF => rg.frame_tiger(),
+            KeyCode::KeyF => rg.fire_now(),
+            KeyCode::Period | KeyCode::NumpadDecimal => rg.frame_tiger(),
             KeyCode::KeyC => rg.section.on = !rg.section.on,
             KeyCode::KeyV => {
                 let n = rg.g.player.hull_model().inverse().transform_vector3(-rg.forward());
@@ -2394,19 +2616,8 @@ impl App {
                     KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9].iter().position(|k| *k == code).unwrap_or(0);
                 rg.view_camera(n);
             }
-            KeyCode::F12 => {
-                let path = crate::capture_target(&format!("fea_range_{}.png", std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())));
-                let (w, h) = (rg.r.iw * 3, rg.r.ih * 3);
-                if rg.mode == Mode::Live {
-                    rg.pose_view();
-                }
-                rg.draw_ui(self.input.cursor);
-                rg.status = match rg.r.render_to_png_hud(&rg.device, &rg.queue, &path, w, h) {
-                    Ok(()) => format!("SCREENSHOT {path}"),
-                    Err(e) => format!("SCREENSHOT FAILED {e:#}"),
-                };
-            }
+            KeyCode::F12 => rg.still(),
+            KeyCode::KeyR => rg.toggle_recording(),
             _ => {}
         }
     }
@@ -2511,8 +2722,11 @@ impl ApplicationHandler for App {
         }
         match event {
             WindowEvent::CloseRequested => {
-                if let Some(st) = &self.state {
+                if let Some(st) = self.state.as_mut() {
                     st.range.save_state();
+                    if st.range.recorder.is_some() {
+                        st.range.toggle_recording();
+                    }
                 }
                 event_loop.exit();
             }
@@ -2786,6 +3000,19 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let mut rg = Range::new(device, queue, true)?;
+    // KESSEL_FEA_RANGE_PROBE=media: a still and a short recording (fired shot), then stop.
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("media") {
+        rg.still();
+        rg.toggle_recording();
+        rg.fire_now();
+        for _ in 0..24 {
+            rg.tick(1.0 / 60.0);
+            rg.record_frame();
+        }
+        rg.toggle_recording();
+        println!("[fea-range] media probe: {}", rg.status);
+        return Ok(());
+    }
     let (w, h) = (1920, 1080);
     let mut checks = Vec::new();
     let still = |rg: &mut Range, name: &str, converge: bool| -> anyhow::Result<String> {
@@ -2808,10 +3035,10 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     };
     // 1. Live, the default shot (57 mm at the loader through the right turret side), help shown.
     rg.help = true;
-    rg.collapsed = [false, false, true, false, false, false, true];
+    rg.collapsed = [false, false, true, false, false, false, true, true];
     let p1 = still(&mut rg, "live", true)?;
     rg.help = false;
-    rg.collapsed = [false, false, false, false, true, true, true];
+    rg.collapsed = [false, false, false, false, true, true, true, true];
     // 2. The section: the top cut 1.9 m above the ground, the eye above the left side, the cabin
     // lamps at 32 times their power (the review dial), the eye's own exposure.
     rg.section = Section { on: true, yaw: 0.0, pitch: 90.0, offset: 0.5 };
