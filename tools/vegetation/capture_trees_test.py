@@ -4,7 +4,7 @@ lineup rows (every asset) and views over the town, the river and the woods. Real
 the locked look (deltap-real, 1024x576, raymarch); one GPU process at a time, and none while the
 owner's demo build or another agent's engine process is running.
 
-    python3 tools/vegetation/capture_trees_test.py [lineup|map|all] [ROW,...]
+    python3 tools/vegetation/capture_trees_test.py [lineup|close|map|all] [ROW,...]
 """
 import json
 import math
@@ -115,6 +115,16 @@ def main(argv):
             if rows and row['row'] not in rows:
                 continue
             fails += bool(shoot(TEST, f"lineup_row{row['row']}", row['camera'], row['target'], fog=0.0003))
+    if what in ('close', 'all'):
+        # Leaf scale at the ranges that matter (10 m and 30 m from a crown, eye 2.5 m up).
+        g = ground_fn(TEST)
+        by = {a['name']: a for row in rec['lineup'] for a in row['assets']}
+        for name in ('tree_linden_a', 'tree_oak_a', 'tree_birch_a', 'shrub_hazel_a'):
+            t = by[name]
+            for dist in (10, 30):
+                pos = [t['x'] + 3.0, g(t['x'] + 3.0, t['z'] - dist) + 2.5, t['z'] - dist]
+                target = [t['x'], g(t['x'], t['z']) + (1.0 if name.startswith('shrub') else 6.0), t['z']]
+                fails += bool(shoot(TEST, f'close_{name}_{dist}m', pos, target, fog=0.0003))
     if what in ('map', 'all'):
         for name, pos, target in map_views(TEST):
             fails += bool(shoot(TEST, name, pos, target))

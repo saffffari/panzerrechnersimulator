@@ -20,17 +20,30 @@ preview.
 ## Representation
 
 Foliage is opaque geometry. The raymarch backend alpha-tests only the grass kind, in the G-buffer
-and its own shadow program; every other triangle shadows and occludes as drawn. A textured leaf
-card would therefore shadow as a solid quad. Instead each **spray** (a twig's worth of leaves) is
-an irregular, slightly cupped six-triangle polygon whose outline is the cut-out, 0.4-1.6 m
-(about 0.21 x the crown radius, so a spray is a few pixels at combat range on the 1024x576 grid).
-Sprays gather in **clumps** on the crown's shell, leaving sky between clumps; every clump is fed
-by a drawn twig from a **scaffold limb** (limbs are a k-means of the clumps, so the architecture
-grows toward the foliage), every limb from the trunk. Birch and willow sprays hang (weeping).
-Horse chestnut carries upright candles, apple, hawthorn and elder flat petal sprays (May).
+and its own shadow program, and keeps grass-kind batches out of the RT acceleration structure, the
+cabin shadows and the far cascade; every other triangle shadows and occludes as drawn. A textured
+leaf card would therefore shadow as a solid quad, and turning tree batches into grass-kind batches
+would drop them from those passes. So each leaf is a triangle: **twigs** of 3-5 single-triangle
+leaves fanned round a shoot tip, each leaf about 3 x its real length (birch 0.18 m, lime 0.27 m,
+oak 0.30 m, a horse chestnut leaflet 0.38 m; `LEAF_SIZE`), so one leaf spans a few pixels at
+20-40 m on the 1024x576 grid. Twigs gather on the skin of **clumps** on the crown's shell, with
+sky between clumps; every clump is fed by a drawn twig branch from a **scaffold limb** (limbs are
+a k-means of the clumps, so the architecture grows toward the foliage), every limb from the
+trunk. Birch and willow leaves hang (weeping). Horse chestnut carries upright candles; apple,
+hawthorn and elder carry small blossom trusses (May).
 
-Budgets: an intact tree 2,500-4,600 triangles, a damaged tree 200-2,500, a fallen tree up to
-4,300, a shrub 300-800, a stump about 35.
+The first version (2026-11-02, morning) drew a twig's worth of leaves as one 0.4-1.6 m polygon;
+at 5-40 m those read as oversized paper cards and were replaced the same day.
+
+Leaf area is the price of leaf-sized geometry: leaf area = triangles x length^2 x width / 2, so a
+crown's fill is bounded by its triangle budget. Leaf triangles are set in proportion to the crown
+radius (1,400 per metre, 4,000-11,000): the lime and the fruit trees read full, the large oak and
+poplar crowns read open (fitting mid-May, when oak leaves are still expanding). Denser crowns at
+true leaf size need alpha-masked foliage in the renderer (above) or a larger budget.
+
+Budgets: an intact tree 4,312-11,186 triangles, a burnt tree 1,073-2,456, a shattered tree
+262-702, a fallen tree 4,461-11,330, a shrub 887-1,835 (burnt 414-454), a stump about 35. There
+is no instance LOD: a map's tree count times these is drawn in every pass that sees it.
 
 Frame: engine Y up, metres, origin at the trunk's ground contact; the trunk continues 0.25 m below
 to sit into slopes. This equals the Blender bakes' glTF Y-up export (engine = (blender_x,
@@ -74,23 +87,24 @@ chestnut in the streets; oak and wild pear in field margins and woods; apple and
 gardens; hazel, elder, hawthorn, dog rose, blackthorn and young willow scrub. Sizes below are of
 the generated files at scale 1 (m); `spring1943.catalog.json` is the authoritative list.
 
-| Asset | Kind | Size | Triangles |
+| Asset | Kind | Size (m) | Triangles |
 | --- | --- | --- | --- |
-| `tree_birch_a/b/c` | tree | h 16.5 / 11.8 / 16.4 | 3,300-3,950 |
-| `tree_poplar_a/b/c` | tree | h 25.8 / 21.5 / 22.5, crown 19-24 | 3,850-4,600 |
-| `tree_willow_a/b/c` | tree | h 13.4 / 12.2 / 19.8, multi-stemmed, leaning | 3,450-3,650 |
-| `tree_linden_a/b` | tree | h 15.3 / 13.0 | 3,550-4,400 |
-| `tree_chestnut_a/b` | tree | h 17.5 / 12.4, candles | 3,350-4,050 |
-| `tree_oak_a/b/c` | tree | h 20.4 / 15.1 / 19.4, crown 19-24 | 3,850-4,300 |
-| `tree_pear_a/b` | tree | h 7.8 / 8.4 | 2,850-3,250 |
-| `tree_apple_a/b/c` | tree | h 6.3 / 5.0 / 6.3, crown 5.8-7.7, late blossom | 2,550-3,300 |
-| `tree_cherry_a/b` | tree | h 7.8 / 7.0 | 2,500-3,100 |
-| `tree_{birch,poplar,oak}_burnt_{a,b}`, `tree_{willow,linden,apple,cherry}_burnt_a` | tree | as the species; charred to 35-75 % of height, 60-85 % of clumps bare | 1,350-2,500 |
-| `tree_{birch,poplar,linden,oak}_shattered_{a,b}`, `tree_{willow,chestnut,pear}_shattered_a` | tree | snapped at 3.5-12 m, splintered top, broken limbs | 200-380 |
-| `fallen_{oak,birch,apple}_uprooted_a` | fallen | length 21 / 13.5 / 5.2, on its root plate | 3,150-4,350 |
-| `fallen_{poplar,willow,linden,birch}_snapped_a` + `stump_*_snapped_a` | fallen, stump | length 13-19; stumps 1.4-1.5 high | 3,900-4,100; 35 |
-| `shrub_{hazel,elder,hawthorn,dogrose,blackthorn,willowscrub}_{a,b}` | shrub | h 0.8-3.8 | 380-770 |
-| `shrub_burnt_a/b` | shrub | h 3.7 / 1.8 | 320-330 |
+| `tree_birch_a/b/c` | tree | h 16.1 / 11.8 / 16.4, crown 7 / 6 / 9 | 4,606-5,369 |
+| `tree_poplar_a/b/c` | tree | h 24.2 / 21.7 / 22.7, crown 18 / 17 / 17 | 9,062-10,621 |
+| `tree_willow_a/b/c` | tree | h 13.3 / 12.2 / 18.0, crown 12 / 10 / 16 | 6,536-9,920 |
+| `tree_linden_a/b` | tree | h 15.0 / 12.9, crown 10 / 9 | 5,297-6,347 |
+| `tree_chestnut_a/b` | tree | h 17.8 / 11.8, crown 14 / 12 | 6,583-8,320 |
+| `tree_oak_a/b/c` | tree | h 19.1 / 14.8 / 18.9, crown 20 / 16 / 18 | 8,558-11,186 |
+| `tree_pear_a/b` | tree | h 7.9 / 8.4, crown 5 / 6 | 4,312-4,320 |
+| `tree_apple_a/b/c` | tree | h 6.4 / 4.9 / 6.1, crown 6 / 6 / 7 | 4,474-4,590 |
+| `tree_cherry_a/b` | tree | h 7.5 / 7.0, crown 7 / 6 | 4,360-4,463 |
+| `tree_{birch,poplar,oak}_burnt_{a,b}`, `tree_{willow,linden,apple,cherry}_burnt_a` | tree | as the species; charred to 35-75 % of height, 60-85 % of clumps bare | 1,073-2,456 |
+| `tree_{birch,poplar,linden,oak}_shattered_{a,b}`, `tree_{willow,chestnut,pear}_shattered_a` | tree | h 4.4-14.8, splintered top, broken limbs | 262-702 |
+| `fallen_{oak,birch,apple}_uprooted_a` | fallen | length 20.9 / 13.4 / 5.0, on its root plate | 4,461-11,330 |
+| `fallen_{poplar,willow,linden,birch}_snapped_a` | fallen | length 19.0 / 11.9 / 14.7 / 14.6 | 4,737-8,074 |
+| `stump_{poplar,willow,linden,birch}_snapped_a` | stump | h 1.4-1.5, d 0.32-0.68 | 33-36 |
+| `shrub_{hazel,elder,hawthorn,dogrose,blackthorn,willowscrub}_{a,b}` | shrub | h 1.0-4.2 | 887-1,835 |
+| `shrub_burnt_a/b` | shrub | h 3.6 / 1.8 | 414-454 |
 
 ## Known limits
 

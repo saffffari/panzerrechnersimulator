@@ -114,6 +114,18 @@ def leaf_material(key, tone):
 # base, 1 to the top); angle = limb angle from vertical (deg); bow > 0 limbs arch and droop at the
 # tips, < 0 they sag and turn up; weep = sprays hang; spray = spray size m at 15 m; elong = spray
 # aspect; clumps / per = clumps and sprays per clump; limbs; trunk_d at breast height for 15 m.
+# Leaf length (m) and base width / length per species, about 3 x the real blade (birch 6 cm,
+# oak 10 cm, lime 9 cm, a horse chestnut leaflet 15 cm): one leaf spans a few pixels at 20-40 m and
+# the triangle budget still fills the crown (leaf area = triangles x length^2 x width / 2).
+LEAF_SIZE = {
+    'birch': (0.18, 0.60), 'poplar': (0.25, 0.75), 'willow': (0.26, 0.24), 'linden': (0.27, 0.80),
+    'chestnut': (0.38, 0.38), 'oak': (0.30, 0.50), 'pear': (0.18, 0.55), 'apple': (0.20, 0.55),
+    'cherry': (0.24, 0.45), 'hazel': (0.24, 0.80), 'elder': (0.22, 0.40), 'hawthorn': (0.14, 0.70),
+    'dogrose': (0.12, 0.60), 'blackthorn': (0.12, 0.50), 'willowscrub': (0.22, 0.25),
+}
+LEAVES_PER_TWIG = 4
+SHRUB_TWIGS_PER_LEAF_GROUP = 4   # twigs of leaves per former spray of a shrub clump
+
 TREES = {
     'birch': dict(height=(14, 18), bole=0.30, crown=0.20, shape='ovoid', excurrent=0.92, angle=42, bow=0.35,
                   weep=0.75, spray=0.85, elong=1.6, clumps=36, per=12, limbs=10, trunk_d=0.32, lean=0.04,
@@ -257,6 +269,30 @@ class Mesh:
             P.append(q); N.append(unit(n + 0.45 * unit(a * x + b * y)))
         for k in range(6):
             I += [base, base + 1 + k, base + 1 + (k + 1) % 6]
+
+    def twig(self, p, n, length, width, leaves, mat, rng, droop=0.0):
+        """A shoot's leaves: `leaves` single-triangle leaves alternating along a short shoot from p,
+        each `length` long and `width` x length wide at its base, tip outward (one triangle each)."""
+        n = unit(n)
+        ref = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 0.0, 1.0])
+        a = unit(np.cross(n, ref)); b = np.cross(n, a)
+        P, N, I = self._part(mat)
+        phase = rng.uniform(0, 2 * math.pi)
+        # Leaves alternate along a short shoot rather than radiating from one point (no stars).
+        shoot = unit(math.cos(phase) * a + math.sin(phase) * b + n * 0.3)
+        for k in range(leaves):
+            th = phase + math.pi * (k % 2) + (k // 2) * 0.9 + rng.uniform(-0.6, 0.6)
+            d = unit(math.cos(th) * a + math.sin(th) * b + shoot * 0.8 + n * rng.uniform(-0.3, 0.5) - UP * droop)
+            side = unit(np.cross(n, d))
+            ll = length * rng.uniform(0.7, 1.25)
+            base = p + shoot * length * 0.45 * k + d * 0.015
+            w = 0.5 * width * ll
+            lift = n * 0.12 * ll   # the blade arches off the twig
+            base_i = len(P)
+            P += [base + side * w, base - side * w, p + d * ll + lift]
+            nn = unit(n + d * 0.25)
+            N += [nn, nn, nn]
+            I += [base_i, base_i + 1, base_i + 2]
 
     def disc(self, c, n, radius, rim, thick, mat, rng):
         """An irregular slab (a root plate): two fans and a side band."""
@@ -483,24 +519,26 @@ def build_tree(name, species, scale=1.0, damage=None, mesh=None, keep_leaves=Tru
                 hang[1] = max(hang[1], 2.2)   # clear of the bow's height (src/trees.rs trunk section)
                 m.tube([cut, hang], [r0 * 0.45, 0.03], 3, bark_for(attach_h, True), cap='jagged', rng=rng)
                 if rng.random() < 0.5 and keep_leaves:
-                    for _ in range(rng.randint(2, 4)):
-                        c = hang + np.array([rng.uniform(-.4, .4), rng.uniform(-.2, .4), rng.uniform(-.4, .4)])
-                        m.spray(c, unit(np.array([rng.uniform(-1, 1), 0.8, rng.uniform(-1, 1)])),
-                                np.array([rng.uniform(-1, 1), 0, rng.uniform(-1, 1)]), spray_m * 0.9,
-                                sp['elong'], ('wilted', 0), rng)
+                    for _ in range(rng.randint(12, 30)):
+                        c = hang + np.array([rng.uniform(-.5, .5), rng.uniform(-.3, .5), rng.uniform(-.5, .5)])
+                        m.twig(c, unit(np.array([rng.uniform(-1, 1), 0.8, rng.uniform(-1, 1)])),
+                               LEAF_SIZE[species][0], LEAF_SIZE[species][1], rng.randint(3, 5), ('wilted', 0), rng)
             elif rng.random() < 0.3 and keep_leaves:
                 # a few leaves holding on at a stub
-                for _ in range(rng.randint(2, 5)):
-                    c = cut + np.array([rng.uniform(-.5, .5), rng.uniform(-.1, .5), rng.uniform(-.5, .5)])
-                    m.spray(c, unit(np.array([rng.uniform(-1, 1), 1.0, rng.uniform(-1, 1)])),
-                            np.array([rng.uniform(-1, 1), 0, rng.uniform(-1, 1)]), spray_m * 0.85,
-                            sp['elong'], (leaf_key(species), rng.randint(0, 2)), rng)
+                for _ in range(rng.randint(12, 36)):
+                    c = cut + np.array([rng.uniform(-.6, .6), rng.uniform(-.1, .6), rng.uniform(-.6, .6)])
+                    m.twig(c, unit(np.array([rng.uniform(-1, 1), 1.0, rng.uniform(-1, 1)])),
+                           LEAF_SIZE[species][0], LEAF_SIZE[species][1], rng.randint(3, 5),
+                           (leaf_key(species), rng.randint(0, 2)), rng)
             continue
         m.tube(path, rad, 5 if r0 > 0.12 else 4, [bark_for(p[1], True) for p in path[:-1]], rng=rng)
         for i in g:
             kept_clumps.append((i, path))
 
-    # twigs and sprays
+    # twigs and leaves: leaf triangles in proportion to the crown radius, 4,000-11,000
+    leaf_len, leaf_w = LEAF_SIZE[species]
+    leaf_tris = min(11000, max(4000, int(1400 * R)))
+    twigs_per_clump = max(6, leaf_tris // LEAVES_PER_TWIG // max(len(kept_clumps), 1))
     weep = sp['weep']
     leafless = 0.0
     if burnt:
@@ -523,29 +561,21 @@ def build_tree(name, species, scale=1.0, damage=None, mesh=None, keep_leaves=Tru
                 d = unit(cl['out'] * 0.8 + UP * rng.uniform(0.2, 1.0) + np.array([rng.uniform(-.6, .6), 0, rng.uniform(-.6, .6)]))
                 m.tube([c, c + d * rng.uniform(0.6, 1.3) * size_k], [twig_r * 0.6, 0.008], 3, tw_mat, rng=rng)
             continue
-        cr = spray_m * 2.0 * rng.uniform(0.85, 1.25)
-        n_sprays = sp['per'] + 3 + rng.randint(-2, 2)
-        if burnt:
-            n_sprays = max(3, n_sprays - 4)
-        for s in range(n_sprays):
-            off = np.array([rng.gauss(0, 0.45), rng.gauss(0, 0.35), rng.gauss(0, 0.45)]) * cr + cl['out'] * cr * 0.3
+        cr = spray_m * 1.3 * rng.uniform(0.85, 1.2)
+        n_sprays = twigs_per_clump + rng.randint(-3, 3)
+
+        def tone_of():
+            return 0 if (cl['rr'] > 0.85 and rng.random() < 0.6) else (2 if rng.random() < 0.3 else 1)
+        n_twigs = n_sprays if not burnt else max(3, n_sprays // 3)
+        for _ in range(n_twigs):
+            d = unit(np.array([rng.gauss(0, 1), rng.gauss(0, 0.8), rng.gauss(0, 1)]) + cl['out'] * 1.0 + UP * 0.3)
+            p = c + d * cr * rng.uniform(0.45, 1.0) ** 0.5   # most leaves on the clump's skin
             if weep > 0:
-                off[1] -= abs(rng.gauss(0, 1.0)) * weep * cr * 1.2
-            p = c + off
+                p[1] -= abs(rng.gauss(0, 1.0)) * weep * cr * 1.1
             if p[1] < 1.35 and math.hypot(p[0], p[2]) < 1.05:
                 continue   # keep the trunk clear at the bow's height (src/trees.rs measures it)
-            outward = unit(np.array([p[0], 0.0, p[2]]) - np.array([axis(p[1])[0], 0, axis(p[1])[2]]) + 1e-6)
-            if weep > 0 and rng.random() < weep:
-                nrm = unit(outward + np.array([rng.uniform(-.5, .5), rng.uniform(-.2, .3), rng.uniform(-.5, .5)]))
-                along = UP
-                el = sp['elong'] * 1.2
-            else:
-                nrm = unit(outward * 0.6 + UP * 0.45 + np.array([rng.uniform(-.9, .9), rng.uniform(-.5, .5), rng.uniform(-.9, .9)]))
-                along = np.array([rng.uniform(-1, 1), rng.uniform(-0.3, 0.3), rng.uniform(-1, 1)])
-                el = sp['elong']
-            # tone: outer and upper sprays are the newest growth (less chlorophyll)
-            tone = 0 if (cl['rr'] > 0.85 and rng.random() < 0.6) else (2 if rng.random() < 0.3 else 1)
-            mat = (leaf_key(species), tone)
+            nrm = unit(d * 0.7 + UP * 0.35 + np.array([rng.uniform(-.5, .5), rng.uniform(-.3, .3), rng.uniform(-.5, .5)]))
+            mat = (leaf_key(species), tone_of())
             if burnt:
                 u = rng.random()
                 if cl['t'] > 0.6 and u < 0.3:
@@ -554,12 +584,13 @@ def build_tree(name, species, scale=1.0, damage=None, mesh=None, keep_leaves=Tru
                     mat = ('scorched', 0)
                 else:
                     mat = ('wilted', 0)
-            m.spray(p, nrm, along, spray_m * rng.uniform(0.8, 1.2), el, mat, rng)
+            m.twig(p, nrm, leaf_len, leaf_w, rng.randint(3, 5), mat, rng, droop=weep * 0.8)
+        n_sprays = max(4, n_sprays // 4)   # scales the blossom and candle counts below
         if not burnt and 'blossom' in sp and rng.random() < 0.8:
             pm, share = sp['blossom']
             for _ in range(max(1, int(n_sprays * share * 2))):
                 p = c + cl['out'] * cr * 0.55 + np.array([rng.gauss(0, .35), rng.gauss(0, .3) + 0.15, rng.gauss(0, .35)]) * cr
-                m.spray(p, unit(cl['out'] * 0.5 + UP), np.array([1.0, 0, 0]), spray_m * 0.45, 1.0, pm, rng)
+                m.spray(p, unit(cl['out'] * 0.5 + UP), np.array([1.0, 0, 0]), 0.25, 1.0, pm, rng)   # a blossom truss
         if not burnt and sp.get('candles') and rng.random() < sp['candles']:
             for _ in range(rng.randint(2, 4)):
                 p = c + cl['out'] * cr * 0.5 + np.array([rng.gauss(0, .4), rng.gauss(0, .2) + 0.2, rng.gauss(0, .4)]) * cr
@@ -684,20 +715,20 @@ def build_shrub(name, species, scale=1.0, burnt=False):
             c = base + (mid - base) * (f * 2) if f < 0.5 else mid + (tip - mid) * ((f - 0.5) * 2)
             if burnt and rng.random() < 0.6:
                 continue
-            for _ in range(sp['per'] + rng.randint(-1, 1)):
-                p = c + np.array([rng.gauss(0, .5), rng.gauss(0, .35), rng.gauss(0, .5)]) * sp['spray'] * 1.6 * scale
+            leaf_len, leaf_w = LEAF_SIZE[leaf]
+            for _ in range(SHRUB_TWIGS_PER_LEAF_GROUP * sp['per'] + rng.randint(-2, 2)):
+                p = c + np.array([rng.gauss(0, .5), rng.gauss(0, .35), rng.gauss(0, .5)]) * sp['spray'] * 1.9 * scale
                 p[1] = max(p[1], 0.12)
                 nrm = unit(out * 0.6 + UP * 0.7 + np.array([rng.uniform(-.6, .6), rng.uniform(-.3, .3), rng.uniform(-.6, .6)]))
                 tone = rng.choice((0, 1, 1, 2))
                 mt = (leaf, tone)
                 if burnt:
                     mt = ('scorched', 0) if rng.random() < 0.7 else ('wilted', 0)
-                m.spray(p, nrm, np.array([rng.uniform(-1, 1), 0.2, rng.uniform(-1, 1)]),
-                        1.55 * sp['spray'] * scale * rng.uniform(0.8, 1.2), sp['elong'], mt, rng)
+                m.twig(p, nrm, leaf_len * scale ** 0.3, leaf_w, rng.randint(3, 5), mt, rng)
             if not burnt and 'blossom' in sp and rng.random() < sp['blossom'][1] * 2:
                 for _ in range(rng.randint(1, 3)):
                     p = c + out * 0.2 + np.array([rng.gauss(0, .3), 0.15 + rng.gauss(0, .2), rng.gauss(0, .3)]) * sp['spray'] * 1.5
-                    m.spray(p, unit(UP + out * 0.4), np.array([1.0, 0, 0]), sp['spray'] * 0.5, 1.0, sp['blossom'][0], rng)
+                    m.spray(p, unit(UP + out * 0.4), np.array([1.0, 0, 0]), 0.18, 1.0, sp['blossom'][0], rng)
     lo, hi = m.bounds()
     return m, dict(height_m=round(float(hi[1]), 2), width_m=round(float(max(hi[0] - lo[0], hi[2] - lo[2])), 2))
 
