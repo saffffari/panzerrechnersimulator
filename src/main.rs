@@ -109,6 +109,7 @@ mod repair_manual_capture;
 mod sky_review;
 mod canyon;
 mod canyon_attempt;
+mod t34_canyon_training;
 mod mission;
 mod mission_capture;
 mod radio_llm;
@@ -2902,7 +2903,7 @@ fn run_campaign_ai(
             std::fs::create_dir_all(parent)?;
         }
     }
-    let t34_brain = ai::Mlp::load(t34_weights)?;
+    let t34_brain = ai::Mlp::load_t34(t34_weights)?;
     let tiger_brain = ai::Mlp::load(tiger_weights)?;
 
     let instance = create_instance();
@@ -9072,7 +9073,7 @@ fn run_brawl(outdir: &str, weights: Option<&str>) -> anyhow::Result<()> {
     g.player.pos = glam::Vec3::new(0.0, g.hf.height_at(0.0, -400.0), -400.0);
 
     let wpath = weights.unwrap_or("assets/ai/weights_academy.bin");
-    match ai::Mlp::load(wpath) {
+    match ai::Mlp::load_t34(wpath) {
         Ok(net) => {
             println!("[brawl] both teams driven by {wpath}");
             g.enemy_policy = Some(net);
@@ -9319,7 +9320,7 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
 
     // Drive the T-34s with the evolved brain when available (default: the smoke-test artifact).
     let wpath = weights.unwrap_or("assets/ai/weights_test.bin");
-    match ai::Mlp::load(wpath) {
+    match ai::Mlp::load_t34(wpath) {
         Ok(net) => {
             println!("[duel] T-34s driven by {wpath}");
             g.enemy_policy = Some(net);
@@ -9770,7 +9771,7 @@ fn run_train(
         // These seeds never select a champion during evolution; use them for promotion only.
         const PROMOTION_SEEDS: [u32; K_SEEDS] = [0xE7B1_0001, 0xE7B1_0002, 0xE7B1_0003, 0xE7B1_0005, 0xE7B1_0008];
         for path in evaluate_paths {
-            let net = ai::Mlp::load(path)?;
+            let net = ai::Mlp::load_t34(path)?;
             let (score, scores) = eval(&net, &PROMOTION_SEEDS, STAGES[2])?;
             let (replay, replay_scores) = eval(&net, &PROMOTION_SEEDS, STAGES[2])?;
             let deterministic = scores.iter().zip(&replay_scores).all(|(a,b)| a.to_bits() == b.to_bits());
@@ -9909,7 +9910,7 @@ fn run_train(
     // Final artifact + load-path determinism proof (on the exam seeds — the shipped metric).
     anyhow::ensure!(gen_done > 0, "no generation completed before the wall cap");
     let path = artifact.as_str();
-    let reloaded = ai::Mlp::load(path)?;
+    let reloaded = ai::Mlp::load_t34(path)?;
     let (f_replay, _) = eval(
         &reloaded,
         &EXAM_SEEDS,
@@ -17323,6 +17324,19 @@ fn main() -> anyhow::Result<()> {
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(200.0),
         );
+    }
+    if args.len() >= 2 && args[1] == "t34-seed" {
+        return t34_canyon_training::write_seed(
+            args.get(2).map(String::as_str).unwrap_or("assets/ai/weights_t34_seed.bin"),
+            args.get(3).map(String::as_str).unwrap_or("assets/ai/weights_academy.bin"));
+    }
+    if args.len() >= 2 && args[1] == "t34-canyon-eval" {
+        // Worker for tools/t34_canyon_es.py: comma-separated Canyon seeds, episode seconds; reads
+        // weight-artifact paths on stdin, prints one `[t34-eval]` line per path and seed.
+        let seeds: Vec<u64> = args.get(2).map(String::as_str).unwrap_or("3,11")
+            .split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60.0f32);
+        return t34_canyon_training::serve(&seeds, secs);
     }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {
         return canyon_attempt::run(
