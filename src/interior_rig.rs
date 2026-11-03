@@ -117,15 +117,9 @@ pub const SIGHT_ROUND_FIXTURES: [FiniteCubeLamp; 3] = [
 
 pub fn dome_lamp_state(time_s: f32) -> f32 { 0.96 + 0.04 * (time_s * 5.0).sin() }
 
-/// Since the light foundation (2026-09-29) both backends hold the same spectral radiance, lit by
-/// the same physical environment and mapped by the same crewman's eye, so the shader backend's
-/// former x20 on these fixtures (a calibration for its old fixed exposure) multiplied their real
-/// output a second time: the cabin blew out in the dome lamp's amber and the ready lamp's and
-/// annunciator's green. A backend may not change an emitter's power (CLAUDE.md, second principle).
-pub const SHADER_CABIN_PRACTICAL_GAIN: f32 = 1.0;
-pub const fn cabin_practical_gain(shader_backend: bool) -> f32 {
-    if shader_backend { SHADER_CABIN_PRACTICAL_GAIN } else { 1.0 }
-}
+// Since the light foundation (2026-09-29) both backends hold the same spectral radiance; the shader
+// backend's former x20 on these fixtures is gone and no backend scales an emitter's power (CLAUDE.md,
+// second principle). The pass-through gain that stood here was removed on 2 November 2026.
 
 /// Existing source registrations whose emitting lens area/radiance has not yet been extracted.
 /// Keep their authored output explicit; never invent a finite mesh to claim source agreement.
@@ -160,23 +154,9 @@ mod lighting_tests {
 
     #[test]
     fn named_cabin_fixtures_emit_the_same_power_on_both_backends() {
-        let physical = cabin_practical_gain(false);
-        let raster = cabin_practical_gain(true);
-        for &(_, _, _, intensity, _) in LAMPS {
-            assert_eq!(intensity * physical, intensity);
-            assert_eq!(intensity * raster, intensity, "the shader backend adds no gain");
-        }
-        for fixture in std::iter::once(DOME_FIXTURE)
-            .chain(ANNUNCIATOR_FIXTURES).chain(BREECH_FIXTURES).chain([IGNITION_FIXTURE]) {
-            for state in [0.0, 0.4, 0.5, 0.6, 1.0, 2.4, 3.5, 4.0, 6.0] {
-                let a = fixture.sample(state * physical);
-                let b = fixture.sample(state * raster);
-                assert_eq!(a.visible_emissive, b.visible_emissive);
-                assert_eq!(a.radiant_intensity, b.radiant_intensity);
-                assert_eq!(a.linear_color, b.linear_color);
-            }
-        }
-        assert_eq!(0.0 * raster, 0.0, "an unlit fixture stays unlit");
+        // No backend scales a fixture's power: game.rs drives the lights by the switch alone.
+        assert!(include_str!("game.rs").contains("let practical_gain = power;"));
+        assert!(!include_str!("game.rs").contains("cabin_practical_gain"));
     }
 
     #[test]

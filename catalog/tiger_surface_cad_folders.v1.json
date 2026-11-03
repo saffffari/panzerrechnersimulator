@@ -1,0 +1,3647 @@
+{
+ "method": "per GLB node: the SolidWorks assembly folder of its solids' mass candidates, weighted 1/candidates",
+ "nodes": {
+  "gun:Breech": {
+   "folder": "TG_RM5010-0C02_88 Barrel Base Unit",
+   "share": 1.0,
+   "solids": [
+    787
+   ]
+  },
+  "gun:Gun_0007": {
+   "folder": "TG_RM5010-0C01_88 Barrel Unit",
+   "share": 1.0,
+   "solids": [
+    1233
+   ]
+  },
+  "gun:Gun_0008": {
+   "folder": "TG_RM5010-0C01_88 Barrel Unit",
+   "share": 1.0,
+   "solids": [
+    1090
+   ]
+  },
+  "gun:Gun_0009": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    1055
+   ]
+  },
+  "gun:Gun_0018": {
+   "folder": "TG_RM5010-0C01_88 Barrel Unit",
+   "share": 1.0,
+   "solids": [
+    1053
+   ]
+  },
+  "gun:Gun_0025": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.5,
+   "solids": [
+    1022
+   ]
+  },
+  "gun:Gun_0035": {
+   "folder": "TG_RM5010-0C02_88 Barrel Base Unit",
+   "share": 0.5,
+   "solids": [
+    984
+   ]
+  },
+  "gun:Gun_0047": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    911
+   ]
+  },
+  "gun:Gun_0114": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    792
+   ]
+  },
+  "hull:Drivers Hatch Pivot": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1161
+   ]
+  },
+  "hull:Hull_0001": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    1484
+   ]
+  },
+  "hull:Hull_0002": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    1483
+   ]
+  },
+  "hull:Hull_0003": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1480
+   ]
+  },
+  "hull:Hull_0004": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1482
+   ]
+  },
+  "hull:Hull_0005": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1479
+   ]
+  },
+  "hull:Hull_0007": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1478
+   ]
+  },
+  "hull:Hull_0011": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1474
+   ]
+  },
+  "hull:Hull_0012": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1472
+   ]
+  },
+  "hull:Hull_0015": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1470
+   ]
+  },
+  "hull:Hull_0016": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1469
+   ]
+  },
+  "hull:Hull_0028": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1463
+   ]
+  },
+  "hull:Hull_0034": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1455
+   ]
+  },
+  "hull:Hull_0035": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1450
+   ]
+  },
+  "hull:Hull_0040": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1445
+   ]
+  },
+  "hull:Hull_0053": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1436
+   ]
+  },
+  "hull:Hull_0054": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1428
+   ]
+  },
+  "hull:Hull_0055": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1431
+   ]
+  },
+  "hull:Hull_0060": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1423
+   ]
+  },
+  "hull:Hull_0061": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 1.0,
+   "solids": [
+    1429
+   ]
+  },
+  "hull:Hull_0062": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 1.0,
+   "solids": [
+    1430
+   ]
+  },
+  "hull:Hull_0065": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    1422
+   ]
+  },
+  "hull:Hull_0072": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1413
+   ]
+  },
+  "hull:Hull_0073": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1410
+   ]
+  },
+  "hull:Hull_0074": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1411
+   ]
+  },
+  "hull:Hull_0075": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1405
+   ]
+  },
+  "hull:Hull_0076": {
+   "folder": "TG_RM5010-0B25_Cover",
+   "share": 1.0,
+   "solids": [
+    1398
+   ]
+  },
+  "hull:Hull_0081": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1412
+   ]
+  },
+  "hull:Hull_0082": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1401
+   ]
+  },
+  "hull:Hull_0085": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 1.0,
+   "solids": [
+    1404
+   ]
+  },
+  "hull:Hull_0089": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    1409
+   ]
+  },
+  "hull:Hull_0090": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    1408
+   ]
+  },
+  "hull:Hull_0095": {
+   "folder": "TG_RM5010-0B19_Drive Rollar",
+   "share": 1.0,
+   "solids": [
+    1387
+   ]
+  },
+  "hull:Hull_0096": {
+   "folder": "TG_RM5010-0B19_Drive Rollar",
+   "share": 1.0,
+   "solids": [
+    1386
+   ]
+  },
+  "hull:Hull_0097": {
+   "folder": "TG_RM5010-0B19_Drive Rollar",
+   "share": 1.0,
+   "solids": [
+    1383
+   ]
+  },
+  "hull:Hull_0098": {
+   "folder": "TG_RM5010-0B19_Drive Rollar",
+   "share": 1.0,
+   "solids": [
+    1390
+   ]
+  },
+  "hull:Hull_0099": {
+   "folder": "TG_RM5010-0B19_Drive Rollar",
+   "share": 0.5,
+   "solids": [
+    1384
+   ]
+  },
+  "hull:Hull_0100": {
+   "folder": "TG_RM5010-0B19_Drive Rollar",
+   "share": 0.5,
+   "solids": [
+    1389
+   ]
+  },
+  "hull:Hull_0103": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 1.0,
+   "solids": [
+    1381
+   ]
+  },
+  "hull:Hull_0104": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 1.0,
+   "solids": [
+    1380
+   ]
+  },
+  "hull:Hull_0105": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1382
+   ]
+  },
+  "hull:Hull_0106": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1376
+   ]
+  },
+  "hull:Hull_0113": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1379
+   ]
+  },
+  "hull:Hull_0114": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1369
+   ]
+  },
+  "hull:Hull_0117": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.4,
+   "solids": [
+    1363
+   ]
+  },
+  "hull:Hull_0126": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1360
+   ]
+  },
+  "hull:Hull_0127": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1350
+   ]
+  },
+  "hull:Hull_0128": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 0.333,
+   "solids": [
+    1358
+   ]
+  },
+  "hull:Hull_0134": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1351
+   ]
+  },
+  "hull:Hull_0137": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 0.667,
+   "solids": [
+    1342
+   ]
+  },
+  "hull:Hull_0138": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 0.667,
+   "solids": [
+    1341
+   ]
+  },
+  "hull:Hull_0142": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1354
+   ]
+  },
+  "hull:Hull_0143": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1344
+   ]
+  },
+  "hull:Hull_0144": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1339
+   ]
+  },
+  "hull:Hull_0145": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 1.0,
+   "solids": [
+    1340
+   ]
+  },
+  "hull:Hull_0155": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1333
+   ]
+  },
+  "hull:Hull_0156": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1332
+   ]
+  },
+  "hull:Hull_0157": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1319
+   ]
+  },
+  "hull:Hull_0164": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.333,
+   "solids": [
+    1320
+   ]
+  },
+  "hull:Hull_0167": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1323
+   ]
+  },
+  "hull:Hull_0168": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1316
+   ]
+  },
+  "hull:Hull_0171": {
+   "folder": "TG_RM5010-0B25_Cover",
+   "share": 1.0,
+   "solids": [
+    1310
+   ]
+  },
+  "hull:Hull_0175": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1308
+   ]
+  },
+  "hull:Hull_0176": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1309
+   ]
+  },
+  "hull:Hull_0177": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1299
+   ]
+  },
+  "hull:Hull_0184": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1307
+   ]
+  },
+  "hull:Hull_0187": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1304
+   ]
+  },
+  "hull:Hull_0188": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1294
+   ]
+  },
+  "hull:Hull_0192": {
+   "folder": "Ammo Unit",
+   "share": 0.5,
+   "solids": [
+    1292
+   ]
+  },
+  "hull:Hull_0197": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 1.0,
+   "solids": [
+    1262
+   ]
+  },
+  "hull:Hull_0198": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1285
+   ]
+  },
+  "hull:Hull_0199": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1278
+   ]
+  },
+  "hull:Hull_0200": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1286
+   ]
+  },
+  "hull:Hull_0202": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1284
+   ]
+  },
+  "hull:Hull_0205": {
+   "folder": "TG_RM5010-0B25_Cover",
+   "share": 1.0,
+   "solids": [
+    1296
+   ]
+  },
+  "hull:Hull_0210": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1270
+   ]
+  },
+  "hull:Hull_0211": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1271
+   ]
+  },
+  "hull:Hull_0212": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1272
+   ]
+  },
+  "hull:Hull_0214": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1283
+   ]
+  },
+  "hull:Hull_0217": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1264
+   ]
+  },
+  "hull:Hull_0222": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1261
+   ]
+  },
+  "hull:Hull_0227": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    1263
+   ]
+  },
+  "hull:Hull_0231": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.4,
+   "solids": [
+    1253
+   ]
+  },
+  "hull:Hull_0234": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1254
+   ]
+  },
+  "hull:Hull_0235": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1244
+   ]
+  },
+  "hull:Hull_0244": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1245
+   ]
+  },
+  "hull:Hull_0245": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1232
+   ]
+  },
+  "hull:Hull_0248": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 1.0,
+   "solids": [
+    1237
+   ]
+  },
+  "hull:Hull_0249": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    1234
+   ]
+  },
+  "hull:Hull_0251": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    1235
+   ]
+  },
+  "hull:Hull_0254": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    1228
+   ]
+  },
+  "hull:Hull_0255": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 1.0,
+   "solids": [
+    1226
+   ]
+  },
+  "hull:Hull_0257": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    1229
+   ]
+  },
+  "hull:Hull_0279": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1221
+   ]
+  },
+  "hull:Hull_0280": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1200
+   ]
+  },
+  "hull:Hull_0283": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1219
+   ]
+  },
+  "hull:Hull_0284": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1220
+   ]
+  },
+  "hull:Hull_0285": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1201
+   ]
+  },
+  "hull:Hull_0288": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1193
+   ]
+  },
+  "hull:Hull_0289": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    1177
+   ]
+  },
+  "hull:Hull_0294": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1195
+   ]
+  },
+  "hull:Hull_0295": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1181
+   ]
+  },
+  "hull:Hull_0299": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    1188
+   ]
+  },
+  "hull:Hull_0303": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.25,
+   "solids": [
+    1173
+   ]
+  },
+  "hull:Hull_0304": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1192
+   ]
+  },
+  "hull:Hull_0307": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1178
+   ]
+  },
+  "hull:Hull_0308": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.5,
+   "solids": [
+    1174
+   ]
+  },
+  "hull:Hull_0310": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1176
+   ]
+  },
+  "hull:Hull_0312": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1170
+   ]
+  },
+  "hull:Hull_0316": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1171
+   ]
+  },
+  "hull:Hull_0319": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1153
+   ]
+  },
+  "hull:Hull_0322": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.25,
+   "solids": [
+    1157
+   ]
+  },
+  "hull:Hull_0323": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.25,
+   "solids": [
+    1156
+   ]
+  },
+  "hull:Hull_0324": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    1159
+   ]
+  },
+  "hull:Hull_0329": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    1158
+   ]
+  },
+  "hull:Hull_0333": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1155
+   ]
+  },
+  "hull:Hull_0334": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1145
+   ]
+  },
+  "hull:Hull_0338": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    1151
+   ]
+  },
+  "hull:Hull_0340": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.5,
+   "solids": [
+    1143
+   ]
+  },
+  "hull:Hull_0342": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 1.0,
+   "solids": [
+    1132
+   ]
+  },
+  "hull:Hull_0348": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1139
+   ]
+  },
+  "hull:Hull_0351": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1129
+   ]
+  },
+  "hull:Hull_0353": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.333,
+   "solids": [
+    1131
+   ]
+  },
+  "hull:Hull_0354": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1128
+   ]
+  },
+  "hull:Hull_0355": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.5,
+   "solids": [
+    1127
+   ]
+  },
+  "hull:Hull_0358": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1130
+   ]
+  },
+  "hull:Hull_0359": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1118
+   ]
+  },
+  "hull:Hull_0365": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1119
+   ]
+  },
+  "hull:Hull_0366": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1120
+   ]
+  },
+  "hull:Hull_0368": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1115
+   ]
+  },
+  "hull:Hull_0375": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1112
+   ]
+  },
+  "hull:Hull_0378": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1102
+   ]
+  },
+  "hull:Hull_0382": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1103
+   ]
+  },
+  "hull:Hull_0383": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    1097
+   ]
+  },
+  "hull:Hull_0384": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    1100
+   ]
+  },
+  "hull:Hull_0385": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    1099
+   ]
+  },
+  "hull:Hull_0387": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1104
+   ]
+  },
+  "hull:Hull_0390": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1089
+   ]
+  },
+  "hull:Hull_0394": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.5,
+   "solids": [
+    1101
+   ]
+  },
+  "hull:Hull_0395": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1093
+   ]
+  },
+  "hull:Hull_0399": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    1075
+   ]
+  },
+  "hull:Hull_0400": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    1083
+   ]
+  },
+  "hull:Hull_0401": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    1085
+   ]
+  },
+  "hull:Hull_0403": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    1082
+   ]
+  },
+  "hull:Hull_0404": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1081
+   ]
+  },
+  "hull:Hull_0411": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1078
+   ]
+  },
+  "hull:Hull_0414": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1072
+   ]
+  },
+  "hull:Hull_0415": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1068
+   ]
+  },
+  "hull:Hull_0416": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.5,
+   "solids": [
+    1067
+   ]
+  },
+  "hull:Hull_0417": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1064
+   ]
+  },
+  "hull:Hull_0418": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1069
+   ]
+  },
+  "hull:Hull_0421": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1060
+   ]
+  },
+  "hull:Hull_0428": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1056
+   ]
+  },
+  "hull:Hull_0433": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1044
+   ]
+  },
+  "hull:Hull_0434": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1045
+   ]
+  },
+  "hull:Hull_0435": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1046
+   ]
+  },
+  "hull:Hull_0436": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    1047
+   ]
+  },
+  "hull:Hull_0439": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1050
+   ]
+  },
+  "hull:Hull_0442": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1036
+   ]
+  },
+  "hull:Hull_0443": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1038
+   ]
+  },
+  "hull:Hull_0446": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1029
+   ]
+  },
+  "hull:Hull_0449": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1037
+   ]
+  },
+  "hull:Hull_0451": {
+   "folder": "Ammo Unit",
+   "share": 0.5,
+   "solids": [
+    1035
+   ]
+  },
+  "hull:Hull_0456": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    1021
+   ]
+  },
+  "hull:Hull_0458": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1025
+   ]
+  },
+  "hull:Hull_0461": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1019
+   ]
+  },
+  "hull:Hull_0465": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1013
+   ]
+  },
+  "hull:Hull_0468": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1014
+   ]
+  },
+  "hull:Hull_0469": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    1007
+   ]
+  },
+  "hull:Hull_0472": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 1.0,
+   "solids": [
+    1012
+   ]
+  },
+  "hull:Hull_0476": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1004
+   ]
+  },
+  "hull:Hull_0478": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    1003
+   ]
+  },
+  "hull:Hull_0481": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    999
+   ]
+  },
+  "hull:Hull_0484": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    993
+   ]
+  },
+  "hull:Hull_0486": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    990
+   ]
+  },
+  "hull:Hull_0487": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 1.0,
+   "solids": [
+    992
+   ]
+  },
+  "hull:Hull_0488": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    989
+   ]
+  },
+  "hull:Hull_0491": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    994
+   ]
+  },
+  "hull:Hull_0492": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    979
+   ]
+  },
+  "hull:Hull_0493": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    985
+   ]
+  },
+  "hull:Hull_0496": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.333,
+   "solids": [
+    980
+   ]
+  },
+  "hull:Hull_0497": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.333,
+   "solids": [
+    981
+   ]
+  },
+  "hull:Hull_0500": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    976
+   ]
+  },
+  "hull:Hull_0501": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    975
+   ]
+  },
+  "hull:Hull_0502": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 1.0,
+   "solids": [
+    973
+   ]
+  },
+  "hull:Hull_0508": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    969
+   ]
+  },
+  "hull:Hull_0511": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    960
+   ]
+  },
+  "hull:Hull_0514": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    961
+   ]
+  },
+  "hull:Hull_0515": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    954
+   ]
+  },
+  "hull:Hull_0518": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    951
+   ]
+  },
+  "hull:Hull_0527": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    947
+   ]
+  },
+  "hull:Hull_0530": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    937
+   ]
+  },
+  "hull:Hull_0533": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    939
+   ]
+  },
+  "hull:Hull_0534": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    910
+   ]
+  },
+  "hull:Hull_0539": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    936
+   ]
+  },
+  "hull:Hull_0553": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    896
+   ]
+  },
+  "hull:Hull_0556": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    874
+   ]
+  },
+  "hull:Hull_0557": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    872
+   ]
+  },
+  "hull:Hull_0558": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    873
+   ]
+  },
+  "hull:Hull_0569": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    875
+   ]
+  },
+  "hull:Hull_0570": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    834
+   ]
+  },
+  "hull:Hull_0579": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    825
+   ]
+  },
+  "hull:Hull_0582": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    809
+   ]
+  },
+  "hull:Hull_0583": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    810
+   ]
+  },
+  "hull:Hull_0584": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    813
+   ]
+  },
+  "hull:Hull_0585": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    812
+   ]
+  },
+  "hull:Hull_0589": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    816
+   ]
+  },
+  "hull:Hull_0590": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    801
+   ]
+  },
+  "hull:Hull_0595": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    796
+   ]
+  },
+  "hull:Hull_0596": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    799
+   ]
+  },
+  "hull:Hull_0597": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    797
+   ]
+  },
+  "hull:Hull_0599": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    808
+   ]
+  },
+  "hull:Hull_0604": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    785
+   ]
+  },
+  "hull:Hull_0607": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    777
+   ]
+  },
+  "hull:Hull_0608": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    778
+   ]
+  },
+  "hull:Hull_0611": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    769
+   ]
+  },
+  "hull:Hull_0616": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    766
+   ]
+  },
+  "hull:Hull_0617": {
+   "folder": "Ammo Unit",
+   "share": 0.5,
+   "solids": [
+    747
+   ]
+  },
+  "hull:Hull_0618": {
+   "folder": "Ammo Unit",
+   "share": 0.5,
+   "solids": [
+    748
+   ]
+  },
+  "hull:Hull_0619": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 1.0,
+   "solids": [
+    725
+   ]
+  },
+  "hull:Hull_0625": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    758
+   ]
+  },
+  "hull:Hull_0628": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    744
+   ]
+  },
+  "hull:Hull_0629": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    749
+   ]
+  },
+  "hull:Hull_0632": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    732
+   ]
+  },
+  "hull:Hull_0633": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 0.333,
+   "solids": [
+    742
+   ]
+  },
+  "hull:Hull_0637": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.833,
+   "solids": [
+    727
+   ]
+  },
+  "hull:Hull_0638": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.833,
+   "solids": [
+    728
+   ]
+  },
+  "hull:Hull_0641": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    692
+   ]
+  },
+  "hull:Hull_0645": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.25,
+   "solids": [
+    706
+   ]
+  },
+  "hull:Hull_0646": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.25,
+   "solids": [
+    705
+   ]
+  },
+  "hull:Hull_0650": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    711
+   ]
+  },
+  "hull:Hull_0653": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    686
+   ]
+  },
+  "hull:Hull_0654": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.4,
+   "solids": [
+    694
+   ]
+  },
+  "hull:Hull_0655": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.286,
+   "solids": [
+    745
+   ]
+  },
+  "hull:Hull_0656": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.286,
+   "solids": [
+    746
+   ]
+  },
+  "hull:Hull_0657": {
+   "folder": "Ammo Unit",
+   "share": 0.5,
+   "solids": [
+    714
+   ]
+  },
+  "hull:Hull_0658": {
+   "folder": "Ammo Unit",
+   "share": 0.5,
+   "solids": [
+    716
+   ]
+  },
+  "hull:Hull_0659": {
+   "folder": "Ammo Unit",
+   "share": 0.5,
+   "solids": [
+    715
+   ]
+  },
+  "hull:Hull_0660": {
+   "folder": "Ammo Unit",
+   "share": 0.5,
+   "solids": [
+    717
+   ]
+  },
+  "hull:Hull_0661": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    688
+   ]
+  },
+  "hull:Hull_0664": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    677
+   ]
+  },
+  "hull:Hull_0667": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    685
+   ]
+  },
+  "hull:Hull_0675": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    660
+   ]
+  },
+  "hull:Hull_0676": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    645
+   ]
+  },
+  "hull:Hull_0679": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    647
+   ]
+  },
+  "hull:Hull_0680": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 1.0,
+   "solids": [
+    651
+   ]
+  },
+  "hull:Hull_0681": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    648
+   ]
+  },
+  "hull:Hull_0682": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    649
+   ]
+  },
+  "hull:Hull_0684": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    652
+   ]
+  },
+  "hull:Hull_0687": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    634
+   ]
+  },
+  "hull:Hull_0690": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    637
+   ]
+  },
+  "hull:Hull_0691": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    638
+   ]
+  },
+  "hull:Hull_0692": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 1.0,
+   "solids": [
+    635
+   ]
+  },
+  "hull:Hull_0696": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 1.0,
+   "solids": [
+    630
+   ]
+  },
+  "hull:Hull_0697": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 1.0,
+   "solids": [
+    631
+   ]
+  },
+  "hull:Hull_0702": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    627
+   ]
+  },
+  "hull:Hull_0705": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    618
+   ]
+  },
+  "hull:Hull_0706": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 1.0,
+   "solids": [
+    580
+   ]
+  },
+  "hull:Hull_0708": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 1.0,
+   "solids": [
+    662
+   ]
+  },
+  "hull:Hull_0709": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    619
+   ]
+  },
+  "hull:Hull_0712": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    608
+   ]
+  },
+  "hull:Hull_0723": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    594
+   ]
+  },
+  "hull:Hull_0726": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    581
+   ]
+  },
+  "hull:Hull_0727": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    584
+   ]
+  },
+  "hull:Hull_0730": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    538
+   ]
+  },
+  "hull:Hull_0743": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    535
+   ]
+  },
+  "hull:Hull_0744": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    536
+   ]
+  },
+  "hull:Hull_0758": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    517
+   ]
+  },
+  "hull:Hull_0761": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    505
+   ]
+  },
+  "hull:Hull_0762": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    507
+   ]
+  },
+  "hull:Hull_0765": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    500
+   ]
+  },
+  "hull:Hull_0770": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 1.0,
+   "solids": [
+    494
+   ]
+  },
+  "hull:Hull_0776": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    489
+   ]
+  },
+  "hull:Hull_0779": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    473
+   ]
+  },
+  "hull:Hull_0781": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    481
+   ]
+  },
+  "hull:Hull_0782": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    478
+   ]
+  },
+  "hull:Hull_0783": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    480
+   ]
+  },
+  "hull:Hull_0785": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 1.0,
+   "solids": [
+    476
+   ]
+  },
+  "hull:Hull_0786": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    475
+   ]
+  },
+  "hull:Hull_0789": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    463
+   ]
+  },
+  "hull:Hull_0792": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    466
+   ]
+  },
+  "hull:Hull_0793": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    469
+   ]
+  },
+  "hull:Hull_0794": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    467
+   ]
+  },
+  "hull:Hull_0802": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    452
+   ]
+  },
+  "hull:Hull_0805": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    443
+   ]
+  },
+  "hull:Hull_0806": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    445
+   ]
+  },
+  "hull:Hull_0809": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    433
+   ]
+  },
+  "hull:Hull_0819": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    428
+   ]
+  },
+  "hull:Hull_0822": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    408
+   ]
+  },
+  "hull:Hull_0823": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    410
+   ]
+  },
+  "hull:Hull_0826": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    401
+   ]
+  },
+  "hull:Hull_0838": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 1.0,
+   "solids": [
+    386
+   ]
+  },
+  "hull:Hull_0839": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    391
+   ]
+  },
+  "hull:Hull_0842": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    384
+   ]
+  },
+  "hull:Hull_0843": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    385
+   ]
+  },
+  "hull:Hull_0846": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    378
+   ]
+  },
+  "hull:Hull_0849": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 1.0,
+   "solids": [
+    383
+   ]
+  },
+  "hull:Hull_0856": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    373
+   ]
+  },
+  "hull:Hull_0859": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    362
+   ]
+  },
+  "hull:Hull_0860": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    366
+   ]
+  },
+  "hull:Hull_0861": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    365
+   ]
+  },
+  "hull:Hull_0863": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 1.0,
+   "solids": [
+    368
+   ]
+  },
+  "hull:Hull_0864": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    364
+   ]
+  },
+  "hull:Hull_0867": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    351
+   ]
+  },
+  "hull:Hull_0869": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 1.0,
+   "solids": [
+    358
+   ]
+  },
+  "hull:Hull_0870": {
+   "folder": "TG_RM5010-0B18_Rollor System",
+   "share": 0.5,
+   "solids": [
+    360
+   ]
+  },
+  "hull:Hull_0871": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    361
+   ]
+  },
+  "hull:Hull_0882": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    345
+   ]
+  },
+  "hull:Hull_0885": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    335
+   ]
+  },
+  "hull:Hull_0887": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    336
+   ]
+  },
+  "hull:Hull_0890": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    330
+   ]
+  },
+  "hull:Hull_0894": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.333,
+   "solids": [
+    325
+   ]
+  },
+  "hull:Hull_0899": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 0.333,
+   "solids": [
+    324
+   ]
+  },
+  "hull:Hull_0901": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.5,
+   "solids": [
+    337
+   ]
+  },
+  "hull:Hull_0902": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.5,
+   "solids": [
+    338
+   ]
+  },
+  "hull:Hull_0906": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    320
+   ]
+  },
+  "hull:Hull_0909": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    314
+   ]
+  },
+  "hull:Hull_0910": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    315
+   ]
+  },
+  "hull:Hull_0913": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    308
+   ]
+  },
+  "hull:Hull_0916": {
+   "folder": "TG_RM5010-0B29_EngineSystem",
+   "share": 1.0,
+   "solids": [
+    309
+   ]
+  },
+  "hull:Hull_0918": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 0.667,
+   "solids": [
+    303
+   ]
+  },
+  "hull:Hull_0919": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 0.667,
+   "solids": [
+    304
+   ]
+  },
+  "hull:Hull_0926": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    300
+   ]
+  },
+  "hull:Hull_0929": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    290
+   ]
+  },
+  "hull:Hull_0934": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    295
+   ]
+  },
+  "hull:Hull_0937": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    285
+   ]
+  },
+  "hull:Hull_0948": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    271
+   ]
+  },
+  "hull:Hull_0949": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    274
+   ]
+  },
+  "hull:Hull_0950": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    273
+   ]
+  },
+  "hull:Hull_0951": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    279
+   ]
+  },
+  "hull:Hull_0954": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    269
+   ]
+  },
+  "hull:Hull_0955": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.286,
+   "solids": [
+    268
+   ]
+  },
+  "hull:Hull_0956": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    266
+   ]
+  },
+  "hull:Hull_0958": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 0.5,
+   "solids": [
+    265
+   ]
+  },
+  "hull:Hull_0959": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    262
+   ]
+  },
+  "hull:Hull_0960": {
+   "folder": "TG_RM5010-0B17_Rollor System",
+   "share": 1.0,
+   "solids": [
+    263
+   ]
+  },
+  "hull:Hull_0961": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    270
+   ]
+  },
+  "hull:Hull_0962": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    256
+   ]
+  },
+  "hull:Hull_0967": {
+   "folder": "TG_RM5010-0B29_EngineSystem",
+   "share": 0.5,
+   "solids": [
+    267
+   ]
+  },
+  "hull:Hull_0968": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.5,
+   "solids": [
+    252
+   ]
+  },
+  "hull:Hull_0975": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 1.0,
+   "solids": [
+    248
+   ]
+  },
+  "hull:Hull_0979": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    245
+   ]
+  },
+  "hull:Hull_0980": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    238
+   ]
+  },
+  "hull:Hull_0983": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    240
+   ]
+  },
+  "hull:Hull_0984": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.333,
+   "solids": [
+    224
+   ]
+  },
+  "hull:Hull_0987": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    230
+   ]
+  },
+  "hull:Hull_0990": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 0.5,
+   "solids": [
+    241
+   ]
+  },
+  "hull:Hull_0993": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 1.0,
+   "solids": [
+    239
+   ]
+  },
+  "hull:Hull_0994": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 1.0,
+   "solids": [
+    261
+   ]
+  },
+  "hull:Hull_0998": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    228
+   ]
+  },
+  "hull:Hull_0999": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 1.0,
+   "solids": [
+    225
+   ]
+  },
+  "hull:Hull_1006": {
+   "folder": "TG_RM5010-0B29_EngineSystem",
+   "share": 1.0,
+   "solids": [
+    217
+   ]
+  },
+  "hull:Hull_1007": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    219
+   ]
+  },
+  "hull:Hull_1008": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    215
+   ]
+  },
+  "hull:Hull_1009": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 1.0,
+   "solids": [
+    211
+   ]
+  },
+  "hull:Hull_1010": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 1.0,
+   "solids": [
+    212
+   ]
+  },
+  "hull:Hull_1013": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    216
+   ]
+  },
+  "hull:Hull_1014": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    205
+   ]
+  },
+  "hull:Hull_1023": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.333,
+   "solids": [
+    202
+   ]
+  },
+  "hull:Hull_1029": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    196
+   ]
+  },
+  "hull:Hull_1030": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    193
+   ]
+  },
+  "hull:Hull_1032": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    194
+   ]
+  },
+  "hull:Hull_1033": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    185
+   ]
+  },
+  "hull:Hull_1044": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    181
+   ]
+  },
+  "hull:Hull_1051": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    175
+   ]
+  },
+  "hull:Hull_1052": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    173
+   ]
+  },
+  "hull:Hull_1053": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    172
+   ]
+  },
+  "hull:Hull_1056": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    160
+   ]
+  },
+  "hull:Hull_1060": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    165
+   ]
+  },
+  "hull:Hull_1061": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    166
+   ]
+  },
+  "hull:Hull_1069": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    157
+   ]
+  },
+  "hull:Hull_1070": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    158
+   ]
+  },
+  "hull:Hull_1074": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    148
+   ]
+  },
+  "hull:Hull_1075": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    149
+   ]
+  },
+  "hull:Hull_1079": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    150
+   ]
+  },
+  "hull:Hull_1080": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.286,
+   "solids": [
+    146
+   ]
+  },
+  "hull:Hull_1081": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 1.0,
+   "solids": [
+    170
+   ]
+  },
+  "hull:Hull_1082": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 1.0,
+   "solids": [
+    171
+   ]
+  },
+  "hull:Hull_1083": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    145
+   ]
+  },
+  "hull:Hull_1084": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.667,
+   "solids": [
+    143
+   ]
+  },
+  "hull:Hull_1085": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.667,
+   "solids": [
+    142
+   ]
+  },
+  "hull:Hull_1086": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.833,
+   "solids": [
+    138
+   ]
+  },
+  "hull:Hull_1087": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    134
+   ]
+  },
+  "hull:Hull_1088": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 0.5,
+   "solids": [
+    140
+   ]
+  },
+  "hull:Hull_1089": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.833,
+   "solids": [
+    135
+   ]
+  },
+  "hull:Hull_1090": {
+   "folder": "TG_RM5010-0B20_Guide Roller",
+   "share": 1.0,
+   "solids": [
+    136
+   ]
+  },
+  "hull:Hull_1091": {
+   "folder": "TG_RM5010-0B20_Guide Roller",
+   "share": 1.0,
+   "solids": [
+    137
+   ]
+  },
+  "hull:Hull_1092": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 0.5,
+   "solids": [
+    141
+   ]
+  },
+  "hull:Hull_1093": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    139
+   ]
+  },
+  "hull:Hull_1096": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    144
+   ]
+  },
+  "hull:Hull_1097": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    127
+   ]
+  },
+  "hull:Hull_1102": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 0.333,
+   "solids": [
+    125
+   ]
+  },
+  "hull:Hull_1103": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 0.333,
+   "solids": [
+    126
+   ]
+  },
+  "hull:Hull_1110": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    118
+   ]
+  },
+  "hull:Hull_1111": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    113
+   ]
+  },
+  "hull:Hull_1112": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    114
+   ]
+  },
+  "hull:Hull_1113": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    115
+   ]
+  },
+  "hull:Hull_1114": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    110
+   ]
+  },
+  "hull:Hull_1115": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 1.0,
+   "solids": [
+    117
+   ]
+  },
+  "hull:Hull_1116": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    116
+   ]
+  },
+  "hull:Hull_1117": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    108
+   ]
+  },
+  "hull:Hull_1118": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    107
+   ]
+  },
+  "hull:Hull_1123": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    109
+   ]
+  },
+  "hull:Hull_1124": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    96
+   ]
+  },
+  "hull:Hull_1125": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.5,
+   "solids": [
+    103
+   ]
+  },
+  "hull:Hull_1126": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.5,
+   "solids": [
+    104
+   ]
+  },
+  "hull:Hull_1128": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    94
+   ]
+  },
+  "hull:Hull_1129": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    95
+   ]
+  },
+  "hull:Hull_1135": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.5,
+   "solids": [
+    93
+   ]
+  },
+  "hull:Hull_1136": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    89
+   ]
+  },
+  "hull:Hull_1139": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    90
+   ]
+  },
+  "hull:Hull_1140": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.25,
+   "solids": [
+    86
+   ]
+  },
+  "hull:Hull_1145": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    81
+   ]
+  },
+  "hull:Hull_1148": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    77
+   ]
+  },
+  "hull:Hull_1152": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    80
+   ]
+  },
+  "hull:Hull_1153": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    70
+   ]
+  },
+  "hull:Hull_1155": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    69
+   ]
+  },
+  "hull:Hull_1166": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    66
+   ]
+  },
+  "hull:Hull_1167": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    67
+   ]
+  },
+  "hull:Hull_1171": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    54
+   ]
+  },
+  "hull:Hull_1174": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 1.0,
+   "solids": [
+    55
+   ]
+  },
+  "hull:Hull_1175": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    53
+   ]
+  },
+  "hull:Hull_1176": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    52
+   ]
+  },
+  "hull:Hull_1180": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    48
+   ]
+  },
+  "hull:Hull_1185": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    44
+   ]
+  },
+  "hull:Hull_1187": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    42
+   ]
+  },
+  "hull:Hull_1188": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    41
+   ]
+  },
+  "hull:Hull_1189": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    40
+   ]
+  },
+  "hull:Hull_1191": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    43
+   ]
+  },
+  "hull:Hull_1195": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    36
+   ]
+  },
+  "hull:Hull_1196": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    34
+   ]
+  },
+  "hull:Hull_1207": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 1.0,
+   "solids": [
+    17
+   ]
+  },
+  "hull:Hull_1208": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 1.0,
+   "solids": [
+    16
+   ]
+  },
+  "hull:Hull_1214": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    22
+   ]
+  },
+  "hull:Hull_1215": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 1.0,
+   "solids": [
+    10
+   ]
+  },
+  "hull:Hull_1216": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 1.0,
+   "solids": [
+    11
+   ]
+  },
+  "hull:Hull_1218": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 0.5,
+   "solids": [
+    12
+   ]
+  },
+  "hull:Hull_1219": {
+   "folder": "TG_RM5010-0B24_Cover",
+   "share": 0.5,
+   "solids": [
+    13
+   ]
+  },
+  "hull:Hull_1220": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.25,
+   "solids": [
+    15
+   ]
+  },
+  "hull:Hull_1221": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    5
+   ]
+  },
+  "hull:Hull_1222": {
+   "folder": "TG_RM5010-0B19_Drive Rollar",
+   "share": 0.5,
+   "solids": [
+    14
+   ]
+  },
+  "hull:Hull_1227": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    3
+   ]
+  },
+  "hull:Hull_1228": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    2
+   ]
+  },
+  "hull:Hull_1229": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    0
+   ]
+  },
+  "hull:Hull_1230": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    1
+   ]
+  },
+  "hull:MG Operater": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    1160
+   ]
+  },
+  "turret:TURRET FLOOR": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 1.0,
+   "solids": [
+    702
+   ]
+  },
+  "turret:Turret_0005": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.286,
+   "solids": [
+    972
+   ]
+  },
+  "turret:Turret_0007": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.833,
+   "solids": [
+    965
+   ]
+  },
+  "turret:Turret_0008": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    943
+   ]
+  },
+  "turret:Turret_0010": {
+   "folder": "TG_RM5010-0C02_88 Barrel Base Unit",
+   "share": 0.5,
+   "solids": [
+    950
+   ]
+  },
+  "turret:Turret_0011": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    938
+   ]
+  },
+  "turret:Turret_0031": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    930
+   ]
+  },
+  "turret:Turret_0032": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    931
+   ]
+  },
+  "turret:Turret_0033": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    906
+   ]
+  },
+  "turret:Turret_0034": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.25,
+   "solids": [
+    902
+   ]
+  },
+  "turret:Turret_0035": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    905
+   ]
+  },
+  "turret:Turret_0037": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    898
+   ]
+  },
+  "turret:Turret_0038": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    899
+   ]
+  },
+  "turret:Turret_0039": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.583,
+   "solids": [
+    878
+   ]
+  },
+  "turret:Turret_0068": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    879
+   ]
+  },
+  "turret:Turret_0070": {
+   "folder": "TG_RM5010-0B23_EngineRoom",
+   "share": 0.333,
+   "solids": [
+    876
+   ]
+  },
+  "turret:Turret_0072": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    853
+   ]
+  },
+  "turret:Turret_0074": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 1.0,
+   "solids": [
+    823
+   ]
+  },
+  "turret:Turret_0075": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    824
+   ]
+  },
+  "turret:Turret_0078": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    820
+   ]
+  },
+  "turret:Turret_0084": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    791
+   ]
+  },
+  "turret:Turret_0086": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.4,
+   "solids": [
+    779
+   ]
+  },
+  "turret:Turret_0089": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    775
+   ]
+  },
+  "turret:Turret_0092": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.333,
+   "solids": [
+    767
+   ]
+  },
+  "turret:Turret_0096": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    764
+   ]
+  },
+  "turret:Turret_0099": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 1.0,
+   "solids": [
+    657
+   ]
+  },
+  "turret:Turret_0101": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 1.0,
+   "solids": [
+    741
+   ]
+  },
+  "turret:Turret_0112": {
+   "folder": "TG_RM5010-0C02_88 Barrel Base Unit",
+   "share": 0.5,
+   "solids": [
+    701
+   ]
+  },
+  "turret:Turret_0113": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 1.0,
+   "solids": [
+    697
+   ]
+  },
+  "turret:Turret_0115": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    699
+   ]
+  },
+  "turret:Turret_0116": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    700
+   ]
+  },
+  "turret:Turret_0117": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 1.0,
+   "solids": [
+    693
+   ]
+  },
+  "turret:Turret_0118": {
+   "folder": "TG_RM5010-0C05_Room Unit",
+   "share": 0.25,
+   "solids": [
+    698
+   ]
+  },
+  "turret:Turret_0128": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    668
+   ]
+  },
+  "turret:Turret_0134": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    675
+   ]
+  },
+  "turret:Turret_0137": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.667,
+   "solids": [
+    653
+   ]
+  },
+  "turret:Turret_0142": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    620
+   ]
+  },
+  "turret:Turret_0147": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    605
+   ]
+  },
+  "turret:Turret_0148": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    615
+   ]
+  },
+  "turret:Turret_0156": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.333,
+   "solids": [
+    621
+   ]
+  },
+  "turret:Turret_0158": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    591
+   ]
+  },
+  "turret:Turret_0159": {
+   "folder": "TG_RM5010-0C13_Top Cover Unit",
+   "share": 1.0,
+   "solids": [
+    590
+   ]
+  },
+  "turret:Turret_0193": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    510
+   ]
+  },
+  "turret:Turret_0194": {
+   "folder": "TG_RM5010-0B16_Base Unit",
+   "share": 0.182,
+   "solids": [
+    511
+   ]
+  },
+  "turret:Turret_0198": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    509
+   ]
+  },
+  "turret:Turret_0204": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.5,
+   "solids": [
+    448
+   ]
+  },
+  "turret:Turret_0208": {
+   "folder": "TG_RM5010-0B22_AmmoRoom",
+   "share": 0.5,
+   "solids": [
+    472
+   ]
+  },
+  "turret:Turret_0214": {
+   "folder": "TG_RM5010-0B26_Cover",
+   "share": 0.4,
+   "solids": [
+    456
+   ]
+  },
+  "turret:Turret_0215": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    454
+   ]
+  },
+  "turret:Turret_0220": {
+   "folder": "TG_RM5010-0B21_DriverRoom",
+   "share": 0.583,
+   "solids": [
+    436
+   ]
+  },
+  "turret:Turret_0221": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    423
+   ]
+  },
+  "turret:Turret_0222": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    424
+   ]
+  },
+  "turret:Turret_0223": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    425
+   ]
+  },
+  "turret:Turret_0224": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    411
+   ]
+  },
+  "turret:Turret_0225": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    412
+   ]
+  },
+  "turret:Turret_0226": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    413
+   ]
+  },
+  "turret:Turret_0227": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    414
+   ]
+  },
+  "turret:Turret_0228": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    415
+   ]
+  },
+  "turret:Turret_0229": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    416
+   ]
+  },
+  "turret:Turret_0230": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    417
+   ]
+  },
+  "turret:Turret_0231": {
+   "folder": "Ammo Unit",
+   "share": 0.25,
+   "solids": [
+    418
+   ]
+  },
+  "turret:Turret_0239": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 1.0,
+   "solids": [
+    347
+   ]
+  },
+  "turret:Turret_0240": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 0.333,
+   "solids": [
+    340
+   ]
+  },
+  "turret:Turret_0241": {
+   "folder": "TG_RM5010-0C10_Armor Unit",
+   "share": 0.333,
+   "solids": [
+    339
+   ]
+  },
+  "turret:escape hatch": {
+   "folder": "TG_RM5010-0B29_EngineSystem",
+   "share": 0.5,
+   "solids": [
+    444
+   ]
+  }
+ },
+ "schema": "kessel.vsm-cad-folders.v1",
+ "source": "registration of the RM-5010 kit CAD to tiger_{hull,turret,gun}.glb (damage session, 2026-11-02)"
+}

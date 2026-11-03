@@ -186,6 +186,11 @@ pub fn rise_tau(base_tau_s: f64, excess_log: f64) -> f64 {
 
 pub const DISPLAY_ADAPTATION_CD_M2: f64 = 100.0;
 pub const DISPLAY_KEY: f64 = 0.18;
+/// The display's exposure into AgX (`crush.wgsl` `agx`): the eye's key (0.18 of the adapted scene)
+/// enters the curve at 1.3 times, landing about 0.27 display-linear rather than AgX's own 0.21, the
+/// level the reproduction has used since the ACES fit it replaced. A named reproduction choice
+/// (docs/PHYSICAL_TRUTH_AUDIT.md, "The display tonemap is AgX"); it changes no light.
+pub const AGX_KEY_TRIM: f64 = 1.3;
 pub const ROD_SATURATION_SCOT_TD: f64 = 1_700.0;
 /// How much brighter than the threshold-matched level the screen shows the rod signal. At 1 a
 /// moonlit field is reproduced as dim as it is to a dark-adapted eye, which on a monitor in a
@@ -215,9 +220,10 @@ pub const EYE_RANGE_SLOPE: f64 = 0.55;
 /// colour, and a daylight frame (rod share zero) is untouched. `KESSEL_ROD_HUE=r,g,b` overrides.
 /// Outdoors: the deep blue the owner asked of the night (2 November 2026), still luminance-neutral.
 pub const ROD_DISPLAY_HUE: [f64; 3] = [0.675, 1.022, 1.738];
-/// Inside the hull: the hue the cabin has had since 2026-10-04, so the night's deeper blue outside
-/// changes nothing in the cabin (`crush.wgsl` mixes by the buttoned-up view's eye_range_strength).
-pub const CABIN_ROD_DISPLAY_HUE: [f64; 3] = [0.80, 1.00, 1.45];
+// Inside the hull the rod term is drawn achromatic, as the rod signal is (`crush.wgsl` mixes the
+// night hue toward grey by the buttoned-up view's eye_range_strength). The cabin's own cool hue of
+// 2026-10-04 (0.80/1.00/1.45) was removed on 2 November 2026 at the owner's word: with the
+// compartment's paint a white it tinted the whole dim cabin blue.
 
 /// A sample brighter than this multiple of the cone adaptation counts as flash light [E].
 pub const FLASH_ABOVE_ADAPTATION: f64 = 30.0;
@@ -728,6 +734,7 @@ pub fn wgsl_constants() -> String {
     push("OBS_DAZZLE_TAU", DAZZLE_TAU_S);
     push("OBS_DISPLAY_ADAPTATION", DISPLAY_ADAPTATION_CD_M2);
     push("OBS_DISPLAY_KEY", DISPLAY_KEY);
+    push("OBS_AGX_KEY_TRIM", AGX_KEY_TRIM);
     push("OBS_ROD_SATURATION_TD", ROD_SATURATION_SCOT_TD);
     push("OBS_INSIDE_RESPONSE", INSIDE_RESPONSE);
     push("OBS_INSIDE_REFERENCE_TAU", INSIDE_REFERENCE_TAU_S);
@@ -748,9 +755,6 @@ pub fn wgsl_constants() -> String {
     push("OBS_ROD_HUE_R", hue[0]);
     push("OBS_ROD_HUE_G", hue[1]);
     push("OBS_ROD_HUE_B", hue[2]);
-    push("OBS_CABIN_ROD_HUE_R", CABIN_ROD_DISPLAY_HUE[0]);
-    push("OBS_CABIN_ROD_HUE_G", CABIN_ROD_DISPLAY_HUE[1]);
-    push("OBS_CABIN_ROD_HUE_B", CABIN_ROD_DISPLAY_HUE[2]);
     push("OBS_FLASH_ABOVE_ADAPTATION", FLASH_ABOVE_ADAPTATION);
     push("OBS_FLASH_MEMORY_TAU", FLASH_MEMORY_TAU_S);
     push("OBS_FLASH_MIN_RECOVERY", FLASH_MIN_RECOVERY_S);
@@ -974,22 +978,19 @@ mod tests {
 
     #[test]
     fn the_rod_display_hues_are_luminance_neutral_cool_and_named() {
-        for (hue, bound) in [(ROD_DISPLAY_HUE, 2.8), (CABIN_ROD_DISPLAY_HUE, 2.2)] {
-            let [r, g, b] = hue;
-            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            assert!((luma - 1.0).abs() < 0.02, "the hue must not change the rod signal's brightness: {luma}");
-            assert!(b > g && g >= r, "cool: blue above green above red");
-            assert!(b / r < bound, "bounded departure from grey: {hue:?}");
-        }
-        // The cabin's hue is the one it has had since 2026-10-04; the night's is deeper.
-        assert_eq!(CABIN_ROD_DISPLAY_HUE, [0.80, 1.00, 1.45]);
-        assert!(ROD_DISPLAY_HUE[2] / ROD_DISPLAY_HUE[0] > CABIN_ROD_DISPLAY_HUE[2] / CABIN_ROD_DISPLAY_HUE[0]);
+        let [r, g, b] = ROD_DISPLAY_HUE;
+        let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        assert!((luma - 1.0).abs() < 0.02, "the hue must not change the rod signal's brightness: {luma}");
+        assert!(b > g && g >= r, "cool: blue above green above red");
+        assert!(b / r < 2.8, "bounded departure from grey: {ROD_DISPLAY_HUE:?}");
         let constants = wgsl_constants();
-        for name in ["OBS_ROD_HUE_R", "OBS_ROD_HUE_G", "OBS_ROD_HUE_B", "OBS_CABIN_ROD_HUE_R", "OBS_CABIN_ROD_HUE_G", "OBS_CABIN_ROD_HUE_B"] {
+        for name in ["OBS_ROD_HUE_R", "OBS_ROD_HUE_G", "OBS_ROD_HUE_B"] {
             assert!(constants.contains(&format!("const {name}: f32 = ")));
         }
+        assert!(!constants.contains("OBS_CABIN_ROD_HUE"));
+        // Inside the hull the rods are drawn achromatic.
+        assert!(include_str!("../shaders/crush.wgsl").contains("vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));"));
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("ROD_DISPLAY_HUE"));
-        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("CABIN_ROD_DISPLAY_HUE"));
     }
 
     #[test]

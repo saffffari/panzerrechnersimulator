@@ -420,6 +420,11 @@ impl Medium {
             size: [width, height, DOMAINS as u32],
         })
     }
+    /// Each domain's local bounds (min, max) in its frame (0 hull, 1 turret, 2 cupola in the
+    /// turret's frame), for fields sampled in the same frames (`cabin_material_field`).
+    pub fn domain_bounds(&self) -> [(Vec3, Vec3); DOMAINS] {
+        std::array::from_fn(|i| (self.source.domains[i].min, self.source.domains[i].max))
+    }
     pub fn texture_data(&self) -> &[[f32; 2]] {
         &self.source.texture
     }

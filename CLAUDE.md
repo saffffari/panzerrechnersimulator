@@ -90,6 +90,8 @@ cargo run -- koop prefix                            # headless: KOOP splitscreen
                                                     #   the mission phases with a synthesized couch CrewFrame, writes
                                                     #   per-seat views + a composed split PNG, PASS/FAIL asserts
 cargo run -- absitzen outdir                        # headless: on-foot slice — dismount, walk, loot, Luger, stealth beats
+cargo run --release -- fp-body-review prefix        # headless: the player's own body looking down (loader, cupola, driver,
+                                                    #   on foot) + the same man in third person; per-still arm-page audit
 cargo run -- lasttiger                              # headless: the Last Tiger loop — bail burning, survive cook-off, remount a spare
 cargo run -- climb                                  # headless: the mount/dismount climb ritual (3 timed moves each way) + jump
 cargo run -- crew-solo-designate prefix             # headless, short: commander's MMB designation -> gunner slews, TPZ second

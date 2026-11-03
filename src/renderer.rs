@@ -1673,7 +1673,7 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
-    /// A lamp lens (`mark_lamp_lens`): 0 none, 1 bare, 2 behind a wire cage; 4 an indicator cube,
+    /// A lamp: 0 none; 4 an indicator cube (`mark_indicator_lamp`),
     /// uniformly lit, dark glass when off (`mark_indicator_lamp`).
     lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
@@ -1691,6 +1691,9 @@ struct MeshGpu {
     instrument_cover: bool,
     /// The source model's default metal on this mesh is painted steel (`mark_painted_steel`).
     painted_steel: bool,
+    /// The player's vehicle surface model frame this mesh samples (`mark_vsm_frame`): 0 none, 1 the
+    /// hull, 2 the turret, 3 the gun (`vehicle_surface.rs`, rm_vsm.wgsl).
+    vsm_frame: u8,
     /// Left out of the sky-visibility atlas (`exclude_from_relay_visibility`).
     sky_visibility_excluded: bool,
     /// A small-arms muzzle flash (`mark_small_arms_flash`).
@@ -2837,9 +2840,6 @@ pub struct Renderer {
     /// Wear on the player's vehicle (`surface_wear`): interior grime, exterior grime, glass grime,
     /// mechanical wear, each 0..1; set by the game each update (raymarch backend).
     pub wear: [f32; 4],
-    /// The player's Tiger's winter whitewash, 0 (none) to 1 (a full field coat): the raymarch
-    /// G-buffer lays it over the exterior paint (`rm_gbuffer.wgsl` `apply_whitewash`).
-    pub whitewash: f32,
     /// The film/review section plane (world normal xyz into the removed half, offset w), set only
     /// through `set_film_section`; None in play and in both shipping presets.
     film_section: Option<[f32; 4]>,
@@ -3180,6 +3180,10 @@ pub struct Renderer {
     atmo_enabled: bool, // spatial cabin medium exists independently of the current camera
     atmo_haze: f32,     // 0..1 interior hazy-atmosphere density (0 = pass skips it)
     atmo_soot: f32,     // 0..1 a fire's soot load in the cabin air (dark, absorbing)
+    /// The vehicle surface model's review view (`KESSEL_VSM_VIEW`, `vehicle_surface::VIEWS`; 0 off)
+    /// and its layer switches (`KESSEL_VSM_LAYERS`, a bit mask; 0 all on).
+    pub(crate) vsm_view: u32,
+    pub(crate) vsm_layers: u32,
     atmo_dust: f32,     // 0..1 dust-mote sparkle inside the cabin haze
     atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame with a slow cabin-local drift
     smoke_buf: wgpu::Buffer,
@@ -3824,6 +3828,7 @@ fn make_mesh_gpu(
         vehicle_finish: [0.0; 4],
         instrument_cover: false,
         painted_steel: false,
+        vsm_frame: 0,
         sky_visibility_excluded: false,
         small_arms_flash: false,
         legacy_small_arms_fx: false,
@@ -6277,7 +6282,6 @@ impl Renderer {
             player_snow_load: 0.0,
             world_snow_load: 0.0,
             wear: [0.0; 4],
-            whitewash: 0.0,
             film_section: None,
             section_window: [0.0; 4],
             worn_vehicles: Vec::new(),
@@ -6380,6 +6384,8 @@ impl Renderer {
             atmo_enabled: false,
             atmo_haze: 0.0,
             atmo_soot: 0.0,
+            vsm_view: crate::vehicle_surface::view_from_env(),
+            vsm_layers: std::env::var("KESSEL_VSM_LAYERS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0),
             atmo_dust: 0.0,
             atmo_origin: glam::Vec3::ZERO,
             smoke_buf,
@@ -6766,6 +6772,10 @@ impl Renderer {
             .filter(|(_, m)| m.visible && m.model.w_axis.truncate().distance(point) <= radius)
             .map(|(i, _)| i).collect()
     }
+    /// Review harness: a mesh's world bounds as last placed.
+    pub fn debug_mesh_world_bounds(&self, idx: usize) -> Option<(glam::Vec3, glam::Vec3)> {
+        self.meshes.get(idx).map(|g| (g.world_min, g.world_max))
+    }
     pub fn debug_mesh_state(&self, idx: usize) -> Option<(bool, glam::Mat4)> {
         self.meshes.get(idx).map(|g| (g.visible, g.model))
     }
@@ -7034,6 +7044,32 @@ impl Renderer {
             g.painted_steel = true;
         }
     }
+    /// Mesh `idx` samples the player's vehicle surface model in `frame` (1 hull, 2 turret, 3 gun;
+    /// `vehicle_surface.rs`). The raymarch backend installs the field once its bake is ready.
+    pub fn mark_vsm_frame(&mut self, idx: usize, frame: u8) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.vsm_frame = frame.min(3);
+        }
+    }
+    /// A separate part of the player's vehicle (a hatch lid, the visor holder) samples the surface
+    /// model in `frame` at its own vertices plus `rest_offset` (the frame's units): the part's
+    /// paint moves with it when it opens. The offset rides the push's vehicle lane, unused on the
+    /// player's meshes.
+    pub fn mark_vsm_part(&mut self, idx: usize, frame: u8, rest_offset: glam::Vec3) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.vsm_frame = frame.min(3);
+            g.vehicle_finish = [rest_offset.x, rest_offset.y, rest_offset.z, 0.0];
+        }
+    }
+    /// The vehicle surface model's review view (`vehicle_surface::VIEWS`; 0 off).
+    pub fn set_vsm_view(&mut self, view: u32) { self.vsm_view = view; }
+    /// Review aid: the visible meshes whose bounds contain `p` (index, triangles, vsm frame, flags).
+    pub fn debug_meshes_at(&self, p: glam::Vec3) -> Vec<String> {
+        self.meshes.iter().enumerate().filter(|(_, m)| m.visible && p.cmpge(m.world_min - glam::Vec3::splat(0.05)).all() && p.cmple(m.world_max + glam::Vec3::splat(0.05)).all())
+            .map(|(i, m)| format!("mesh {i}: tris {} vsm {} painted {} snow_vehicle {} emissive {:.2} raster_only {} bounds {:.2?}..{:.2?}",
+                m.index_count / 3, m.vsm_frame, m.painted_steel, m.snow_vehicle, m.emissive, m.raster_only, m.world_min, m.world_max)).collect()
+    }
+    pub fn set_vsm_layers(&mut self, layers: u32) { self.vsm_layers = layers; }
     /// On the raymarch backend the sky-visibility atlas serves only the periscope relays' views of
     /// the outside: leave the player's own tank out of it, so its turret and hull moving do not
     /// force the atlas's whole static layer (66 tiles of the scene, 88 ms) to be redrawn every
@@ -7073,13 +7109,6 @@ impl Renderer {
     pub fn mark_indicator_lamp(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.lamp_lens = 4;
-        }
-    }
-    /// Flag own-colour emissive mesh `idx` as a lamp: the raymarch G-buffer draws each face as a
-    /// round lens in a dark bezel (`rm_gbuffer.wgsl` `lamp_lens`), behind a wire cage if `caged`.
-    pub fn mark_lamp_lens(&mut self, idx: usize, caged: bool) {
-        if let Some(g) = self.meshes.get_mut(idx) {
-            g.lamp_lens = if caged { 2 } else { 1 };
         }
     }
     /// Flag mesh `idx` as an OWN-COLOUR emissive that is NOT night-gated: a warm interior bulb or a
@@ -9748,7 +9777,7 @@ impl Renderer {
                 GpuInstanceMaterialState::disabled(regular_object_custom_data(slot, mesh.temporal_dynamic), SurfaceId(surface))
             } else {
                 let tint = if mode == InstanceEmissionMode::RasterFxOrange {
-                    [1.0, 0.24, 0.03]
+                    crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(mesh.emissive))
                 } else {
                     [1.0; 3]
                 };
@@ -9801,7 +9830,7 @@ impl Renderer {
                     let (mode, tint) = if own_colour {
                         (InstanceEmissionMode::BaseColorUngated, [1.0; 3])
                     } else {
-                        (InstanceEmissionMode::RasterFxOrange, [1.0, 0.24, 0.03])
+                        (InstanceEmissionMode::RasterFxOrange, crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(batch.emissive)))
                     };
                     GpuInstanceMaterialState::emissive(
                         custom_data,
@@ -13570,9 +13599,9 @@ mod atmosphere_tests {
         assert!(crush.contains("let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));"));
         // The rods' local share (observer::local_rod_weight) scales the display rod term only.
         assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;"),
-            "owner-directed cabin reproduction still acts only on the display rod term");
-        assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));"),
-            "the night's hue outdoors, the cabin's own hue inside");
+            "the display's rod reproduction acts only on the rod term");
+        assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));"),
+            "the night's hue outdoors, achromatic rods inside the hull");
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(!mesh.contains("let spring_fill"));

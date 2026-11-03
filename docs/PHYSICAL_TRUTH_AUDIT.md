@@ -1,8 +1,44 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## The player's own body seen from his own eyes, 2026-11-02 (`src/first_person_arms.rs`, `fp-body-review`)
+
+The owner's report: looking down, his body was "orange pointy things". Cause, measured: the
+first-person body (the nisu CC0 infantry figure) hung from its neck joint with the camera 8 cm above
+it and 4.5 cm forward, so the eye sat inside the collar and shoulders. Its nearest drawn vertex was
+7 cm from the eye and 207 of 800 lower-hemisphere rays met body surfaces within 15 cm; drawn
+double-sided at a 2.5 cm near plane, those were the screen-filling shards. Skinning was sound
+(every joint index inside the 49-bone skeleton, every weight sum 1, longest posed arm edge 0.112 m).
+
+Now the player's body is the reviewed AdrielCZ Panzertruppe (CC-BY-4.0, black Panzer uniform,
+the crew's own source, face01 = the commander identity), standing at the cupola, loader and
+dismounted posts and seated at the gunner, driver and radio posts. The camera is at its `Eyes_N1`
+joint. Named rules and approximations:
+
+- OWNER_HEAD_HIDDEN: the one source object that is the head (`PanzerTruppe_Head_N1`: skull, face,
+  neck skin; 116 triangles, every vertex weighted wholly to Neck/Head/Eyes) is not drawn for the
+  camera that owns the body. Nothing is shrunk or moved. Every other camera draws the whole man (the
+  commander witness is the same source with its head). The headless first-person pages are still a
+  raster-only shadow caster, so the owner's own shadow lacks a head (an existing limitation).
+- NECK_FLEXION_EYE_TRAVEL: looking down, the neck takes 0.6 of the view's depression, at most
+  0.80 rad, about `Neck_N1`; the eyes' forward travel (4.4 cm at most) moves the body back under the
+  fixed game camera. Its drop is not modelled (the game owns the eye height).
+- Walker stature: out of the tank the same source is scaled uniformly by `foot::EYE` / its eye
+  height (1.70 / 1.415 = 1.20), so its eyes are the walker's simulated eyes and its feet his ground
+  contact. Crew posts keep the reviewed 1.53 m Tiger-interior size. The two statures differ, as the
+  walker eye and the crew bake already did.
+- A crouching walker lowers the whole standing source (no crouch pose); the standing loader's feet
+  stand 12.5 cm under the turret floor at full height (his eye is 1.29 m above it).
+- The arm page now skins every triangle with any arm-joint weight. The former 0.35 single-influence
+  rule left spread-weight palm triangles on the static page, hanging at the thighs.
+
+Gate: `cargo test --bin panzerrechnersystem first_person_arms` (skin joints within the skeleton,
+unit weights, no arm-moved vertex on the static page, head rule equals the head object, eye clear of
+the drawn body by more than 10 cm at 0 to 1.45 rad down, posed arm edges within 1.6x of the source).
+Review: `fp-body-review <prefix>`.
 
 ## Spectral aerosol and the surfaces' clear air, 2026-11-02 (`src/physical_environment.rs`, `shaders/physical_environment.wgsl`, `shaders/rm_medium.wgsl`, `shaders/rm_shade.wgsl` `fog_to`)
 
@@ -67,8 +103,9 @@ Named approximations (limits):
   the beam in the clear air, no secondary body (the Moon while the Sun keys) in it, single
   scattering only, altitude as y above the local planet surface (flat over the map).
 - The weather layer's albedo (0.70 aerosol, 0.92 snow) and asymmetry are the values it had,
-  unsourced; the cabin haze and the plumes keep the (0.94, 0.97, 1) scattering tint (outside this
-  change); both are open.
+  unsourced; the cabin haze and the plumes kept the (0.94, 0.97, 1) scattering tint until 2 November
+  2026, when it was removed as unsourced (it cast the cabin blue): they scatter neutrally. The
+  weather layer's values remain open.
 
 Measured (spring-bridge-v2 copy, 15:28 local solar, looking east across the valley to the hills
 1.8 km away, the locked look; sRGB means over the hill band): before (128, 131, 134 → B-R +6.7);
@@ -520,6 +557,12 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   approximations: the scene's acceleration structure and the sky-cover map keep the bare
   geometry, so shadows, ray-query occlusion and the cover map ignore the lift (at most 6 cm);
   the thickness is a display estimate of a night's fall on a deck, not a deposition model.
+  What rides aboard the player's tank (a part, a batch or a pane whose box is under 2 m across and
+  whose box centre lies inside a vehicle-surface frame's oriented box with 5 cm grace;
+  `is_aboard`, renderer_raymarch.rs) takes no lying snow from the world's load: the lift raised
+  the cabin lamps' top faces off their bodies, green faces floating by the gunner (owner report,
+  2 November 2026). The tank's own snow is its catch, of which none is kept. Named approximation:
+  a box-centre test, so a small object under the hull between the tracks is counted aboard.
 - The winter running gear (2026-11-02; `snow_cover::step_pack`, `Renderer::set_running_gear_snow`,
   `snow_gear_crust`). Nothing packed the tracks before: the Tiger's belt carried only
   centimetre flecks (`track_snow`), the enemies' nothing, and lying snow stays off every
@@ -573,6 +616,35 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   (2026-11-02): 2.5 % at 1,100 K, 1.3e-4 at 900 K, 4e-7 at 750 K of the 1,300 K band's, so the
   pages' display scale (lifted and drawn hotter for legibility) no longer lights the cabin's dust
   orange from a floor of resting dull-red chips.
+- The behind-armour flash (2026-11-02; `behind_armour_flash_peak`, the owner: a flash of light
+  as the round bursts through, seen from inside). A perforation of the player's vehicle lights a
+  modelled emitter 12 cm inside the hole: 1 % of the steel the round displaces (the calibre's
+  disc over the oblique path) leaves as fine dust and burns in the compartment's air to magnetite
+  (6.7 MJ/kg) over a 20 ms time constant, 30 % of the power radiated at a luminous efficacy of
+  18 lm/W at about 2,800 K (its colour on the shared Planck law). A 76 mm round through 80 mm
+  peaks near 4 Mcd, about five times the 88's muzzle flash light; a 14.5 mm bullet's is a
+  fiftieth of a unit. Each frame shows the flash's mean over its own exposure, so it is equally
+  bright at every frame rate. Named estimates: the 1 % fine share, the burn time, the radiant
+  share and the efficacy; it lights through the scene's shadow rays like any lamp.
+- Inside a perforation (2026-11-02, the owner): sparks thrown inward from the back face (the
+  exterior strike's 0.6 % share of the plate's work, as incandescent dust along the shot line);
+  an armour-piercing round with no filler that comes through above 60 m/s draws its base tracer
+  across the compartment as the tracer strip, exposed over exactly the time the round takes to
+  reach the first surface on its line (a few milliseconds, so one frame holds its whole path, as
+  a camera records it; named: a tracer is assumed on every such round); the authored fragment
+  sizes reach 1.2-1.8 cm instead of 7-9 mm (behind-armour debris has a centimetre tail; the drawn
+  body is the physical one, so the larger pieces are heavier and hit harder), and a cooled chip's
+  colour is a reddish-brown oxide (sRGB 104, 66, 52) instead of plain grey.
+- Every wound glows with a radial temperature falloff (2026-11-02): where the lattice solved the
+  strike, its own field; otherwise the rim estimate's temperature at the bore falling outward
+  exponentially over a third of the hole's radius (0.3 R from a dent's centre; named), drawn,
+  like the chips, at 1.7 times its temperature from 750 K up, so the bore reads white-yellow and
+  the colour runs through orange, red and deep red to raw steel instead of one flat colour.
+- A penetration's trapped interior smoke is a third as dense as its exterior vent (0.55 against
+  1.6) and clears in six seconds instead of ten (2026-11-02): at the vent's density the six
+  puffs were opaque across the turret, and an interior camera saw only sky-lit fog for ten
+  seconds. A compartment does fill with smoke; the density is a named presentation value, not a
+  vented-gas model.
 - A penetration's interior smoke stays at the hole (above) and a fire's smoke is its own soot
   (2026-11-02, the owner: fires need time to build up smoke, much darker, absorbing the light).
   The soot is a uniform load in the cabin air (`Game::interior_soot`, 0-1), built at 0.38 per
@@ -1109,6 +1181,16 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   (`crew_tissue` test `the_tissue_tuning_is_authored_unless_the_review_range_sets_it`, which also
   pins the only setter to `game_fea_range.rs`). Bonds keep the law `k = 2E/(ε_c·r)²`; a tuned class
   scales its bonds' stiffness and critical stretch at solve time instead of rebuilding the model.
+  **Lamp power** (2026-11-03, the owner: a cut-open interior too dark to read): a review-only
+  factor on the cabin lamps' radiant power (`game_fea_range::review_lamp_gain`, the dome, TPZ
+  illuminator and ignition lamps' light and their glowing bulbs alike, through the one
+  `practical_gain` the lamp switch sets), shown on the sidebar as "LAMP POWER xN * (REVIEW)". It is a
+  brighter real emitter, not fill light: the lamps' light is still occluded and shadowed by the
+  closed tank. 1 in every other path (test `the_lamp_power_is_one_unless_the_range_sets_it`). The
+  range's LOOK dials are the display reproduction (look mode, exposure compensation, saturation,
+  warmth, gamma, dither, palette, retro strength, white balance), not light; its fog dial sets the
+  physical medium's density. Its focal length is a 35 mm-format field of view. No depth of field:
+  the renderer has no lens model, and a screen-space blur would not be one.
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
   game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
   SVG/PNG frames about 1/1000 of real time apart, with a contact sheet and a 12 fps clip per case.
@@ -1890,7 +1972,8 @@ are presented as ray tracing, GI or a combustion/solver result:
   `cabin_medium.rs`); the exterior grey swatch on a cabin-facing surface is read as the ivory there
   (a reclassification by exact swatch, not per-part source data).
 - Crew compartment paint, grime, lamps (2026-10-28; `tank.rs` `tiger_paint_finish`,
-  `rm_gbuffer.wgsl` `cabin_grime` and `lamp_lens`, `surface_wear::CAMPAIGN_START`): ivory from a
+  `surface_wear::CAMPAIGN_START`; `cabin_grime` and the `lamp_lens` profile were removed on 2
+  November 2026, superseded by the vehicle surface model and unreached): ivory from a
   common RAL 1001 conversion, not a measured surviving interior; grime an authored mask (dust up,
   oil low, soot high) at one scalar load, 0.65 at the start (an estimate of weeks in the cauldron);
   lamp lenses an authored profile (core, rim, glint, cage) carrying the cube face's emission (the
@@ -1952,7 +2035,9 @@ are presented as ray tracing, GI or a combustion/solver result:
   (`lamp_mounts::SIGHT`), real emitters at the
   cabin lamps' power, driven by the reload machine's state, never by the player's selection. The
   APCR lens never lights because the reload machine chambers APCR as the armour-piercing round.
-- Winter whitewash (2026-10-28; `rm_gbuffer.wgsl` `apply_whitewash`, `Renderer::whitewash`): in
+- Winter whitewash (2026-10-28; removed 2 November 2026 with its frame lane, its renderer field and
+  `KESSEL_WHITEWASH`: the owner keeps the Tiger grey in every season, and the vehicle surface model
+  has no whitewash layer; the description below is the former coat): in
   winter acts the player's Tiger's exterior paint (recognised by its exact swatch) takes a chalky
   white coat (linear 0.56-0.72), thin where the brush ran dry, worn through on the decks, streaked
   down the sides; an authored mask in the mesh frame, raymarch backend only. Gate: `raymarch-cabin`
@@ -2024,8 +2109,9 @@ are presented as ray tracing, GI or a combustion/solver result:
   banks; the shader and physical backends draw none (the editor shows them with
   `KESSEL_RENDERER=raymarch`). Gate: `KESSEL_RM_SKIP=4194304` (debug A/B, removes the banks);
   `cargo test -- low_clouds` (extinction law, absent block, round trip, drift, optical depth).
-- Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`, `rm_gbuffer.wgsl`
-  `apply_wear`, the shade pass's worn edges and cavity grime, the glass film): four scalar loads,
+- Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`; its `apply_wear` noise was
+  removed on 2 November 2026 and the loads now set the vehicle surface model's amounts; the shade
+  pass's worn edges and cavity grime serve the other vehicles; the glass film): four scalar loads,
   mechanical wear (+0.4 % of the remainder per round), interior grime (toward full over 40 min
   crewed, +3 % per round), exterior grime (toward full over 3 km driven), glass grime (+2 % per
   round, over 8 km, toward full over an hour of full snowfall; a wipe leaves 0.05), starting at
@@ -4026,17 +4112,22 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   choice that changes no light; the baseline showed the fully adapted night blue-grey and the
   moonlit night bright, so the black the owner saw was the unadapted eye.
 - **The night's hue is deeper outdoors** (`observer::ROD_DISPLAY_HUE`, 0.675/1.022/1.738,
-  luminance-neutral) and **the cabin keeps its hue** (`observer::CABIN_ROD_DISPLAY_HUE`, the former
-  0.80/1.00/1.45; `crush.wgsl` mixes the two by the buttoned-up view's eye_range_strength as it
+  luminance-neutral); the cabin's own hue (`CABIN_ROD_DISPLAY_HUE`, the former 0.80/1.00/1.45,
+  removed 2 November 2026, see below) was kept at first (`crush.wgsl` mixes the two by the buttoned-up view's eye_range_strength as it
   does the rod gain), so the interior's look is untouched; the interior stills' photometry before
-  and after is in the sky note.
+  and after is in the sky note. Since 2 November 2026 the cabin's hue is removed (the owner: "the interior
+  now has a very blue hue", once the compartment's paint became a white; "i think we can remove
+  this"): inside the hull the rod term is drawn achromatic, as the rod signal is.
 - **The display tonemap is AgX** (`crush.wgsl` `agx`, `tonemap`; `KESSEL_TONEMAP=aces` keeps the
   former fit): Sobotka's AgX in its minimal form (the inset, a 16.5-stop log2 encoding, the
   sigmoid, the outset, the 2.2 decode), chosen because bright colours desaturate toward white
   instead of skewing hue, which is what the owner's "oversaturated, deep fried" sunset was: the
   ACES fit turning the orange of a three-band sunset yellow. A reproduction transform like the fit
   it replaces; it changes no light. The CPU reference `observer::aces` stays as the mapping's
-  monotonic reference in the tests.
+  monotonic reference in the tests. The exposure into the curve, ×1.3, is the named
+  `observer::AGX_KEY_TRIM` (the key at about 0.27 display-linear as under the former fit; AgX
+  alone gives 0.21), a reproduction choice kept on 2 November 2026 when the leftover constants were
+  reviewed.
 - **The aerosol is a winter continental background** (`AtmosphereParameters::default`:
   Mie scattering 4.0e-5 and extinction 4.444e-5 per metre at sea level over the 1,200 m scale
   height, optical depth about 0.05 at 550 nm, single-scattering albedo 0.9; first set at 0.08,
@@ -4375,3 +4466,53 @@ Gates: `observer::tests::fire_lit_ground_keeps_its_cones_colour_and_the_dark_fie
 (CPU statement and the shader's use of it), `renderer::tests` (the crush uniform's 208 bytes, the
 eye lane at 192, the three lane copies on both backends), `observer::spatial_meter_tests`
 (shader validation). Identical in both presets.
+
+## Effect glow on the one incandescence law, 2026-11-02 (`incandescence::fx_kelvin`, `fx_glow`; the shaders' `incandescent_glow`)
+
+An emissive effect mesh (gunfire, an impact, a burning box) and its light were drawn in a
+hand-tinted orange, (1, 0.24, 0.03) mixed 18 % toward the mesh's colour, with an added white-hot term
+above a drive of 6, in five places (`rm_gbuffer.wgsl`, `mesh.wgsl`, `gbuf.wgsl`, `stylized_mesh.wgsl`,
+`combine.wgsl`) and three CPU copies (the main flash's light, the volumetric flash colour, the
+ray-traced emission tint). Now each is the Planck colour (red band 1) of 1,500 K plus 150 K per unit
+of drive, to 2,800 K, at 0.30 of the drive: the old orange was that law at about 1,800 K, so a low
+drive looks as before and a strong one turns white-hot by the same law the fire, the sparks and the
+glowing metal use (test: `an_effect_glows_on_the_planck_law_and_matches_the_old_orange_at_a_low_drive`).
+The drive-to-temperature map is an estimate. In the raymarch backend an own-colour glowing instance
+batch is now pushed as kind 2 (its authored colour, `set_batch_own_emissive`), not kind 0.
+
+## The vehicle surface model, 2026-11-02 (`src/vehicle_surface.rs`, `shaders/rm_vsm.wgsl`; `docs/VEHICLE_SURFACE_MODEL_20261102.md`)
+
+Every material layer on the player's Tiger is placed by its cause. Phase 1 measures the causes the
+geometry carries; phase 2 builds the paint and steel on them; phase 3 simulates the processes that
+act on a vehicle in the field. With the field installed, the player's hull, turret, gun, roof
+hatches, visor holder and guides, cupola grip and lid, periscope housings, deck plate and fuel caps
+take this finish in place of the plain fallback paint (`paint_source_metal`, drawn only until the
+field is installed or with it switched off, at the same grey and white) and the shade pass's
+screen-space worn edges and corner grime (which stand down for every pixel near the player's
+vehicle). The former noise layers (`apply_whitewash`, `apply_wear`, `cabin_grime`) were removed on 2
+November 2026. `KESSEL_VSM_LAYERS=N` keeps layers 1..N for review; 255 shows the fallback paint. The
+old swatches were aligned the same day so the friendly Tigers, the German wrecks and every part off
+the field match: exterior sRGB 105/108/115 (satin), compartment 221/216/206, basket floor a neutral
+93/93/91 (it took the source's green-grey 58/70/64). The cupola's lid is its own bake, added to the
+turret's field at its hinge, closed. Within a marked part the finish replaces only pixels whose
+authored base colour is one the field repaints (the fallback grey and white, the floor paint, track
+and cable steel, or the source's metal at metallic 0.5 and above; `vsm_repaints`, rm_gbuffer.wgsl):
+a painted instrument face, a dial's white back and a lamp keep their own material. A 1 cm cell's
+class cannot resolve a 4 cm dial in the gunner's contact zone; the turret position indicator's white
+face read as worn steel until this gate (owner report, 2 November 2026).
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| The field | A sparse grid of 1 cm cells (the kit-CAD frame's units, 1.112 cm of the real vehicle while the true-scale gate is off) on the surfaces of the hull, turret and gun GLBs, in 4x4x4 bricks with a 64-bit occupancy mask: 7.94 M cells, 212 MB on the GPU with the process and snow channels, baked in 168 s on 16 threads and cached by the meshes' hash. Each surface point's record sits 9 mm off it along its visible normal (the two faces of a thin sheet in different cells); the shader blends the eight records round the point by trilinear weight, leaving missing ones out. | One representative surface point per cell (the sample nearest the cell's centre), so a cell straddling two faces carries one face's measures. Turret at zero traverse and gun level for the occluders; the field does not follow a turned turret's shadowing of the hull. Hatch lids, periscopes and other separate meshes are occluders where the GLBs hold them at rest but do not sample the field yet. |
+| Openness | At reaches of 0.6, 2 and 6 cm: the share of 24 rays (a Fibonacci sphere, rotated per cell by a hash of its key) cast from half the reach off the surface that run the reach unblocked. Flat 0.75, convex above, creases below (test: `openness_reads_a_face_an_edge_and_a_crease`). | A geometric accessibility measure, the standard proxy for where paint chips and grime packs; 24 rays give a sampling noise of about 0.1 per cell before the trilinear blend. |
+| Sky and enclosure | 32 cosine-weighted hemisphere rays from 0.3 mm off the surface against all three meshes and the ground plane: the share free for 25 cm (enclosure) and the share reaching 40 m upward (sky). | The vehicle's own geometry only: terrain, buildings and other vehicles do not occlude. |
+| Thickness | The first hit straight into the surface within 25 cm. | The wall behind the face, not the plate's nominal thickness: a bracket on a plate reads the bracket. |
+| Sharp convex edges | Mesh edges welded at 0.05 mm (99.7 % of the meshes' edges join exactly two triangles) whose faces meet at more than 12 degrees and convexly; per cell the nearest such edge within 2.5 cm of a face that borders it, stored as a point on its line (0.1 mm units) and an octahedral direction (about 1.4 degrees), with its dihedral angle. The shader measures the pixel's distance to that line exactly. | Corners use the two nearest records of different direction among the eight round the point. Coarsely tessellated curves (a barrel's facets) read as shallow edges, kept with their angle so later layers can weight them. |
+| Material class | From the source material name, the reviewed node lists (`TRACK_STEEL`, `CABLE_EXHAUST_STEEL`, `PAINTED`), the running gear's envelope, and the CAD registration's assembly folders where at least 60 % of a node's mass candidates agree (`catalog/tiger_surface_cad_folders.v1.json`, `tools/vsm_cad_folders.py`). | The folders come from SolidWorks mass candidates (several parts can share a mass), so only the running gear's and the barrel's folders are used; road wheel tyres are not separated from their discs yet. |
+| Review views | `KESSEL_VSM_VIEW=class|open_fine|open_mid|open_coarse|sky|enclosure|edge|thickness|cells|albedo|roughness|metallic|rounding|flow|rust_carried|dirt_carried|mud|heat|soot|oil|standing_water` draws the channel as unlit false colour on the marked meshes (`KESSEL_VSM_VIEW_GAIN`); fx-review part `materials` (`KESSEL_VSM_REVIEW=field` the channels, default the layer progression lit and as unlit albedo); `tools/vsm_contact_sheet.py`. The progression's interior stills open the roof hatches for daylight (a disclosed harness action). | A debug view, off unless set (test: `the_review_view_is_off_unless_asked`); it writes emission only to show placement and is never a shipping finish. The finish writes albedo, roughness, metallic and the shading normal only (test: `the_vehicle_surface_finish_writes_no_light`). |
+| Paint and steel (layers 1-3) | Substrate by class (rolled plate or sheet by measured thickness 12 mm, oxidised manganese track, heat-scaled exhaust, blackened breech steel where the gun's wall is 2 cm or more inside); red-oxide primer RAL 8012 linear (0.156, 0.039, 0.034) from the RAL CIELAB values; the exterior topcoat a medium grey (0.142, 0.151, 0.170; L* 46) matched in lightness to the owner's reference image (its lit faces sRGB ~135 and mid faces ~95 under studio light) and given the slight blue lean of the period's German greys so that it reads neutral under the low winter sun (sunlit snow measures R/G 1.05, B/G 0.95 on the display) — the owner's choice over RAL 7021's blue-black (0.041, 0.045, 0.051; L* 25) (2 November 2026: "too dark and blue and green ... more neutral"; "see this reference for the grey approx"; "exterior still looks green can we make it neutral grey"); outside the paint is satin (roughness 0.50, chalking to 0.70) with a small metallic share 0.15 and the bared steel smoother (0.30, dark steel 0.42), the owner's choice ("a bit shinier") over a flat field paint, a departure from a dielectric paint named here; bare steel neutral; inside, a white at RAL 9010's slightly warm chromaticity (0.72, 0.688, 0.62), the owner's choice over the period's Elfenbein RAL 1001 (2 November 2026: "a neutral white and we'll play with lighting instead"; the cool neutral first tried read blue in the compartment's daylight); the machinery (engine, radiators, fans, transmission, steering: `Class::Mechanical`, by the CAD folders and the engine bay's and gearbox's regions) is bare metal under oil, the owner's choice where the period finish is undocumented (sources give a blue-grey or grey-green engine bay and a satin black Maybach, none all red); spray thickness varying the topcoat by +/-5 % over tens of centimetres. | The CIELAB values are the standards' nominal colours converted to linear sRGB (D65), not measured wartime paint; steel and oxide reflectances (bare 0.48-0.56, blackened 0.14, rust 0.155/0.045/0.012 to 0.06/0.022/0.01) are published-range estimates. The topcoat no longer depends on the environment: the whitewash is not applied to the player's vehicle. |
+| Edge rounding (layer 4) | Within the edge record's reach the shading normal turns toward the neighbouring face by up to half the dihedral angle over a fillet of 3.5 mm outside, 2.5 mm inside, plus 3 mm where the crew's contact wears it, for the nearest edge and a corner's second. | A normal approximation of a geometric round: the triangles stay sharp, silhouettes are unchanged. The radii are estimates of paint build-up and wear. |
+| Wear (layers 5-6) | Chips: a wear depth through topcoat (primer halo) to steel from the edge's distance (e-folding 7 mm inside, 10-25 mm outside), angle (25-80 degrees), prominence (6 cm openness), height and forward position on the hull, the crew's contact, the mechanical-wear load and a 12 cm field of runs along each edge; shaped by value noise at 9 and 25 mm in the vehicle's frame. Scattered chips on open faces outside. Contact: the crew's hand zones and floors (stations from `cabin_medium`, the commander's eye, the loader's arc from rack to breech), the roof hatches' rims and the deck lanes outside, wearing through on edges and high points and polishing steel. Running gear wears through to steel. | The calibration (bands, rates, noise) is an estimate from service photographs, not a measured wear law; chip shapes are noise inside cause-placed regions; contact zones are fixed points and capsules, not tracked crew motion. |
+| Corrosion, deposits, weather (layers 7-9) | Rust on bared steel by wetness (outside: the sky and trapped water; inside: dry but the floor), creeping under the paint's broken edge; grime by openness and enclosure (a months-in-service floor plus the campaign loads), hands' grime; inside and on the machinery a dulling film over every surface and an oil-and-grime coat gathering in corners and enclosed spaces and toward the floor (below 1.6 m in the hull frame); dust on up-facing interior faces away from contact, propellant soot under the turret roof; UV chalking of exterior paint by sky exposure. | Amounts are scaled by the existing whole-vehicle loads (`surface_wear`), not accumulated per cell over the campaign. |
+| Snow on the vehicle (phase 4; `vehicle_surface::snow_catch`, rm_vsm_core.wgsl) | Per cell a byte of how much of the lying snow a surface keeps: the sky it sees (0.08-0.5 smoothstep), less the exhaust's heat and the engine deck over the radiators (to 15 %), less the crew's routes outside (the roof hatches' rims, measured from the source GLBs' hatch subtrees, and the deck lane beside the turret; to 15 %). The depth programs and the G-buffer read the same byte at a vertex's nearest cell, so both lift a face identically; the lying share and the relief normal take it too. The whitewash is not applied to the player's vehicle in any environment; the lying snow's load is the vehicle's own (`snow_cover`). `SNOW_KEPT` = 0: the crew keep their vehicle brushed clear and snow slides off the barrel, so no lying snow is drawn on it (the owner, 2 November 2026: keep the Tiger grey; snow on it is to come from the particle system); the catch stays in the field for that work. The running gear's packed snow is unaffected. The replacement deck plate (`tiger_refuel`), the roof hatches, the visor holder and guides, the cupola grip and the periscope housings take the field like the hull. | The snow is the earlier lying-snow relief and noise, now placed by the field; it is not deposited by a simulated fall with wind, does not slide off steep faces by a snow mechanics model, and does not melt by a heat balance (the deck's warmth is a fixed share). The nearest-cell lookup at a vertex steps at 1 cm. |
+| Processes (layers 10-14; `vehicle_surface::processes`, 25 s at bake) | Water: three drops from every cell the sky reaches walk the surfaces under gravity in 6 mm steps (re-projected by ray casts, rounding edges whose next face overhangs less than about 53 degrees, dripping otherwise, meandering on flats), depositing flow, picking up dirt where they stand and rust where they cross sharp exposed edges, laying both down as they run. Track throw: clods from every link cell at eight speeds (-4.5 to 10 m/s) with the run's velocity (top forward, wraps turning, bottom still) flown ballistically to their strike. Exhaust: heat by distance from the pipes (e-folding 6 cm); 120,000 buoyant random-walk gas parcels with varied wind leaving soot where they touch. Oil: drops from each sprocket's hub until they reach the track. Barrel heat and propellant soot by position along the gun. Each channel is a byte, saturating over its own 99th percentile. | Geometric particle models, not fluid dynamics: no film thickness, evaporation, freezing or wind field; one gravity direction (the vehicle level); the throw ignores air drag and clod size; the plume is a random walk, not a solved flow; the oil sources are the sprockets' hubs only. The renderer draws the results as streak, spatter and stain patterns shaped by noise inside the simulated amounts. |

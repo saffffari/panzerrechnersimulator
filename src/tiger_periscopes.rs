@@ -309,7 +309,7 @@ fn loader_optical_parts(mut housing: CpuMesh, pane: CpuMesh) -> anyhow::Result<V
         OpticalPart::lens(rectangle(&housing, center, Vec3::X*0.055, Vec3::Z*0.0215, Vec3::Y), LOADER_RELAY_FOCAL_M)
     });
     housing=retained;
-    let mut parts=vec![OpticalPart::new(crate::tank::repaint_german_grey(housing),0),OpticalPart::new(mirrors,MIRROR),
+    let mut parts=vec![OpticalPart::new(housing,0),OpticalPart::new(mirrors,MIRROR),
         OpticalPart::new(close_window(pane,-Vec3::Z*WINDOW_THICKNESS_M)?,WINDOW),
         OpticalPart::new(close_window(objective,Vec3::Z*WINDOW_THICKNESS_M)?,WINDOW)];
     parts.extend(lenses);
@@ -424,7 +424,7 @@ pub fn load_turret() -> anyhow::Result<(CpuMesh, CpuMesh, Vec<OpticalPart>, CpuM
         let objective_normal = face_normal(&objective);
         let entry_outward = -face_normal(&pane);
         let retained = select_triangles(&housing, |t| !matches!(t, 26 | 27 | 44 | 45 | 76 | 77));
-        let mut block=vec![OpticalPart::new(crate::tank::repaint_german_grey(retained), 0),
+        let mut block=vec![OpticalPart::new(retained, 0),
             OpticalPart::new(mirrors, MIRROR)];
         // The exported pane is the inner recess face; extend toward the eye, not into its holder.
         block.push(OpticalPart::new(close_window(pane, -entry_outward * WINDOW_THICKNESS_M)?, WINDOW));

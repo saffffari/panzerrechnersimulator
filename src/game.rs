@@ -70,6 +70,8 @@ pub(crate) mod game_fea_review;
 pub(crate) mod game_fea_film;
 #[path = "game_fea_range.rs"]
 pub(crate) mod game_fea_range;
+#[path = "game_ai_film.rs"]
+pub(crate) mod game_ai_film;
 #[path = "crew_skeleton.rs"]
 mod crew_skeleton;
 #[path = "crew_tissue.rs"]
@@ -255,6 +257,8 @@ mod solid_city;
 mod enemy_crew;
 #[path = "first_person_arms.rs"]
 mod first_person_arms;
+#[path = "first_person_body_review.rs"]
+pub mod first_person_body_review;
 #[path = "session_telemetry.rs"]
 mod session_telemetry;
 #[path = "player_burn.rs"]
@@ -797,14 +801,10 @@ fn main_flash_edge(remaining: f32) -> f32 { 1.2 + 8.0 * remaining.clamp(0.0, 0.0
 /// Total-power-equivalent source calibrated against the legacy six-face muzzle cube. This
 /// replaces the unrelated pale 420-unit light. The shader backend draws the separate weapon
 /// grain field, so this is still a reference-emitter approximation, not that field's exact flux.
-/// Mode-zero emission matches gbuf/stylized_mesh, including its small hot core.
+/// Mode-zero emission matches the shaders' `incandescent_glow` (incandescence::fx_glow).
 fn main_flash_light(position: Vec3, remaining: f32) -> Option<PointLight> {
     if remaining <= 0.0 { return None; }
-    let raw = Vec3::from_array(MAIN_FLASH_COLOR.map(|v|
-        crate::rt_surface::srgb_to_linear(v as f32 / 255.0)));
-    let emission = Vec3::new(1.0, 0.24, 0.03).lerp(raw, 0.18)
-        * MAIN_FLASH_EMISSIVE * 0.30
-        + Vec3::new(1.0, 0.88, 0.62) * (MAIN_FLASH_EMISSIVE - 6.0).max(0.0) * 0.18;
+    let emission = Vec3::from_array(crate::incandescence::fx_glow(MAIN_FLASH_EMISSIVE));
     let edge = main_flash_edge(remaining);
     let peak = emission.max_element();
     Some(PointLight {pos: position, color: emission / peak,
@@ -957,6 +957,42 @@ impl Wreck {
     fn gun_pop_xf(&self) -> Mat4 {
         self.turret_pop_xf() * self.t_gun_local
     }
+}
+
+/// The behind-armour flash of a perforation (`behind_armour_flash`): where it burns (in the
+/// struck part's frame), its age and its peak radiant intensity (renderer units).
+#[derive(Clone, Copy, Debug)]
+struct ArmourFlash { frame: BloodFrame, local: Vec3, age_s: f32, peak: f32 }
+
+/// The fine steel a perforation turns to dust: this share of the steel the round displaces from
+/// the hole (a named estimate; behind-armour debris photographs show a dense fine cloud).
+const FLASH_FINE_SHARE: f32 = 0.01;
+/// Iron burning in air to magnetite, J per kg of iron.
+const IRON_OXIDATION_J_PER_KG: f32 = 6.7e6;
+/// The fine dust burns over this time constant (s): the flash in behind-armour photography lasts
+/// a few tens of milliseconds.
+const FLASH_TAU_S: f32 = 0.020;
+/// Share of the combustion power radiated, and the luminous efficacy of that radiation at about
+/// 2,800 K (lm per radiant W): estimates.
+const FLASH_RADIANT_SHARE: f32 = 0.3;
+const FLASH_EFFICACY_LM_PER_W: f32 = 18.0;
+/// Candela per renderer radiant-intensity unit at the tracer's 3,400 K colour (`TRACER_INTENSITY`'s
+/// note in renderer_raymarch.rs: 52,285 lx per unit at a metre).
+const CD_PER_LIGHT_UNIT: f32 = 52_285.0;
+/// The flash's colour temperature (K).
+const FLASH_KELVIN: f32 = 2_800.0;
+
+/// The behind-armour flash: peak radiant intensity (renderer units) of the fine steel a
+/// perforation of `plate_mm` at `impact_angle_deg` by a round of `caliber_mm` burns. The hole's
+/// volume is the calibre's disc over the oblique path; the fine share of it burns in the
+/// compartment's air over `FLASH_TAU_S`.
+fn behind_armour_flash_peak(caliber_mm: f32, plate_mm: f32, impact_angle_deg: f32) -> f32 {
+    let d = caliber_mm.max(5.0) * 1e-3;
+    let path = plate_mm.max(1.0) * 1e-3 / impact_angle_deg.to_radians().cos().clamp(0.2, 1.0);
+    let displaced_kg = std::f32::consts::PI * 0.25 * d * d * path * 7850.0;
+    let power_w = FLASH_FINE_SHARE * displaced_kg * IRON_OXIDATION_J_PER_KG / FLASH_TAU_S;
+    let candela = power_w * FLASH_RADIANT_SHARE * FLASH_EFFICACY_LM_PER_W / (4.0 * std::f32::consts::PI);
+    candela / CD_PER_LIGHT_UNIT
 }
 
 /// One pooled big emissive fireball (kill / turret-pop / cook-off blast).
@@ -3947,8 +3983,11 @@ fn fragment_shower_profile(
         // cool through orange/red for five to seven seconds after the brief amber impact frames.
         fragment_life: 3.20 + energy * 1.65 + filler * 0.95 + caliber * 0.45,
         cone_half_tan: SPALL_HALF_TAN * (0.84 + caliber * 0.20 + filler * 0.18),
+        // Behind-armour debris has a tail of pieces one to three centimetres across (the owner,
+        // 2 November 2026: larger shrapnel that stands out); the size sampling's power keeps most
+        // pieces small. The drawn body stays the physical one.
         min_size_m: 0.0014,
-        max_size_m: 0.0072 + caliber * 0.0018,
+        max_size_m: 0.012 + caliber * 0.006,
     }
 }
 
@@ -6162,6 +6201,8 @@ const FLAME_CUBES_PER_INTERIOR_SPOT: usize = 6144;
 const MAX_INTERIOR_FLAME_CUBES: usize = 49152;
 /// Updates between two regenerations of the fire's grains (`drive_interior_fire`).
 const FIRE_PRESENTATION_PERIOD: u32 = 2;
+/// Fire time between rebuilds of a burning wreck's surface-fire patches (`Game::wreck_surface_patches`).
+const WRECK_PATCH_PERIOD_S: f32 = 0.1;
 // Authored particle radiance calibration, not a temperature or physical fire-power model.
 // The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
 const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
@@ -9768,6 +9809,10 @@ pub struct Game {
     track_snow_previous_model: Option<Mat4>,
     weapon_vfx: weapon_vfx::Effects,
     blasts: Vec<Blast>, // pooled fireball light envelopes (len == N_BLAST)
+    /// Behind-armour flashes of the player's vehicle's perforations, burning out.
+    armour_flashes: Vec<ArmourFlash>,
+    /// The last simulation step's dt: a flash's light is its mean over that exposure.
+    last_frame_dt: f32,
     sparks: Vec<Spark>, // pooled debris FX (len == N_DEBRIS)
     snow_puffs: Vec<SnowPuff>, // pooled near-miss snow/dust puffs (len == N_SNOW)
     // ── Coax + hull MG34 state ──
@@ -10247,6 +10292,10 @@ pub struct Game {
     world_fire_lights: [Option<PointLight>; MAX_WORLD_FIRE_SOURCES],
     wreck_deck_anchors: [Option<Vec3>; 6],
     wreck_fire_surfaces: [[wreck_surface_fire::Surface; 2]; 6],
+    /// Each burning wreck's surface-fire patches, rebuilt every WRECK_PATCH_PERIOD_S of fire time or
+    /// when its hull or turret moves (a thrown turret): the burn front creeps over seconds, and
+    /// rebuilding every update cost 18 ms a frame with five wrecks burning (2026-11-02 playtest).
+    wreck_patch_cache: std::collections::HashMap<usize, (f32, [Mat4; 2], Vec<wreck_surface_fire::Patch>)>,
     player_fire_surfaces: [wreck_surface_fire::Surface; 2],
     player_surface_burn: Option<[wreck_surface_fire::Burn; 2]>,
     player_surface_fire_started: f32,
@@ -11625,9 +11674,9 @@ impl Game {
         let driver_visor_holder=scene.len();
         scene.push(visor_holder);
         let driver_visor_guides=scene.len();
-        scene.push(tank::repaint_german_grey(shutters.guides));
+        scene.push(shutters.guides);
         let driver_visor_moving=[scene.len(),scene.len()+1,scene.len()+2];
-        scene.extend(shutters.moving.map(tank::repaint_german_grey));
+        scene.extend(shutters.moving);
         let (driver_visor_glass, other_hull_eyepieces, driver_roof_pane)=tiger_driver_visor::load_optics()?;
         let driver_roof_eyepiece=scene.len();
         scene.push(driver_roof_pane);
@@ -12125,7 +12174,7 @@ impl Game {
                 );
                 // Same panzer-grey repaint as the hull/turret/gun bakes — the raw albedo is
                 // authored near-black and vanishes against the cupola well in the crushed frame.
-                scene.push(crate::tank::repaint_german_grey(m));
+                scene.push(m);
             }
             Err(e) => {
                 println!("[panzerrechnersystem] cupola hatch: bake missing ({e}) — procedural stand-in");
@@ -12990,6 +13039,28 @@ impl Game {
         // The hull and turret were painted steel inside and out; the gun's machined parts stay bare.
         renderer.mark_painted_steel(slots.tiger[0]);
         renderer.mark_painted_steel(slots.tiger[1]);
+        // The vehicle surface model (vehicle_surface.rs): the three frames sample its field, baked
+        // on a worker (a minute and a half the first time, the cache after) and installed when ready.
+        if renderer.meadow_supported() {
+            for (frame, slot) in slots.tiger.iter().enumerate() { renderer.mark_vsm_frame(*slot, frame as u8 + 1); }
+            // The roof hatches turn about their hinges in their frame's coordinates (driver and
+            // radio operator on the hull, loader and escape on the turret); the visor holder is
+            // drawn at the hull's model; the cupola's grip sits in the cupola hinge's frame.
+            for (slot, frame) in slots.roof_hatches.iter().zip([1u8, 2, 1, 2]) {
+                renderer.mark_vsm_part(*slot, frame, Vec3::ZERO);
+                renderer.mark_snow_vehicle(*slot);
+            }
+            renderer.mark_vsm_part(slots.driver_visor_holder, 1, Vec3::ZERO);
+            renderer.mark_vsm_part(slots.cupola_grip, 2, CUPOLA_HINGE);
+            // The cupola's lid: its own bake, origin on the hinge as the grip's.
+            renderer.mark_vsm_part(slots.hatch, 2, CUPOLA_HINGE);
+            renderer.mark_snow_vehicle(slots.hatch);
+            // Parts split off the source meshes and drawn at their frame's model: the visor's
+            // guides (hull) and the periscope housings (turret).
+            renderer.mark_vsm_part(slots.driver_visor_guides, 1, Vec3::ZERO);
+            for slot in &slots.tiger_periscopes { renderer.mark_vsm_part(*slot, 2, Vec3::ZERO); }
+            crate::vehicle_surface::prefetch();
+        }
         for (prototype, kind) in prototypes.iter().zip([
             EnemyKind::T34, EnemyKind::Su100, EnemyKind::Kv2,
             EnemyKind::Isu152, EnemyKind::Is2, EnemyKind::Is3,
@@ -13719,7 +13790,10 @@ impl Game {
         // white hot metal", not the dull red the solved temperatures give); named as a display
         // choice, the chips' temperatures themselves are the lattice's. The fifth is cold steel.
         let hot_steel = [crate::incandescence::planck_srgb8(1300.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(1100.0 * HOT_PAGE_DRAWN_OVER_BAND),
-            crate::incandescence::planck_srgb8(900.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(750.0 * HOT_PAGE_DRAWN_OVER_BAND), [70, 68, 64]];
+            crate::incandescence::planck_srgb8(900.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(750.0 * HOT_PAGE_DRAWN_OVER_BAND),
+            // Cooled steel that has been through that heat: a reddish-brown oxide over grey (the
+            // owner, 2 November 2026: shrapnel with a slight red hue that stands out). Albedo only.
+            [104, 66, 52]];
         let hot_emissive = HOT_FRAGMENT_STAGE_EMISSIVE;
         slots.hot_fragment_batch = std::array::from_fn(|i| {
             let batch = renderer
@@ -14320,6 +14394,8 @@ impl Game {
             track_snow_previous_model: None,
             weapon_vfx: weapon_vfx::Effects::default(),
             blasts: vec![Blast::default(); N_BLAST],
+            armour_flashes: Vec::new(),
+            last_frame_dt: 1.0 / 60.0,
             sparks: vec![Spark::default(); N_DEBRIS],
             snow_puffs: vec![SnowPuff::default(); N_SNOW],
             mg_tracers: vec![MgTracer::default(); N_MG_TRACER],
@@ -14635,7 +14711,7 @@ impl Game {
             interior_fire_lights: [None; N_INT_FIRE_LIGHTS],
             world_fire_lights: [None; MAX_WORLD_FIRE_SOURCES],
             wreck_deck_anchors,
-            wreck_fire_surfaces, player_fire_surfaces, player_surface_burn: None, player_surface_fire_started: 0.0,
+            wreck_fire_surfaces, wreck_patch_cache: std::collections::HashMap::new(), player_fire_surfaces, player_surface_burn: None, player_surface_fire_started: 0.0,
             wreck_turret_sources,
             fire_t: 0.0,
             ammo_fire: ammunition_fire::AmmunitionFire::default(),
@@ -17372,10 +17448,8 @@ impl Game {
         // precipitation (`surface_wear`).
         self.surface_wear.update(dt, self.player.speed, self.rounds_spent, r.precipitation);
         r.wear = self.surface_wear.uniform();
-        // The scratched, worn Dunkelgrau in every season, the owner's choice of 2 November 2026
-        // over the winter coat. A crew in the snow would often carry a washable white coat
-        // (December 1942); `KESSEL_WHITEWASH=1` lays it on (renderer_raymarch's override).
-        r.whitewash = 0.0;
+        // The player's Tiger carries its grey in every season, the owner's choice of 2 November
+        // 2026 over the winter coat (vehicle_surface.rs: no whitewash layer).
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
@@ -20290,6 +20364,18 @@ impl Game {
         }
         // Explosions are light sources, not merely bright geometry. The flash is short and violent;
         // `Renderer::set_lights` keeps the strongest sources when the battlefield is saturated.
+        // Behind-armour flashes: the intensity each frame shows is the flash's mean over that
+        // frame's exposure (dt), so a 20 ms flash is as bright on every frame rate.
+        for flash in self.armour_flashes.iter().filter(|_| transients) {
+            let dt = self.last_frame_dt.max(1.0 / 240.0);
+            let t0 = (flash.age_s - dt).max(0.0);
+            let mean = flash.peak * FLASH_TAU_S / dt * ((-t0 / FLASH_TAU_S).exp() - (-flash.age_s / FLASH_TAU_S).exp());
+            if mean <= 1e-4 { continue; }
+            let world = blood_parent_model(&self.player, flash.frame).transform_point3(flash.local);
+            r.observer_flash_source = true;
+            let chroma = crate::incandescence::planck_chroma(FLASH_KELVIN);
+            lights.push(PointLight { pos: world, source_radius: 0.25, color: Vec3::from_array(chroma), radiant_intensity: mean });
+        }
         for b in self.blasts.iter().filter(|b| transients && b.t > 0.0) {
             let f = (b.t / b.dur.max(0.01)).clamp(0.0, 1.0);
             let legacy_reach = b.scale * (2.2 + 1.4 * (1.0 - f));
@@ -20342,7 +20428,8 @@ impl Game {
             // The cabin lights' switch (`set_cabin_lights`): off, every lamp is an unlit cube and
             // its light is zero.
             let power = if self.cabin_lights { 1.0 } else { 0.0 };
-            let practical_gain = rig::cabin_practical_gain(r.shader_backend) * power;
+            // `game_fea_range::review_lamp_gain` is 1 outside the review range's LAMP POWER knob.
+            let practical_gain = power * game_fea_range::review_lamp_gain();
             let hm = self.player.hull_model();
             let tm = self.player.turret_model();
             let gm = self.player.visual_gun_model();
@@ -21200,6 +21287,8 @@ impl Game {
                 // Its steel holds no rounds, and the lost hull's fragments stay with the lost hull.
                 self.fea.reset();
                 self.fea_effects = Default::default();
+        self.armour_flashes.clear();
+                self.armour_flashes.clear();
                 self.hot_fragments.iter_mut().for_each(|f| f.active = false);
                 self.crew = default_crew();
                 self.reset_singleplayer_crew();
@@ -29618,6 +29707,41 @@ impl Game {
             couch_hits,
         };
         self.stage_penetration_fragments(&solution.fragments);
+        // The behind-armour flash: the fine steel the perforation turns to dust burns in the
+        // compartment's air just inside the hole (the owner, 2 November 2026: a flash as the round
+        // bursts through, seen from inside).
+        if ev.terminal == crate::ballistics::Terminal::Penetration {
+            let path = ev.plate.thickness_mm * 1e-3 / ev.impact_angle_deg.to_radians().cos().clamp(0.2, 1.0);
+            let inside = parent_inv.transform_point3(entry_w + shell_dir_w.normalize_or_zero() * (path + 0.12));
+            let peak = behind_armour_flash_peak(ev.shell.caliber_mm, ev.plate.thickness_mm, ev.impact_angle_deg);
+            println!("[armor] behind-armour flash: {:.0} units peak ({:.1} Mcd) over {:.0} ms", peak, peak * CD_PER_LIGHT_UNIT * 1e-6, FLASH_TAU_S * 1e3);
+            self.armour_flashes.push(ArmourFlash { frame, local: inside, age_s: 0.0, peak });
+            // Sparks thrown inward from the back face: the exterior strike's share of the plate's
+            // work (0.6 %), the incandescent dust a perforation spits into the compartment.
+            let dir = shell_dir_w.normalize_or_zero();
+            let deposited = 0.5 * ev.shell.mass_kg * (ev.striking_v.powi(2) - ev.residual_v.powi(2)).max(0.0);
+            let back_face = entry_w + dir * path;
+            self.weapon_vfx.interior_spall_sparks(back_face, dir, deposited * 0.006,
+                weapon_vfx::Weapon::Cannon(ev.shell.caliber_mm as u16));
+            // An armour-piercing round that comes through whole (no filler to burst it) carries its
+            // base tracer across the compartment: the tracer strip over exactly the time the round
+            // takes to reach the first surface on its line (a few milliseconds, so one frame shows
+            // its whole path, as a camera would record it).
+            let whole = matches!(ev.shell.kind, crate::ballistics::ShellKind::Ap | crate::ballistics::ShellKind::Apcr
+                | crate::ballistics::ShellKind::Apcbc) && ev.shell.filler_g <= 0.0 && ev.residual_v > 60.0;
+            if whole {
+                let start = back_face + dir * 0.02;
+                let models = self.fire_surface_models();
+                let far = start + dir * 4.0;
+                let end = self.cabin_fire.sweep(start, far, &models)
+                    .map(|c| models[c.frame].transform_point3(c.point)).unwrap_or(far);
+                let length = start.distance(end);
+                let now = self.weapon_vfx.now();
+                self.weapon_vfx.record_bullet_segment(penetration_id | (1u64 << 62), true, start, end,
+                    now, now + length / ev.residual_v, 0.0, length);
+                println!("[armor] the round's tracer crosses {length:.2} m of the compartment at {:.0} m/s", ev.residual_v);
+            }
+        }
         let res = solution.result.clone();
         // A shaped charge bursts outside the armor; its full filler must not teleport inside.
         let explosive_energy_j = if ev.shell.filler_g > 10.0
@@ -31771,6 +31895,9 @@ impl Game {
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("update_fx");
         self.drive_fea_effects(dt, r);
+        self.last_frame_dt = dt;
+        for flash in &mut self.armour_flashes { flash.age_s += dt.max(0.0); }
+        self.armour_flashes.retain(|f| f.age_s < FLASH_TAU_S * 12.0);
         self.hide_claimed_field_people(r);
         // Persistent casualty physics advances once with the host simulation, never once per split
         // viewport. Every camera therefore sees the same directional throw and final body pose.
@@ -33329,6 +33456,13 @@ impl Game {
             wreck.surface_burn = Some(std::array::from_fn(|i|surfaces[i].ignite(
                 models[i].inverse().transform_point3(source))));
         }
+        // Reuse the last build while the fire has advanced less than the period and nothing moved.
+        if let Some((t, at, cached)) = self.wreck_patch_cache.get(&index) {
+            let moved = (0..2).any(|k| (at[k].w_axis - models[k].w_axis).truncate().length() > 0.01);
+            if !moved && (wreck.fire_t - *t).abs() < WRECK_PATCH_PERIOD_S {
+                return cached.clone();
+            }
+        }
         let burn = wreck.surface_burn.as_ref().unwrap();
         let strength = wreck.fire_strength();
         let mut patches = surfaces[0].patches(&burn[0],models[0],wreck.fire_t,
@@ -33339,6 +33473,7 @@ impl Game {
         patches.extend(surfaces[1].patches(&burn[1],models[1],turret_age,
             wreck.ignition_load,strength*if wreck.kind==WreckKind::TurretPop {0.30}else{0.50})
             .into_iter().map(|mut patch| {patch.frame=1;patch}));
+        self.wreck_patch_cache.insert(index, (wreck.fire_t, models, patches.clone()));
         patches
     }
 
@@ -34762,6 +34897,20 @@ fn swept_terrain_contact(start: Vec3, end: Vec3, hf: &Heightfield) -> Option<Pro
         });
     }
     None
+}
+
+#[cfg(test)]
+mod armour_flash_tests {
+    use super::*;
+    #[test]
+    fn the_flash_scales_with_the_steel_displaced_and_outshines_the_muzzle() {
+        // 76 mm through 80 mm square: about 2.9 kg displaced, 29 g burnt, 9.6 MW, 4 Mcd.
+        let flash = behind_armour_flash_peak(76.2, 80.0, 0.0);
+        assert!(flash > 60.0 && flash < 100.0, "{flash}");
+        assert!(behind_armour_flash_peak(88.0, 80.0, 0.0) > flash);
+        assert!(behind_armour_flash_peak(76.2, 80.0, 45.0) > flash * 1.3);
+        assert!(behind_armour_flash_peak(14.5, 25.0, 0.0) < 1.0);
+    }
 }
 
 #[cfg(test)]

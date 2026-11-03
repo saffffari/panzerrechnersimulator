@@ -112,11 +112,11 @@ fn eye_response(radiance: vec3<f32>, point: vec3<f32>, uv: vec2<f32>) -> vec3<f3
     // The outdoor night-visibility boost is unnecessary in a cabin with practical lamps and
     // local range compression. Retain normal rod vision without washing out the lamps' colour.
     let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));
-    // The rod term is achromatic in the eye; it is reproduced in the cool mesopic hue,
-    // luminance-neutral: the deep blue of the night outdoors (observer::ROD_DISPLAY_HUE), the
-    // cabin's own hue inside the hull (observer::CABIN_ROD_DISPLAY_HUE, unchanged since
-    // 2026-10-04, so the cabin keeps its look). Cones keep every source's own colour.
-    let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));
+    // The rod term is achromatic in the eye: outdoors it is reproduced in the deep blue of the
+    // night, luminance-neutral (observer::ROD_DISPLAY_HUE); inside the hull it is drawn as it is,
+    // grey (the cabin's own cool hue was removed on 2 November 2026). Cones keep every source's
+    // own colour.
+    let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(1.0), clamp(cr.eye_range_strength, 0.0, 1.0));
     // The lifted rod channel reaches the display's key at most (observer::rod_display): an eye
     // adapted to the moonlit field, or dark-adapted beyond it, showed the whole sight white
     // (2 November 2026); mid-grey is what a night field is to a locally adapted eye.
@@ -174,9 +174,9 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
         vec3(-0.0529716355144438, -0.0980434501171241, 1.15107367264116));
     let min_ev = -12.47393;
     let max_ev = 4.026069;
-    // The exposure trim that puts the eye's key where the former fit put it (0.18 scene to
-    // about 0.27 display-linear; AgX alone lands it at 0.21), so midday is as bright as before.
-    var v = inset * max(x * 1.3, vec3(1.0e-10));
+    // The display's exposure into the curve (observer::AGX_KEY_TRIM: the key lands about 0.27
+    // display-linear, AgX alone puts it at 0.21).
+    var v = inset * max(x * OBS_AGX_KEY_TRIM, vec3(1.0e-10));
     v = clamp(log2(v), vec3(min_ev), vec3(max_ev));
     v = (v - min_ev) / (max_ev - min_ev);
     if (cr.look.x > 5.5) {
@@ -184,7 +184,11 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
         // the trim), the film-gamma kind of contrast, before the sigmoid keeps its roll-off at both
         // ends. A reproduction choice: it changes no light.
         let pivot = (log2(0.18 * 1.3) - min_ev) / (max_ev - min_ev);
-        v = clamp((v - vec3(pivot)) * cr.real.x + vec3(pivot), vec3(0.0), vec3(1.0));
+        // Inside the buttoned-up view (cr.eye_range_strength) the slope eases back to AgX's own:
+        // there the eye's draw-in lifts a dark cabin beside bright ports, and a steeper slope
+        // pushed it back to black (median code 8 under the standard look, 1 at 1.35; 2 November 2026).
+        let contrast = mix(cr.real.x, 1.0, clamp(cr.eye_range_strength, 0.0, 1.0));
+        v = clamp((v - vec3(pivot)) * contrast + vec3(pivot), vec3(0.0), vec3(1.0));
     }
     let v2 = v * v;
     let v4 = v2 * v2;

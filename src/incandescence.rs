@@ -16,6 +16,16 @@ pub fn planck_chroma(kelvin: f32) -> [f32; 3] {
     })
 }
 
+/// A flash or a burning effect mesh driven at `drive` (its emissive intensity) glows at the Planck
+/// colour of 1,500 K plus 150 K per unit of drive, to 2,800 K: about 1,800 K, the deep orange of a
+/// burning tongue, at a drive of 2, white-hot at the muzzle flash's 8. The shaders' `incandescent_glow`
+/// and the ray-traced emission tint use the same law, replacing a hand-tinted orange and its added
+/// white-hot core (2 November 2026).
+pub fn fx_kelvin(drive: f32) -> f32 { (1500.0 + 150.0 * drive.max(0.0)).clamp(1500.0, 2800.0) }
+/// The drawn glow of an effect mesh at `drive`: the chroma at `fx_kelvin` times the drive times 0.30
+/// (the scale the orange used, so the red band is as bright as before).
+pub fn fx_glow(drive: f32) -> [f32; 3] { planck_chroma(fx_kelvin(drive)).map(|c| c * drive.max(0.0) * 0.30) }
+
 /// The chroma as an 8-bit sRGB page colour (the red band full), for the grain prototypes.
 pub fn planck_srgb8(kelvin: f32) -> [u8; 3] {
     planck_chroma(kelvin).map(|v| (linear_to_srgb(v.clamp(0.0, 1.0)) * 255.0).round() as u8)
@@ -27,6 +37,20 @@ fn linear_to_srgb(v: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_effect_glows_on_the_planck_law_and_matches_the_old_orange_at_a_low_drive() {
+        // The retired hand tint (1, 0.24, 0.03) was the Planck colour of about 1,800 K.
+        let c = planck_chroma(fx_kelvin(2.0));
+        assert!((c[0] - 1.0).abs() < 1e-6 && (c[1] - 0.24).abs() < 0.03 && (c[2] - 0.03).abs() < 0.01, "{c:?}");
+        // Hotter with drive: green and blue rise toward white.
+        let hot = planck_chroma(fx_kelvin(8.0));
+        assert!(hot[1] > c[1] && hot[2] > c[2]);
+        for shader in [include_str!("../shaders/rm_gbuffer.wgsl"), include_str!("../shaders/mesh.wgsl"),
+            include_str!("../shaders/gbuf.wgsl"), include_str!("../shaders/stylized_mesh.wgsl")] {
+            assert!(shader.contains("clamp(1500.0 + 150.0 * x, 1500.0, 2800.0)"));
+            assert!(!shader.contains("vec3(1.0, 0.24, 0.03)"));
+        }
+    }
     #[test]
     fn hotter_is_whiter_and_red_leads() {
         for kelvin in [1200.0, 1500.0, 1900.0, 2800.0, 3400.0] {

@@ -32,7 +32,6 @@ struct Frame {
     cloud: vec4<f32>,             // cloud shadow map centre x, z, half extent m, w on
     fog: vec4<f32>,               // fog banks: extinction inside /m, coverage, depth m, floor y
     optic_eye: vec4<f32>,         // xy the eye's offset from the sight's axis (screen heights)
-    livery: vec4<f32>,            // x the player's Tiger's winter whitewash 0..1
     samples: vec4<f32>,           // x sample budget; y theatre climate flag; zw actual world weather displacement xz
     stars: vec4<f32>,             // the star lattice's frame: sin lat, cos lat, sidereal angle, gain
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
@@ -72,6 +71,10 @@ struct Frame {
     // The section's window (Renderer::set_replay_cutaway): centre xyz and radius w; with a radius
     // only what lies within it of the line through the centre along the plane's normal is cut.
     section_window: vec4<f32>,
+    // The player's vehicle surface model (rm_vsm.wgsl, vehicle_surface.rs): per frame the brick
+    // grid's origin xyz and cell edge w (0-2), its dims xyz and first brick w (3-5); the mask base,
+    // cell count, review view and layer switches (6); x the review view's gain (7).
+    vsm: array<vec4<f32>, 8>,
 };
 // True where a camera pass must leave `world` out: beyond the film's section plane (within its
 // window, when it has one).

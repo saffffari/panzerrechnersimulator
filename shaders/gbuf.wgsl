@@ -200,10 +200,7 @@ fn fs(in: VsOut) -> GbufOut {
         return pack(raw, 1.0, geo_n, 1.0, wcol, 0.0, in.id);
     }
     if (!sparse_cubic_smoke && pc.params.x > 0.0 && pc.params.w < 0.5) { // GUNFIRE orange FX
-        let orange = vec3(1.0, 0.24, 0.03);
-        let tinted = mix(orange, raw, 0.18);
-        var col = tinted * pc.params.x * 0.30;
-        col = col + vec3(1.0, 0.88, 0.62) * max(pc.params.x - 6.0, 0.0) * 0.18;
+        let col = incandescent_glow(pc.params.x);
         return pack(raw, 1.0, geo_n, 1.0, col, 0.0, in.id);
     }
 
@@ -252,4 +249,17 @@ fn fs(in: VsOut) -> GbufOut {
     let metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
 
     return pack(albedo, 0.0, n, roughness, vec3(0.0), metallic, in.id);
+}
+
+// The one incandescence law (incandescence.rs `fx_kelvin`, `fx_glow`): an effect mesh driven at
+// `x` glows at the Planck colour of 1,500 K plus 150 K per unit of drive (to 2,800 K), red band 1,
+// at 0.30 of the drive.
+fn incandescent_glow(x: f32) -> vec3<f32> {
+    let kelvin = clamp(1500.0 + 150.0 * x, 1500.0, 2800.0);
+    let c2 = 14387769.0;
+    let reference = exp(c2 / (650.0 * kelvin)) - 1.0;
+    let lambda = vec3(650.0, 550.0, 450.0);
+    let ratio = vec3(650.0) / lambda;
+    let chroma = ratio * ratio * ratio * ratio * ratio * reference / (exp(vec3(c2) / (lambda * kelvin)) - vec3(1.0));
+    return chroma * x * 0.30;
 }

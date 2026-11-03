@@ -202,6 +202,7 @@ mod static_wreck_support;
 mod static_wreck_ownership;
 mod snow_cover;
 mod surface_wear;
+mod vehicle_surface;
 mod exhaust_plume;
 mod explosion_volumes;
 mod powertrain;
@@ -17323,6 +17324,10 @@ fn main() -> anyhow::Result<()> {
             game::combined_battle_review::run(&prefix, seed, seconds, t34, tiger)
         };
     }
+    if early_args.get(1).is_some_and(|arg| arg == "fp-body-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!("usage: fp-body-review <new-prefix>"))?;
+        return game::first_person_body_review::run(prefix);
+    }
     if early_args.get(1).is_some_and(|arg| arg == "expedition-lookdown-review") {
         let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
             "usage: expedition-lookdown-review <new-prefix>"))?;
@@ -17445,6 +17450,10 @@ fn main() -> anyhow::Result<()> {
         // GPU: review clips of the spring meadow by day and at dusk (KESSEL_RENDERER=raymarch).
         return meadow_film::run(&capture_arg(&args, 2, "meadow_film"));
     }
+    if args.len() >= 2 && args[1] == "ai-film" {
+        // GPU: an AI-against-AI battle filmed by an event-following director (KESSEL_RENDERER=raymarch).
+        return game::game_ai_film::run(&args[2..]);
+    }
     if args.len() >= 2 && args[1] == "fea-film" {
         // GPU: video clips of the layered damage model in play (KESSEL_RENDERER=raymarch).
         return game::game_fea_film::run(&capture_arg(&args, 2, "fea_film"));
@@ -17476,6 +17485,10 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "asset-trace" {
         return run_asset_trace();
+    }
+    if args.len() >= 2 && args[1] == "vsm-bake" {
+        // The vehicle surface model's measured field: bake (or read the cache) and report.
+        return vehicle_surface::report();
     }
     if args.len() >= 2 && args[1] == "lan-ifaces" {
         net_ifaces::print_report(lan::DEFAULT_PORT, lan::DISCOVERY_PORT);

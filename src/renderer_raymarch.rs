@@ -223,7 +223,6 @@ struct FrameUniform {
     cloud: [f32; 4],
     fog: [f32; 4],
     optic_eye: [f32; 4],
-    livery: [f32; 4],
     /// x the per-pixel sample budget (`sample_budget`).
     samples: [f32; 4],
     /// The star lattice's frame (sin latitude, cos latitude, local sidereal angle, gain), as
@@ -270,6 +269,10 @@ struct FrameUniform {
     soot: [f32; 4],
     /// The section's window (`Renderer::set_replay_cutaway`): centre xyz, radius w (0: none).
     section_window: [f32; 4],
+    /// The player's vehicle surface model (`vehicle_surface::Field::uniform`; rm_vsm.wgsl): per
+    /// frame the brick grid's origin and cell edge, its dims and first brick; then the mask base,
+    /// the cell count, the review view and the layer switches. Zeros until the field is installed.
+    vsm: [[f32; 4]; 8],
 }
 
 /// The low cloud banks' optical-depth grid round the eye (rm_low_clouds.wgsl): texels along x,
@@ -423,7 +426,12 @@ const SKY_CACHE_BLEND: f64 = 0.3;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct ShadowViewsUniform { vp: [[[f32; 4]; 4]; SHADOW_VIEWS] }
+struct ShadowViewsUniform {
+    vp: [[[f32; 4]; 4]; SHADOW_VIEWS],
+    /// The vehicle surface model's lanes (as `FrameUniform::vsm`): the depth programs lift lying
+    /// snow by its catch exactly as the G-buffer does (rm_vsm_core.wgsl).
+    vsm: [[f32; 4]; 8],
+}
 
 /// One binned medium parcel. Layout shared with rm_volume.wgsl.
 #[repr(C)]
@@ -707,8 +715,13 @@ pub(super) struct Backend {
     binds: Option<Binds>,
     /// `KESSEL_GLASS_GRIME`: a fixed glass grime load in place of the game's.
     glass_grime: Option<f32>,
-    /// `KESSEL_WHITEWASH`: a fixed winter whitewash in place of the game's.
-    whitewash: Option<f32>,
+    /// The vehicle surface model on the GPU (`install_vehicle_surface`): its two storage buffers
+    /// and uniform lanes; None until the bake is ready. The G-buffer bind group's other inputs are
+    /// kept to rebuild it with them.
+    vsm: Option<(wgpu::Buffer, wgpu::Buffer, wgpu::Buffer, [[f32; 4]; 8], wgpu::Buffer)>,
+    /// Empty stand-ins bound until the field is installed (index, cells, processes, snow).
+    vsm_placeholder: (wgpu::Buffer, wgpu::Buffer, wgpu::Buffer, wgpu::Buffer),
+    gbuffer_inputs: (wgpu::TextureView, wgpu::Sampler, wgpu::TextureView),
     history_valid: bool,
     shadow_views: [Mat4; SHADOW_VIEWS],
     shadowed: [Option<usize>; POINT_SHADOWS],
@@ -924,6 +937,8 @@ fn rm_source_text(name: &str) -> String {
         "rm_medium.wgsl" => MEDIUM,
         "rm_depth.wgsl" => include_str!("../shaders/rm_depth.wgsl"),
         "rm_snow_lift.wgsl" => include_str!("../shaders/rm_snow_lift.wgsl"),
+        "rm_vsm.wgsl" => include_str!("../shaders/rm_vsm.wgsl"),
+        "rm_vsm_core.wgsl" => include_str!("../shaders/rm_vsm_core.wgsl"),
         "rm_scars.wgsl" => include_str!("../shaders/rm_scars.wgsl"),
         "rm_scar_patch.wgsl" => include_str!("../shaders/rm_scar_patch.wgsl"),
         "rm_gbuffer.wgsl" => include_str!("../shaders/rm_gbuffer.wgsl"),
@@ -1248,7 +1263,9 @@ impl Backend {
 
         use wgpu::ShaderStages as S;
         let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rm-depth-bgl"), entries: &[uniform_entry(0, S::VERTEX), readonly_storage(1, S::VERTEX_FRAGMENT)],
+            label: Some("rm-depth-bgl"), entries: &[uniform_entry(0, S::VERTEX), readonly_storage(1, S::VERTEX_FRAGMENT),
+                // The vehicle surface model's bricks and snow catch (rm_vsm_core.wgsl).
+                readonly_storage(2, S::VERTEX), readonly_storage(3, S::VERTEX)],
         });
         let gbuffer_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-gbuffer-bgl"), entries: &[uniform_entry(0, S::VERTEX_FRAGMENT),
@@ -1256,8 +1273,12 @@ impl Backend {
                 sampler_filtering(2, S::FRAGMENT),
                 readonly_storage(3, S::VERTEX_FRAGMENT), readonly_storage(4, S::VERTEX_FRAGMENT),
                 // The cabin air's columns (`rm_gbuffer.wgsl` gb_cabin_air; 3 and 4 are the scars').
-                tex2d_entry(5, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array)],
+                tex2d_entry(5, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array),
+                // The vehicle surface model's bricks and cells (rm_vsm.wgsl).
+                readonly_storage(6, S::VERTEX_FRAGMENT), readonly_storage(7, S::FRAGMENT), readonly_storage(8, S::FRAGMENT),
+                readonly_storage(9, S::VERTEX_FRAGMENT)],
         });
+        let vsm_placeholder = (storage("rm-vsm-index", 16), storage("rm-vsm-cells", 16), storage("rm-vsm-proc", 16), storage("rm-vsm-snow", 16));
         let gbuffer_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-gbuffer"), layout: &gbuffer_bgl, entries: &[
                 entry(0, frame_buf.as_entire_binding()),
@@ -1266,6 +1287,10 @@ impl Backend {
                 entry(3, scars_buf.as_entire_binding()),
                 entry(4, scar_near_buf.as_entire_binding()),
                 entry(5, wgpu::BindingResource::TextureView(cabin_medium_view)),
+                entry(6, vsm_placeholder.0.as_entire_binding()),
+                entry(7, vsm_placeholder.1.as_entire_binding()),
+                entry(8, vsm_placeholder.2.as_entire_binding()),
+                entry(9, vsm_placeholder.3.as_entire_binding()),
             ],
         });
         let vis_stages = S::FRAGMENT | S::COMPUTE;
@@ -1336,7 +1361,7 @@ impl Backend {
         };
 
         // Depth-only program for every shadow/cover map.
-        let depth_shader = rm_shader(device, "rm-depth", &["rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_depth.wgsl"]);
+        let depth_shader = rm_shader(device, "rm-depth", &["rm_scars.wgsl", "rm_vsm_core.wgsl", "rm_snow_lift.wgsl", "rm_depth.wgsl"]);
         let depth_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-depth-pl"), bind_group_layouts: &[&depth_bgl], push_constant_ranges: &[push_range(S::VERTEX)],
         });
@@ -1378,7 +1403,7 @@ impl Backend {
         });
 
         // G-buffer.
-        let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_gbuffer.wgsl"]);
+        let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_vsm_core.wgsl", "rm_vsm.wgsl", "rm_gbuffer.wgsl"]);
         let gbuffer_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-gbuffer-pl"), bind_group_layouts: &[&gbuffer_bgl, material_bgl, track_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
         });
@@ -1664,7 +1689,9 @@ impl Backend {
             points_pipe, no_canopy, point_layer_pipe, sparks_pipe, tracers_pipe,
             binds: None, history_valid: false,
             glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
-            whitewash: std::env::var("KESSEL_WHITEWASH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
+            vsm: None,
+            vsm_placeholder,
+            gbuffer_inputs: (terrain_detail_view.clone(), terrain_detail_sampler.clone(), cabin_medium_view.clone()),
             shadow_views: [Mat4::IDENTITY; SHADOW_VIEWS], shadowed: [None; POINT_SHADOWS],
             lights: Vec::with_capacity(MAX_LIGHTS), parcels: Vec::with_capacity(MAX_PARCELS), embers: Vec::with_capacity(MAX_EMBERS),
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
@@ -1743,7 +1770,9 @@ impl Backend {
         let frame = self.frame_buf.as_entire_binding();
         let depth = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-depth"), layout: &self.depth_bgl, entries: &[entry(0, self.shadow_views_buf.as_entire_binding()),
-                entry(1, self.scars_buf.as_entire_binding())],
+                entry(1, self.scars_buf.as_entire_binding()),
+                entry(2, self.vsm.as_ref().map_or(&self.vsm_placeholder.0, |v| &v.0).as_entire_binding()),
+                entry(3, self.vsm.as_ref().map_or(&self.vsm_placeholder.3, |v| &v.4).as_entire_binding())],
         });
         let visibility = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-visibility"), layout: &self.visibility_bgl, entries: &[
@@ -1920,7 +1949,48 @@ impl Backend {
         (out, n as u32)
     }
 
+    /// Put the vehicle surface model's field on the GPU and rebuild the G-buffer bind group with it.
+    fn install_vehicle_surface(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, field: &crate::vehicle_surface::Field) {
+        let make = |label: &str, bytes: &[u8]| {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label), size: (bytes.len() as u64).max(16).next_multiple_of(16),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            });
+            queue.write_buffer(&buf, 0, bytes);
+            buf
+        };
+        let index = make("rm-vsm-index", bytemuck::cast_slice(&field.index));
+        let cells = make("rm-vsm-cells", bytemuck::cast_slice(&field.cells));
+        let proc = make("rm-vsm-proc", bytemuck::cast_slice(&field.proc));
+        let snow = make("rm-vsm-snow", bytemuck::cast_slice(&field.snow));
+        let (terrain_view, terrain_sampler, cabin_view) = &self.gbuffer_inputs;
+        self.gbuffer_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-gbuffer"), layout: &self.gbuffer_bgl, entries: &[
+                entry(0, self.frame_buf.as_entire_binding()),
+                entry(1, wgpu::BindingResource::TextureView(terrain_view)),
+                entry(2, wgpu::BindingResource::Sampler(terrain_sampler)),
+                entry(3, self.scars_buf.as_entire_binding()),
+                entry(4, self.scar_near_buf.as_entire_binding()),
+                entry(5, wgpu::BindingResource::TextureView(cabin_view)),
+                entry(6, index.as_entire_binding()),
+                entry(7, cells.as_entire_binding()),
+                entry(8, proc.as_entire_binding()),
+                entry(9, snow.as_entire_binding()),
+            ],
+        });
+        println!("[vsm] installed: {} cells, {:.0} MB on the GPU", field.cells.len(), field.bytes() as f64 / 1.0e6);
+        let mut lanes = field.uniform(0, 0);
+        // The review view's emission gain (`KESSEL_VSM_VIEW_GAIN`): false colour drawn unlit.
+        lanes[7][0] = std::env::var("KESSEL_VSM_VIEW_GAIN").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(1.0);
+        self.vsm = Some((index, cells, proc, lanes, snow));
+        // The depth programs' group takes the field too.
+        self.binds = None;
+    }
+
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.vsm.is_none() && r.meshes.iter().any(|m| m.vsm_frame > 0) {
+            if let Some(field) = crate::vehicle_surface::ready() { self.install_vehicle_surface(device, queue, &field); }
+        }
         let started = std::time::Instant::now();
         if let Some(voxels) = self.explosion_pending.take() {
             let side = crate::explosion_volumes::SLOT;
@@ -2185,6 +2255,11 @@ impl Backend {
         }
         queue.write_buffer(&self.shadow_views_buf, 0, bytemuck::bytes_of(&ShadowViewsUniform {
             vp: self.shadow_views.map(|m| m.to_cols_array_2d()),
+            vsm: self.vsm.as_ref().map_or([[0.0; 4]; 8], |(_, _, _, lanes, _)| {
+                let mut lanes = *lanes;
+                lanes[6][3] = r.vsm_layers as f32;
+                lanes
+            }),
         }));
         self.upload_lists(queue);
         self.collect_weapon_records(r, queue, rel_vp, eye);
@@ -2280,8 +2355,6 @@ impl Backend {
             cloud: [self.cloud_area[0], self.cloud_area[1], self.cloud_area[2], if cloud_shadows { 1.0 } else { 0.0 }],
             fog: r.fog_bank,
             optic_eye: [r.optic_eye[0], r.optic_eye[1], 0.0, 0.0],
-            // KESSEL_WHITEWASH=0..1 fixes the winter coat for review.
-            livery: [self.whitewash.unwrap_or(r.whitewash).clamp(0.0, 1.0), 0.0, 0.0, 0.0],
             samples: [self.quality.sample_budget(self.iw, self.ih), if r.theatre_weather {1.0}else{0.0}, r.weather_offset.x, r.weather_offset.z],
             stars: {
                 let latitude = r.sky_clock.site.latitude_deg.to_radians();
@@ -2314,6 +2387,12 @@ impl Backend {
             },
             soot: [if r.atmo_enabled { r.atmo_soot * SOOT_EXTINCTION_PER_M } else { 0.0 }, 0.0, 0.0, 0.0],
             section_window: r.section_window(),
+            vsm: self.vsm.as_ref().map_or([[0.0; 4]; 8], |(_, _, _, lanes, _)| {
+                let mut lanes = *lanes;
+                lanes[6][2] = r.vsm_view as f32;
+                lanes[6][3] = r.vsm_layers as f32;
+                lanes
+            }),
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -2646,7 +2725,7 @@ impl Backend {
             // (2026-10-28).
             let radius = if m.small_arms_flash { half.max_element().clamp(0.03, 0.10) } else { half.max_element().clamp(0.05, 6.0) };
             let x = m.emissive;
-            let color = Vec3::new(1.0, 0.24, 0.03).lerp(Vec3::new(1.0, 0.9, 0.7), (x / 8.0).clamp(0.0, 1.0));
+            let color = Vec3::from_array(crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(x)));
             // The gun's own flash mesh becomes a forward lobe along the bore, not a ball. Never a
             // small-arms flash: the coax's, then out along the barrel, took this path and drew the
             // 88's fire lobe at the muzzle on every MG round (2026-10-28).
@@ -3223,6 +3302,14 @@ impl Backend {
         let encloses = |mn: Vec3, mx: Vec3| enclosing.is_some_and(|(p, m)| {
             p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
         });
+        // What rides aboard the player's tank (a lamp, a box, a fitting) lies under no world snow:
+        // the lying-snow lift raised the top faces of the cabin's lamp housings off their bodies,
+        // green faces floating by the gunner (owner report, 2026-11-02). Aboard: a part whose box
+        // centre is inside a vehicle-surface frame's own box (oriented, 5 cm grace) and which is
+        // small enough to be a fitting, not a batch spread over the ground. The tank's own snow
+        // is its catch (rm_vsm_core.wgsl), and none is kept on it.
+        let frames = aboard_frames(r);
+        let aboard = |mn: Vec3, mx: Vec3| is_aboard(&frames, mn, mx);
         let visible = r.inst_spatial_index.query(vp);
         let stages = if shadow { wgpu::ShaderStages::VERTEX } else { wgpu::ShaderStages::VERTEX_FRAGMENT };
         pass.set_pipeline(inst_pipe);
@@ -3261,8 +3348,11 @@ impl Backend {
             }
             let push = Push {
                 model: Mat4::IDENTITY.to_cols_array_2d(),
-                params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor, if flags > 3.5 { 4.0 } else { 0.0 }] },
-                extra: [self.snow_load(r.world_snow_load), 0.0, 0.0, 0.0],
+                // Kind 4 grass, 2 an own-colour emitter (`set_batch_own_emissive`: its authored colour
+                // glows), else an ordinary surface (or an effect's incandescent glow).
+                params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor,
+                    if flags > 3.5 { 4.0 } else if (flags - 2.0).abs() < 0.5 { 2.0 } else { 0.0 }] },
+                extra: [if aboard(b.world_min, b.world_max) { 0.0 } else { self.snow_load(r.world_snow_load) }, 0.0, 0.0, 0.0],
                 scars: [0; 4],
                 vehicle: [0.0; 4],
             };
@@ -3309,8 +3399,10 @@ impl Backend {
             let push = Push {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
-                extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
-                    if m.painted_steel { 1.0 } else { 0.0 }, m.lamp_lens as f32],
+                extra: [if m.snow_vehicle { self.snow_load(r.player_snow_load) } else if aboard(m.world_min, m.world_max) { 0.0 }
+                    else { self.snow_load(r.world_snow_load) }, if m.snow_vehicle { 1.0 } else { 0.0 },
+                    // z: bit 0 painted steel, bits 1-2 the vehicle surface model's frame (rm_vsm.wgsl).
+                    (u32::from(m.painted_steel) | u32::from(m.vsm_frame) << 1) as f32, m.lamp_lens as f32],
                 // scars.w: the running gear's packed snow in bytes 0-2 (rm_snow_lift.wgsl), the film
                 // section bit in bit 24 (`section_bit`).
                 scars: {
@@ -3318,7 +3410,9 @@ impl Backend {
                     scars[3] = m.running_gear | section_bit(r.film_section(), m.section_cut, shadow) << SECTION_BIT_SHIFT;
                     scars
                 },
-                vehicle: if shadow { [0.0; 4] } else { m.vehicle_finish },
+                // The depth programs read it only for the vehicle surface model's parts (their rest
+                // offset, for the snow catch); the other vehicles' finish is a G-buffer record.
+                vehicle: m.vehicle_finish,
             };
             let stages = if scar_bound { wgpu::ShaderStages::VERTEX_FRAGMENT } else { stages };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
@@ -3609,6 +3703,7 @@ impl Backend {
             pass.set_bind_group(0, &binds.reflect, &[]);
             pass.set_bind_group(1, &binds.visibility, &[]);
             if let Some(rt) = &self.rt_bind { pass.set_bind_group(3, rt, &[]); }
+            let frames = aboard_frames(r);
             for &i in &self.panes {
                 let m = &r.meshes[i];
                 // A pane of a sectioned vehicle beyond the film's plane goes with its frame.
@@ -3624,7 +3719,8 @@ impl Backend {
                 // sight glass millimetres).
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
                 let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
-                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
+                    extra: [if m.snow_vehicle { self.snow_load(r.player_snow_load) } else if is_aboard(&frames, m.world_min, m.world_max) { 0.0 }
+                        else { self.snow_load(r.world_snow_load) }, if m.snow_vehicle { 1.0 } else { 0.0 },
                         if m.instrument_cover { 1.0 } else { 0.0 }, 0.0], scars: [0; 4], vehicle: [0.0; 4] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
@@ -3859,9 +3955,43 @@ impl Renderer {
     }
 }
 
+/// The vehicle-surface frames' own boxes (inverse model, local box with 5 cm grace): what rides
+/// aboard the player's tank is inside one of them (`is_aboard`).
+fn aboard_frames(r: &Renderer) -> Vec<(Mat4, Vec3, Vec3)> {
+    r.meshes.iter().filter(|m| m.visible && m.vsm_frame > 0)
+        .map(|m| (m.model.inverse(), m.local_min - Vec3::splat(0.05), m.local_max + Vec3::splat(0.05))).collect()
+}
+
+/// A part aboard: its box centre inside a frame's oriented box, and small enough to be a fitting
+/// rather than an instanced batch spread over the ground.
+fn is_aboard(frames: &[(Mat4, Vec3, Vec3)], mn: Vec3, mx: Vec3) -> bool {
+    (mx - mn).length() < 2.0 && frames.iter().any(|&(inv, lo, hi)| {
+        let c = inv.transform_point3((mn + mx) * 0.5);
+        c.cmpge(lo).all() && c.cmple(hi).all()
+    })
+}
+
 #[cfg(test)]
 mod shader_tests {
     use super::*;
+
+    /// The vehicle surface model's finish changes a surface's albedo, roughness, metallic and
+    /// shading normal only: no layer writes emission, and its false colour is drawn only in the
+    /// review views (KESSEL_VSM_VIEW, off unless set).
+    #[test]
+    fn the_vehicle_surface_finish_writes_no_light() {
+        let vsm = rm_source("rm_vsm.wgsl");
+        let finish = &vsm[vsm.find("fn vsm_finish(").expect("vsm_finish")..];
+        for word in ["g2", "emiss", "glow", "radiance", "fr.sun", "light"] {
+            assert!(!finish.contains(word), "the finish mentions {word}");
+        }
+        let gbuffer = rm_source("rm_gbuffer.wgsl");
+        let block = &gbuffer[gbuffer.find("var vsm_used = false;").expect("vsm block")..gbuffer.find("if (!vsm_used && kind < 0.5 && gb_in_cabin").expect("block end")];
+        // The only emission in the block is the review view's, behind its gate.
+        assert_eq!(block.matches("out.g2").count(), 1);
+        assert!(block.contains("if (vsm_view >= 10u && vsm_view < 14u)"));
+        assert!(gbuffer.contains("if (vsm_frame > 0u && ((vsm_view > 0u && vsm_view < 10u) || vsm_view >= 14u) && kind < 0.5)"));
+    }
 
     fn validate(label: &str, source: &str) {
         let module = wgpu::naga::front::wgsl::parse_str(source)
@@ -3905,8 +4035,8 @@ mod shader_tests {
     #[test]
     fn every_raymarch_shader_validates_with_and_without_ray_queries() {
         let common: &[(&str, &[&str])] = &[
-            ("rm-depth", &["rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_depth.wgsl"]),
-            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_gbuffer.wgsl"]),
+            ("rm-depth", &["rm_scars.wgsl", "rm_vsm_core.wgsl", "rm_snow_lift.wgsl", "rm_depth.wgsl"]),
+            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_vsm_core.wgsl", "rm_vsm.wgsl", "rm_gbuffer.wgsl"]),
             ("rm-scar-patch", &["rm_common.wgsl", "rm_scars.wgsl", "rm_scar_patch.wgsl"]),
             ("rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]),
             ("rm-low-cloud-tau", &["rm_common.wgsl", "rm_low_clouds.wgsl"]),

@@ -432,7 +432,7 @@ pub(crate) fn t34_paint_finish(_node: &str, material: Option<&str>) -> Option<cr
 }
 
 #[path = "tiger_exterior_finishes.rs"]
-mod exterior_finishes;
+pub(crate) mod exterior_finishes;
 
 /// Exact authored running-belt steel nodes, shared with the reviewed finishes. The ten
 /// Turret_* spare shoes are stored armor, not moving belts, and are excluded by source identity.
@@ -465,9 +465,13 @@ pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<c
     let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
     if matches!(material, Some("Interior Paint" | "Turret Floor")) {
         let (swatch, rgb, metallic, roughness) = if material == Some("Turret Floor") {
-            (2, [58.0, 70.0, 64.0], 0.0, 0.84)
+            // The basket floor plate: a neutral mid grey (the owner's neutral-grey call of 2 November
+            // 2026; vehicle_surface's `VSM_FLOOR` is the same colour).
+            (2, [93.0, 93.0, 91.0], 0.0, 0.84)
         } else {
-            (1, [205.0, 186.0, 136.0], 0.0, 0.70)
+            // The fighting compartment's white (the owner's choice over Elfenbein RAL 1001, 2
+            // November 2026; rm_vsm.wgsl `VSM_IVORY`, rm_gbuffer.wgsl `RM_INTERIOR_PAINT`).
+            (1, [221.0, 216.0, 206.0], 0.0, 0.62)
         };
         return Some(crate::gltf_load::MaterialOverride {
             swatch,
@@ -505,13 +509,13 @@ pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<c
         });
     }
     if !TIGER_PAINTED_NODES.contains(&node) && !exterior_finishes::PAINTED.contains(&node) { return None; }
-    // Charcoal German-grey paint, stored as linear reflectance for the glTF material pipeline.
-    // Dielectric pigment remains distinct from bare track/breech steel; no lighting gain is added.
+    // The exterior grey (the owner's reference, 2 November 2026; rm_vsm.wgsl `VSM_GREY`,
+    // rm_gbuffer.wgsl `RM_TIGER_PAINT`), satin with a small metallic share as the player's Tiger.
     Some(crate::gltf_load::MaterialOverride {
         swatch: 0,
-        base: [linear(72.0), linear(74.0), linear(78.0), 1.0],
-        metallic: 0.0,
-        roughness: 0.75,
+        base: [linear(105.0), linear(108.0), linear(115.0), 1.0],
+        metallic: 0.15,
+        roughness: 0.50,
     })
 }
 
@@ -522,10 +526,6 @@ pub(crate) fn load_painted_tiger(path: &str) -> anyhow::Result<CpuMesh> {
     } else {crate::gltf_load::load_glb_with_material_override(path,tiger_paint_finish)}
 }
 
-/// Compatibility hook for the existing source-steel/optic callers. The former whole-atlas tint
-/// darkened dials and unrelated materials. Finishes now happen by explicit source-node/material
-/// selection during Tiger import; these already classified meshes stay unchanged.
-pub fn repaint_german_grey(m: CpuMesh) -> CpuMesh { m }
 
 /// The Schutzglas vision-block meshes (hull visor / cupola blocks / TZF), baked as separate
 /// parts so the renderer can draw them SEE-THROUGH (GLASS mode, params.w = 7). Missing bake →
@@ -597,7 +597,7 @@ fn german_wreck_finish(_node: &str, material: Option<&str>) -> Option<crate::glt
     let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
     match material {
         Some("Material" | "Panther wheel" | "Tiger Camo") => Some(crate::gltf_load::MaterialOverride {
-            swatch: 13, base: [linear(72.0), linear(74.0), linear(78.0), 1.0], metallic: 0.0, roughness: 0.75 }),
+            swatch: 13, base: [linear(105.0), linear(108.0), linear(115.0), 1.0], metallic: 0.0, roughness: 0.75 }),
         Some("PantherTruck" | "Tiger Truck") => t34_paint_finish("", Some("T-34 Truck")),
         _ => None,
     }
@@ -1411,7 +1411,8 @@ mod tests {
     fn tiger_finishes_keep_exterior_cabin_and_instruments_distinct() {
         for node in ["Hull_0619", "Turret_0101", "Turret_0105", "Gun_0001", "Gun_0008"] {
             let paint = tiger_paint_finish(node, Some("Material.001")).unwrap();
-            assert_eq!((paint.metallic, paint.roughness), (0.0, 0.75));
+            // Satin with a small metallic share (the owner's "a bit shinier", 2 November 2026).
+            assert_eq!((paint.metallic, paint.roughness), (0.15, 0.50));
             let cabin = tiger_paint_finish(node, Some("Interior Paint")).unwrap();
             assert_ne!(paint.swatch, cabin.swatch);
             assert_eq!(cabin.metallic, 0.0, "pigmented cabin paint is not bare metal");
@@ -1436,7 +1437,7 @@ mod tests {
     fn exterior_hardware_and_running_gear_have_distinct_reviewed_finishes() {
         for node in ["Hull_0164", "Hull_0323", "Hull_0861", "Hull_1229", "Turret_0078", "cupola hatch handle.001"] {
             let m=tiger_paint_finish(node,Some("Material.001")).unwrap();
-            assert_eq!(m.swatch,0,"painted exterior {node}");assert_eq!(m.metallic,0.0);
+            assert_eq!(m.swatch,0,"painted exterior {node}");assert_eq!(m.metallic,0.15);
         }
         for node in ["Hull_0003", "Hull_0007", "Turret_0096"] {
             let m=tiger_paint_finish(node,Some("Material.001")).unwrap();
@@ -1496,9 +1497,9 @@ mod tests {
                 let actual = material(&painted, first);
                 if let Some(finish) = selected {
                     let expected = match finish.swatch {
-                        0 => [72, 74, 78, 255],
-                        1 => [205, 186, 136, 255],
-                        2 => [58, 70, 64, 255],
+                        0 => [105, 108, 115, 255],
+                        1 => [221, 216, 206, 255],
+                        2 => [93, 93, 91, 255],
                         3 => [58, 58, 56, 255],
                         4 => [73, 72, 68, 255],
                         5 => [40, 40, 40, 255],

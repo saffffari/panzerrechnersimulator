@@ -38,7 +38,11 @@ not touched. None of them were built.
 turret-ring clip (standard display, 1280x720) with deltaP refilms of it, the owner chose the
 standard display's colour ("better than our stylized effects on the color as of now"). The launcher
 default is now the standard look at 1280x720 (4x on the panel) with the Canyon document's dither
-profile; deltaP stays selectable with `--look`. AgX tonemap. Eye adaptation with the
+profile; deltaP stays selectable with `--look`. **Superseded again later on 2 November:** the
+owner picked the realism look (`deltap-real`: AgX with contrast 1.35 and saturation 0.85 outside
+the hull, an ordered dither to 2,048 colours, `KESSEL_REAL_STEPS=15,15,7`) at 1024x576, 5x on the
+panel; `tools/launch_demo_20261101.sh` starts it by default (`--look standard` for the plain look).
+The bare binary without the launcher still defaults to the standard look. AgX tonemap. Eye adaptation with the
 rod channel capped at the display key. Eyepiece lens, optic masks, the etched TZF reticle,
 concussion defocus, the one-pixel hover outline.
 
