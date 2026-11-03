@@ -135,6 +135,13 @@ impl Corpses {
     pub(super) fn reset_tissue(&mut self) {
         if let Some(tissue)=self.tissue.as_mut() {tissue.reset();}
     }
+    /// The voxel bodies' simulated state (a review checkpoint; `TissueDraw::state`).
+    pub(super) fn tissue_state(&self,previous:Option<&crew_corpse_tissue::TissueState>)->Option<crew_corpse_tissue::TissueState> {
+        self.tissue.as_ref().map(|tissue|tissue.state(previous))
+    }
+    pub(super) fn restore_tissue_state(&mut self,state:&crew_corpse_tissue::TissueState) {
+        if let Some(tissue)=self.tissue.as_mut() {tissue.restore(state);}
+    }
     pub(super) fn hide(&self,r:&mut Renderer) {
         if let Some(tissue)=&self.tissue {tissue.hide(r);}
         for pages in self.pages.iter().flatten() {

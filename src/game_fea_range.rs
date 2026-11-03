@@ -17,10 +17,10 @@
 //!   1/30 s per frame, then on in real time; the camera, section and gizmos stay free throughout
 //!   and every run frame's picture is kept as the timeline's preview. Space pauses; → steps a
 //!   frame; dragging the timeline shows the previews and letting go makes that frame live: on
-//!   from the present, or back by repeating the run step for step on a fresh Tiger. Measured
-//!   2026-11-03 (`--shots`): the game does not repeat a strike bit for bit (the chain and scars
-//!   agreed; the crew's tissue and the surface blood did not, between runs and between re-runs),
-//!   so going back is the same shot re-run, not a copy, and the status line says so.
+//!   from the present, or back from the run's checkpoints (`rewind`: the state put back, not
+//!   re-simulated; the status line says whether the stepped frame matched its checkpoint bit for
+//!   bit). Every run starts from the same kept fresh Tiger, so a run repeats (`--shots` checks a
+//!   tape re-run against the first run field by field).
 //! - **Section**: the film section (`Renderer::set_film_section`), a camera-only plane through the
 //!   Tiger; shadows, light, ray queries and every simulation see the whole closed tank.
 //! - **Sky**: the renderer's sky clock held at the chosen date and local time (Stalingrad), the
@@ -29,9 +29,14 @@
 //!   (`crew_tissue::TissueTuning`), never a shipping default; P prints them for hand-over.
 //!
 //! `fea-range --shots PREFIX` renders the editor headless (stills of the interface, a short run,
-//! a scrubbed frame and a live re-simulation with its agreement check). Requires the raymarch
-//! renderer (set when KESSEL_RENDERER is unset).
+//! a scrubbed frame, a re-simulation from the fresh Tiger and seeks from the checkpoints, each
+//! with its agreement check). `KESSEL_FEA_RANGE_PROBE=determinism` runs the short run three times
+//! and names the first field and frame where runs part; `=rewind-memory` reports the checkpoints'
+//! memory over the editor's own run. Requires the raymarch renderer (set when KESSEL_RENDERER is
+//! unset).
 use super::*;
+#[path = "game_fea_range/rewind.rs"]
+mod rewind;
 use crate::{act_manifest, celestial_sky, ephemeris, graphics, world};
 use std::collections::HashSet;
 use glam::Vec4;
@@ -591,6 +596,8 @@ struct Range {
     /// and for each run frame how much of it had been given then.
     tape: Vec<Tape>,
     tape_base: (u32, SceneSetup, Vec2, f32),
+    /// The run's checkpoints (`rewind`): a backward seek puts the state back instead of re-running.
+    rewind: rewind::Rewind,
     run_tape: Vec<usize>,
     /// The engine running (off by default: no exhaust).
     engine: bool,
@@ -730,6 +737,7 @@ impl Range {
             tuning: crew_tissue::TissueTuning::AUTHORED,
             mode: Mode::Live,
             tape: Vec::new(),
+            rewind: rewind::Rewind::default(),
             tape_base: (0, SceneSetup { racks_loaded: false, cabin_lamps: true, fresh_each_run: true, slow_s: 0.25, run_s: 4.0 },
                 TIGER_AT, TIGER_HEADING),
             run_tape: Vec::new(),
@@ -872,13 +880,52 @@ impl Range {
             TankInput::default()
         };
         self.g.engine_on = self.engine || self.pilot.is_some() || self.player_control;
+        // The game reads the renderer's camera as its eye and ears (the sound's listener, the
+        // head's sway, a hit's camera kick): every step starts from the editor's camera, so a run
+        // repeats whether or not its frames were drawn.
+        self.place_camera();
         self.g.update(&input, dt, &mut self.r);
         self.tape.push(Tape::Step(dt));
     }
 
     /// A fresh Tiger and crew at the review spot (`game_fea_film::fresh_tiger`), settled for a
     /// second of game time.
+    ///
+    /// The settled Tiger is kept (`rewind`) and put back for the same setup: `reset_match` leaves
+    /// some of the game's clocks and counters running on (the projectile serial, the armour clock,
+    /// the infantry), so a Tiger built again does not start a strike from the same state.
     fn fresh(&mut self) {
+        let key = format!("{:?}", (self.shot.seed, self.scene.racks_loaded, self.scene.cabin_lamps, self.tiger_at,
+            self.tiger_heading, self.engine, self.muted));
+        let kept = self.rewind.fresh.as_ref().filter(|(k, _)| *k == key).map(|(_, c)| c.clone());
+        let restored = kept.is_some_and(|c| match c.restore(&mut self.g, &mut self.r) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("[fea-range] the kept fresh Tiger could not be put back ({e:#}); building it again");
+                false
+            }
+        });
+        if !restored {
+            self.build_fresh();
+            // Kept, and put back at once: the first run starts as every later one does.
+            match rewind::Checkpoint::capture(&self.g, &self.r, None) {
+                Ok((c, _)) => {
+                    if let Err(e) = c.restore(&mut self.g, &mut self.r) {
+                        eprintln!("[fea-range] the fresh Tiger could not be put back: {e:#}");
+                    }
+                    self.rewind.fresh = Some((key, c));
+                }
+                Err(e) => eprintln!("[fea-range] the fresh Tiger is not kept: {e:#}"),
+            }
+        }
+        self.shot_t = 0.0;
+        self.last_chain.clear();
+        self.tape.clear();
+        self.tape_base = (self.shot.seed, self.scene, self.tiger_at, self.tiger_heading);
+    }
+
+    /// Build the fresh Tiger: the match reset, the place, a second's settling.
+    fn build_fresh(&mut self) {
         self.g.enable_singleplayer_crew();
         self.g.reset_match(self.shot.seed, 0.0);
         self.g.dbg_reset_foot();
@@ -905,10 +952,6 @@ impl Range {
         for _ in 0..60 {
             self.step(TICK);
         }
-        self.shot_t = 0.0;
-        self.last_chain.clear();
-        self.tape.clear();
-        self.tape_base = (self.shot.seed, self.scene, self.tiger_at, self.tiger_heading);
     }
 
     /// The shot's aim point and travel direction (world).
@@ -996,6 +1039,7 @@ impl Range {
         self.frame_at = None;
         self.past_run = false;
         self.fire();
+        self.rewind.start_run(&self.g, &self.r, total, self.tape.len());
         self.mode = Mode::Live;
         self.playing = true;
         self.status = format!("FIRED: {} at {:.0} m ({:.0} m/s)", self.shot.spec().name, self.shot.range_m, self.shot.impact_velocity());
@@ -1018,21 +1062,24 @@ impl Range {
     /// Step the run's next frame.
     fn run_frame(&mut self, k: u32) {
         let Some(run) = self.run else { return };
+        let started = std::time::Instant::now();
         self.advance_frame(k, &run.scene);
+        let step_s = started.elapsed().as_secs_f32();
         self.frame_at = Some(k);
         if let Some(slot) = self.run_tape.get_mut(k as usize) {
             *slot = self.tape.len();
         }
+        self.rewind.keep(&self.g, &self.r, k, self.shot_t, self.tape.len(), step_s);
         if k + 1 == run.total {
             self.status = format!("RUN DONE at {:.2} s: the simulation plays on in real time (SPACE pauses)", self.shot_t);
         }
     }
 
-    /// The live state at run frame `index`: on from the present frame, or (backward) a fresh Tiger
-    /// built the same way and given the same steps and shots again up to that frame (the tape).
-    /// The game does not repeat a strike bit for bit (measured 2026-11-03: the chain and scars
-    /// agree, the crew's tissue and the surface blood can differ), so a backward seek is a re-run,
-    /// not a copy, and says so. The camera is the editor's and is never moved by it.
+    /// The live state at run frame `index`: on from the present frame, or (backward) the latest
+    /// checkpoint before it put back (`rewind`) and the frames from it stepped again, at least the
+    /// frame itself (its picture is then the update's own), the result compared field by field
+    /// with the frame's own checkpoint. Without a checkpoint, a fresh Tiger given the same steps and
+    /// shots again (the tape). The camera is the editor's and is never moved by it.
     fn seek(&mut self, index: u32) {
         self.mode = Mode::Live;
         let Some(run) = self.run else { return };
@@ -1046,6 +1093,9 @@ impl Range {
                 self.run_frame(k);
             }
             self.status = format!("ON TO {:.4} S", self.shot_t);
+            return;
+        }
+        if self.seek_kept(index) {
             return;
         }
         let Some(&upto) = self.run_tape.get(index as usize).filter(|&&n| n != usize::MAX) else {
@@ -1084,8 +1134,69 @@ impl Range {
         self.apply_tuning();
         self.frame_at = Some(index);
         self.past_run = false;
-        self.status = format!("BACK TO {:.4} S: RE-RUN IN {:.1} S (TISSUE DETAIL CAN DIFFER FROM THE FIRST TIME)",
+        self.status = format!("BACK TO {:.4} S: RE-RUN FROM A FRESH TIGER IN {:.1} S",
             self.shot_t, started.elapsed().as_secs_f32());
+    }
+
+    /// A backward seek from the run's checkpoints (`rewind`): the one before the frame put back and
+    /// the frames from it stepped, so the frame's picture is its own update's; or, when the frame's
+    /// own update was slow (the strike's solves), the frame's checkpoint put back, a 1 µs update
+    /// for its picture and the checkpoint put back again. False when there is none to use.
+    fn seek_kept(&mut self, index: u32) -> bool {
+        let started = std::time::Instant::now();
+        let own = self.rewind.at(index).filter(|_| !self.rewind.disabled && self.rewind.step_s(index) > rewind::SLOW_FRAME_S).cloned();
+        if let Some(checkpoint) = own {
+            let put_back = checkpoint.restore(&mut self.g, &mut self.r).and_then(|()| {
+                self.place_camera();
+                self.g.update(&TankInput::default(), rewind::PICTURE_STEP_S, &mut self.r);
+                checkpoint.restore(&mut self.g, &mut self.r)
+            });
+            match put_back {
+                Ok(()) => {
+                    self.tape.truncate(checkpoint.tape_len);
+                    self.shot_t = checkpoint.shot_t;
+                    self.frame_at = Some(index);
+                    self.past_run = false;
+                    self.status = format!("BACK TO {:.4} S: PUT BACK IN {:.2} S (THE FRAME'S OWN UPDATE TOOK {:.1} S; DRAWN FROM A 1 US STEP)",
+                        self.shot_t, started.elapsed().as_secs_f32(), self.rewind.step_s(index));
+                    return true;
+                }
+                Err(e) => eprintln!("[fea-range] the checkpoint could not be put back ({e:#})"),
+            }
+        }
+        let Some((from, checkpoint)) = self.rewind.before(index).map(|(f, c)| (f, c.clone())) else { return false };
+        if let Err(e) = checkpoint.restore(&mut self.g, &mut self.r) {
+            eprintln!("[fea-range] the checkpoint could not be put back ({e:#}); re-running the tape");
+            return false;
+        }
+        self.tape.truncate(checkpoint.tape_len);
+        self.shot_t = checkpoint.shot_t;
+        self.frame_at = from;
+        self.past_run = false;
+        let first = from.map_or(0, |f| f + 1);
+        for k in first..=index {
+            self.run_frame(k);
+        }
+        let kept = self.rewind.prints_at(index);
+        let now = rewind::Checkpoint::capture(&self.g, &self.r, None).map(|(c, _)| c.prints());
+        let check = match (kept, now) {
+            (Some(kept), Ok(now)) => match rewind::parted(&kept, &now).len() {
+                0 => "BIT-EXACT".to_string(),
+                n => format!("DIFFERS FROM THE FIRST TIME IN {n} FIELDS"),
+            },
+            _ => "NOT CHECKED".to_string(),
+        };
+        self.status = format!("BACK TO {:.4} S: PUT BACK AND {} FRAME{} STEPPED IN {:.2} S ({check})",
+            self.shot_t, index + 1 - first, if index == first { "" } else { "S" }, started.elapsed().as_secs_f32());
+        true
+    }
+
+    /// The renderer's camera at the editor's.
+    fn place_camera(&mut self) {
+        self.r.camera.pos = self.eye;
+        self.r.camera.yaw = self.yaw;
+        self.r.camera.pitch = self.pitch;
+        self.r.camera.fov_y = self.fov_deg().to_radians();
     }
 
     /// The camera, the section and the crew drawing for this frame.
@@ -1112,10 +1223,7 @@ impl Range {
         // the game leaves the player's own body out of his view.
         let inside = self.crew_at_eye();
         self.g.drive_singleplayer_crew_rigs_for_view(inside, &mut self.r);
-        self.r.camera.pos = self.eye;
-        self.r.camera.yaw = self.yaw;
-        self.r.camera.pitch = self.pitch;
-        self.r.camera.fov_y = self.fov_deg().to_radians();
+        self.place_camera();
         // A moved camera restarts the transport's history (as `fea-film` does): the accumulator's
         // reprojection otherwise smears the view while it moves. Fewer samples, sharp frames.
         let pose = (self.eye, self.yaw, self.pitch, self.focal_mm);
@@ -3913,6 +4021,90 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         println!("[fea-range] {}", rg.status);
         return Ok(());
     }
+    // KESSEL_FEA_RANGE_PROBE=determinism: the short run three times from a fresh Tiger, every
+    // field's checksum (`rewind::Checkpoint::prints`) at every frame, and where the runs part; then
+    // backward seeks put back from the checkpoints, each against the first runs at that frame.
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("determinism") {
+        let prints = |rg: &Range| rewind::Checkpoint::capture(&rg.g, &rg.r, None).map(|(c, _)| c.prints()).unwrap_or_default();
+        rg.scene.slow_s = 0.1;
+        rg.scene.run_s = 0.5;
+        let mut runs = Vec::new();
+        for pass in 0..3 {
+            let started = std::time::Instant::now();
+            rg.run();
+            let fresh_s = started.elapsed().as_secs_f32();
+            let total = rg.run.map_or(0, |r| r.total);
+            let mut frames = vec![prints(&rg)];
+            let (mut step_s, captures_before, capture_before) = (0.0, rg.rewind.captures, rg.rewind.capture_s);
+            for k in 0..total {
+                let started = std::time::Instant::now();
+                rg.run_frame(k);
+                step_s += started.elapsed().as_secs_f32();
+                frames.push(prints(&rg));
+            }
+            let captures = (rg.rewind.captures - captures_before).max(1);
+            println!("[fea-range] determinism pass {pass}: fresh in {fresh_s:.2} s; {total} frames in {step_s:.2} s ({:.0} ms a frame with its checkpoint, the checkpoint {:.1} ms); {} fields; {} checkpoints hold {:.1} MB",
+                step_s * 1000.0 / total as f32, (rg.rewind.capture_s - capture_before) * 1000.0 / captures as f32, frames[0].len(),
+                rg.rewind.kept(), rg.rewind.bytes as f64 / 1.0e6);
+            println!("[fea-range]   {}", rg.digest());
+            runs.push(frames);
+        }
+        let parted = rewind::parted;
+        for (a, b) in [(0, 1), (1, 2)] {
+            if let Some((frame, (x, y))) = runs[a].iter().zip(&runs[b]).enumerate().find(|(_, (x, y))| x != y) {
+                let all: Vec<&String> = x.keys().filter(|k| x.get(*k) != y.get(*k)).collect();
+                println!("[fea-range] runs {a} and {b} first part at frame {frame} (0 = just fired) in {all:?}");
+            }
+            match runs[a].iter().zip(&runs[b]).enumerate().find(|(_, (x, y))| !parted(x, y).is_empty()) {
+                None => println!("[fea-range] PASS runs {a} and {b} agree in every field at every frame but {:?}", rewind::LISTENER_FIELDS),
+                Some((frame, (x, y))) => println!("[fea-range] FAIL runs {a} and {b} part at frame {frame} (0 = just fired) in {:?}", parted(x, y)),
+            }
+        }
+        rg.rewind.collect_blood(true);
+        for (k, b) in rg.rewind.bytes_by_field().into_iter().take(14) {
+            println!("[fea-range]   checkpoint memory: {k} {:.1} MB", b as f64 / 1.0e6);
+        }
+        let total = rg.run.map_or(0, |r| r.total);
+        for index in [total - 1, 36, 47, 48, 5, 0, 59.min(total - 1), 12] {
+            rg.seek(total - 1);
+            let started = std::time::Instant::now();
+            rg.seek(index);
+            let seek_s = started.elapsed().as_secs_f32();
+            let differ = parted(&prints(&rg), &runs[2][index as usize + 1]);
+            println!("[fea-range] {} back to frame {index} in {seek_s:.2} s against the run it was kept from{}: {}", if differ.is_empty() { "PASS" } else { "FAIL" },
+                if differ.is_empty() { String::new() } else { format!(" (differs in {differ:?})") }, rg.status);
+        }
+        return Ok(());
+    }
+    // KESSEL_FEA_RANGE_PROBE=rewind-memory: the editor's default run (its scene as set) played to
+    // its end with its checkpoints; their memory and timings.
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("rewind-memory") {
+        rg.run();
+        let total = rg.run.map_or(0, |r| r.total);
+        let started = std::time::Instant::now();
+        let mut marks = Vec::new();
+        for k in 0..total {
+            rg.run_frame(k);
+            if (k + 1) % 30 == 0 || k + 1 == total {
+                marks.push(format!("{:.2} s: {:.0} MB", rg.shot_t, rg.rewind.bytes as f64 / 1.0e6));
+            }
+        }
+        let played_s = started.elapsed().as_secs_f32();
+        rg.rewind.collect_blood(true);
+        println!("[fea-range] rewind memory: {} frames ({:.2} s slow, {:.1} s run) played in {played_s:.1} s, blood encoded by {:.1} s; {} kept, {:.0} MB ({:.2} MB a frame); a checkpoint {:.1} ms",
+            total, rg.scene.slow_s, rg.scene.run_s, started.elapsed().as_secs_f32(), rg.rewind.kept(), rg.rewind.bytes as f64 / 1.0e6,
+            rg.rewind.bytes as f64 / 1.0e6 / rg.rewind.kept().max(1) as f64, rg.rewind.capture_s * 1000.0 / rg.rewind.captures.max(1) as f32);
+        println!("[fea-range] rewind memory over the run: {}", marks.join(", "));
+        for (k, b) in rg.rewind.bytes_by_field().into_iter().take(8) {
+            println!("[fea-range]   {k} {:.1} MB", b as f64 / 1.0e6);
+        }
+        for index in [total / 2, 3, total - 2] {
+            rg.seek(total - 1);
+            rg.seek(index);
+            println!("[fea-range] seek to {index}: {}", rg.status);
+        }
+        return Ok(());
+    }
     // KESSEL_FEA_RANGE_PROBE=flight: a round in flight seen from beside its path, close up.
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("flight") {
         rg.shot.shell = 9; // 122 mm BR-471
@@ -3978,21 +4170,60 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         "frames": total, "wall_s": run_s}));
     rg.mode = Mode::Scrub(probe as usize);
     let p3 = still(&mut rg, "timeline", false)?;
-    // 4. Back to that frame (let go of the timeline): the run repeated step for step, and its state
-    // against the first run's there.
+    // 4. Back to that frame (let go of the timeline) with the checkpoints off: the run repeated
+    // step for step from the fresh Tiger (the tape), its state against the first run's there, by
+    // the digest and every field's checksum (`rewind::Checkpoint::prints`, the listener's side
+    // named and left out).
+    let recorded_prints = rg.rewind.prints_at(probe).unwrap_or_default();
+    let prints = |rg: &Range| rewind::Checkpoint::capture(&rg.g, &rg.r, None).map(|(c, _)| c.prints()).unwrap_or_default();
+    rg.rewind.disabled = true;
+    let started = std::time::Instant::now();
     rg.seek(probe);
+    let rerun_s = started.elapsed().as_secs_f32();
     let live_digest = rg.digest();
-    let agree = recorded_digest.as_deref() == Some(live_digest.as_str());
-    println!("[fea-range] {} the re-run agrees with the first run at frame {probe}", if agree { "PASS" } else { "FAIL" });
+    let live_prints = prints(&rg);
+    let differ = rewind::parted(&recorded_prints, &live_prints);
+    let agree = recorded_digest.as_deref() == Some(live_digest.as_str()) && differ.is_empty() && !recorded_prints.is_empty();
+    println!("[fea-range] {} the re-run agrees with the first run at frame {probe} ({} fields; re-run in {rerun_s:.1} s){}",
+        if agree { "PASS" } else { "FAIL" }, live_prints.len(), if differ.is_empty() { String::new() } else { format!(": {differ:?}") });
     checks.push(serde_json::json!({"check": "a backward seek agrees with the first run", "pass": agree, "frame": probe,
-        "recorded": recorded_digest, "live": live_digest}));
+        "recorded": recorded_digest, "live": live_digest, "fields": live_prints.len(), "differ": differ,
+        "not_compared": rewind::LISTENER_FIELDS, "wall_s": rerun_s}));
     // On to the end and back again: whether the re-run repeats itself.
     rg.seek(total - 1);
     rg.seek(probe);
     let again = rg.digest();
-    let repeat = again == live_digest;
-    println!("[fea-range] {} a second re-run agrees with the first re-run", if repeat { "PASS" } else { "FAIL" });
-    checks.push(serde_json::json!({"check": "a backward seek repeats itself", "pass": repeat, "again": again}));
+    let differ = rewind::parted(&live_prints, &prints(&rg));
+    let repeat = again == live_digest && differ.is_empty();
+    println!("[fea-range] {} a second re-run agrees with the first re-run{}", if repeat { "PASS" } else { "FAIL" },
+        if differ.is_empty() { String::new() } else { format!(": {differ:?}") });
+    checks.push(serde_json::json!({"check": "a backward seek repeats itself", "pass": repeat, "again": again, "differ": differ}));
+    // 4b. The same seeks from the checkpoints (the editor's way): put back, not re-run. The first
+    // frame, the strike's own (its update slow: put back and drawn from a 1 us step) and the
+    // probe frame last (the still below), each against its checkpoint from the first run.
+    rg.rewind.disabled = false;
+    let slowest = (0..total).max_by(|a, b| rg.rewind.step_s(*a).total_cmp(&rg.rewind.step_s(*b))).unwrap_or(0);
+    for (name, index) in [("first", 0), ("slowest", slowest), ("probe", probe)] {
+        rg.seek(total - 1);
+        let started = std::time::Instant::now();
+        rg.seek(index);
+        let seek_s = started.elapsed().as_secs_f32();
+        let differ = rewind::parted(&rg.rewind.prints_at(index).unwrap_or_default(), &prints(&rg));
+        let pass = differ.is_empty() && rg.rewind.at(index).is_some();
+        println!("[fea-range] {} back to frame {index} ({name}) from the checkpoints in {seek_s:.2} s: {}{}", if pass { "PASS" } else { "FAIL" },
+            rg.status, if differ.is_empty() { String::new() } else { format!(": {differ:?}") });
+        checks.push(serde_json::json!({"check": format!("a backward seek from the checkpoints ({name})"), "pass": pass, "frame": index,
+            "wall_s": seek_s, "frame_update_s": rg.rewind.step_s(index), "status": rg.status, "differ": differ}));
+    }
+    rg.rewind.collect_blood(true);
+    let memory: Vec<serde_json::Value> = rg.rewind.bytes_by_field().into_iter().take(12)
+        .map(|(k, b)| serde_json::json!({"field": k, "mb": b as f64 / 1.0e6})).collect();
+    println!("[fea-range] checkpoints: {} of {total} frames hold {:.1} MB ({:.2} MB a frame); a checkpoint took {:.1} ms; most: {}",
+        rg.rewind.kept(), rg.rewind.bytes as f64 / 1.0e6, rg.rewind.bytes as f64 / 1.0e6 / rg.rewind.kept().max(1) as f64,
+        rg.rewind.capture_s * 1000.0 / rg.rewind.captures.max(1) as f32,
+        memory.iter().take(6).map(|m| format!("{} {:.1} MB", m["field"].as_str().unwrap_or(""), m["mb"].as_f64().unwrap_or(0.0))).collect::<Vec<_>>().join(", "));
+    checks.push(serde_json::json!({"check": "checkpoint memory (information)", "pass": true, "kept": rg.rewind.kept(), "frames": total,
+        "mb": rg.rewind.bytes as f64 / 1.0e6, "capture_ms": rg.rewind.capture_s * 1000.0 / rg.rewind.captures.max(1) as f32, "by_field": memory}));
     rg.snap_section_to_shot();
     let p4 = still(&mut rg, "live_here", true)?;
     // 5. The panel's tissue knobs changed and printed (review override set, then restored).

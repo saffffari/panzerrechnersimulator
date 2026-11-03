@@ -1292,12 +1292,28 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   is placed and reset by state, enemies are banished and hold fire, the racks may be emptied, the
   cabin lamps switched, the sky clock is held at the chosen date and time, the eye's exposure may
   be held (a camera setting), and the section is the film section above (camera only, labelled on
-  screen). Recorded frames are the renderer's own frames read back; "live here" re-runs the same
-  shot step for step on a fresh Tiger. Measured (`fea-range --shots`, 2026-11-03): the game does
-  not repeat bit for bit (the chain and scars agreed; the crew's tissue and the surface blood
-  differed between the recording and the re-run, and between two re-runs), so "live here" is a
-  sibling outcome, not a copy, and says so on screen. Cause not found (reset state or iteration
-  order are candidates).
+  screen). Recorded frames are the renderer's own frames read back.
+  **Rewind** (2026-11-03, `src/game_fea_range/rewind.rs`, review-only; no play path builds one): a
+  backward seek puts back a checkpoint of the game's state kept at the end of each run frame
+  instead of re-running the shot. A checkpoint is the world save's own lossless owner state
+  (`game_world_state`, every field by name, encoded as the save encodes it) plus what the save does
+  not keep: the voxel tissue and its pieces, the FEA chain receipts, the game clock (the renderer's
+  `time`, which `Game::update` advances and reads) and the renderer's pressure fronts and wind. The
+  frame is then stepped again from the checkpoint before it, so its picture is the frame's own
+  update; a frame whose update was slow (the strike's solves, about 3 s) is put back, drawn from a
+  1 µs update and put back again (named in the status line). Not kept: the renderer's draw state,
+  sky and camera, and the grass about the camera. Cause of the earlier non-repeat (measured with
+  per-field checksums over three runs): `reset_match` leaves the game clock, the projectile serial,
+  the armour clock, the renderer's pressure fronts, the infantry and a few presentation counters
+  running on, and every range step began from whichever camera the previous frame left, while
+  the game reads the renderer camera as its eye and ears. The range now keeps its settled fresh
+  Tiger and puts it back for every run (and for the tape re-run), and poses the editor's camera
+  before every step. With that, three runs agree in all 361 checked fields at every frame, and the
+  tape re-run and a second re-run agree with the first run (`fea-range --shots`, 2026-11-03),
+  except three listener-side fields named and left out of the comparison
+  (`rewind::LISTENER_FIELDS`): the sound's room tracing (its import empties a per-frame job and
+  cache), and the player's hearing and first-person arms, which follow the sound. The shipping
+  `reset_match` is unchanged: a restarted match in play still starts from the running clock.
   **Tissue knobs** (`crew_tissue::TissueTuning`): a review-only override of the crew lattice's
   authored constants (tear energies, critical stretches, momentum shares, active reach, the piece
   landing-breakup factor), set only by `fea-range` while it differs from the authored values; with
