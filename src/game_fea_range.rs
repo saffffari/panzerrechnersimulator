@@ -275,7 +275,7 @@ enum Tape {
 /// Every adjustable row of the sidebar.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Knob {
-    Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed,
+    Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot,
     Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
     MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame, SmokeDensity, SmokeDelay, EffectsAuthored, Concussion, FlashAfterimage,
     Focal, SavedCam, AddCam, DeleteCam, ExportCams,
@@ -301,10 +301,10 @@ fn kind(knob: Knob) -> Kind {
     use Knob::*;
     match knob {
         Gun => Kind::Info,
-        Shell | TargetKind | Seed | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
+        Shell | TargetKind | Seed | SavedShot | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
         Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance
         | Concussion | FlashAfterimage => Kind::Toggle,
-        AddCam | DeleteCam | ExportCams | EffectsAuthored | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
+        AddShot | AddCam | DeleteCam | ExportCams | EffectsAuthored | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
         _ => Kind::Dial,
     }
 }
@@ -355,7 +355,7 @@ const GROUPS: [&str; 9] = ["SHOT", "SCENE", "CAMERA", "SECTION", "SKY", "LOOK", 
 fn group_rows(group: usize) -> Vec<Knob> {
     use Knob::*;
     match group {
-        0 => vec![Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed],
+        0 => vec![Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot],
         1 => vec![TimeSpeed, Loop, Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength],
         2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams, MovingCamera],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
@@ -613,6 +613,7 @@ fn camera_name(eye: Vec3, forward: Vec3) -> String {
     format!("{place}, looking {look}")
 }
 /// The editor's settings between launches (`--shots` neither reads nor writes it).
+const PRESETS_PATH: &str = "target/fea_range_presets.json";
 const STATE_PATH: &str = "target/fea_range_state.json";
 
 /// The range editor's state: the game, its renderer and everything the panel sets.
@@ -675,6 +676,8 @@ struct Range {
     frame_image: u32,
     shown_frame: Option<usize>,
     status: String,
+    shot_presets: Vec<serde_json::Value>,
+    shot_preset_at: Option<usize>,
     help: bool,
     muted: bool,
     idle_s: f32,
@@ -682,9 +685,6 @@ struct Range {
     last_chain: String,
     /// Where the section's rotation handle was drawn this frame (window 0..1), if it was.
     handle_at: Option<[f32; 2]>,
-    /// Where the shot's handle was drawn this frame (window 0..1), if it was.
-    shot_az_at: Option<[f32; 2]>,
-    shot_el_at: Option<[f32; 2]>,
     /// REC in progress, and the last viewport frame captured (what it writes).
     recorder: Option<Recorder>,
     last_rgba: Option<(Vec<u8>, u32, u32)>,
@@ -803,13 +803,15 @@ impl Range {
             frame_image,
             shown_frame: None,
             status: "RESET: a fresh Tiger and crew".into(),
+            shot_presets: std::fs::read_to_string(PRESETS_PATH).ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v["presets"].as_array().cloned()).unwrap_or_default(),
+            shot_preset_at: None,
             help: false,
             muted: false,
             idle_s: 0.0,
             last_chain: String::new(),
             handle_at: None,
-            shot_az_at: None,
-            shot_el_at: None,
             axis_labels: [[-1.0, -1.0]; 3],
             cursor: [0.5, 0.5],
             orbit_pivot: None,
@@ -1446,6 +1448,10 @@ impl Range {
         let a = crew_tissue::TissueTuning::AUTHORED;
         let mark = |changed: bool| if changed { " *" } else { "" };
         match knob {
+            Knob::SavedShot => ("SHOT PRESET".into(), self.shot_preset_at
+                .and_then(|i| self.shot_presets.get(i)).and_then(|v| v["name"].as_str())
+                .unwrap_or("SELECT < >").to_uppercase()),
+            Knob::AddShot => ("SAVE PRESET".into(), "SAVE AS NEXT SHOT".into()),
             Knob::Shell => ("SHELL".into(), self.shot.spec().name.to_uppercase()),
             Knob::Gun => ("FIRED BY".into(), SHOOTERS[self.shot.shell % SHOOTERS.len()].into()),
             Knob::Range => ("RANGE".into(), format!("{:.0} M", self.shot.range_m)),
@@ -1538,6 +1544,42 @@ impl Range {
         let n = shells().len() as i32;
         match knob {
             // The range is kept; the new shell's own velocity at it follows.
+            Knob::SavedShot => {
+                if !self.shot_presets.is_empty() {
+                    let n = self.shot_presets.len() as i32;
+                    let i = self.shot_preset_at.map_or(if dir > 0.0 { 0 } else { n - 1 },
+                        |i| (i as i32 + dir as i32).rem_euclid(n)) as usize;
+                    let preset = self.shot_presets[i].clone();
+                    self.apply_state(&preset["settings"]);
+                    self.apply_sky();
+                    self.fresh();
+                    self.shot_preset_at = Some(i);
+                    self.status = format!("PRESET {} LOADED", preset["name"].as_str().unwrap_or(""));
+                }
+            }
+            Knob::AddShot => {
+                let mut n = 1;
+                while self.shot_presets.iter().any(|p| p["name"].as_str() == Some(format!("shot{n}").as_str())) { n += 1; }
+                let name = format!("shot{n}");
+                let mut presets = self.shot_presets.clone();
+                presets.push(serde_json::json!({"name": name, "settings": self.state_json()}));
+                let json = serde_json::json!({"schema": "fea-range-presets/v1", "presets": presets});
+                let result = (|| -> anyhow::Result<()> {
+                    let path = std::path::Path::new(PRESETS_PATH);
+                    let temp = path.with_extension("json.tmp");
+                    std::fs::write(&temp, serde_json::to_vec_pretty(&json)?)?;
+                    std::fs::rename(temp, path)?;
+                    Ok(())
+                })();
+                match result {
+                    Ok(()) => {
+                        self.shot_presets = presets;
+                        self.shot_preset_at = Some(self.shot_presets.len() - 1);
+                        self.status = format!("PRESET {name} SAVED");
+                    }
+                    Err(e) => self.status = format!("PRESET NOT SAVED: {e}"),
+                }
+            }
             Knob::Shell => self.shot.shell = (self.shot.shell as i32 + dir as i32).rem_euclid(n) as usize,
             Knob::Range => self.shot.range_m = (self.shot.range_m + 50.0 * s).clamp(0.0, 6_000.0),
             Knob::Velocity => {
@@ -2010,42 +2052,25 @@ impl Range {
         if let Some(p) = self.project(aim) {
             self.dot(p, 0.010, INK);
         }
-        // The shot's two handles about the aim point: on a ring flat in the hull's horizontal plane
-        // (green, the bearing it comes from) and on an arc in the shot's vertical plane (red, its
-        // elevation); each slides along its own curve.
-        let ((az_point, el_point), (h, up, x_axis, z_axis)) = self.shot_frames(aim, dir);
+        // The curves themselves are the handles. Separate radii keep the elevation arc
+        // independently accessible even for a level shot (where the old dots coincided).
+        for which in 0..2 {
+            let points = self.shot_curve(which);
+            let colour = if which == 0 { GREEN } else { RED };
+            for pair in points.windows(2) {
+                if let (Some(a), Some(b)) = (self.project(pair[0]), self.project(pair[1])) {
+                    self.screen_segment(a, b, colour);
+                }
+            }
+        }
+        let ((_, el_point), _) = self.shot_frames(aim, dir);
         self.line(el_point, aim, [0.75, 0.75, 0.75, 0.9]);
-        let ring = [0.35, 0.9, 0.3, 0.45];
-        let arc = [0.95, 0.22, 0.18, 0.45];
-        for k in 0..64 {
-            let a = k as f32 / 64.0 * std::f32::consts::TAU;
-            if let Some(p) = self.project(aim + (x_axis * a.sin() + z_axis * a.cos()) * SHOT_HANDLE_M) {
-                self.dot(p, 0.0015, ring);
-            }
-        }
-        for k in 0..=28 {
-            let e = (-60.0f32 + 140.0 * k as f32 / 28.0).to_radians();
-            if let Some(p) = self.project(aim + (h * e.cos() + up * e.sin()) * SHOT_HANDLE_M) {
-                self.dot(p, 0.0015, arc);
-            }
-        }
-        self.shot_az_at = self.project(az_point);
-        self.shot_el_at = self.project(el_point);
-        for (at, colour) in [(self.shot_az_at, GREEN), (self.shot_el_at, RED)] {
-            if let Some(p) = at {
-                self.dot(p, 0.010, colour);
-                self.dot(p, 0.005, BLACK);
-            }
-        }
         if let Some((e, n)) = entry {
             if let Some(p) = self.project(e) {
                 self.dot(p, 0.009, [0.95, 0.15, 0.1, 1.0]);
             }
             self.line(e, e + n * 0.6, [0.6, 0.6, 0.6, 0.8]);
         }
-        } else {
-            self.shot_az_at = None;
-            self.shot_el_at = None;
         }
         if let Some(plane) = self.section_plane() {
             let n = plane.truncate();
@@ -2079,11 +2104,49 @@ impl Range {
         ((aim + h * SHOT_HANDLE_M, aim + from * SHOT_HANDLE_M), (h, up, x_axis, z_axis))
     }
 
-    /// Which of the shot's handles is under `c`: 0 the bearing, 1 the elevation.
+    fn shot_curve(&self, which: usize) -> Vec<Vec3> {
+        let (aim, dir) = self.aim_line();
+        let (_, (h, up, x, z)) = self.shot_frames(aim, dir);
+        (0..=128).map(|k| {
+            let t = k as f32 / 128.0;
+            if which == 0 {
+                let a = t * std::f32::consts::TAU;
+                aim + (x * a.sin() + z * a.cos()) * SHOT_HANDLE_M
+            } else {
+                let a = (-60.0 + 140.0 * t).to_radians();
+                aim + (h * a.cos() + up * a.sin()) * (SHOT_HANDLE_M * 1.22)
+            }
+        }).collect()
+    }
+
+    fn screen_segment(&mut self, a: [f32; 2], b: [f32; 2], colour: [f32; 4]) {
+        let length = ((b[0] - a[0]) * self.win[0]).hypot((b[1] - a[1]) * self.win[1]);
+        let steps = (length / 1.5).ceil().clamp(1.0, 512.0) as usize;
+        for k in 0..=steps {
+            let t = k as f32 / steps as f32;
+            self.dot([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
+                2.5 / self.win[1].max(1.0), colour);
+        }
+    }
+
+    /// Pick the nearest visible curve segment, using a constant pixel hit width.
     fn shot_handle_hit(&self, c: [f32; 2]) -> Option<usize> {
-        let aspect = self.win[0] / self.win[1].max(1.0);
-        let near = |p: Option<[f32; 2]>| p.is_some_and(|p| ((c[0] - p[0]) * aspect).hypot(c[1] - p[1]) < 0.02);
-        if near(self.shot_el_at) { Some(1) } else if near(self.shot_az_at) { Some(0) } else { None }
+        if !self.open[0] { return None; }
+        let pixels = |p: [f32; 2]| Vec2::new(p[0] * self.win[0], p[1] * self.win[1]);
+        let c = pixels(c);
+        let mut best = (9.0f32, None);
+        for which in 0..2 {
+            for pair in self.shot_curve(which).windows(2) {
+                if let (Some(a), Some(b)) = (self.project(pair[0]), self.project(pair[1])) {
+                    let (a, b) = (pixels(a), pixels(b));
+                    let ab = b - a;
+                    let t = ((c - a).dot(ab) / ab.length_squared().max(1e-8)).clamp(0.0, 1.0);
+                    let d = c.distance(a + ab * t);
+                    if d < best.0 { best = (d, Some(which)); }
+                }
+            }
+        }
+        best.1
     }
 
     /// A shot handle dragged to `c`: the bearing from where the cursor's ray meets the hull's
@@ -2479,6 +2542,7 @@ impl Range {
                 "retro": d.retro_strength, "white_balance": d.ambient_white_balance,
                 "white_balance_strength": d.ambient_white_balance_strength, "tuned": self.r.display_tuning.is_some(), "fog": self.fog,
                 "eye_fx": {"concussion": self.eye_fx.concussion, "flash": self.eye_fx.flash}},
+            "effects": {"smoke_density": review_smoke_density(), "smoke_delay": review_smoke_delay()},
             "lamp_gain": review_lamp_gain(), "time_speed": self.time_speed, "looping": self.looping,
             "engine": self.engine, "accumulate_moving": self.accumulate_moving, "wear": self.wear, "snow": self.snow,
             "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm, "speed": self.speed},
@@ -2496,6 +2560,10 @@ impl Range {
     /// Settings from the last launch (whatever is missing or unreadable keeps its default).
     fn load_state(&mut self) {
         let Some(v) = std::fs::read_to_string(STATE_PATH).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { return };
+        self.apply_state(&v);
+    }
+
+    fn apply_state(&mut self, v: &serde_json::Value) {
         let f = |v: &serde_json::Value| v.as_f64().map(|x| x as f32);
         let arr4 = |v: &serde_json::Value| -> Option<[f32; 4]> {
             let a: Vec<f32> = v.as_array()?.iter().filter_map(|x| x.as_f64().map(|x| x as f32)).collect();
@@ -2511,6 +2579,9 @@ impl Range {
             self.shot.target = Target::Point(Vec3::new(f(&p[0]).unwrap_or(0.0), f(&p[1]).unwrap_or(0.0), f(&p[2]).unwrap_or(0.0)));
         } else if let Ok(role) = serde_json::from_value::<CrewRole>(s["target"]["man"].clone()) {
             self.shot.target = Target::Man(role);
+        }
+        if let Some(density) = f(&v["effects"]["smoke_density"]) {
+            set_review_smoke(density, f(&v["effects"]["smoke_delay"]));
         }
         let sc = &v["scene"];
         if let Some(x) = sc["racks_loaded"].as_bool() { self.scene.racks_loaded = x; }
@@ -2893,8 +2964,6 @@ impl Range {
         self.cursor = cursor;
         self.r.ui_reset();
         self.handle_at = None;
-        self.shot_az_at = None;
-        self.shot_el_at = None;
         let scrubbing = matches!(self.mode, Mode::Scrub(_));
         // The viewport: a dragged timeline's stored frame, or the live frame captured this frame
         // for the timeline (or, headless, the live frame); otherwise `render` blits the live view.

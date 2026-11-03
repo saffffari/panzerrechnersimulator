@@ -74,6 +74,12 @@ impl FiniteCubeLamp {
     }
 }
 
+/// Review placement below the front hull roof, above driver (+X) and radio operator (-X).
+/// Authored positions, metres in hull frame; these are not historical fixture measurements.
+pub const FRONT_DOME_POSITIONS: [Vec3; 2] = [
+    Vec3::new(0.68, 1.88, 1.75), Vec3::new(-0.68, 1.88, 1.75),
+];
+
 pub const DOME_FIXTURE: FiniteCubeLamp = FiniteCubeLamp {
     // Owner-directed warm cabin practical (2026-10-30). The earlier atmosphere depended on
     // the instrument backlight illuminating the compartment; give that job to the actual dome

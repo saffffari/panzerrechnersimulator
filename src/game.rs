@@ -9445,6 +9445,7 @@ struct Slots {
     weapon_vfx: [usize; weapon_vfx::PAGES], // bounded raster trails, flash grains and expanding soot
     fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // advected hot/yellow/orange/red flame parcels
     fire_smoke_batch: [usize; FIRE_SMOKE_BATCHES], // sparse dark-grey cubic soot
+    front_domes: [usize; 2],
     bulb: usize,       // warm button/dome lens, lit only when the player is buttoned up
     turret_disc: usize, // articulated turret-basket floor; follows live traverse
     enigma: usize,     // physical machine mounted at the hull-right radio/bow-MG station
@@ -12382,6 +12383,14 @@ impl Game {
             dome_fixture.srgb,
         )); // amber cube mounted directly to the measured fan underside
 
+        // Owner-requested amber practicals for the driver and radio operator.
+        let front_domes = std::array::from_fn(|_| {
+            let slot = scene.len();
+            scene.push(box_mesh(Vec3::splat(-dome_fixture.half_size_m),
+                Vec3::splat(dome_fixture.half_size_m), dome_fixture.srgb));
+            slot
+        });
+
         // Procedural turret-basket floor. Its asymmetric cleat and inspection cover make the
         // otherwise circular plate's live traverse visible from inside the tank.
         let turret_disc = scene.len();
@@ -13109,6 +13118,7 @@ impl Game {
             fire_flame_batch,
             fire_smoke_batch,
             bulb,
+            front_domes,
             turret_disc,
             enigma,
             binocular_prop,
@@ -14241,6 +14251,7 @@ impl Game {
         // with their authored amber / white-grey instead of the FX orange. The bulb's mesh and
         // transported power are driven together; snow puffs sit idle until a near-miss arms one.
         renderer.mark_own_emissive(slots.bulb);
+        for slot in slots.front_domes { renderer.mark_own_emissive(slot); }
         renderer.mark_indicator_lamp(slots.bulb);
         for &s in &slots.annun { renderer.mark_indicator_lamp(s); }
         renderer.set_visible(slots.bulb, false);
@@ -20752,6 +20763,13 @@ impl Game {
             if dome.radiant_intensity > 0.0 { lights.push(dome); }
             shadowed_cabin_lights.push(dome);
             emitting_meshes.push(Some(self.slots.bulb));
+            for (slot, pos) in self.slots.front_domes.into_iter().zip(rig::FRONT_DOME_POSITIONS) {
+                let lamp = Self::drive_finite_lamp(r, slot, hm * Mat4::from_translation(pos),
+                    rig::DOME_FIXTURE.sample(practical_gain));
+                if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
+                shadowed_cabin_lights.push(lamp);
+                emitting_meshes.push(Some(slot));
+            }
             for &(frame, pos, color, radiant_intensity, source_radius) in rig::LAMPS {
                 let m = if frame == Frame::Hull { &hm } else { &tm };
                 let pos = m.transform_point3(pos);
@@ -35346,7 +35364,7 @@ mod tests {
 
     #[test]
     fn cabin_fixture_registration_reserves_actual_sights_and_optional_work_lamp() {
-        let base_count = 1 + crate::interior_rig::LAMPS.len() + 1
+        let base_count = 3 + crate::interior_rig::LAMPS.len() + 1
             + crate::interior_rig::ANNUNCIATOR_FIXTURES.len() + crate::lamp_mounts::BREECH.len();
         let sight_count = crate::lamp_mounts::SIGHT.iter().map(|station|station.len()).sum::<usize>();
         let panel_count = crew_status_panel::SHADOW_REGISTRATIONS;
@@ -35378,9 +35396,9 @@ mod tests {
             }
             assert_eq!(named.len(),crate::renderer::CABIN_LIGHT_REGISTRATIONS);
             assert_eq!(emitters.len(),named.len());
-            assert_eq!(&emitters[9..13],&[Some(301),None,None,Some(404)]);
-            assert_eq!(emitters[13],Some(500));
-            assert_eq!(emitters[21],work_installed.then_some(900));
+            assert_eq!(&emitters[11..15],&[Some(301),None,None,Some(404)]);
+            assert_eq!(emitters[15],Some(500));
+            assert_eq!(emitters[23],work_installed.then_some(900));
             assert_eq!(active.len(),before_work+usize::from(work_installed));
             for i in [10,11] {assert_eq!(named[i].radiant_intensity,0.0);}
             if work_installed { assert_eq!(named[21].radiant_intensity,0.001); }

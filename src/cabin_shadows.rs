@@ -981,7 +981,7 @@ mod tests {
 
     #[test]
     fn cabin_and_wreck_shadow_slots_share_the_expanded_shader_abi() {
-        assert_eq!(CABIN_LIGHTS, 33);
+        assert_eq!(CABIN_LIGHTS, 35);
         assert_eq!(WORLD_FIRE_LIGHTS, 8);
         assert_eq!(COMBAT_LIGHTS, 8);
         assert_eq!(INTERIOR_FIRE_LIGHTS, 8);

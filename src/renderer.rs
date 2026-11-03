@@ -840,7 +840,7 @@ pub const N_LIGHTS: usize = 32;
 /// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources,
 /// one optional work lamp and the radio sets' and driver's eleven panel lamps (`cabin_panels`).
 /// This is not the active packed-light budget or a shader array size.
-pub const CABIN_LIGHT_REGISTRATIONS: usize = 33;
+pub const CABIN_LIGHT_REGISTRATIONS: usize = 35;
 
 /// A modeled compact spherical emitter. `source_radius` is the physical luminous radius in metres,
 /// used only to regularize the near field of the inverse-square law; it is never an illumination
