@@ -1189,7 +1189,12 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   closed tank. 1 in every other path (test `the_lamp_power_is_one_unless_the_range_sets_it`). The
   range's LOOK dials are the display reproduction (look mode, exposure compensation, saturation,
   warmth, gamma, dither, palette, retro strength, white balance), not light; its fog dial sets the
-  physical medium's density. Its focal length is a 35 mm-format field of view. No depth of field:
+  physical medium's density. Its focal length is a 35 mm-format field of view. Impact smoke (2026-11-03,
+  the owner: it hid the strike): `weapon_vfx::impact_smoke_build`, an authored envelope for the
+  `Impact`, `ArmorImpact` and `PenetrationSmoke` bursts in every path: none for 0.12 s, a smooth
+  build over 0.5 s, 0.4 of the earlier density (earlier: full within 0.08 s). Authored, not
+  combustion or dust modelling. The range's EFFECTS dials scale it (review-only; test pins the
+  setter). No depth of field:
   the renderer has no lens model, and a screen-space blur would not be one.
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
   game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as

@@ -86,6 +86,21 @@ enum BurstKind { Muzzle, Blast, InteriorBlast,
     /// A cook-off's fireball (`game_cookoff`): an 88 mm burst's envelope with its visible size
     /// scaled by the factor (its fireball's diameter against the 88 mm burst's).
     CookoffFireball(f32), PressureVent(Vec3, f32), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet { normal:Vec3, energy_j:f32 }, BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
+/// Smoke from a round's impact on armour (and the penetration's puff): none while the flash and
+/// sparks play, then building over half a second, at 40 % of the earlier density (the owner,
+/// 2026-11-03: the smoke reached full density within 0.08 s and hid the strike; it should be light
+/// and build after the impact has begun to decay). An authored envelope, not combustion modelling.
+pub(super) const IMPACT_SMOKE_DELAY_S: f32 = 0.12;
+const IMPACT_SMOKE_RISE_S: f32 = 0.5;
+const IMPACT_SMOKE_SCALE: f32 = 0.4;
+
+/// The impact smoke's build-up at `age` s (0..IMPACT_SMOKE_SCALE), with the FEA range's review
+/// factors (1 and the authored delay everywhere else).
+fn impact_smoke_build(age: f32) -> f32 {
+    let delay = super::game_fea_range::review_smoke_delay();
+    smoothstep(delay, delay + IMPACT_SMOKE_RISE_S, age) * IMPACT_SMOKE_SCALE * super::game_fea_range::review_smoke_density()
+}
+
 impl BurstKind {
     fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet{..} | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
 }
@@ -909,7 +924,7 @@ impl Game {
                 let tangent_wind=wind-normal*wind.dot(normal);
                 let source=b.pos+normal*radius;
                 r.add_smoke_sweep(source,source+normal*b.age*0.6+tangent_wind*b.age*0.20,
-                    radius,0.24*(1.0-b.age/b.life).max(0.0).powi(2),
+                    radius,0.24*(1.0-b.age/b.life).max(0.0).powi(2)*impact_smoke_build(b.age),
                     crate::particle_motion::seed_phase(b.seed)+b.age*0.8,0.35);
                 continue;
             }
@@ -941,7 +956,8 @@ impl Game {
             let radius=if muzzle {b.radius*(0.22+age.sqrt()*0.70)}else{b.radius*(0.25+0.60*age.sqrt())};
             let center=if muzzle {b.pos+propellant_offset(b.dir,Vec3::ZERO,age,b.radius,0.5,wind)}
                 else {b.pos+Vec3::new(wind.x*age*0.55,age*b.radius*0.32,wind.y*age*0.55)};
-            let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*smoothstep(0.0,0.08,age);
+            let onset=if matches!(b.kind,BurstKind::Impact|BurstKind::ArmorImpact(_)) {impact_smoke_build(age)} else {smoothstep(0.0,0.08,age)};
+            let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*onset;
             for lobe in 0..3 {
                 let phase=crate::particle_motion::seed_phase(b.seed)+lobe as f32*2.1;
                 let offset=Vec3::new(phase.sin(),0.3*phase.cos(),phase.cos())*radius*0.30;
