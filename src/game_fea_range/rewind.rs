@@ -171,9 +171,9 @@ pub(super) struct Checkpoint {
     tissue: Option<crew_corpse_tissue::TissueState>,
     receipts: Vec<game_fea::FeaChainReceipt>,
     current: Option<game_fea::ImpactSolve>,
-    /// The surface blood: a copy at first (its world-save encoding sorts every map and set entry
-    /// by its bytes, a tenth of a second a frame late in a run, where a copy takes milliseconds
-    /// but holds about 12 MB), then encoded and patched on the rewind's worker (`BloodWorker`).
+    /// The surface blood: a copy (its world-save encoding sorts every map and set entry by its
+    /// bytes, a tenth of a second a frame late in a run, where a copy takes milliseconds but holds
+    /// about 12 MB); past `ENCODE_BLOOD_ABOVE_BYTES`, encoded and patched on the rewind's worker.
     blood: BloodKept,
     /// The game's clock (the renderer's `time`: `Game::update` advances it and reads the armour
     /// clock, pressure arrivals and projectile flight from it; the world save keeps it too).
@@ -651,8 +651,13 @@ pub(super) fn parted(a: &BTreeMap<String, u64>, b: &BTreeMap<String, u64>) -> Ve
 }
 
 /// The run's checkpoints are kept while they hold less than this; past it, every
-/// `SPARSE_EVERY`-th frame only (a seek then steps on from the last kept one).
-pub(super) const REWIND_BUDGET_BYTES: usize = 2_000_000_000;
+/// `SPARSE_EVERY`-th frame only (a seek then steps on from the last kept one). The owner's machine
+/// has 128 GB (2026-11-03: "budget is large").
+pub(super) const REWIND_BUDGET_BYTES: usize = 32_000_000_000;
+/// Below this the blood stays a copy in every checkpoint (about 12 MB each: faster to put back,
+/// and no worker encoding beside the simulation); past it each new copy is encoded and patched on
+/// the worker (`BloodWorker`).
+pub(super) const ENCODE_BLOOD_ABOVE_BYTES: usize = 8_000_000_000;
 pub(super) const SPARSE_EVERY: u32 = 8;
 
 impl Rewind {
@@ -710,7 +715,7 @@ impl Rewind {
         }
         let previous = self.latest(k.saturating_sub(1)).filter(|(i, _)| k > 0 || i.is_none()).map(|(_, c)| c.clone());
         let checkpoint = self.capture(g, r, previous.as_ref(), shot_t, tape_len);
-        if let Some(BloodKept::Copy(blood)) = checkpoint.as_ref().map(|c| &c.blood) {
+        if let Some(BloodKept::Copy(blood)) = checkpoint.as_ref().map(|c| &c.blood).filter(|_| self.bytes > ENCODE_BLOOD_ABOVE_BYTES) {
             let worker = self.blood.get_or_insert_with(BloodWorker::start);
             if worker.jobs.send((self.run_serial, k, blood.clone())).is_ok() {
                 worker.pending += 1;
