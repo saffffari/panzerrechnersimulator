@@ -17,7 +17,10 @@
 // [15] metered photopic cd/m^2, [16] metered scotopic, [17] pupil mm, [18] afterimage cd/m^2,
 // [19] bright coverage, [20] bright luminance cd/m^2, [21] arithmetic field onset reference,
 // [22] inside reference log10 photopic, [23] inside reference log10 scotopic (observer::inside_meter).
-// Lanes 24..31 remain reserved; renderer already allocates 32 lanes.
+// [24] glare veil over the field cd/m^2, [25] over the Gaussian (diagnostics), [27] last frame's
+// log-average photopic cd/m^2, [28] share of cells above GLARE_RATIO times it, [29] the scotopic
+// background (observer::GLARE_*), [30] 1 while the first-frame snap waits for that background.
+// Lanes 26 and 31 remain reserved (32 allocated).
 @group(0) @binding(1) var<storage, read_write> state: array<f32>;
 
 struct ExposureClock {
@@ -49,7 +52,10 @@ struct ExposureClock {
 // The same 256 strided accumulations used by the original single workgroup, distributed
 // across independent workgroups. Each lane's sample order and the final reduction tree stay
 // unchanged. This is scheduling only: no fewer pixels, changed meter or adaptation law.
-struct MeterSum { p: vec4<f32>, s: vec4<f32>, w: vec4<f32> };
+// v: the photopic glare veil of small bright sources over the field, Gaussian and fovea windows,
+// cd/m^2, already per window (not to be averaged); u: x the number of cells above GLARE_RATIO
+// times the background, y..w the scotopic veil over the same three windows.
+struct MeterSum { p: vec4<f32>, s: vec4<f32>, w: vec4<f32>, v: vec4<f32>, u: vec4<f32> };
 @group(0) @binding(3) var<storage, read_write> meter_sums: array<MeterSum, 256>;
 
 // Per-thread partial sums: linear photopic sums (field, gaussian, fovea, bright luminance),
@@ -231,6 +237,16 @@ fn sample_meter(li: u32) -> MeterSum {
     var sp = vec4(0.0);
     var ss = vec4(0.0);
     var sw = vec4(0.0);
+    var sv = vec4(0.0);
+    // The field and Gaussian windows in square degrees, for a source's veil over each.
+    let field_deg2 = degrees(2.0 * atan(tan_x)) * degrees(2.0 * atan(tan_y));
+    let sigma_deg = OBS_GAUSSIAN_SIGMA_DEG;
+    let cell_sr = (2.0 * tan_x / f32(grid.x)) * (2.0 * tan_y / f32(grid.y));
+    let outdoors = (u32(clock.mode + 0.5) & 3u) == 0u;
+    var su = vec4(0.0);
+    // Glare treatment needs the previous frame's background; it stands down while the bright
+    // cells cover too much of the field (lane 28, their share last frame).
+    let glare_on = outdoors && state[27] > 0.0 && state[28] < OBS_GLARE_MAX_COVERAGE;
     var i = li;
     loop {
         if (i >= total) { break; }
@@ -260,8 +276,45 @@ fn sample_meter(li: u32) -> MeterSum {
         let angle = acos(clamp(1.0 / length(ray), -1.0, 1.0));
         let wg = exp(-0.5 * (angle * angle) / (sigma * sigma));
         let wf = select(0.0, 1.0, angle <= fovea);
-        sp += vec4(lp, wg * lp, wf * lp, 0.0);
-        ss += vec4(ls, wg * ls, wf * ls, 0.0);
+        // A small source far brighter than the frame (a lit window, a fire, the Sun's disc)
+        // adapts the rest of the field only through the eye's scatter round its image, not as a
+        // share of the field average: the retina adapts locally (observer.rs GLARE_*). Against the
+        // previous frame's log-average (geometric mean) luminance, outdoors,
+        // and while such cells cover under GLARE_MAX_COVERAGE of the field (a large bright area
+        // adapts the eye as before), a cell above GLARE_RATIO times it enters the fovea, Gaussian
+        // and field windows at that background and adds the CIE disability-glare veil to each.
+        var field_p = lp;
+        var field_s = ls;
+        let background = state[27];
+        let background_s = state[29];
+        let glare_cell = background > 0.0 && lp > OBS_GLARE_RATIO * background;
+        if (glare_cell) {
+            su.x += 1.0;
+        }
+        if (glare_on && glare_cell) {
+            let solid = cell_sr / pow(length(ray), 3.0);
+            let e_p = (lp - background) * solid;
+            let e_s = max(ls - background_s, 0.0) * solid;
+            let theta = degrees(angle);
+            let gauss = OBS_GLARE_INTEGRAL_DEG2 * exp(-0.5 * theta * theta / (sigma_deg * sigma_deg))
+                / (6.2831853 * sigma_deg * sigma_deg);
+            let field = OBS_GLARE_INTEGRAL_DEG2 / max(field_deg2, 1.0);
+            // The fovea's mean veil: 10/theta^2 at the window's centre for a source outside it
+            // (named); for a source inside, at theta from the centre, the disc's mean of 10/r^2 cut
+            // at CIE 146's lower validity bound theta_min, 20 ln((R^2 - theta^2) / (theta_min R)) / R^2,
+            // never under its value at the rim.
+            let r_f = OBS_FOVEA_RADIUS_DEG;
+            let inside_mean = 20.0 * log(max(r_f * r_f - theta * theta, 1.0e-6) / (OBS_GLARE_MIN_DEG * r_f))
+                / (r_f * r_f);
+            let fov = select(10.0 / max(theta * theta, r_f * r_f),
+                max(inside_mean, 10.0 / (r_f * r_f)), theta <= r_f);
+            sv += vec4(e_p * field, e_p * gauss, e_p * fov, 0.0);
+            su += vec4(0.0, e_s * field, e_s * gauss, e_s * fov);
+            field_p = background;
+            field_s = background_s;
+        }
+        sp += vec4(field_p, wg * field_p, wf * field_p, 0.0);
+        ss += vec4(field_s, wg * field_s, wf * field_s, 0.0);
         // w: the frame's log10 luminance sum (its log-average, the inside reference's floor).
         sw += vec4(1.0, wg, wf, log10(clamp_luminance(lp)));
         if (lp > flash_level) {
@@ -270,7 +323,7 @@ fn sample_meter(li: u32) -> MeterSum {
         }
         i += 256u;
     }
-    return MeterSum(sp, ss, sw);
+    return MeterSum(sp, ss, sw, sv, su);
 }
 
 @compute @workgroup_size(8)
@@ -305,17 +358,34 @@ fn finish_meter(li: u32, sum: MeterSum) {
         workgroupBarrier();
         stride = stride >> 1u;
     }
-    if (li != 0u) { return; }
-
+    // The glare sums reuse two of the arrays (12 KiB of workgroup memory, under WebGPU's 16 KiB).
     let p = partial_p[0];
     let s = partial_s[0];
+    workgroupBarrier();
+    partial_p[li] = sum.v;
+    partial_s[li] = sum.u;
+    workgroupBarrier();
+    stride = 128u;
+    loop {
+        if (stride == 0u) { break; }
+        if (li < stride) {
+            partial_p[li] += partial_p[li + stride];
+            partial_s[li] += partial_s[li + stride];
+        }
+        workgroupBarrier();
+        stride = stride >> 1u;
+    }
+    if (li != 0u) { return; }
+
     let w = partial_w[0];
-    let field_p = p.x / max(w.x, 1.0);
-    let field_s = s.x / max(w.x, 1.0);
-    let gauss_p = select(field_p, p.y / w.y, w.y > 1e-6);
-    let gauss_s = select(field_s, s.y / w.y, w.y > 1e-6);
-    let fovea_p = select(gauss_p, p.z / w.z, w.z > 0.5);
-    let fovea_s = select(gauss_s, s.z / w.z, w.z > 0.5);
+    let v = partial_p[0];
+    let u = partial_s[0];
+    let field_p = p.x / max(w.x, 1.0) + v.x;
+    let field_s = s.x / max(w.x, 1.0) + u.y;
+    let gauss_p = select(field_p, p.y / w.y + v.y, w.y > 1e-6);
+    let gauss_s = select(field_s, s.y / w.y + u.z, w.y > 1e-6);
+    let fovea_p = select(gauss_p, p.z / w.z + v.z, w.z > 0.5);
+    let fovea_s = select(gauss_s, s.z / w.z + u.w, w.z > 0.5);
     // One shared view adaptation driven by the incident light in the existing spatial windows.
     // No aperture classification, independent port exposure, or scene-dependent luminance floor.
     let metered_p = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_p + OBS_GAUSSIAN_WEIGHT * gauss_p
@@ -344,15 +414,25 @@ fn finish_meter(li: u32, sum: MeterSum) {
     let coverage = s.w / max(w.x, 1.0);
     let bright = select(0.0, p.w / max(s.w, 1.0), s.w > 0.0);
     let monocular = clock.monocular > 0.5;
+    // Unprimed: no frame has yet given the glare treatment its background (lane 27).
+    let glare_unprimed = (mode & 3u) == 0u && state[27] <= 0.0;
     state[15] = lp;
     state[16] = ls;
+    // The glare treatment's state for the next frame: the frame's log-average photopic and
+    // scotopic luminance (the background a glare cell stands in for) and the glare cells' share.
+    // Diagnostics: the photopic veil added to the field and Gaussian windows.
+    state[24] = v.x;
+    state[25] = v.y;
+    state[27] = pow(10.0, w.w / max(w.x, 1.0));
+    state[28] = u.x / max(w.x, 1.0);
+    state[29] = clamp_luminance(state[27] * clamp_luminance(field_s) / clamp_luminance(field_p));
     state[19] = coverage;
     state[20] = bright;
 
     // A view's first observed frame: the crewman is already adapted to what he sees, as a real
     // observer is before the first presented frame. An optic's own eye snaps too when the eye
     // comes back to it (observer::OPTIC_RESNAP_GAP_S).
-    if (state[1] < 0.0 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP)) {
+    if (state[1] < 0.0 || state[30] > 0.5 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP)) {
         state[22] = log10(metered_p);
         state[23] = log10(metered_s);
         let pupil = pupil_diameter(lp, monocular);
@@ -366,6 +446,9 @@ fn finish_meter(li: u32, sum: MeterSum) {
         state[10] = 0.0;
         state[11] = 1.0e6;
         state[21] = field;
+        // Outdoors, the snap waits one frame for the glare treatment's background, so the eye is
+        // not first adapted to small sources the treatment then takes out of the field.
+        state[30] = select(0.0, 1.0, glare_unprimed);
         state[1] = clock.time_s;
         write_mapping(monocular);
         return;
