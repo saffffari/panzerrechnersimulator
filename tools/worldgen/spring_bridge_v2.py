@@ -878,6 +878,46 @@ def war_trash(P, cx, cz, centre_x, route, variant, craters, town_rects):
         strew(key, x, z, [('stretcher_occ', 1.0)], 'dead_verge', (1.0, 1.0))
 
 
+def bridge_fight(P, cx, cz, centre_x, deck_y, variant):
+    """The crossing was fought for: men fell along the railings where the only cover was, their
+    kit lies where it dropped, and shelled timber and steel lie on the deck; at the water's edge
+    below, the men who went into the river trying to cross lie on the banks. Deck pieces stand at
+    the deck's height (the terrain under the span is the river bed)."""
+    b = variant['battle']
+    dead = ['dead_down', 'dead_side', 'dead_curled', 'dead_down', 'dead_side']
+    def on_deck(name, x, z, yaw, scale=1.0, tag='bridge_dead'):
+        path = ASSET[name]
+        if (ASSET_ROOT/path).exists():
+            P.m['placements'].append([P.asset(path), cc.r3(x), cc.r3(deck_y), cc.r3(z), round(yaw % 360.0, 2), cc.r3(scale)])
+            P.count[tag] = P.count.get(tag, 0)+1
+    span = BRIDGE_HALF_L-3.0
+    for k in range(int(9*b)+3):
+        key = f'bd{k}'
+        x = cx-span+rnd(key, 1)*2*span
+        side = 1.0 if rnd(key, 2) < 0.5 else -1.0
+        z = cz+side*(BRIDGE_HALF_W-0.9-rnd(key, 3)*1.2)       # against the railing, out of the tank lane
+        on_deck(dead[int(rnd(key, 4)*len(dead))], x, z, (90 if side > 0 else 270)+(rnd(key, 5)-0.5)*90)
+        for j in range(int(rnd(key, 6)*3)):
+            kk = f'{key}k{j}'
+            on_deck(pick(kk, [('helmet', .45), ('canister', .2), ('ammo_burst', .2), ('jerrycan', .15)]),
+                    x+(rnd(kk, 1)-0.5)*3, z-side*rnd(kk, 2)*1.0, rnd(kk, 3)*360, 1.0, 'bridge_kit')
+    for k in range(int(40*b)+10):
+        key = f'bdeb{k}'
+        x = cx-span+rnd(key, 1)*2*span
+        side = 1.0 if rnd(key, 2) < 0.5 else -1.0
+        z = cz+side*(BRIDGE_HALF_W-0.5-rnd(key, 3)*2.0)
+        on_deck(pick(key, [('charred', .3), ('plank2', .2), ('scrap', .15), ('scrap3', .15), ('brick3', .1), ('helmet', .1)]),
+                x, z, rnd(key, 4)*360, 0.7+0.6*rnd(key, 5), 'bridge_debris')
+    for side in (-1, 1):
+        for k in range(int(14*b)+4):
+            key = f'shore{side}.{k}'
+            z = cz+(rnd(key, 1)-0.5)*260
+            x = float(centre_x(np.array([z]))[0])+side*(RIVER_HALF_W+0.8+rnd(key, 2)*3.5)
+            P.put(dead[int(rnd(key, 3)*len(dead))], x, z, rnd(key, 4)*360, 1.0, sink=0.05, tag='shore_dead')
+            if rnd(key, 5) < 0.4:
+                P.put('helmet', x+(rnd(key, 6)-0.5)*3, z+(rnd(key, 7)-0.5)*3, rnd(key, 8)*360, 1.0, tag='shore_dead')
+
+
 def night_lights(P, H, grid, cx, cz, deck_y, town, craters, variant):
     """Lights for the night (environment_authoring's authored lights). The front was blacked out:
     the bridge's lamp is a shielded blackout lamp on its pole at the camp side (warm, low); the
@@ -1098,6 +1138,7 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     scatter_ground(P, town, streets, cx, cz, centre_x, variant, trees_xz)
     battlefield(P, cx, cz, centre_x, route, variant, kept_craters, town_rects)
     war_trash(P, cx, cz, centre_x, route, variant, kept_craters, town_rects)
+    bridge_fight(P, cx, cz, centre_x, deck_y, variant)
     for x, z, r in kept_craters:
         if rnd(f'crs{x:.0f}{z:.0f}', 1) < 0.35:
             P.put('scorch', x, z, rnd(f'crs{x:.0f}{z:.0f}', 2)*360, r*0.9, sink=0.0, tag='crater_scorch')
