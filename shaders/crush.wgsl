@@ -539,10 +539,34 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
     return out;
 }
 
+// The defocus of a concussed eye: its blur circle, a uniform disc `r_px` pixels in radius
+// (geometric optics), each pixel of the internal grid weighted by its share inside the circle (its
+// centre's distance from the rim, a pixel wide). From 2 pixels up the disc covers the diagonal
+// neighbours as fully as the axial ones. The former five taps (the centre and four axial pixels)
+// drew every bright point as a cross: a hot chip became a plus with arms (the owner, 2026-11-03:
+// never a star particle shape). Mirrored for its test in src/point_footprint.rs.
+fn defocus_disc(uv: vec2<f32>, texel: vec2<f32>, r_px: f32) -> vec3<f32> {
+    let reach = i32(ceil(r_px));
+    var sum = vec3(0.0);
+    var weight = 0.0;
+    for (var y = -reach; y <= reach; y += 1) {
+        for (var x = -reach; x <= reach; x += 1) {
+            let o = vec2(f32(x), f32(y));
+            let w = clamp(r_px + 0.5 - length(o), 0.0, 1.0);
+            if (w > 0.0) {
+                sum += textureSampleLevel(hdr, samp, uv + o * texel, 0.0).rgb * w;
+                weight += w;
+            }
+        }
+    }
+    return sum / max(weight, 1e-6);
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-    // A close heavy hit briefly knocks the eyes out of focus. This compact optical defocus keeps
-    // silhouettes legible, while the tiny asymmetric pulse prevents it reading as a static filter.
+    // A close heavy hit briefly knocks the eyes out of focus: a blur circle (`defocus_disc`) of 2 to
+    // 5.5 pixels keeps silhouettes legible, while the tiny asymmetric pulse prevents it reading as a
+    // static filter.
     let concussion = clamp(cr.concussion, 0.0, 1.0);
     let hd = vec2<f32>(textureDimensions(hdr));
     // One native-pixel decision is reused by both palette and LDR quantization. Screen Bayer8
@@ -553,13 +577,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     }
     let texel = 1.0 / max(hd, vec2(1.0));
     let pulse = vec2(sin(cr.frame * 0.31), cos(cr.frame * 0.27));
-    let radius = texel * (1.0 + 4.5 * concussion);
-    let centre = textureSample(hdr, samp, in.uv + pulse * texel * concussion * 0.7).rgb;
-    let blur = centre * 0.40
-        + textureSample(hdr, samp, in.uv + vec2(radius.x, 0.0)).rgb * 0.15
-        + textureSample(hdr, samp, in.uv - vec2(radius.x, 0.0)).rgb * 0.15
-        + textureSample(hdr, samp, in.uv + vec2(0.0, radius.y)).rgb * 0.15
-        + textureSample(hdr, samp, in.uv - vec2(0.0, radius.y)).rgb * 0.15;
+    let focus_uv = in.uv + pulse * texel * concussion * 0.7;
+    let centre = textureSample(hdr, samp, focus_uv).rgb;
+    var blur = centre;
+    if (concussion > 0.0) { blur = defocus_disc(focus_uv, texel, 2.0 + 3.5 * concussion); }
     let point = textureLoad(point_layer, clamp(vec2<i32>(in.uv * hd), vec2(0), vec2<i32>(hd) - vec2(1)), 0).rgb;
     var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion), in.uv);
     if (cr.debug.x > 0.5) { c = vec3(select(0.0, 4.0, dot(point, vec3(1.0)) > 0.0), dot(centre, vec3(1.0)) * cr.exposure, 0.0); }
