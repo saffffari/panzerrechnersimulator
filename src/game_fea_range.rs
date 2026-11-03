@@ -365,22 +365,24 @@ const AMBER: [f32; 4] = [0.807, 0.205, 0.006, 1.0];
 const RED: [f32; 4] = [0.95, 0.22, 0.18, 1.0];
 const GREEN: [f32; 4] = [0.35, 0.9, 0.3, 1.0];
 const BLUE: [f32; 4] = [0.3, 0.5, 1.0, 1.0];
-/// Very dark grey (linear).
-const PANEL_FILL: [f32; 4] = [0.007, 0.007, 0.007, 1.0];
+/// Black.
+const PANEL_FILL: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const INK: [f32; 4] = [0.92, 0.92, 0.92, 1.0];
 const DIM: [f32; 4] = [0.42, 0.42, 0.42, 1.0];
 const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const BOX: [f32; 4] = [0.035, 0.035, 0.035, 1.0];
 const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
-/// The left block's margin and width, and the buttons there (label, column, row).
+/// The left block (title, crew, axes, status), and the right block (buttons) with its width.
 const LEFT_X: f32 = 0.008;
 const LEFT_W: f32 = 0.15;
+const RIGHT_W: f32 = 0.15;
+const RIGHT_X: f32 = 1.0 - 0.006 - RIGHT_W;
 const BUTTONS: [(&str, usize, usize); 6] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1)];
 const BUTTON_H: f32 = 0.028;
 /// The groups' area: its left edge, the tabs' row and the rows' columns.
-const GROUPS_X: f32 = 0.215;
-const COLS_W: f32 = 0.16;
+const GROUPS_X: f32 = 0.168;
+const COLS_W: f32 = 0.166;
 const ROWS_PER_COL: usize = 9;
 const BTN_W: f32 = 0.011;
 /// The panel's hide button (its show button sits in the same corner when it is hidden).
@@ -400,13 +402,13 @@ const HANDLE_DRAG_STEP: f32 = 0.04;
 /// A button's rectangle (x, y, w, h) in the panel's left block.
 fn button_rect(col: usize, row: usize) -> [f32; 4] {
     let gap = 0.004;
-    let w = (LEFT_W - 2.0 * gap) / 3.0;
-    [LEFT_X + col as f32 * (w + gap), 1.0 - PANEL_H + 0.034 + row as f32 * (BUTTON_H + 0.005), w, BUTTON_H]
+    let w = (RIGHT_W - 2.0 * gap) / 3.0;
+    [RIGHT_X + col as f32 * (w + gap), 1.0 - PANEL_H + 0.040 + row as f32 * (BUTTON_H + 0.005), w, BUTTON_H]
 }
 
 /// The panel's hide (or, hidden, show) button.
 fn hide_rect(hidden: bool) -> [f32; 4] {
-    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [1.0 - HIDE_W - 0.006, 1.0 - PANEL_H + 0.006, HIDE_W, 0.024] }
+    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [RIGHT_X + RIGHT_W - HIDE_W, 1.0 - PANEL_H + 0.008, HIDE_W, 0.024] }
 }
 
 
@@ -1057,7 +1059,9 @@ impl Range {
             lo = lo.min(p);
             hi = hi.max(p);
         }
-        self.r.solid_meshes_within(lo, hi)
+        // Everything of the vehicle, not only its solid parts: the glass, the periscope screens,
+        // the lamp lenses, the crew and the effects inside it are cut with it (the camera's only).
+        self.r.meshes_centred_within(lo, hi, 20.0)
     }
 
     /// The camera ray through the window point `cursor` (0..1; the viewport's centre for a point
@@ -2129,6 +2133,35 @@ impl Range {
         self.status = format!("VIEW ALONG THE HULL'S {}{} AXIS", if positive { "+" } else { "-" }, ["X", "Y", "Z"][axis]);
     }
 
+    /// The five crew as a plan of the tank seen from above, front up (the tank's left on the
+    /// left): each man at his seat, white alive, amber wounded, dim amber out cold, red with a
+    /// cross dead.
+    fn draw_crew_plan(&mut self, at: [f32; 2], height: f32) {
+        let aspect = self.win[0] / self.win[1].max(1.0);
+        let w = height * 0.55 / aspect;
+        let px = 1.0 / self.win[1].max(1.0);
+        let outline = [0.35, 0.35, 0.35, 1.0];
+        let frame = |r: &mut Renderer, x: f32, y: f32, fw: f32, fh: f32| {
+            r.fill_rect(x, y, fw, px, outline);
+            r.fill_rect(x, y + fh, fw, px, outline);
+            r.fill_rect(x, y, px / aspect, fh, outline);
+            r.fill_rect(x + fw, y, px / aspect, fh, outline);
+        };
+        frame(&mut self.r, at[0], at[1], w, height);
+        frame(&mut self.r, at[0] + w * 0.18, at[1] + height * 0.30, w * 0.64, height * 0.44);
+        let seats = [(CrewRole::Driver, 0.30, 0.15, "D"), (CrewRole::Radioman, 0.70, 0.15, "R"), (CrewRole::Gunner, 0.36, 0.40, "G"),
+            (CrewRole::Commander, 0.34, 0.63, "C"), (CrewRole::Loader, 0.67, 0.52, "L")];
+        for (role, u, v, letter) in seats {
+            let man = self.g.crew_solo.man(role);
+            let colour = if man.dead { RED } else if man.unconscious_s > 0.0 { [0.45, 0.2, 0.02, 1.0] }
+                else if !man.wounds.is_empty() { AMBER } else { INK };
+            let c = [at[0] + w * u, at[1] + height * v];
+            let d = height * 0.16;
+            self.r.fill_rect(c[0] - d * 0.5 / aspect, c[1] - d * 0.5, d / aspect, d, colour);
+            self.text_bold(if man.dead { "X" } else { letter }, c[0], c[1], TEXT * 0.6, BLACK, crate::ui::Align::Center);
+        }
+    }
+
     /// The hull's axes as the camera sees them (X red, Y green, Z blue), in the viewport's corner;
     /// a label clicked looks along its axis.
     fn draw_axes_gizmo(&mut self) {
@@ -2137,7 +2170,7 @@ impl Range {
         let right = f.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(f).normalize_or_zero();
         // On the panel, right of the buttons; with the panel hidden, the viewport's corner.
-        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [LEFT_X + LEFT_W + 0.03 / aspect + 0.012, 1.0 - PANEL_H + 0.07] };
+        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [LEFT_X + LEFT_W - 0.06 / aspect, 1.0 - PANEL_H + 0.085] };
         let hull = self.g.player.hull_model();
         for (axis, colour, name) in [(Vec3::X, RED, "X"), (Vec3::Y, GREEN, "Y"), (Vec3::Z, BLUE, "Z")] {
             let d = hull.transform_vector3(axis).normalize_or_zero();
@@ -2230,24 +2263,38 @@ impl Range {
         lines
     }
 
-    /// The open groups' rows, each with its column's left edge and its centre's height: every
-    /// group starts a new column; columns past the panel's right edge are left out.
-    fn rows(&self) -> Vec<(Knob, f32, f32)> {
+    /// The open groups laid out as one flow down and across the columns: each group's name, then
+    /// its rows, ROW_H a line, as far as the columns reach (no space left between groups).
+    fn layout(&self) -> (Vec<(Knob, f32, f32)>, Vec<(usize, f32, f32)>) {
         let top = 1.0 - PANEL_H + 0.042;
-        let mut out = Vec::new();
-        let mut col = 0usize;
+        let (mut rows, mut headers) = (Vec::new(), Vec::new());
+        let mut line = 0usize;
+        let place = |line: usize| (GROUPS_X + (line / ROWS_PER_COL) as f32 * COLS_W, top + ((line % ROWS_PER_COL) as f32 + 0.5) * ROW_H);
         for g in (0..GROUPS.len()).filter(|&g| self.open[g]) {
-            let rows = group_rows(g);
-            for (i, k) in rows.iter().enumerate() {
-                let x = GROUPS_X + (col + i / ROWS_PER_COL) as f32 * COLS_W;
-                if x + COLS_W > 1.0 + 0.004 {
-                    return out;
-                }
-                out.push((*k, x, top + ((i % ROWS_PER_COL) as f32 + 0.5) * ROW_H));
+            // A group's name never ends a column.
+            if line % ROWS_PER_COL == ROWS_PER_COL - 1 {
+                line += 1;
             }
-            col += rows.len().div_ceil(ROWS_PER_COL);
+            let (x, y) = place(line);
+            if x + COLS_W > RIGHT_X + 0.002 {
+                break;
+            }
+            headers.push((g, x, y));
+            line += 1;
+            for k in group_rows(g) {
+                let (x, y) = place(line);
+                if x + COLS_W > RIGHT_X + 0.002 {
+                    return (rows, headers);
+                }
+                rows.push((k, x, y));
+                line += 1;
+            }
         }
-        out
+        (rows, headers)
+    }
+
+    fn rows(&self) -> Vec<(Knob, f32, f32)> {
+        self.layout().0
     }
 
     /// The row under `c`, with its column's left edge.
@@ -2262,7 +2309,7 @@ impl Range {
     /// The tabs' rectangles (x, y, w, h), one a group.
     fn tab_rects(&self) -> Vec<[f32; 4]> {
         let size = TEXT * 0.8;
-        let mut x = GROUPS_X;
+        let mut x = GROUPS_X + 0.004;
         GROUPS.iter().map(|name| {
             let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.012;
             let rect = [x, 1.0 - PANEL_H + 0.008, w, 0.022];
@@ -2332,11 +2379,14 @@ impl Range {
         };
         self.label_box("FEA RANGE", LEFT_X, top + 0.018, TEXT * 0.85);
         self.text(&format!("{mode}  T {:.4} S", t), LEFT_X + LEFT_W, top + 0.018, TEXT * 0.8, INK, crate::ui::Align::Right);
+        self.draw_crew_plan([LEFT_X, top + 0.036], 0.09);
         for (label, col, row) in BUTTONS {
             let [x, y, w, h] = button_rect(col, row);
             let lit = (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some());
             let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
-            self.r.fill_rect(x, y, w, h, if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX });
+            let fill = if label == "FIRE" { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
+                else if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX };
+            self.r.fill_rect(x, y, w, h, fill);
             let rec_label = self.recorder.as_ref().map(|r| format!("REC {:.0} S", r.frames as f32 / 30.0));
             let text = match label {
                 "PLAY" if self.playing => "PAUSE",
@@ -2345,9 +2395,10 @@ impl Range {
             };
             self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.85, if lit { BLACK } else { INK }, crate::ui::Align::Center);
         }
-        let alive = CrewRole::ALL.iter().filter(|&&role| !self.g.crew_solo.man(role).dead).count();
         let mut notes: Vec<(String, [f32; 4])> = vec![(self.status.to_uppercase(), INK)];
-        notes.push((format!("CREW ALIVE {alive}/5. {}", self.last_chain.to_uppercase()), DIM));
+        if !self.last_chain.is_empty() {
+            notes.push((self.last_chain.to_uppercase(), DIM));
+        }
         if self.section.on {
             notes.push(("SECTION FOR THE CAMERA ONLY: LIGHT AND PHYSICS SEE THE WHOLE TANK".into(), DIM));
         }
@@ -2355,7 +2406,7 @@ impl Range {
             notes.push(("LET GO OF THE TIMELINE TO TAKE THE SIMULATION TO THIS FRAME".into(), INK));
         }
         let chars = ((GROUPS_X - LEFT_X - 0.01) * self.win[0] / (0.45 * TEXT * 0.72 * self.win[1])).max(10.0) as usize;
-        let mut y = top + 0.112;
+        let mut y = top + 0.142;
         'notes: for (text, colour) in notes {
             for line in Self::wrap(&text, chars).into_iter().take(3) {
                 if y > 0.992 {
@@ -2372,6 +2423,11 @@ impl Range {
                 self.r.fill_rect(x, y, w, h, INK);
             }
             self.text_bold(GROUPS[g], x + w * 0.5, y + h * 0.5, TEXT * 0.8, if chosen { BLACK } else { DIM }, crate::ui::Align::Center);
+        }
+        let (_, headers) = self.layout();
+        for (g, x, y) in headers {
+            self.text_bold(GROUPS[g], x + 0.004, y, TEXT * 0.72, DIM, crate::ui::Align::Left);
+            self.r.fill_rect(x + 0.004, y + ROW_H * 0.42, COLS_W - 0.02, 1.0 / self.win[1].max(1.0), [0.2, 0.2, 0.2, 1.0]);
         }
         let [x, y, w, h] = hide_rect(false);
         self.r.fill_rect(x, y, w, h, BOX);
