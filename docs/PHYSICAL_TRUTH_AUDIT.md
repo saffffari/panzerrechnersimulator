@@ -1571,7 +1571,7 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   shipping presets keep the constants above.
 - **The round as a deformable body** (2026-11-03, `fea_damage::shot`, review film
   `fea-shot-film`; the owner: shells must squash, bend, ricochet and spin off the armour and break
-  into shrapnel, each by its kind). Status: joined to play for perforations only. The round of a
+  into shrapnel, each by its kind). Status: joined to play for perforations and ricochets. The round of a
   perforation is solved at 8 cells across (`game_fea::SHOT_CELLS_ACROSS`, every preset; 0.1-0.4 s
   on a worker beside the plate's lattice, the tick waiting for both) over one crossing time; the
   chain carries its residual mass past the plate (`chain::run_with_residual`: capability at the
@@ -1580,8 +1580,17 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   that mass, the pieces it shed through the plate join the interior's hot fragments at their solved
   motion, spin and heat (placed where each one's path crosses the back face, a piece still in the
   cavity going on unresisted; slower than 20 m/s it stays; filler pieces are the burst's), and a
-  bursting round breaks only the steel it kept. Ricochets, stops and lodged rounds still use the
-  rigid round in play (drawn undeformed: named). The review film solves at 12 across. Each kinetic round is a
+  bursting round breaks only the steel it kept. A ricochet off any vehicle's armour is solved the
+  same way on a worker and joined at that round's next contact (so the result never depends on when
+  the worker ends): from then on the round carries its residual mass share into crew, infantry and
+  gun contacts, and meets the next plate at the speed giving its lighter body the same DeMarre
+  capability. The ricochet's outgoing velocity stays the authored `ricochet::response` (the solve's
+  own exit speed is within a few per cent of it in the film's cases; named), the pieces it sheds
+  outside the vehicle are not followed (named), a round saved mid-solve keeps its whole mass
+  (named), and a second ricochet re-solves the intact round's build at its lighter share (named).
+  Stops and lodged rounds still use the rigid round in play (drawn undeformed: named); flying
+  rounds are drawn as tracer streaks, so the deformed shape shows in the review film and the range
+  editor only. The review film solves at 12 across. Each kinetic round is a
   voxel lattice, 12 cells across its calibre, built from its kind: a hardened nose, a body, a soft
   base, a piercing cap (APCBC), a sheet-steel ballistic cap (2.5 mm, carried at its sheet's share of
   a cell), the filler in its cavity, or a tungsten-carbide core in a soft-steel carrier (APCR), its
