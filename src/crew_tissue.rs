@@ -434,7 +434,7 @@ fn build_anatomical(figure: &CpuMesh, volume: &crate::crew_anatomy::Volume) -> T
 
 /// The figure's cells, skin within one cell of its surface and muscle deeper, and bone where the
 /// fitted skeleton's triangles pass (see the module doc).
-fn build_procedural(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -> TissueModel {
+pub(super) fn build_procedural(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -> TissueModel {
     let triangles = figure.indices.len() / 3;
     let corner = |t: usize, i: usize| figure.vertices[figure.indices[3 * t + i] as usize];
     let points = |t: usize| [0, 1, 2].map(|i| Vec3::from(corner(t, i).pos));

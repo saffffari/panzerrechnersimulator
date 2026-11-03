@@ -327,7 +327,9 @@ impl TissueDraw {
 
     /// Advance the pieces by `dt`: gravity; the vehicle's own surfaces (`FragmentWorld`) and the
     /// grains already at rest, each met by a sphere of the piece's bounding radius about its
-    /// centre (named: not its cells), with no rotational response to a contact (named). A piece
+    /// centre, and the vehicle's surfaces also by the piece's outermost cells (the one furthest
+    /// along each of 14 directions, each swept with its turn and its half edge ahead; named: not
+    /// every cell), with no rotational response to a contact (named). A piece
     /// that lands harder than its own bonds hold (half its mass times the square of its speed
     /// into the surface, against the breaking energy of its intact bonds) breaks into single
     /// grains, each leaving with the piece's motion at its own place. A piece rests on a face
@@ -364,6 +366,8 @@ impl TissueDraw {
             let parent_inverse = blood_parent_model(player, piece.frame).inverse();
             let gravity = parent_inverse.transform_vector3(Vec3::new(0.0, -9.81, 0.0));
             let up = parent_inverse.transform_vector3(Vec3::Y).normalize_or_zero();
+            let half_cell = 0.5 * model.cell * piece.scale;
+            let outer = outer_cells(&model, piece);
             let steps = (piece.vel.length() * dt / 0.03).ceil().clamp(1.0, 48.0) as usize;
             let h = dt / steps as f32;
             for _ in 0..steps {
@@ -373,6 +377,27 @@ impl TissueDraw {
                 let ahead = travel + travel.normalize_or_zero() * piece.radius;
                 let mut contact = world.first_surface(piece.frame, piece.pos, piece.pos + ahead)
                     .map(|(fraction, normal)| (fraction * ahead.length(), normal));
+                // The outer cells, from this pose to the next (its turn included), each with its
+                // half edge ahead; a hit is put as the centre's distance (the sphere's convention).
+                let turned = (Quat::from_scaled_axis(piece.spin * h) * piece.rot).normalize();
+                for &offset in &outer {
+                    let from = piece.pos + piece.rot * offset;
+                    let to = piece.pos + travel + turned * offset;
+                    let path = to - from;
+                    let span = path.length();
+                    if span <= 1.0e-7 {
+                        continue;
+                    }
+                    let end = to + path / span * half_cell;
+                    if let Some((fraction, normal)) = world.first_surface(piece.frame, from, end) {
+                        let reach = fraction * (span + half_cell) - half_cell;
+                        let distance = reach / span * length + piece.radius;
+                        if contact.is_none_or(|(d, _)| distance < d) {
+                            let normal = if normal.dot(path) > 0.0 { -normal } else { normal };
+                            contact = Some((distance, normal));
+                        }
+                    }
+                }
                 // Grains at rest along the way: the nearest whose sphere the piece's would enter.
                 if length > 0.0 {
                     let dir = travel / length;
@@ -598,5 +623,79 @@ impl TissueDraw {
             "piece_cells": self.pieces.iter().map(|p| p.cells.len()).sum::<usize>(),
             "cubes_drawn_last_frame": self.cube_lists.iter().map(Vec::len).collect::<Vec<_>>(),
         })
+    }
+}
+
+/// A piece's outermost cells (offsets from its centre in its own turn, scaled): for each of the 6
+/// axes and 8 diagonals the cell furthest along it, duplicates dropped. A single grain has none
+/// (its sphere is its cell).
+fn outer_cells(model: &crew_tissue::TissueModel, piece: &crew_tissue::ChunkBody) -> Vec<Vec3> {
+    if piece.cells.len() < 2 {
+        return Vec::new();
+    }
+    let mut dirs = vec![Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z];
+    for i in 0..8 {
+        dirs.push(Vec3::new(if i & 1 == 0 { -1.0 } else { 1.0 }, if i & 2 == 0 { -1.0 } else { 1.0 },
+            if i & 4 == 0 { -1.0 } else { 1.0 }));
+    }
+    let mut chosen: Vec<u32> = Vec::new();
+    for dir in dirs {
+        let best = piece.cells.iter().copied()
+            .max_by(|&a, &b| model.cells[a as usize].at.dot(dir).total_cmp(&model.cells[b as usize].at.dot(dir)));
+        if let Some(c) = best {
+            if !chosen.contains(&c) {
+                chosen.push(c);
+            }
+        }
+    }
+    chosen.into_iter().map(|c| (model.cells[c as usize].at - piece.centre) * piece.scale).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 12 x 20 x 12 cm chunk flying past a 2 cm post that its centre's path misses but its side
+    /// meets: it stops at the post, and no cell ends up beyond it.
+    #[test]
+    fn a_piece_whose_side_meets_a_post_stops_at_it() {
+        let figure = crate::prims::box_mesh(Vec3::new(-0.06, 1.0, -0.06), Vec3::new(0.06, 1.2, 0.06), [1, 1, 1]);
+        let model = std::sync::Arc::new(crew_tissue::build_procedural(&figure, &std::array::from_fn(|_| None)));
+        let cells: Vec<u32> = (0..model.cells.len() as u32).collect();
+        let centre = Vec3::new(0.0, 1.1, 0.0);
+        let piece = ChunkBody { actor: 1, frame: BloodFrame::Turret, cells, centre, scale: 1.0,
+            pos: Vec3::new(0.0, 2.0, 0.0), rot: Quat::IDENTITY, vel: Vec3::new(0.0, 0.0, 4.0), spin: Vec3::ZERO,
+            radius: 0.13, cohesion_j: 1.0e9, bounces: 0, settled: false };
+        let post_z = 0.40;
+        let post = crate::prims::box_mesh(Vec3::new(0.035, 1.0, post_z), Vec3::new(0.055, 3.0, post_z + 0.02), [90; 3]);
+        let away = crate::prims::box_mesh(Vec3::new(5.0, 0.0, 5.0), Vec3::new(5.1, 0.1, 5.1), [90; 3]);
+        let hf = crate::terrain::Heightfield { res: 2, spacing: 1000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0,
+            openings: Default::default(), detail: None };
+        let tank = Tank::new(0.0, 0.0, 0.0, &hf, crate::tank::TIGER_PARTS);
+        let mut models = [Mat4::IDENTITY; surface_fire::FRAMES];
+        models[0] = tank.hull_model();
+        models[1] = tank.turret_model();
+        let run = |with_post: bool| {
+            let source = if with_post {
+                surface_fire::CabinFire::new(&[(1, &post)])
+            } else {
+                surface_fire::CabinFire::new(&[(1, &away)])
+            };
+            let world = FragmentWorld::new(&source, &models, &tank,
+                crate::fea_damage::components::Articulation::rest(tank.parts.turret_pivot));
+            let mut draw = TissueDraw { model: model.clone(), helmet: HelmetShape::new(&figure),
+                cube_pages: [usize::MAX; crew_tissue::LABELS], skin_labels: Vec::new(), actors: Vec::new(),
+                pieces: vec![piece.clone()], cube_lists: std::array::from_fn(|_| Vec::new()), overflow_reported: false };
+            for _ in 0..15 {
+                draw.integrate(&world, &tank, 1.0 / 60.0);
+            }
+            let p = &draw.pieces[0];
+            let m = p.local_model();
+            p.cells.iter().map(|&c| m.transform_point3(model.cells[c as usize].at).z).fold(f32::MIN, f32::max)
+        };
+        // Its centre's path passes the post 3.5 cm clear: with no post it flies on.
+        assert!(run(false) > post_z + 0.3);
+        let furthest = run(true);
+        assert!(furthest < post_z + 0.5 * model.cell, "a cell went beyond the post: {furthest}");
     }
 }

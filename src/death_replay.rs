@@ -140,7 +140,12 @@ impl Game {
         }
         while replay.elapsed + 1e-6 < target {
             let dt = STEP.min(target - replay.elapsed);
-            for body in &mut self.couch_ragdolls { integrate_crew_ragdoll(body, dt); }
+            // The same drawn interior the live bodies meet.
+            let models = self.fire_surface_models();
+            let world = FragmentWorld::new(&self.cabin_fire, &models, &self.player, self.fea_articulation());
+            for body in &mut self.couch_ragdolls {
+                if body.world_space { integrate_crew_ragdoll(body, dt); } else { integrate_crew_ragdoll_in(body, dt, Some(&world)); }
+            }
             self.drive_cubic_blood(dt, r);
             self.drive_penetration_fx(dt, r);
             replay.elapsed += dt;
