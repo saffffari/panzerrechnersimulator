@@ -60,6 +60,7 @@ mod ai_doctrine;
 mod anti_infantry_ai;
 mod armor_damage;
 mod fea_damage;
+mod periscope_optics_review;
 mod cabin_heat;
 #[cfg(test)]
 mod asset_catalog;
@@ -17685,6 +17686,10 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or("assets/tanks/tiger/baked/tiger_hull.glb");
         let prefix = capture_arg(&args, 3, "texel");
         return texelsplat::run_texel(glb, &prefix);
+    }
+    if args.len() >= 2 && args[1] == "periscope-optics" {
+        let prefix = capture_arg(&args, 2, "periscope_optics");
+        return periscope_optics_review::run(&prefix);
     }
     if args.len() >= 2 && args[1] == "cupola" {
         let prefix = capture_arg(&args, 2, "cupola");

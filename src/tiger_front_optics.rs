@@ -139,7 +139,7 @@ fn spec(entry: &CpuMesh, mesh: usize, objective: Vec3, objective_outward: Vec3) 
     Ok(RasterOpticSpec {mesh,
         entry_indices: 0..6,
         entry_corners:corners,entry_outward,objective,objective_outward,
-        preserve_ray_direction:false,eyepiece:None})
+        preserve_ray_direction:false,eyepiece:None,relay_stops:Vec::new(),window_thickness_m:0.0})
 }
 
 pub(super) fn raster_specs(driver: &CpuMesh, radio: &CpuMesh, fixed: &CpuMesh,
