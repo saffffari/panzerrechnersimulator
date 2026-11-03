@@ -57,12 +57,23 @@ pub const LEVELS: usize = 9;
 pub const BLADES_L0: u32 = (NEAR_DENSITY * TILE_M * TILE_M) as u32;
 /// Flowers: drawn to this distance; at most this many heads per square metre.
 pub const FLOWER_RADIUS_M: f32 = 60.0;
-pub const FLOWER_CAP_PER_M2: f32 = 16.0;
+/// The owner (2 November 2026): "too many flowers ... a spec here and there": at the heart of a
+/// clump a few heads per 10 m^2 at most, most of the meadow none.
+pub const FLOWER_CAP_PER_M2: f32 = 1.0;
 pub const FLOWER_SLOTS: u32 = (FLOWER_CAP_PER_M2 * TILE_M * TILE_M) as u32;
 pub const FLOWER_VERTICES: u32 = 27;
 /// Grass heights: 0.30-0.60 m (1-2 ft) by the stand's lushness.
 pub const HEIGHT_MIN_M: f32 = 0.30;
 pub const HEIGHT_SPAN_M: f32 = 0.30;
+/// Last year's standing dead among the spring blades: a May steppe sward carries its litter
+/// (senescent straw) through the new growth. The share of blades and their height relative to the
+/// live ones are estimates (the owner, 2 November 2026: "a bit too saturated, a bit dryer").
+pub const LITTER_SHARE: f32 = 0.24;
+pub const LITTER_HEIGHT: f32 = 0.6;
+/// The least share of the pale (older, less chlorophyll) leaf state in a live blade.
+pub const PALE_BASE: f32 = 0.30;
+/// Mean blade height over the stand height (tussock, per-blade and litter variation).
+pub const MEAN_HEIGHT: f32 = 0.75 * (1.0 - (1.0 - LITTER_HEIGHT) * LITTER_SHARE);
 
 pub const SALT_TILE: u32 = 0x6d65_6164;
 pub const SALT_FLOWER: u32 = 0x666c_6f77;
@@ -196,15 +207,15 @@ pub struct Species {
     pub petal: [f32; 3],
 }
 pub const SPECIES: [Species; 5] = [
-    Species { name: "poppy (Papaver rhoeas)", peak: 10.0, scale: 14.0, lo: 0.52, hi: 0.72, stem: [0.50, 0.80],
+    Species { name: "poppy (Papaver rhoeas)", peak: 0.5, scale: 14.0, lo: 0.72, hi: 0.86, stem: [0.50, 0.80],
         radius: 0.035, rise: -0.012, centre: [0.04, 0.03, 0.03], petal: [0.60, 0.035, 0.025] },
-    Species { name: "cornflower (Centaurea cyanus)", peak: 8.0, scale: 10.0, lo: 0.54, hi: 0.74, stem: [0.45, 0.75],
+    Species { name: "cornflower (Centaurea cyanus)", peak: 0.4, scale: 10.0, lo: 0.73, hi: 0.87, stem: [0.45, 0.75],
         radius: 0.020, rise: 0.004, centre: [0.12, 0.10, 0.42], petal: [0.09, 0.16, 0.62] },
-    Species { name: "chamomile (Matricaria chamomilla)", peak: 16.0, scale: 18.0, lo: 0.50, hi: 0.70, stem: [0.35, 0.60],
+    Species { name: "chamomile (Matricaria chamomilla)", peak: 0.7, scale: 18.0, lo: 0.71, hi: 0.85, stem: [0.35, 0.60],
         radius: 0.016, rise: 0.005, centre: [0.72, 0.50, 0.04], petal: [0.80, 0.80, 0.74] },
-    Species { name: "buttercup (Ranunculus acris)", peak: 14.0, scale: 12.0, lo: 0.50, hi: 0.70, stem: [0.40, 0.70],
+    Species { name: "buttercup (Ranunculus acris)", peak: 0.6, scale: 12.0, lo: 0.71, hi: 0.85, stem: [0.40, 0.70],
         radius: 0.013, rise: -0.005, centre: [0.66, 0.50, 0.03], petal: [0.78, 0.62, 0.03] },
-    Species { name: "meadow sage (Salvia nemorosa)", peak: 6.0, scale: 16.0, lo: 0.58, hi: 0.78, stem: [0.45, 0.65],
+    Species { name: "meadow sage (Salvia nemorosa)", peak: 0.3, scale: 16.0, lo: 0.74, hi: 0.88, stem: [0.45, 0.65],
         radius: 0.010, rise: 0.06, centre: [0.20, 0.07, 0.38], petal: [0.28, 0.10, 0.48] },
 ];
 fn species_salt(s: usize) -> u32 { 0xf10e_0000 + s as u32 * 7919 }
@@ -252,7 +263,8 @@ pub fn wgsl_constants() -> String {
     f("MD_TILE", TILE_M); f("MD_NEAR_DENSITY", NEAR_DENSITY); f("MD_BLADE_WIDTH", BLADE_WIDTH_M);
     f("MD_MIN_PIXELS", MIN_PIXELS); f("MD_NEAR_RADIUS", NEAR_RADIUS_M); f("MD_BAND", BAND_M);
     f("MD_FAR_RADIUS", FAR_RADIUS_M); f("MD_FAR_TILE", FAR_TILE_M);
-    f("MD_CLUMP", CLUMP_M); f("MD_PUSH_CELL", PUSH_CELL_M); f("MD_PUSH_CELLS", PUSH_CELLS as f32);
+    f("MD_CLUMP", CLUMP_M); f("MD_LITTER_SHARE", LITTER_SHARE); f("MD_LITTER_HEIGHT", LITTER_HEIGHT);
+    f("MD_PALE_BASE", PALE_BASE); f("MD_MEAN_HEIGHT", MEAN_HEIGHT); f("MD_PUSH_CELL", PUSH_CELL_M); f("MD_PUSH_CELLS", PUSH_CELLS as f32);
     f("MD_SLAB_START", SLAB_START_M); f("MD_SLAB_FULL", SLAB_FULL_M); f("MD_SLAB_TILE", SLAB_TILE_M); f("MD_SLAB_TILE_FAR", SLAB_TILE_FAR_M);
     f("MD_SHADOW_RADIUS", SHADOW_RADIUS_M); f("MD_FLOWER_RADIUS", FLOWER_RADIUS_M); f("MD_FLOWER_CAP", FLOWER_CAP_PER_M2);
     f("MD_HEIGHT_MIN", HEIGHT_MIN_M); f("MD_HEIGHT_SPAN", HEIGHT_SPAN_M); f("MD_R2_A1", R2_A1); f("MD_R2_A2", R2_A2);
@@ -661,7 +673,7 @@ pub fn canopy_grid(heights: &[f32], res: usize, spacing: f32, cover: &CoverMap) 
                 let (presence, lush) = (cover.presence(px, pz), cover.lush(px, pz));
                 let height = (HEIGHT_MIN_M + HEIGHT_SPAN_M * lush) * (0.55 + 0.45 * presence);
                 h += height * (presence > 0.004) as u32 as f32;
-                lai += NEAR_DENSITY * BLADE_WIDTH_M * height * 0.75 * presence;
+                lai += NEAR_DENSITY * BLADE_WIDTH_M * height * MEAN_HEIGHT * presence;
             }
             out.push([heights[j * res + i], h / 5.0, lai / 5.0, extent]);
         }
@@ -752,29 +764,32 @@ mod tests {
     #[test]
     fn flowers_clump_by_species_and_respect_bare_ground() {
         let full = |_: Vec2| 1.0;
-        // Heads of each species per tile over an 80 x 80 tile (160 m) field.
-        let mut counts = vec![[0u32; 5]; 6400];
-        for tz in -40..40 {
-            for tx in -40..40 {
+        // Heads per 2 m tile over a 240 x 240 m field.
+        let n = 120usize;
+        let mut counts = vec![[0u32; 5]; n * n];
+        for tz in 0..n as i32 {
+            for tx in 0..n as i32 {
                 for k in 0..FLOWER_SLOTS {
-                    if let Some(f) = flower_at(tx, tz, k, full) {
-                        counts[((tz + 40) * 80 + tx + 40) as usize][f.species] += 1;
+                    if let Some(f) = flower_at(tx - 60, tz - 60, k, full) {
+                        counts[tz as usize * n + tx as usize][f.species] += 1;
                         let sp = SPECIES[f.species];
                         assert!(f.stem >= sp.stem[0] && f.stem <= sp.stem[1]);
                     }
                 }
             }
         }
+        let tiles = (n * n) as f32;
+        let total: u32 = counts.iter().map(|c| c.iter().sum::<u32>()).sum();
+        let per_m2 = total as f32 / (tiles * TILE_M * TILE_M);
+        // A speck here and there: well under one head per 10 m^2 on average, most tiles bare.
+        assert!(per_m2 > 0.005 && per_m2 < 0.1, "{per_m2} heads per m^2");
+        let bare = counts.iter().filter(|c| c.iter().sum::<u32>() == 0).count() as f32 / tiles;
+        assert!(bare > 0.8, "{bare} of the tiles bare");
+        // Where they are, at most a few per 10 m^2 (a tile is 4 m^2).
+        assert!(counts.iter().all(|c| c.iter().sum::<u32>() <= 4), "a crowded tile");
         for s in 0..5 {
-            let n = counts.iter().map(|c| c[s] as f32).collect::<Vec<_>>();
-            let mean = n.iter().sum::<f32>() / n.len() as f32;
-            let var = n.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>() / n.len() as f32;
-            let empty = n.iter().filter(|&&x| x == 0.0).count();
-            assert!(mean > 0.05, "{} absent", SPECIES[s].name);
-            // Clumped, not uniform: far more variable between tiles than independent scatter
-            // (a uniform random scatter has variance = mean), with bare tiles between clumps.
-            assert!(var > 3.0 * mean, "{} not clumped: mean {mean} variance {var}", SPECIES[s].name);
-            assert!(empty > 6400 / 4, "{} everywhere: {empty} empty tiles", SPECIES[s].name);
+            let present = counts.iter().filter(|c| c[s] > 0).count();
+            assert!(present > 3, "{} absent", SPECIES[s].name);
         }
         let bare = |_: Vec2| 0.0;
         assert!((0..FLOWER_SLOTS).all(|k| flower_at(3, 3, k, bare).is_none()));
@@ -853,8 +868,8 @@ mod tests {
         // The mean gap over flower roots exceeds the mean over all ground.
         let full = |_: Vec2| 1.0;
         let (mut flower_gap, mut flowers) = (0.0f32, 0usize);
-        for tz in -20..20 {
-            for tx in -20..20 {
+        for tz in -100..100 {
+            for tx in -100..100 {
                 for k in 0..FLOWER_SLOTS {
                     if let Some(f) = flower_at(tx, tz, k, full) { flower_gap += clump_at(f.root).gap(); flowers += 1; }
                 }
@@ -889,6 +904,32 @@ mod tests {
         // A walker parts the grass round his legs.
         g.press_disc(Vec2::new(5.0, 5.0), 0.5);
         assert!(at(&g, Vec2::new(5.25, 5.0)).x > 0.1);
+    }
+
+    /// The sward's mean leaf optics (the slab's mix) at the renderer's lanes.
+    pub(crate) fn sward_mean(field_pale: f32) -> ([f32; 3], [f32; 3]) {
+        use crate::leaf_optics::{lanes, DRY_GRASS, PALE_GRASS, SPRING_GRASS};
+        let (fr, ft) = lanes(SPRING_GRASS);
+        let (pr, pt) = lanes(PALE_GRASS);
+        let (dr, dt) = lanes(DRY_GRASS);
+        let pale = (PALE_BASE + field_pale * 0.5).clamp(0.0, 1.0);
+        let dry = LITTER_SHARE + (1.0 - LITTER_SHARE) * 0.05;
+        let mix = |a: [f32; 3], b: [f32; 3], c: [f32; 3]| std::array::from_fn(|i| (a[i] + (b[i] - a[i]) * pale) * (1.0 - dry) + c[i] * dry);
+        (mix(fr, pr, dr), mix(ft, pt, dt))
+    }
+
+    #[test]
+    fn the_spring_sward_is_drier_than_fresh_leaves_but_still_green() {
+        let (fresh, _) = crate::leaf_optics::lanes(crate::leaf_optics::SPRING_GRASS);
+        let (rho, tau) = sward_mean(0.5);
+        // Chroma relative to brightness: the lanes' spread about their mean over the mean.
+        let saturation = |c: [f32; 3]| { let m = (c[0] + c[1] + c[2]) / 3.0; (c.iter().map(|v| (v - m) * (v - m)).sum::<f32>()).sqrt() / m };
+        // Less saturated than a fresh blade (the owner's "a bit dryer"), still green-dominant.
+        assert!(saturation(rho) < saturation(fresh) * 0.85, "{rho:?} vs {fresh:?}");
+        assert!(rho[1] > rho[0] && rho[1] > rho[2], "{rho:?}");
+        assert!(rho[0] > fresh[0] * 1.5, "the straw's red: {rho:?}");
+        for i in 0..3 { assert!(rho[i] + tau[i] < 1.0); }
+        assert!((MEAN_HEIGHT - 0.678).abs() < 0.01);
     }
 
     #[test]

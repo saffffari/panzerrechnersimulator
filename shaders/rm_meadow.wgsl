@@ -200,7 +200,7 @@ fn md_emit(world: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, tau: vec3<f32
 // area per ground area: density x width x mean height, conserved by the LOD).
 fn md_canopy(cv: vec2<f32>) -> vec2<f32> {
     let h = (MD_HEIGHT_MIN + MD_HEIGHT_SPAN * cv.y) * (0.55 + 0.45 * cv.x);
-    return vec2(h, MD_NEAR_DENSITY * MD_BLADE_WIDTH * h * 0.75 * cv.x);
+    return vec2(h, MD_NEAR_DENSITY * MD_BLADE_WIDTH * h * MD_MEAN_HEIGHT * cv.x);
 }
 // Leaf area above a point at height y over the ground: a uniform vertical distribution.
 fn md_lai_above(canopy: vec2<f32>, above_ground: f32) -> f32 {
@@ -296,14 +296,18 @@ fn vs_blade(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsO
     let rim = clamp(clump.f1 / (0.6 * MD_CLUMP), 0.0, 1.0);
     let clump_height = (0.80 + 0.35 * md_unit(md_hash(ch ^ 0x11u))) * (1.0 - 0.25 * rim * rim);
     // 0.30-0.60 m by lushness; thin cover (the tan dry ground) carries shorter grass.
-    let height = (MD_HEIGHT_MIN + MD_HEIGHT_SPAN * cv.y) * (0.70 + 0.30 * r0) * clump_height * (0.55 + 0.45 * cv.x) * grow;
+    // Last year's standing dead (a May steppe sward's litter, meadow.rs LITTER_SHARE): shorter,
+    // lodged blades of senescent straw among the live ones.
+    let litter = md_unit(md_hash(h ^ 0x07u)) < MD_LITTER_SHARE;
+    let height = (MD_HEIGHT_MIN + MD_HEIGHT_SPAN * cv.y) * (0.70 + 0.30 * r0) * clump_height * (0.55 + 0.45 * cv.x) * grow
+        * select(1.0, MD_LITTER_HEIGHT, litter);
     let blade_w = width * (0.7 + 0.6 * r1);
     let outward = root2 - clump.centre;
     let out_angle = atan2(outward.y, outward.x);
     // Blades fan out from their tussock's centre, more at its rim.
     let azimuth = mix(r2 * MD_TAU, out_angle + (r2 - 0.5) * 1.2, 0.65 * smoothstep(0.02, 0.2, length(outward)));
     let facing = vec3(cos(azimuth), 0.0, sin(azimuth));
-    let lean = 0.08 + 0.30 * r3 * r3 + (0.10 + 0.25 * md_unit(md_hash(ch ^ 0x12u))) * rim;
+    let lean = min(0.08 + 0.30 * r3 * r3 + (0.10 + 0.25 * md_unit(md_hash(ch ^ 0x12u))) * rim + select(0.0, 0.35, litter), 0.9);
 
     // The wind grid's bend for this blade's height and stiffness, and the blade's own flutter at
     // its hashed natural frequency (named in the ledger).
@@ -349,8 +353,8 @@ fn vs_blade(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsO
     let field = md_noise(root2.x / 31.0, root2.y / 31.0, 0x600du) * 0.75 + md_noise(root2.x / 9.0, root2.y / 9.0, 0x601du) * 0.25;
     // Leaf state: fresh and paler blades in world-fixed 9 m / 31 m patches, senescent straw on the
     // thin (tan) ground and toward some old tips; each blade's vigour scales its reflectance.
-    let pale = clamp(smoothstep(0.30, 0.75, field) * 0.7 + (md_unit(md_hash(ch ^ 0x13u)) - 0.5) * 0.5, 0.0, 1.0);
-    let dry = max(smoothstep(0.95, 0.60, cv.x) * 0.75, t * t * (0.05 + 0.35 * r6));
+    let pale = clamp(MD_PALE_BASE + smoothstep(0.30, 0.75, field) * 0.5 + (md_unit(md_hash(ch ^ 0x13u)) - 0.5) * 0.5, 0.0, 1.0);
+    let dry = select(max(smoothstep(0.95, 0.60, cv.x) * 0.75, t * t * (0.05 + 0.35 * r6)), 1.0, litter);
     var rho = mix(mix(MD_LEAF_RHO_FRESH, MD_LEAF_RHO_PALE, pale), MD_LEAF_RHO_DRY, dry) * (0.85 + 0.30 * r1);
     var tau = mix(mix(MD_LEAF_TAU_FRESH, MD_LEAF_TAU_PALE, pale), MD_LEAF_TAU_DRY, dry);
     let canopy = md_canopy(cv);
@@ -457,10 +461,20 @@ fn vs_slab(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsOu
     let normal = normalize(vec3(md_ground(p - vec2(e, 0.0)) - md_ground(p + vec2(e, 0.0)), 2.0 * e,
         md_ground(p - vec2(0.0, e)) - md_ground(p + vec2(0.0, e))));
     let field = md_noise(p.x / 31.0, p.y / 31.0, 0x600du) * 0.75 + md_noise(p.x / 9.0, p.y / 9.0, 0x601du) * 0.25;
-    let pale = smoothstep(0.30, 0.75, field) * 0.7;
-    let dry = smoothstep(0.95, 0.60, cv.x) * 0.75 + 0.03;
-    let rho = mix(mix(MD_LEAF_RHO_FRESH, MD_LEAF_RHO_PALE, pale), MD_LEAF_RHO_DRY, dry);
-    let tau = mix(mix(MD_LEAF_TAU_FRESH, MD_LEAF_TAU_PALE, pale), MD_LEAF_TAU_DRY, dry);
+    // The stand's mean leaf state, as the blades' (litter share, pale share, dry tips).
+    let pale = clamp(MD_PALE_BASE + smoothstep(0.30, 0.75, field) * 0.5, 0.0, 1.0);
+    let dry = MD_LITTER_SHARE + (1.0 - MD_LITTER_SHARE) * (smoothstep(0.95, 0.60, cv.x) * 0.75 + 0.05);
+    var rho = mix(mix(MD_LEAF_RHO_FRESH, MD_LEAF_RHO_PALE, pale), MD_LEAF_RHO_DRY, dry);
+    var tau = mix(mix(MD_LEAF_TAU_FRESH, MD_LEAF_TAU_PALE, pale), MD_LEAF_TAU_DRY, dry);
+    // The flowers' share of the canopy's top: each species' heads per m^2 here times a head's
+    // area, over the canopy's top (a few parts in ten thousand; their petals' optics mixed in).
+    let in_gap = cv.x * 0.85;
+    for (var s = 0u; s < MD_SPECIES; s++) {
+        let heads = MD_SP_PEAK[s] * md_bed(s, p.x, p.y) * in_gap;
+        let share = min(heads * 3.14159 * MD_SP_RADIUS[s] * MD_SP_RADIUS[s], 1.0);
+        rho = mix(rho, MD_SP_P[s], share);
+        tau = mix(tau, MD_SP_P[s] * 0.4, share);
+    }
     let world = vec3(p.x, ground + canopy.x * rise, p.y);
     return md_emit(world, normal, rho, tau, canopy.y * rise);
 }
