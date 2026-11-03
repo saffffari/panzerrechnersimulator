@@ -2405,9 +2405,19 @@ fn load_crew_steel_helmet() -> anyhow::Result<CpuMesh> {
     // crown so it grows down over the head rather than up off it.
     let (lo, hi) = (mesh.min, mesh.max);
     let pivot = Vec3::new(0.5 * (lo.x + hi.x), hi.y - 0.2 * (hi.y - lo.y), 0.5 * (lo.z + hi.z));
-    for v in &mut mesh.vertices {
-        let p = pivot + (Vec3::from(v.pos) - pivot) * CREW_HELMET_SCALE;
-        v.pos = p.to_array();
+    // The shell keeps its source thickness: a vertex of the inner surface (normal facing the head)
+    // is pushed back out by the extra thickness the scale gave it, its source distance to the
+    // nearest outer-surface vertex times (scale - 1).
+    let source: Vec<(Vec3, Vec3)> = mesh.vertices.iter().map(|v| (Vec3::from(v.pos), Vec3::from(v.normal))).collect();
+    let inner = |(p, n): (Vec3, Vec3)| n.dot((p - pivot).with_y(0.0)) < 0.0 || n.y < -0.5;
+    for (v, &(p, n)) in mesh.vertices.iter_mut().zip(&source) {
+        let mut q = pivot + (p - pivot) * CREW_HELMET_SCALE;
+        if inner((p, n)) {
+            let thickness = source.iter().filter(|s| !inner(**s))
+                .map(|(o, _)| o.distance(p)).fold(f32::INFINITY, f32::min).min(0.02);
+            q -= n.normalize_or_zero() * thickness * (CREW_HELMET_SCALE - 1.0);
+        }
+        v.pos = q.to_array();
     }
     mesh.min = pivot + (lo - pivot) * CREW_HELMET_SCALE;
     mesh.max = pivot + (hi - pivot) * CREW_HELMET_SCALE;
