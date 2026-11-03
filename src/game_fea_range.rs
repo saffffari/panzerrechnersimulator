@@ -437,6 +437,11 @@ const HANDLE_NEAR: f32 = 0.06;
 /// Screen distance of a centre-pad drag per 45° step.
 const HANDLE_DRAG_STEP: f32 = 0.04;
 
+/// A group's name on its header: its first word ("TISSUE (REVIEW)" is TISSUE).
+fn header_name(name: &str) -> &str {
+    name.split(" (").next().unwrap_or(name)
+}
+
 /// A button's rectangle (x, y, w, h) on the bar's lower line: in order, the last one wide.
 fn button_rect(col: usize, row: usize) -> [f32; 4] {
     let index = row * 3 + col;
@@ -1292,10 +1297,9 @@ impl Range {
             self.r.player_snow_load = tank;
             self.r.world_snow_load = world;
         }
-        // Sharp (the default) restarts the history every frame, held still too: a held camera built
-        // the cabin air's in-scatter up into expanding haze that vanished on the next move, which the
-        // owner found jarring (2026-11-03). Held and moving views now look the same.
-        if !self.accumulate_moving {
+        // Restarting the history every frame (tried 2026-11-03 against the held-camera haze) left the
+        // picture unconverged: TV static. The history restarts only when the camera moves.
+        if !self.accumulate_moving && self.last_pose.is_some_and(|p| p != pose) {
             self.r.reset_history();
         }
         self.last_pose = Some(pose);
@@ -2810,23 +2814,6 @@ impl Range {
         self.r.draw_text_bold(s, x, y - 0.38 * size, size, color, align);
     }
 
-    /// `text` broken into lines of at most `chars` characters at spaces.
-    fn wrap(text: &str, chars: usize) -> Vec<String> {
-        let mut lines = vec![String::new()];
-        for word in text.split_whitespace() {
-            let last = lines.last_mut().expect("one line");
-            if !last.is_empty() && last.len() + 1 + word.len() > chars {
-                lines.push(word.chars().take(chars).collect());
-            } else {
-                if !last.is_empty() {
-                    last.push(' ');
-                }
-                last.push_str(word);
-            }
-        }
-        lines
-    }
-
     /// The open groups' columns: each group's index, its column's left edge and top. A column
     /// stands above its header, pushed right past the column before it (never off the window).
     fn columns(&self) -> Vec<(usize, f32, f32)> {
@@ -2834,10 +2821,15 @@ impl Range {
         let mut next_x = 0.0f32;
         let mut out = Vec::new();
         for g in (0..GROUPS.len()).filter(|&g| self.open[g]) {
-            let x = headers[g][0].max(next_x).min(1.0 - COLS_W - 0.004);
+            let x = headers[g][0].max(next_x);
             let top = BAR_TOP - 0.006 - group_rows(g).len() as f32 * ROW_H;
             next_x = x + COLS_W + 0.004;
             out.push((g, x, top));
+        }
+        // Past the window's right edge, the whole row of columns moves left (as far as the window).
+        let over = (next_x - 1.0).max(0.0);
+        for c in &mut out {
+            c.1 = (c.1 - over).max(0.004);
         }
         out
     }
@@ -2872,7 +2864,7 @@ impl Range {
         let size = TEXT * 0.68;
         let mut x = HEADERS_X;
         GROUPS.iter().map(|name| {
-            let w = (name.len() + 2) as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.006;
+            let w = (header_name(name).len() + 2) as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.006;
             let rect = [x, BAR_ROW_Y, w, BAR_ROW_H];
             x += w + 0.003;
             rect
@@ -3002,11 +2994,11 @@ impl Range {
             let open = self.open[g];
             let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
             self.r.fill_rect(x, y, w, h, if open { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX });
-            self.text_bold(&format!("{} {}", if open { "v" } else { ">" }, GROUPS[g]), x + w * 0.5, y + h * 0.5, TEXT * 0.68,
+            self.text_bold(&format!("{} {}", if open { "v" } else { ">" }, header_name(GROUPS[g])), x + w * 0.5, y + h * 0.5, TEXT * 0.68,
                 if open { BLACK } else { INK }, crate::ui::Align::Center);
         }
         // The open groups' columns: a black ground under each, its name at its head.
-        for (g, x, top) in self.columns() {
+        for (_, x, top) in self.columns() {
             self.r.fill_rect(x - 0.003, top - 0.004, COLS_W + 0.003, BAR_TOP - top + 0.004, PANEL_FILL);
         }
         let [x, y, w, h] = hide_rect(false);
