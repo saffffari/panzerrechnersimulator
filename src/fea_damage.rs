@@ -15,3 +15,5 @@ pub mod lattice;
 pub mod lodged;
 pub mod materials;
 pub mod section;
+pub mod shot;
+pub mod shot_film;

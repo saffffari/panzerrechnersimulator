@@ -260,7 +260,7 @@ enum Knob {
     Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure,
     Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
     WhiteBalance, WhiteBalanceStrength, Fog, LookDefaults,
-    Tear(usize), Stretch(usize), Forward, Outward, Reach, Landing, TissueAuthored,
+    Tear(usize), Stretch(usize), Forward, Outward, Reach, Spread, Landing, TissueAuthored,
 }
 
 /// How a row is worked: a stepper (< >) for discrete choices, a toggle, a knob for continuous
@@ -319,6 +319,7 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
         Stretch(_) => (0.005, 5.0, true),
         Forward | Outward => (0.0, 2.0, false),
         Reach => (0.01, 0.6, true),
+        Spread => (0.25, 8.0, true),
         Landing => (0.01, 1.0e4, true),
         _ => (0.0, 1.0, false),
     }
@@ -342,7 +343,7 @@ fn group_rows(group: usize) -> Vec<Knob> {
         _ => {
             let mut rows: Vec<Knob> = (0..4).map(Tear).collect();
             rows.extend((0..4).map(Stretch));
-            rows.extend([Forward, Outward, Reach, Landing, TissueAuthored]);
+            rows.extend([Forward, Outward, Reach, Spread, Landing, TissueAuthored]);
             rows
         }
     }
@@ -1198,6 +1199,7 @@ impl Range {
             Knob::Forward => ("FORWARD SHARE".into(), format!("{:.2}{}", t.forward, mark(t.forward != a.forward))),
             Knob::Outward => ("OUTWARD SHARE".into(), format!("{:.2}{}", t.outward, mark(t.outward != a.outward))),
             Knob::Reach => ("ACTIVE REACH".into(), format!("{:.3} M{}", t.active_reach_m, mark(t.active_reach_m != a.active_reach_m))),
+            Knob::Spread => ("MOMENTUM SPREAD".into(), format!("X{:.2}{}", t.spread, mark(t.spread != a.spread))),
             Knob::Landing => ("LANDING BREAKUP".into(), format!("X{:.2}{}", t.landing_breakup, mark(t.landing_breakup != a.landing_breakup))),
             Knob::TissueAuthored => ("RESTORE AUTHORED".into(), if *t == a { "IN FORCE".into() } else { "CLICK".into() }),
         }
@@ -1404,6 +1406,7 @@ impl Range {
             Knob::Forward => t.forward,
             Knob::Outward => t.outward,
             Knob::Reach => t.active_reach_m,
+            Knob::Spread => t.spread,
             Knob::Landing => t.landing_breakup,
             _ => 0.0,
         }
@@ -1462,6 +1465,7 @@ impl Range {
             Knob::Forward => self.tuning.forward = v,
             Knob::Outward => self.tuning.outward = v,
             Knob::Reach => self.tuning.active_reach_m = v,
+            Knob::Spread => self.tuning.spread = v,
             Knob::Landing => self.tuning.landing_breakup = v,
             _ => {}
         }
@@ -1916,7 +1920,7 @@ impl Range {
             "sky": {"day": self.sky.day, "local_h": self.sky.local_h, "weather": self.sky.weather, "exposure": self.sky.exposure,
                 "running": self.sky.running, "rate": self.sky.rate},
             "tissue": {"tear_j_m3": t.tear_j_m3, "critical_stretch": t.critical_stretch, "forward": t.forward,
-                "outward": t.outward, "active_reach_m": t.active_reach_m, "landing_breakup": t.landing_breakup},
+                "outward": t.outward, "active_reach_m": t.active_reach_m, "landing_breakup": t.landing_breakup, "spread": t.spread},
             "look": {"look": self.r.look, "grade": self.r.display_grade, "dither": self.r.display_dither_pattern,
                 "palette_levels": d.palette_levels, "ordered_dither": d.ordered_dither, "ldr_dither": d.ldr_dither,
                 "retro": d.retro_strength, "white_balance": d.ambient_white_balance,
@@ -1979,6 +1983,7 @@ impl Range {
         if let Some(x) = f(&t["outward"]) { self.tuning.outward = x; }
         if let Some(x) = f(&t["active_reach_m"]) { self.tuning.active_reach_m = x; }
         if let Some(x) = f(&t["landing_breakup"]) { self.tuning.landing_breakup = x; }
+        if let Some(x) = f(&t["spread"]) { self.tuning.spread = x; }
         self.apply_tuning();
         let l = &v["look"];
         if let Some(x) = f(&l["look"]) { self.r.look = x; }
@@ -3179,6 +3184,8 @@ impl ApplicationHandler for App {
 }
 
 fn prepare_environment() {
+    // The FEA session's review tune (`KESSEL_TISSUE_TUNE`) is honoured here as in `fea-film`.
+    super::crew_tissue::allow_review_tune();
     // The shipping renderer and the owner's review look, unless chosen otherwise.
     if std::env::var_os("KESSEL_RENDERER").is_none() {
         std::env::set_var("KESSEL_RENDERER", "raymarch");

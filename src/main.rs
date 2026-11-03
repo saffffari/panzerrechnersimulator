@@ -17469,6 +17469,11 @@ fn main() -> anyhow::Result<()> {
         // loader's hands, the field repair and an interior burst, with stills and a receipt.
         return game::game_fea_review::run(&capture_arg(&args, 2, "fea_play"));
     }
+    if args.len() >= 2 && args[1] == "fea-shot-film" {
+        // CPU only: slow-motion film of the round as a deformable body against a plate (squash,
+        // ricochet and tumble, break-up), with a receipt.
+        return fea_damage::shot_film::run(&capture_arg(&args, 2, "fea_shot_film"));
+    }
     if args.len() >= 2 && args[1] == "fea-cross-section" {
         // CPU only: the layered damage model's slow-motion cross sections (no wgpu device).
         return game::game_fea_section::run(&capture_arg(&args, 2, "captures/fea_cross_section"),

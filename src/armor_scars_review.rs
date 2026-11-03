@@ -46,6 +46,17 @@ impl Game {
         id
     }
 
+    /// Headless-only: the counters a strike's draws are seeded from (the next projectile id, the
+    /// armour tick), so a review can replay one strike exactly on a fresh Tiger.
+    pub fn debug_strike_counters(&self) -> (u64, u32) {
+        (self.next_projectile_id, self.armor_tick)
+    }
+
+    /// Headless-only: set those counters (`debug_strike_counters`).
+    pub fn debug_set_strike_counters(&mut self, counters: (u64, u32)) {
+        (self.next_projectile_id, self.armor_tick) = counters;
+    }
+
     /// Headless-only: a burst of rifle-calibre machine-gun rounds from `range_m` along `dir`,
     /// spread over `spread_m` round `target` (a deterministic disc pattern).
     pub fn debug_launch_burst(&mut self, target: Vec3, dir: Vec3, rounds: u32, spread_m: f32, range_m: f32) {

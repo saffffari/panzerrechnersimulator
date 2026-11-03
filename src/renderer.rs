@@ -7013,6 +7013,17 @@ impl Renderer {
     }
     /// The section's window, centre xyz and radius (zeros for none).
     pub fn section_window(&self) -> [f32; 4] { if self.film_section.is_some() { self.section_window } else { [0.0; 4] } }
+    /// Review harnesses only: hide every mesh (raster-only actors kept) whose world bounds lie
+    /// wholly farther than `radius` from `centre`, the world round a studied vehicle. Returns how
+    /// many were hidden. Play never calls it.
+    pub fn hide_meshes_beyond(&mut self, centre: glam::Vec3, radius: f32) -> usize {
+        let far: Vec<usize> = self.meshes.iter().enumerate().filter(|(_, m)| !m.raster_only
+            && centre.clamp(m.world_min, m.world_max).distance(centre) > radius).map(|(i, _)| i).collect();
+        for &i in &far {
+            self.set_visible(i, false);
+        }
+        far.len()
+    }
     /// Every solid scene mesh whose world bounds lie inside `lo..hi`: the parts of a vehicle
     /// standing there, for a section view. Crew and other raster-only actors, terrain and glowing
     /// effect meshes are left out.
