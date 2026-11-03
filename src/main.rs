@@ -813,7 +813,12 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     if let Ok(dump) = std::env::var("KESSEL_DUMP_HDR") {
         r.debug_dump_crush_input(&device, &queue, &dump, &photometry.to_json())?;
     }
-    let shown = image::open(capture_target(path))?.to_rgba8();
+    // Under KESSEL_CAPTURE_4K_JPG=1 the renderer writes the still as a JPEG beside the PNG name.
+    let written = {
+        let routed = capture_target(path);
+        if std::path::Path::new(&routed).exists() { routed } else { routed.replace(".png", ".jpg") }
+    };
+    let shown = image::open(&written)?.to_rgba8();
     let display = displayed_mean_luminance(&shown);
     let mut report = photometry.to_json();
     report["display_mean_linear"] = serde_json::json!(display);
