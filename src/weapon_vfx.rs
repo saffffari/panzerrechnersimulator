@@ -61,7 +61,9 @@ impl Weapon {
     }
     fn width(self) -> f32 {
         match self { Self::Pistol => 0.025, Self::Rifle | Self::MachineGun => 0.035,
-            Self::Cannon(mm) => (mm as f32 * 0.0015).clamp(0.07, 0.23), Self::Rocket => 0.12 }
+            // A tank round's tracer burns in a cavity in its base: its glow a third of the calibre
+            // across, never wider than the shell (the owner, 2026-11-03: it hid the round).
+            Self::Cannon(mm) => (mm as f32 * 0.00035).max(0.012), Self::Rocket => 0.12 }
     }
     fn length(self) -> f32 {
         match self { Self::Pistol => 1.6, Self::Rifle | Self::MachineGun => 3.4,
@@ -971,7 +973,11 @@ impl Game {
             if cannon_draws>=CANNON_DRAWS {continue;}
             cannon_draws+=1;
             let weapon=Weapon::Cannon(shot.shell.caliber_mm as u16);
-            self.weapon_vfx.streak(shot.pos,shot.velocity.normalize_or_zero(),shot.distance_m,weapon,r.camera.pos);
+            // The tracer burns at the round's base, behind the body the round is drawn as
+            // (`drive_lodged_rounds` draws it in flight): its streak starts there, not at the nose.
+            let dir=shot.velocity.normalize_or_zero();
+            let base=shot.pos-dir*super::game_fea::penetrator_body(shot.shell).length_m;
+            self.weapon_vfx.streak(base,dir,shot.distance_m,weapon,r.camera.pos);
         }
         if self.panzerfaust_shot.active {
             let shot = &self.panzerfaust_shot;
