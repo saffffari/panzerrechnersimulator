@@ -640,6 +640,29 @@ pub fn rod_display(rods: f64, gain: f64) -> f64 {
     (rods * gain).min(DISPLAY_KEY)
 }
 
+/// The rods' local share of a pixel's response, relative to the field's: (1 - m_local) / (1 - m_field),
+/// m_local the CIE 191:2010 mesopic coefficient of the pixel's own photopic and scotopic luminance,
+/// never below the field's (`crush.wgsl` scales the displayed rod term by it).
+///
+/// The mesopic weight m measures how far vision at a place has passed from the rods to the cones,
+/// and it is set by the luminance that place is adapted to. The retina adapts locally: the image of
+/// a lamp, a fire, or the ground it lights well above the field is adapted toward its own
+/// luminance (the same premise as `GLARE_RATIO`), so the rods' share there is that luminance's,
+/// not the dark field's. A pixel no brighter than the field keeps the field's weight (1); a
+/// photopic one (m = 1 from about 5 cd/m^2) takes no rod signal. Before this weight every pixel
+/// of a night frame carried the rods' full display term, capped at the key and coloured with
+/// `ROD_DISPLAY_HUE`, under its cones: on spring-bridge-v2 at the blue hour the 1-3 cd/m^2 ground
+/// round a 1850 K fire showed (0.10, 0.15, 0.26) of rod blue over (0.22, 0.05, 0.00) of cone
+/// orange, pink (2 November 2026). Approximation, named: each pixel's own luminance stands for
+/// its local adaptation (complete local adaptation, an upper bound on the rods' retreat; the real
+/// retina's local adaptation is partial and spatially pooled).
+pub fn local_rod_weight(photopic_cd_m2: f64, scotopic_cd_m2: f64, field_m: f64) -> f64 {
+    let field_m = field_m.clamp(0.0, 1.0);
+    if field_m >= 1.0 { return 0.0; }
+    let local = mesopic_coefficient(photopic_cd_m2, scotopic_cd_m2).max(field_m);
+    (1.0 - local) / (1.0 - field_m)
+}
+
 /// The ACES fit `crush.wgsl` applies (Narkowicz), the one tone curve of the display.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn aces(x: f64) -> f64 {
@@ -768,6 +791,29 @@ fn obs_rod_response(scotopic: f32, gain: f32, inverse_saturation: f32) -> f32 {
     let local_response = max(raw_local_response, absolute_response);
     return min(gain * signal, local_response);
 }
+// CIE 191:2010 mesopic coefficient (observer::mesopic_coefficient; 12 iterations from m = 0.5).
+fn obs_mesopic_coefficient(photopic: f32, scotopic: f32) -> f32 {
+    let v_prime_555 = 683.0 / 1699.0;
+    let lp = clamp(photopic, OBS_METER_MIN, OBS_METER_MAX);
+    let ls = clamp(scotopic, OBS_METER_MIN, OBS_METER_MAX);
+    var m = 0.5;
+    for (var i = 0; i < 12; i += 1) {
+        let mesopic = (m * lp + (1.0 - m) * ls * v_prime_555) / (m + (1.0 - m) * v_prime_555);
+        m = clamp(0.767 + 0.3334 * log2(max(mesopic, OBS_METER_MIN)) * 0.30102999566, 0.0, 1.0);
+    }
+    return m;
+}
+// The rods' local share of a pixel's response relative to the field's (observer::local_rod_weight).
+fn obs_local_rod_weight(photopic: f32, scotopic: f32, field_m: f32) -> f32 {
+    let field = clamp(field_m, 0.0, 1.0);
+    if (field >= 1.0) { return 0.0; }
+    // The mesopic luminance is a weighted mean of the two, so where both lie under the luminance
+    // whose m is the field's, the local m cannot pass the field's: the weight is 1 without the
+    // iteration (the dark night field, most of the frame).
+    if (max(photopic, scotopic) <= pow(10.0, (field - 0.767) / 0.3334)) { return 1.0; }
+    let local = max(obs_mesopic_coefficient(photopic, scotopic), field);
+    return (1.0 - local) / (1.0 - field);
+}
 "#);
     out
 }
@@ -877,6 +923,53 @@ mod tests {
         assert!((rod_display(rods, ROD_DISPLAY_GAIN) - rods * ROD_DISPLAY_GAIN).abs() < 1e-12);
         let crush = include_str!("../shaders/crush.wgsl");
         assert!(crush.contains("rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY)"));
+    }
+
+    /// Fire-lit ground at the blue hour keeps its cones' colour (2 November 2026, spring-bridge-v2:
+    /// "these lights at night all look like this weirdly red white phosphorous color"). The eye
+    /// metered the frame at 0.066 cd/m^2 (m 0.376); the ground round a 1850 K fire, warm radiance
+    /// (1, 0.20, 0) at 1-10 cd/m^2, was shown with the rods' whole display term under its cones,
+    /// blue over orange: pink. With the local mesopic weight the rods retreat where the place is
+    /// adapted to its own light; the dark field, at or under the field's luminance, keeps its term.
+    #[test]
+    fn fire_lit_ground_keeps_its_cones_colour_and_the_dark_field_keeps_its_rods() {
+        let viewing = Viewing::Binocular;
+        let field = Meter::uniform(0.0663, 0.0686);
+        let m = Eye::adapted(field, viewing).mapping(viewing);
+        assert!((m.mesopic_m - 0.376).abs() < 0.03, "{}", m.mesopic_m);
+        // The weight: whole at and under the field, none where the pixel is photopic.
+        assert!((local_rod_weight(field.photopic_cd_m2, field.scotopic_cd_m2, m.mesopic_m) - 1.0).abs() < 0.02);
+        assert_eq!(local_rod_weight(1.0e-4, 2.0e-4, m.mesopic_m), 1.0);
+        assert_eq!(local_rod_weight(100.0, 75.0, m.mesopic_m), 0.0);
+        assert_eq!(local_rod_weight(0.5, 0.4, 1.0), 0.0, "daylight: no rods to weigh");
+        let warm = [1.0, 0.20, 0.0];
+        let shown = |luminance: f64, weighted: bool| -> [f64; 3] {
+            let k = luminance / (0..3).map(|i| warm[i] * PHOTOPIC_WEIGHTS[i]).sum::<f64>();
+            let radiance = warm.map(|c| c * k);
+            let scotopic: f64 = (0..3).map(|i| radiance[i] * SCOTOPIC_WEIGHTS[i]).sum();
+            let rods = rod_display(rod_response(scotopic, m.rod_exposure, m.rod_inverse_saturation), ROD_DISPLAY_GAIN);
+            let w = if weighted { local_rod_weight(luminance, scotopic, m.mesopic_m) } else { 1.0 };
+            std::array::from_fn(|i| radiance[i] * m.cone_exposure + ROD_DISPLAY_HUE[i] * rods * w)
+        };
+        for luminance in [3.0, 10.0] {
+            let before = shown(luminance, false);
+            let after = shown(luminance, true);
+            eprintln!("{luminance} cd/m^2: before {before:.3?} after {after:.3?}");
+            // Orange: red over green over blue, and blue a small part of red.
+            assert!(after[0] > after[1] && after[1] > after[2] && after[2] < 0.25 * after[0], "{luminance}: {after:?}");
+        }
+        // At 1 cd/m^2 (m 0.75 there) the rods keep a quarter of the mesopic weight: the ground is a
+        // warm red-orange, its blue less than half what it was and well under its red.
+        let (before, after) = (shown(1.0, false), shown(1.0, true));
+        eprintln!("1 cd/m^2: before {before:.3?} after {after:.3?}");
+        assert!(before[2] > before[1], "the regression: the rods' blue passed the cones' green {before:?}");
+        assert!(after[2] < 0.5 * before[2] && after[0] > 1.8 * after[2], "{after:?}");
+        // The night field itself is unchanged.
+        assert_eq!(shown(0.01, true), shown(0.01, false));
+        let crush = include_str!("../shaders/crush.wgsl");
+        assert!(crush.contains("min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods"));
+        assert!(crush.contains("obs_local_rod_weight(photopic, scotopic_px, cr.eye.x)"));
+        assert!(wgsl_constants().contains("fn obs_local_rod_weight("));
     }
 
     #[test]

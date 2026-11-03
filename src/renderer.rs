@@ -1182,6 +1182,10 @@ struct CrushUniform {
     real: [f32; 4],
     /// Debug only (`KESSEL_POINT_LAYER_VIEW=1`): x 1 shows the point layer (rod pooling check).
     debug: [f32; 4],
+    /// The eye's field state for the display (byte 192, copied from the view's eye state every
+    /// metered frame): x = the CIE 191 mesopic coefficient of the field's adaptation (lane 14), the
+    /// floor of each pixel's local mesopic weight (`observer::local_rod_weight`). Appended lane.
+    eye: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -8782,6 +8786,7 @@ impl Renderer {
             loupe: self.loupe,
             real: self.real,
             debug: [if std::env::var("KESSEL_POINT_LAYER_VIEW").as_deref() == Ok("1") { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+            eye: [unmetered.mesopic_m as f32, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {
@@ -9457,6 +9462,8 @@ impl Renderer {
             let eye = &self.exp_bufs[self.active_view];
             encoder.copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4);
             encoder.copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8);
+            // The field's mesopic coefficient (lane 14) for the pixels' local mesopic weight.
+            encoder.copy_buffer_to_buffer(eye, 56, &self.crush_buf, 192, 4);
             if let Some(optics) = &self.raster_optics {
                 // Port images take the same eye (one frame later, as they render first).
                 optics.copy_eye_mapping(encoder, eye);
@@ -11448,6 +11455,23 @@ impl Renderer {
         })
     }
 
+    /// Debug only (`KESSEL_DUMP_HDR`): the crush's HDR input and the display lanes, for a CPU probe.
+    pub fn debug_dump_crush_input(&self, device: &wgpu::Device, queue: &wgpu::Queue, path: &str,
+        photometry: &serde_json::Value) -> anyhow::Result<()> {
+        let raw = debug_read_rgba_f32(device, queue, &self.hdr_tex)?;
+        let size = self.hdr_tex.size();
+        let mut bytes = format!("{} {}\n", size.width, size.height).into_bytes();
+        for pixel in &raw { for c in pixel { bytes.extend_from_slice(&c.to_le_bytes()); } }
+        std::fs::write(path, bytes)?;
+        let meta = serde_json::json!({
+            "photometry": photometry, "look": self.look, "tonemap": self.tonemap, "real": self.real,
+            "display_grade": self.display_grade, "vision_boost": self.vision_boost,
+        });
+        std::fs::write(format!("{path}.json"), serde_json::to_string_pretty(&meta)?)?;
+        println!("[hdr-dump] {path} {}x{}", size.width, size.height);
+        Ok(())
+    }
+
     /// Like `render_to_png` but composites the queued HUD (images + text) over the frame — the
     /// editor's headless verify path, so the asset browser panel shows up in the captured PNG.
     pub fn render_to_png_hud(
@@ -12717,7 +12741,8 @@ mod atmosphere_tests {
         assert_eq!(ranks.iter().map(|r|(r+0.5)/16.0-0.5).sum::<f32>(),0.0);
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 192); // the look lane at 128, the loupe at 144, the realism lane at 160, the debug-view lane at 176
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 208); // the look lane at 128, the loupe at 144, the realism lane at 160, the debug-view lane at 176, the eye's field lane at 192
+        assert_eq!(std::mem::offset_of!(CrushUniform, eye), 192);
         assert_eq!(std::mem::offset_of!(CrushUniform, look), 128);
         assert_eq!(std::mem::offset_of!(CrushUniform, loupe), 144);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
@@ -13483,9 +13508,15 @@ mod atmosphere_tests {
         // source-contract module, after the actual renderer implementation and GPU copies.
         let shipping = renderer.split("\n#[cfg(test)]\nmod atmosphere_tests").next().unwrap();
         let copies: Vec<_> = shipping.match_indices("copy_buffer_to_buffer(eye,").collect();
-        assert_eq!(copies.len(), 2, "cone and rod lanes into crush");
+        assert_eq!(copies.len(), 3, "cone, rod and mesopic lanes into crush");
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8)"));
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 56, &self.crush_buf, 192, 4)"));
+        // The raymarch backend copies the same three lanes into the same crush uniform.
+        let raymarch = include_str!("renderer_raymarch.rs");
+        for lane in ["(eye, 0, &r.crush_buf, 44, 4)", "(eye, 8, &r.crush_buf, 16, 8)", "(eye, 56, &r.crush_buf, 192, 4)"] {
+            assert!(raymarch.contains(&format!("copy_buffer_to_buffer{lane}")), "{lane}");
+        }
         // A view starts adapted to its first frame; an optic's own eye also when it is returned to
         // (observer::OPTIC_RESNAP_GAP_S), and only then. Lane 30 holds an outdoor first snap one
         // frame for the glare split's background (the small-bright-source veil, 2 Nov 2026).
@@ -13512,7 +13543,8 @@ mod atmosphere_tests {
         assert!(crush.contains("let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));"));
         // The cone channel is the frame plus a fixated sub-pixel point's foveal concentration.
         assert!(crush.contains("let cone_seen = radiance + point * ((concentrate * concentrate - 1.0) * (1.0 - rods_here));"));
-        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
+        // The rods' local share (observer::local_rod_weight) scales the display rod term only.
+        assert!(crush.contains("return cone_seen * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY) * local_rods;"),
             "owner-directed cabin reproduction still acts only on the display rod term");
         assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));"),
             "the night's hue outdoors, the cabin's own hue inside");

@@ -780,6 +780,12 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     // Scene-referred luminance of the frame just written, the eye that showed it and the
     // displayed brightness: the numbers behind the backend-agreement regression.
     let photometry = r.debug_frame_photometry(&device, &queue)?;
+    // Debug only: KESSEL_DUMP_HDR=FILE writes the crush's HDR input (after the bloom), raw
+    // little-endian f32 RGBA rows behind a "w h" text line, and FILE.json with the eye lanes and
+    // the look's lanes, so a probe can follow one pixel through the display stages on the CPU.
+    if let Ok(dump) = std::env::var("KESSEL_DUMP_HDR") {
+        r.debug_dump_crush_input(&device, &queue, &dump, &photometry.to_json())?;
+    }
     let shown = image::open(capture_target(path))?.to_rgba8();
     let display = displayed_mean_luminance(&shown);
     let mut report = photometry.to_json();
