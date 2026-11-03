@@ -379,15 +379,21 @@ const LOOKS: [(f32, &str); 7] = [(0.0, "STANDARD"), (6.0, "DELTAP REAL"), (1.0, 
     (4.0, "PASTEL"), (2.0, "PICO-8"), (3.0, "DELTAP RAW")];
 const DITHERS: [&str; 4] = ["SCREEN BAYER4", "BLUE NOISE", "SPHERE BAYER8", "SCREEN BAYER8"];
 
-// The panel down the left (window fractions, top-left origin), the viewport to its right (the
-// owner, 2026-11-03: "lets go back to vertical left sidebar"). Top to bottom: the mode tabs and the
-// hide button, the time, the crew plan and the hull's axes, the buttons, the status, the groups as
-// tabs, then the open groups' rows.
-const SIDE_W: f32 = 0.2;
-/// The buttons' top, the status lines' top and the group tabs' top.
-const BUTTONS_Y: f32 = 0.150;
-const NOTES_Y: f32 = 0.262;
-const TABS_Y: f32 = 0.352;
+// The panel: a bar along the bottom above the timeline (window fractions, top-left origin), the
+// viewport the whole window (the owner, 2026-11-03: "disclosable bottom bar"). Its upper line the
+// status, the time and HIDE; its lower line the mode tabs, the buttons and the groups' headers,
+// each a disclosure (closed > / open v) whose rows open upward above it, several at once.
+const BAR_H: f32 = 0.056;
+const BAR_TOP: f32 = 1.0 - 0.008 - BAR_H;
+/// The bar's lower line (mode tabs, buttons, headers): its top and height.
+const BAR_ROW_Y: f32 = BAR_TOP + 0.028;
+const BAR_ROW_H: f32 = 0.024;
+/// The buttons' left edge, their width and the last (wide) one's.
+const BUTTONS_X: f32 = 0.150;
+const BUTTON_W: f32 = 0.040;
+const BUTTON_WIDE: f32 = 0.066;
+/// The group headers' left edge.
+const HEADERS_X: f32 = BUTTONS_X + 6.0 * (BUTTON_W + 0.003) + BUTTON_WIDE + 0.012;
 /// The timeline line's thickness (px) and the clip's colour (Blender's orange, linear).
 const TL_PX: f32 = 5.0;
 const AMBER: [f32; 4] = [0.807, 0.205, 0.006, 1.0];
@@ -402,9 +408,8 @@ const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const BOX: [f32; 4] = [0.035, 0.035, 0.035, 1.0];
 const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
-/// The sidebar's inner left edge and width (every block in it).
+/// The bar's left margin.
 const LEFT_X: f32 = 0.007;
-const LEFT_W: f32 = SIDE_W - 2.0 * LEFT_X;
 const BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
     ("LOOP", 0, 2)];
 /// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
@@ -414,10 +419,9 @@ const BATTLE_BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("WATCH", 1,
 /// The editor's modes, as tabs at the panel's top left. WORLD (placing objects from the asset
 /// browser, the old `edit` worldbuilder's replacement) is promised and not built: greyed out.
 const MODES: [&str; 3] = ["RANGE", "BATTLE", "WORLD"];
-const BUTTON_H: f32 = 0.028;
-/// The groups' rows: their left edge and width (one column, the sidebar's).
-const GROUPS_X: f32 = LEFT_X;
-const COLS_W: f32 = LEFT_W;
+
+/// An open group's column of rows: its width.
+const COLS_W: f32 = 0.166;
 const BTN_W: f32 = 0.011;
 /// The panel's hide button (its show button sits in the same corner when it is hidden).
 const HIDE_W: f32 = 0.045;
@@ -433,22 +437,17 @@ const HANDLE_NEAR: f32 = 0.06;
 /// Screen distance of a centre-pad drag per 45° step.
 const HANDLE_DRAG_STEP: f32 = 0.04;
 
-/// A button's rectangle (x, y, w, h) in the sidebar.
+/// A button's rectangle (x, y, w, h) on the bar's lower line: in order, the last one wide.
 fn button_rect(col: usize, row: usize) -> [f32; 4] {
-    let gap = 0.004;
-    let w = (LEFT_W - 2.0 * gap) / 3.0;
-    let y = BUTTONS_Y + row as f32 * (BUTTON_H + 0.005);
-    // The third row is one wide button (LOOP).
-    if row == 2 {
-        return [LEFT_X, y, LEFT_W, BUTTON_H];
-    }
-    [LEFT_X + col as f32 * (w + gap), y, w, BUTTON_H]
+    let index = row * 3 + col;
+    let x = BUTTONS_X + index as f32 * (BUTTON_W + 0.003);
+    [x, BAR_ROW_Y, if index == 6 { BUTTON_WIDE } else { BUTTON_W }, BAR_ROW_H]
 }
 
-/// The panel's hide button (the sidebar's top right), or, hidden, its show button (the window's
-/// bottom right).
+/// The panel's hide button (the bar's upper line, right), or, hidden, its show button (the
+/// window's bottom right).
 fn hide_rect(hidden: bool) -> [f32; 4] {
-    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [LEFT_X + LEFT_W - HIDE_W, 0.008, HIDE_W, 0.020] }
+    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [1.0 - HIDE_W - 0.006, BAR_TOP + 0.003, HIDE_W, 0.020] }
 }
 
 
@@ -2406,9 +2405,9 @@ impl Range {
         1.0
     }
 
-    /// The viewport's left edge: right of the sidebar (the window's edge with the panel hidden).
+    /// The viewport's left edge: the window's (the bar lies over the view's foot).
     fn view_x(&self) -> f32 {
-        if self.hide_ui { 0.0 } else { SIDE_W }
+        0.0
     }
 
     /// Whether `c` is on the panel's hide (or show) button.
@@ -2419,7 +2418,8 @@ impl Range {
 
     /// Whether `c` is on the panel.
     fn in_panel(&self, c: [f32; 2]) -> bool {
-        !self.hide_ui && c[0] <= SIDE_W
+        !self.hide_ui && (c[1] >= BAR_TOP || self.columns().iter().any(|&(_, x, top)|
+            c[0] >= x && c[0] <= x + COLS_W && c[1] >= top - 0.004))
     }
 
     /// The timeline line's height: the window's bottom, across the viewport.
@@ -2732,7 +2732,7 @@ impl Range {
         let right = f.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(f).normalize_or_zero();
         // On the panel, right of the buttons; with the panel hidden, the viewport's corner.
-        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [LEFT_X + LEFT_W - 0.06 / aspect, 0.100] };
+        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [0.075, BAR_TOP - 0.055] };
         let hull = self.g.player.hull_model();
         for (axis, colour, name) in [(Vec3::X, RED, "X"), (Vec3::Y, GREEN, "Y"), (Vec3::Z, BLUE, "Z")] {
             let d = hull.transform_vector3(axis).normalize_or_zero();
@@ -2827,32 +2827,31 @@ impl Range {
         lines
     }
 
-    /// The open groups laid out as one flow down and across the columns: each group's name, then
-    /// its rows, ROW_H a line, as far as the columns reach (no space left between groups).
-    fn layout(&self) -> (Vec<(Knob, f32, f32)>, Vec<(usize, f32, f32)>) {
-        let top = self.tab_rects().iter().map(|[_, y, _, h]| y + h).fold(TABS_Y, f32::max) + 0.008;
-        let bottom = 1.0 - 0.012;
-        let (mut rows, mut headers) = (Vec::new(), Vec::new());
-        let mut line = 0usize;
-        let place = |line: usize| (GROUPS_X, top + (line as f32 + 0.5) * ROW_H);
+    /// The open groups' columns: each group's index, its column's left edge and top. A column
+    /// stands above its header, pushed right past the column before it (never off the window).
+    fn columns(&self) -> Vec<(usize, f32, f32)> {
+        let headers = self.header_rects();
+        let mut next_x = 0.0f32;
+        let mut out = Vec::new();
         for g in (0..GROUPS.len()).filter(|&g| self.open[g]) {
-            // A group's name never ends the sidebar.
-            let (x, y) = place(line + 1);
-            if y > bottom {
-                break;
-            }
-            headers.push((g, x, place(line).1));
-            line += 1;
-            for k in group_rows(g) {
-                let (x, y) = place(line);
-                if y > bottom {
-                    return (rows, headers);
-                }
-                rows.push((k, x, y));
-                line += 1;
+            let x = headers[g][0].max(next_x).min(1.0 - COLS_W - 0.004);
+            let top = BAR_TOP - 0.006 - group_rows(g).len() as f32 * ROW_H;
+            next_x = x + COLS_W + 0.004;
+            out.push((g, x, top));
+        }
+        out
+    }
+
+    /// The open groups' rows: each row's knob, its column's left edge and its centre's height
+    /// (headers are the bar's, `header_rects`).
+    fn layout(&self) -> (Vec<(Knob, f32, f32)>, Vec<(usize, f32, f32)>) {
+        let mut rows = Vec::new();
+        for (g, x, top) in self.columns() {
+            for (i, k) in group_rows(g).into_iter().enumerate() {
+                rows.push((k, x, top + (i as f32 + 0.5) * ROW_H));
             }
         }
-        (rows, headers)
+        (rows, Vec::new())
     }
 
     fn rows(&self) -> Vec<(Knob, f32, f32)> {
@@ -2868,19 +2867,14 @@ impl Range {
             .map(|(k, x, _)| (k, x))
     }
 
-    /// The tabs' rectangles (x, y, w, h), one a group.
-    fn tab_rects(&self) -> Vec<[f32; 4]> {
-        // Wrapped onto as many lines as the sidebar needs.
-        let size = TEXT * 0.8;
-        let (mut x, mut y) = (LEFT_X, TABS_Y);
+    /// The groups' headers on the bar (x, y, w, h), one a group.
+    fn header_rects(&self) -> Vec<[f32; 4]> {
+        let size = TEXT * 0.68;
+        let mut x = HEADERS_X;
         GROUPS.iter().map(|name| {
-            let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.012;
-            if x > LEFT_X && x + w > LEFT_X + LEFT_W {
-                x = LEFT_X;
-                y += 0.026;
-            }
-            let rect = [x, y, w, 0.022];
-            x += w + 0.005;
+            let w = (name.len() + 2) as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.006;
+            let rect = [x, BAR_ROW_Y, w, BAR_ROW_H];
+            x += w + 0.003;
             rect
         }).collect()
     }
@@ -2930,8 +2924,7 @@ impl Range {
         if self.mode == Mode::Live && !self.battle {
             self.draw_gizmos();
         }
-        let top = 0.0;
-        self.r.fill_rect(0.0, 0.0, SIDE_W, 1.0, PANEL_FILL);
+        self.r.fill_rect(0.0, BAR_TOP, 1.0, 1.0 - BAR_TOP, PANEL_FILL);
         self.draw_axes_gizmo();
         // The left block: title and time, the buttons, the status.
         let mode = match (self.mode, self.run) {
@@ -2955,10 +2948,10 @@ impl Range {
             else if self.pilot.is_some() { if self.playing { "WATCHING".into() } else { "WATCHING, PAUSED".into() } }
             else { format!("EDIT: {} T-34S", self.t34s.len()) }
         } else { mode };
-        self.text(&format!("{mode}  T {:.2} S", t), LEFT_X, top + 0.044, TEXT * 0.75, INK, crate::ui::Align::Left);
-        self.text(&format!("{:.0} FPS  SIM {:.0} MS  DRAW {:.0} MS", 1.0 / self.perf[0].max(1.0e-4), self.perf[1], self.perf[2]),
-            LEFT_X, top + 0.060, TEXT * 0.62, DIM, crate::ui::Align::Left);
-        self.draw_crew_plan([LEFT_X, top + 0.052 + 0.018], 0.07);
+        let [hx, _, _, _] = hide_rect(false);
+        self.text(&format!("{mode}  T {:.2} S   {:.0} FPS  SIM {:.0} MS  DRAW {:.0} MS   H: HELP", t, 1.0 / self.perf[0].max(1.0e-4),
+            self.perf[1], self.perf[2]), hx - 0.008, BAR_TOP + 0.013, TEXT * 0.66, DIM, crate::ui::Align::Right);
+        self.draw_crew_plan([LEFT_X, BAR_TOP - 0.088], 0.075);
         for (label, col, row) in self.buttons() {
             let [x, y, w, h] = button_rect(col, row);
             let lit = if self.battle {
@@ -2978,13 +2971,13 @@ impl Range {
             };
             let text = match label {
                 "WATCH" | "PLAY" if self.battle && lit => "STOP",
-                "LAYOUTS" => "NEXT SAVED LAYOUT",
+                "LAYOUTS" => "NEXT LAYOUT",
                 "PLAY" if !self.battle && self.playing => "PAUSE",
                 "LOOP" => loop_label,
                 "REC" if rec_label.is_some() => rec_label.as_deref().unwrap_or("REC"),
                 other => other,
             };
-            self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.85, if lit { BLACK } else { INK }, crate::ui::Align::Center);
+            self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.68, if lit { BLACK } else { INK }, crate::ui::Align::Center);
         }
         let mut notes: Vec<(String, [f32; 4])> = vec![(self.status.to_uppercase(), INK)];
         if self.battle && self.pilot.is_none() && !self.player_control {
@@ -2999,34 +2992,26 @@ impl Range {
         if scrubbing {
             notes.push(("LET GO OF THE TIMELINE TO TAKE THE SIMULATION TO THIS FRAME".into(), INK));
         }
-        let chars = ((LEFT_W - 0.004) * self.win[0] / (0.45 * TEXT * 0.72 * self.win[1])).max(10.0) as usize;
-        let mut y = NOTES_Y;
-        'notes: for (text, colour) in notes {
-            for line in Self::wrap(&text, chars).into_iter().take(3) {
-                if y > TABS_Y - 0.012 {
-                    break 'notes;
-                }
-                self.text(&line, LEFT_X, y, TEXT * 0.72, colour, crate::ui::Align::Left);
-                y += 0.016;
-            }
+        // The status: the bar's upper line, its first note (and the next ones while room is left).
+        let line: Vec<String> = notes.iter().map(|(t, _)| t.clone()).collect();
+        let chars = ((hx - 0.36 - LEFT_X) * self.win[0] / (0.45 * TEXT * 0.66 * self.win[1])).max(10.0) as usize;
+        let status: String = line.join("   ").chars().take(chars).collect();
+        self.text(&status, LEFT_X, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
+        // The groups' headers: a disclosure each (closed >, open v), lit while open.
+        for (g, [x, y, w, h]) in self.header_rects().into_iter().enumerate() {
+            let open = self.open[g];
+            let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
+            self.r.fill_rect(x, y, w, h, if open { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX });
+            self.text_bold(&format!("{} {}", if open { "v" } else { ">" }, GROUPS[g]), x + w * 0.5, y + h * 0.5, TEXT * 0.68,
+                if open { BLACK } else { INK }, crate::ui::Align::Center);
         }
-        // The tabs and the hide button.
-        for (g, [x, y, w, h]) in self.tab_rects().into_iter().enumerate() {
-            let chosen = self.open[g];
-            if chosen {
-                self.r.fill_rect(x, y, w, h, INK);
-            }
-            self.text_bold(GROUPS[g], x + w * 0.5, y + h * 0.5, TEXT * 0.8, if chosen { BLACK } else { DIM }, crate::ui::Align::Center);
-        }
-        let (_, headers) = self.layout();
-        for (g, x, y) in headers {
-            self.text_bold(GROUPS[g], x + 0.004, y, TEXT * 0.72, DIM, crate::ui::Align::Left);
-            self.r.fill_rect(x + 0.004, y + ROW_H * 0.42, COLS_W - 0.02, 1.0 / self.win[1].max(1.0), [0.2, 0.2, 0.2, 1.0]);
+        // The open groups' columns: a black ground under each, its name at its head.
+        for (g, x, top) in self.columns() {
+            self.r.fill_rect(x - 0.003, top - 0.004, COLS_W + 0.003, BAR_TOP - top + 0.004, PANEL_FILL);
         }
         let [x, y, w, h] = hide_rect(false);
         self.r.fill_rect(x, y, w, h, BOX);
-        self.text_bold("HIDE", x + w * 0.5, y + h * 0.5, TEXT * 0.75, INK, crate::ui::Align::Center);
-        self.text("H: HELP", LEFT_X + LEFT_W, 0.044, TEXT * 0.62, DIM, crate::ui::Align::Right);
+        self.text_bold("HIDE", x + w * 0.5, y + h * 0.5, TEXT * 0.7, INK, crate::ui::Align::Center);
         // The chosen group's rows.
         let aspect = self.win[0] / self.win[1].max(1.0);
         for (knob, cx, y) in self.rows() {
@@ -3155,17 +3140,13 @@ impl Range {
             self.choose_mode(m);
             return Click::Used;
         }
-        if let Some(g) = self.tab_rects().iter().position(|[x, y, w, h]| cursor[0] >= *x && cursor[0] <= x + w && cursor[1] >= *y && cursor[1] <= y + h) {
-            // A tab opens or closes its group; Shift opens it alone.
+        if let Some(g) = self.header_rects().iter().position(|[x, y, w, h]| cursor[0] >= *x && cursor[0] <= x + w && cursor[1] >= *y && cursor[1] <= y + h) {
+            // A header opens or closes its group in place; Shift opens it alone.
             if coarse {
                 self.open = [false; GROUPS.len()];
                 self.open[g] = true;
             } else {
                 self.open[g] = !self.open[g];
-            }
-            let shown: std::collections::HashSet<_> = self.rows().iter().map(|r| format!("{:?}", r.0)).collect();
-            if self.open[g] && group_rows(g).iter().any(|k| !shown.contains(&format!("{k:?}"))) {
-                self.status = "MORE GROUPS OPEN THAN FIT: CLOSE ONE (SHIFT-CLICK A TAB OPENS IT ALONE)".into();
             }
             return Click::Used;
         }
@@ -3215,7 +3196,7 @@ impl Range {
         let mut x = LEFT_X;
         MODES.iter().map(|name| {
             let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.010;
-            let rect = [x, 0.008, w, 0.020];
+            let rect = [x, BAR_ROW_Y, w, BAR_ROW_H];
             x += w + 0.003;
             rect
         }).collect()

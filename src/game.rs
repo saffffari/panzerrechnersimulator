@@ -2775,12 +2775,12 @@ fn blood_grain_mesh(color: [u8; 3]) -> CpuMesh {
 
 /// Blood's look (2026-11-03, the owner: "an opaque dark red, make sure it's shiny though and a bit
 /// metallic", then "more red and brighter, but use the metallic knob to make it really dark like
-/// almost black"): an opaque, saturated red base, glossy, and mostly metallic, so it reads nearly
-/// black except where it catches a reflection. An owner-directed presentation choice: blood is a
+/// almost black"), then "too metallic and too red/bright": an opaque dark red base, glossy,
+/// a little metallic. An owner-directed presentation choice: blood is a
 /// dielectric, and its metallic response is not a measured property (ledger).
-pub(super) const BLOOD_METALLIC: f32 = 0.86;
+pub(super) const BLOOD_METALLIC: f32 = 0.35;
 pub(super) const BLOOD_ROUGHNESS: f32 = 0.12;
-pub(super) const WET_BLOOD: [[u8; 3]; 4] = [[178, 14, 12], [196, 20, 14], [160, 10, 10], [186, 16, 12]];
+pub(super) const WET_BLOOD: [[u8; 3]; 4] = [[112, 16, 13], [122, 20, 15], [100, 13, 11], [116, 18, 14]];
 
 fn blood_material(mesh: &mut CpuMesh) {
     mesh.metallic_factor = BLOOD_METALLIC;
@@ -38725,7 +38725,7 @@ mod tests {
         assert_eq!(mesh.max, Vec3::splat(0.5));
         // The owner's look: glossy and mostly metallic over a saturated red, so nearly black.
         assert_eq!(mesh.metallic_factor, BLOOD_METALLIC);
-        assert!(BLOOD_METALLIC > 0.8 && mesh.roughness_factor <= 0.15, "glossy, nearly black blood");
+        assert!(BLOOD_METALLIC < 0.5 && mesh.roughness_factor <= 0.15, "glossy dark blood, a little metallic");
         assert!(WET_BLOOD.iter().all(|c| c[0] > 150 && c[0] > 8 * c[1].max(c[2])), "a bright, saturated red base");
     }
 
