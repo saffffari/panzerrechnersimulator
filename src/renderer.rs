@@ -7022,6 +7022,16 @@ impl Renderer {
             g.vsm_frame = frame.min(3);
         }
     }
+    /// A separate part of the player's vehicle (a hatch lid, the visor holder) samples the surface
+    /// model in `frame` at its own vertices plus `rest_offset` (the frame's units): the part's
+    /// paint moves with it when it opens. The offset rides the push's vehicle lane, unused on the
+    /// player's meshes.
+    pub fn mark_vsm_part(&mut self, idx: usize, frame: u8, rest_offset: glam::Vec3) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.vsm_frame = frame.min(3);
+            g.vehicle_finish = [rest_offset.x, rest_offset.y, rest_offset.z, 0.0];
+        }
+    }
     /// The vehicle surface model's review view (`vehicle_surface::VIEWS`; 0 off).
     pub fn set_vsm_view(&mut self, view: u32) { self.vsm_view = view; }
     pub fn set_vsm_layers(&mut self, layers: u32) { self.vsm_layers = layers; }

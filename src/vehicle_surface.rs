@@ -52,7 +52,7 @@ const THICKNESS_REACH: f32 = 0.25;
 /// Edge record offsets are stored in units of this many frame units (0.1 mm).
 pub const EDGE_UNIT: f32 = 1.0e-4;
 /// Bump when the bake changes, so a stale cache is not read.
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 6;
 
 /// What a part is made of, for the layer stack (`rm_vsm.wgsl` names the same numbers).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,7 +64,7 @@ pub enum Class {
     Painted = 1,
     /// Manganese track links and pins, bare.
     Track = 2,
-    /// Exhaust pipes, their guards and the tow cables (`CABLE_EXHAUST_STEEL`), bare and scaled.
+    /// The exhaust pipes (`EXHAUST_PIPES`), bare and heat-scaled.
     Exhaust = 3,
     /// Road wheels, sprocket and idler.
     RunningGear = 4,
@@ -76,8 +76,12 @@ pub enum Class {
     Seat = 7,
     /// Instrument faces (`Illuminated Dial`, `dial red`).
     Instrument = 8,
+    /// The tow cables along the hull's sides (the rest of `CABLE_EXHAUST_STEEL`).
+    Cable = 9,
 }
-pub const CLASS_NAMES: [&str; 9] = ["none", "painted", "track", "exhaust", "running_gear", "gun", "floor", "seat", "instrument"];
+pub const CLASS_NAMES: [&str; 10] = ["none", "painted", "track", "exhaust", "running_gear", "gun", "floor", "seat", "instrument", "cable"];
+/// The two exhaust pipes on the rear plate (of `CABLE_EXHAUST_STEEL`; the other four are cables).
+pub const EXHAUST_PIPES: [&str; 2] = ["Hull_1207", "Hull_1208"];
 
 /// The three rigid frames: 0 hull, 1 turret, 2 gun.
 pub const FRAME_NAMES: [&str; FRAMES] = ["hull", "turret", "gun"];
@@ -106,6 +110,10 @@ pub struct Field {
     pub index: Vec<u32>,
     pub mask_base: u32,
     pub cells: Vec<Cell>,
+    /// Per cell, the simulated processes (`processes`; rm_vsm.wgsl `vsm_proc`): x flow | rust
+    /// carried << 8 | dirt carried << 16 | thrown mud << 24; y exhaust heat | soot << 8 | oil << 16 |
+    /// standing water << 24.
+    pub proc: Vec<[u32; 2]>,
     pub key: u64,
 }
 
@@ -161,7 +169,7 @@ impl Field {
         Some(decode(self.cells[i], cell))
     }
 
-    pub fn bytes(&self) -> usize { self.index.len() * 4 + self.cells.len() * 16 }
+    pub fn bytes(&self) -> usize { self.index.len() * 4 + self.cells.len() * 16 + self.proc.len() * 8 }
 }
 
 pub fn decode(c: Cell, cell: [i32; 3]) -> Sample {
@@ -268,6 +276,8 @@ fn read_frame(frame: usize, path: &str) -> anyhow::Result<(Vec<SrcTri>, u64)> {
 fn classify(frame: usize, node: &NodeInfo) -> Class {
     use crate::tank::exterior_finishes as lists;
     match node.material.as_deref() {
+        // The source's own paint is paint, whatever assembly the part belongs to.
+        Some("Interior Paint") => return Class::Painted,
         Some("Turret Floor") => return Class::Floor,
         Some("seats_black") => return Class::Seat,
         Some("Illuminated Dial" | "dial red") => return Class::Instrument,
@@ -275,7 +285,8 @@ fn classify(frame: usize, node: &NodeInfo) -> Class {
     }
     let name = node.name.as_str();
     if lists::TRACK_STEEL.contains(&name) { return Class::Track; }
-    if lists::CABLE_EXHAUST_STEEL.contains(&name) { return Class::Exhaust; }
+    if EXHAUST_PIPES.contains(&name) { return Class::Exhaust; }
+    if lists::CABLE_EXHAUST_STEEL.contains(&name) { return Class::Cable; }
     let folder = cad_folders().get(&format!("{}:{}", FRAME_NAMES[frame], name)).map(String::as_str);
     match folder {
         Some(f) if f.contains("Rollor System") || f.contains("Drive Rollar") || f.contains("Guide Roller") => return Class::RunningGear,
@@ -315,10 +326,12 @@ struct BNode { min: Vec3, max: Vec3, a: u32, count: u32 }
 #[derive(Clone, Copy)]
 struct BTri { v0: Vec3, e1: Vec3, e2: Vec3 }
 
-pub(crate) struct Bvh { nodes: Vec<BNode>, tris: Vec<BTri> }
+pub(crate) struct Bvh { nodes: Vec<BNode>, tris: Vec<BTri>, tags: Vec<u32> }
 
 impl Bvh {
-    pub(crate) fn build(tris: &[[Vec3; 3]]) -> Self {
+    pub(crate) fn build(tris: &[[Vec3; 3]]) -> Self { Self::build_tagged(tris, &vec![0; tris.len()]) }
+    /// With a tag per triangle (frame | class << 2), returned by `trace_hit`.
+    fn build_tagged(tris: &[[Vec3; 3]], tags_in: &[u32]) -> Self {
         let n = tris.len();
         let mut order: Vec<u32> = (0..n as u32).collect();
         let cent: Vec<Vec3> = tris.iter().map(|t| (t[0] + t[1] + t[2]) / 3.0).collect();
@@ -385,16 +398,25 @@ impl Bvh {
             stack.push((left + 1, mid, e));
             stack.push((left, s, mid));
         }
+        let tags = order.iter().map(|&i| tags_in[i as usize]).collect();
         let tris = order.iter().map(|&i| { let t = tris[i as usize]; BTri { v0: t[0], e1: t[1] - t[0], e2: t[2] - t[0] } }).collect();
-        Self { nodes, tris }
+        Self { nodes, tris, tags }
     }
+
+    fn normal(&self, i: u32) -> Vec3 { let t = &self.tris[i as usize]; t.e1.cross(t.e2).normalize_or_zero() }
+    fn tag(&self, i: u32) -> u32 { self.tags[i as usize] }
 
     /// The nearest hit along unit `d` from `o` within (tmin, tmax), or `any` stops at the first.
     pub(crate) fn trace(&self, o: Vec3, d: Vec3, tmin: f32, tmax: f32, any: bool) -> Option<f32> {
+        self.trace_hit(o, d, tmin, tmax, any).map(|(t, _)| t)
+    }
+    /// The hit's distance and triangle (for `normal` and `tag`).
+    fn trace_hit(&self, o: Vec3, d: Vec3, tmin: f32, tmax: f32, any: bool) -> Option<(f32, u32)> {
         if self.tris.is_empty() { return None; }
         let inv = Vec3::new(1.0 / d.x, 1.0 / d.y, 1.0 / d.z);
         let mut best = tmax;
         let mut found = false;
+        let mut hit = 0u32;
         let mut stack = [0u32; 96];
         let mut sp = 1usize;
         while sp > 0 {
@@ -402,9 +424,12 @@ impl Bvh {
             let node = self.nodes[stack[sp] as usize];
             if !slab(node.min, node.max, o, inv, tmin, best) { continue; }
             if node.count > 0 {
-                for t in &self.tris[node.a as usize..(node.a + node.count) as usize] {
+                for (k, t) in self.tris[node.a as usize..(node.a + node.count) as usize].iter().enumerate() {
                     if let Some(h) = ray_tri(o, d, t) {
-                        if h > tmin && h < best { best = h; found = true; if any { return Some(h); } }
+                        if h > tmin && h < best {
+                            best = h; found = true; hit = node.a + k as u32;
+                            if any { return Some((h, hit)); }
+                        }
                     }
                 }
             } else if sp + 2 <= stack.len() {
@@ -417,7 +442,7 @@ impl Bvh {
                 sp += 2;
             }
         }
-        found.then_some(best)
+        found.then_some((best, hit))
     }
 }
 fn slab(min: Vec3, max: Vec3, o: Vec3, inv: Vec3, tmin: f32, tmax: f32) -> bool {
@@ -674,12 +699,15 @@ pub fn build() -> anyhow::Result<Field> {
     // All three meshes at rest, in the hull frame, for the rays.
     let all: Vec<[Vec3; 3]> = frames_src.iter().enumerate()
         .flat_map(|(f, tris)| tris.iter().map(move |t| t.v.map(|v| v + offsets[f]))).collect();
-    let bvh = Bvh::build(&all);
+    let tags: Vec<u32> = frames_src.iter().enumerate()
+        .flat_map(|(f, tris)| tris.iter().map(move |t| f as u32 | (t.class as u32) << 2)).collect();
+    let bvh = Bvh::build_tagged(&all, &tags);
     drop(all);
+    drop(tags);
     println!("[vsm] bvh over {} triangles in {:.1} s", frames_src.iter().map(Vec::len).sum::<usize>(), started.elapsed().as_secs_f32());
     let sphere = sphere_dirs(SPHERE_RAYS);
     let hemi = cosine_dirs(HEMI_RAYS);
-    let mut records: Vec<(u64, Cell)> = Vec::new();
+    let mut records: Vec<(u64, Cell, [f32; 6])> = Vec::new();
     for (f, tris) in frames_src.iter().enumerate() {
         let t0 = std::time::Instant::now();
         let edges = feature_edges(tris);
@@ -710,7 +738,7 @@ pub fn build() -> anyhow::Result<Field> {
         let cells: Vec<(u64, u32)> = filed.into_iter().map(|(k, _, t)| (k, t)).collect();
         let chunk = cells.len().div_ceil(threads() * 8).max(1);
         let next = std::sync::atomic::AtomicUsize::new(0);
-        let parts: Vec<Vec<(usize, Cell)>> = std::thread::scope(|scope| {
+        let parts: Vec<Vec<(usize, Cell, [f32; 6])>> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..threads()).map(|_| scope.spawn(|| {
                 let mut out = Vec::new();
                 loop {
@@ -737,32 +765,36 @@ pub fn build() -> anyhow::Result<Field> {
                             let line = e.a + dir * (centre - e.a).dot(dir);
                             s.edge = Some((line, dir, e.angle));
                         }
-                        out.push((i, encode(&s, cell)));
+                        out.push((i, encode(&s, cell), [p.x, p.y, p.z, n.x, n.y, n.z]));
                     }
                 }
                 out
             })).collect();
             handles.into_iter().map(|h| h.join().expect("vsm measure")).collect()
         });
-        let mut measured = vec![[0u32; 4]; cells.len()];
-        for part in parts { for (i, c) in part { measured[i] = c; } }
-        records.extend(cells.iter().zip(measured).map(|(&(k, _), c)| (k, c)));
+        let mut measured = vec![([0u32; 4], [0.0f32; 6]); cells.len()];
+        for part in parts { for (i, c, pn) in part { measured[i] = (c, pn); } }
+        records.extend(cells.iter().zip(measured).map(|(&(k, _), (c, pn))| (k, c, pn)));
         println!("[vsm] {}: {} cells, {} sharp edges, {:.1} s", FRAME_NAMES[f], cells.len(), edges.len(), t0.elapsed().as_secs_f32());
     }
-    let field = pack(records, key);
+    let (mut field, points) = pack(records, key);
+    let t0 = std::time::Instant::now();
+    field.proc = processes(&field, &points, &bvh, &frames_src, offsets);
+    println!("[vsm] processes in {:.1} s", t0.elapsed().as_secs_f32());
     if let Some(path) = &cache { write_cache(path, &field); }
     println!("[vsm] baked {} cells ({:.0} MB) in {:.1} s", field.cells.len(), field.bytes() as f64 / 1.0e6, started.elapsed().as_secs_f32());
     Ok(field)
 }
 
-/// Bricks and masks from the (key, record) list.
-fn pack(mut records: Vec<(u64, Cell)>, key: u64) -> Field {
+/// Bricks and masks from the (key, record, surface point and normal) list; the points come back
+/// in the cells' order.
+fn pack(mut records: Vec<(u64, Cell, [f32; 6])>, key: u64) -> (Field, Vec<[f32; 6]>) {
     // Order: frame, brick (z, y, x), then the bit inside the brick.
     let brick_of = |c: [i32; 3]| [c[0].div_euclid(BRICK), c[1].div_euclid(BRICK), c[2].div_euclid(BRICK)];
     let mut frames = [FrameMeta::default(); FRAMES];
     let mut lo_b = [[i32::MAX; 3]; FRAMES];
     let mut hi_b = [[i32::MIN; 3]; FRAMES];
-    for (k, _) in &records {
+    for (k, _, _) in &records {
         let (f, c) = key_cell(*k);
         let b = brick_of(c);
         for a in 0..3 { lo_b[f][a] = lo_b[f][a].min(b[a]); hi_b[f][a] = hi_b[f][a].max(b[a]); }
@@ -786,12 +818,13 @@ fn pack(mut records: Vec<(u64, Cell)>, key: u64) -> Field {
         let l = [c[0].rem_euclid(BRICK), c[1].rem_euclid(BRICK), c[2].rem_euclid(BRICK)];
         slot << 6 | (l[0] + l[1] * 4 + l[2] * 16) as u64
     };
-    records.sort_unstable_by_key(|(k, _)| sort_key(*k));
+    records.sort_unstable_by_key(|(k, _, _)| sort_key(*k));
     let mut index = vec![u32::MAX; base as usize];
     let mut masks: Vec<u32> = Vec::new();
     let mut cells = Vec::with_capacity(records.len());
+    let mut points = Vec::with_capacity(records.len());
     let mut current = u64::MAX;
-    for (k, c) in &records {
+    for (k, c, pn) in &records {
         let sk = sort_key(*k);
         let slot = sk >> 6;
         let bit = (sk & 63) as u32;
@@ -803,10 +836,12 @@ fn pack(mut records: Vec<(u64, Cell)>, key: u64) -> Field {
         let m = masks.len() - 4;
         if bit < 32 { masks[m] |= 1 << bit; } else { masks[m + 1] |= 1 << (bit - 32); }
         cells.push(*c);
+        points.push(*pn);
     }
     let mask_base = index.len() as u32;
     index.extend(masks);
-    Field { frames, index, mask_base, cells, key }
+    let proc = vec![[0u32; 2]; cells.len()];
+    (Field { frames, index, mask_base, cells, proc, key }, points)
 }
 
 fn write_cache(path: &std::path::Path, f: &Field) {
@@ -823,6 +858,7 @@ fn write_cache(path: &std::path::Path, f: &Field) {
     push(&mut bytes, f.cells.len() as u32);
     bytes.extend_from_slice(bytemuck::cast_slice(&f.index));
     bytes.extend_from_slice(bytemuck::cast_slice(&f.cells));
+    bytes.extend_from_slice(bytemuck::cast_slice(&f.proc));
     let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
     let tmp = path.with_extension("tmp");
     if std::fs::write(&tmp, bytes).is_ok() { let _ = std::fs::rename(tmp, path); }
@@ -845,12 +881,315 @@ fn read_cache(path: &std::path::Path, key: u64) -> Option<Field> {
     let nc = u32_at(&mut at)? as usize;
     let ib = bytes.get(at..at + ni * 4)?;
     let cb = bytes.get(at + ni * 4..at + ni * 4 + nc * 16)?;
+    let pb = bytes.get(at + ni * 4 + nc * 16..at + ni * 4 + nc * 24)?;
     let index: Vec<u32> = ib.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
     let cells: Vec<Cell> = cb.chunks_exact(16).map(|c| {
         let w = |i: usize| u32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap());
         [w(0), w(1), w(2), w(3)]
     }).collect();
-    Some(Field { frames, index, mask_base, cells, key })
+    let proc: Vec<[u32; 2]> = pb.chunks_exact(8).map(|c| [u32::from_le_bytes(c[0..4].try_into().unwrap()), u32::from_le_bytes(c[4..8].try_into().unwrap())]).collect();
+    Some(Field { frames, index, mask_base, cells, proc, key })
+}
+
+// ---- Phase 3: the processes, simulated once on the vehicle at rest ----
+//
+// Each writes a channel per cell (`Field::proc`), normalised to a byte with a saturating curve over
+// the channel's own 99th percentile. Deterministic: every random draw is a hash of a cell's key or
+// a particle's number.
+
+const CH_FLOW: usize = 0;
+const CH_RUST: usize = 1;
+const CH_DIRT: usize = 2;
+const CH_MUD: usize = 3;
+const CH_HEAT: usize = 4;
+const CH_SOOT: usize = 5;
+const CH_OIL: usize = 6;
+const CH_POOL: usize = 7;
+const CHANNELS: usize = 8;
+/// A drop's step over the surface (frame units).
+const FLOW_STEP: f32 = 0.006;
+const FLOW_STEPS: usize = 420;
+/// Gravity in frame units per second squared (the frame is within 11 % of metres).
+const GRAVITY: f32 = 9.81;
+
+fn unit_hash(seed: u64, k: u64) -> f32 { (hash(seed ^ k.wrapping_mul(0x9e37_79b9_7f4a_7c15)) >> 40) as f32 / (1u64 << 24) as f32 }
+
+struct Sim<'a> {
+    field: &'a Field,
+    bvh: &'a Bvh,
+    offsets: [Vec3; FRAMES],
+    acc: Vec<std::sync::atomic::AtomicU32>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Liquid { Water, Oil }
+
+impl<'a> Sim<'a> {
+    fn cell_at(&self, frame: usize, p_hull: Vec3, n: Vec3) -> Option<usize> {
+        let q = p_hull - self.offsets[frame] + n * (OFFSET_CELLS * CELL);
+        let c = (q / CELL).floor();
+        self.field.cell_index(frame, [c.x as i32, c.y as i32, c.z as i32])
+    }
+    fn deposit(&self, cell: Option<usize>, ch: usize, amount: f32) {
+        if let Some(i) = cell {
+            let v = (amount * 256.0).round().clamp(0.0, 1.0e6) as u32;
+            if v > 0 { self.acc[i * CHANNELS + ch].fetch_add(v, std::sync::atomic::Ordering::Relaxed); }
+        }
+    }
+    fn track_at(&self, p: Vec3, n: Vec3) -> bool {
+        self.bvh.trace_hit(p + n * 0.003, -n, 1.0e-5, 0.01, false).is_some_and(|(_, i)| self.bvh.tag(i) >> 2 == Class::Track as u32)
+    }
+    fn hit(&self, o: Vec3, d: Vec3, reach: f32) -> Option<(Vec3, Vec3, usize)> {
+        self.bvh.trace_hit(o, d, 1.0e-5, reach, false).map(|(t, i)| (o + d * t, self.bvh.normal(i), (self.bvh.tag(i) & 3) as usize))
+    }
+
+    /// A drop of water or oil from `p` (hull frame) running over the surfaces under gravity until it
+    /// drips to the ground or stops: water marks its path, picks up dirt where it stands and rust
+    /// where it crosses a worn edge, and lays them down as it runs.
+    fn run(&self, mut p: Vec3, mut n: Vec3, mut frame: usize, weight: f32, seed: u64, liquid: Liquid) {
+        let meander = {
+            let a = unit_hash(seed, 1) * std::f32::consts::TAU;
+            Vec3::new(a.cos(), 0.0, a.sin())
+        };
+        let (mut rust, mut dirt) = (0.0f32, 0.0f32);
+        let mut anchor = p;
+        for step in 0..FLOW_STEPS {
+            if p.y < 0.03 { break; }
+            // A drop that has not moved a centimetre in twenty steps is caught (a pocket, a link's
+            // gap): it stays there.
+            if step % 20 == 19 {
+                if (p - anchor).length() < 0.01 { break; }
+                anchor = p;
+            }
+            // Oil reaching the running track is carried off by it.
+            if liquid == Liquid::Oil && step > 0 && self.track_at(p, n) { break; }
+            let g = Vec3::NEG_Y;
+            let tangent = g - n * n.dot(g);
+            let slope = tangent.length();
+            let flat = slope < 0.1;
+            let cell = self.cell_at(frame, p, n);
+            match liquid {
+                Liquid::Water => {
+                    self.deposit(cell, CH_FLOW, weight);
+                    if flat { self.deposit(cell, CH_POOL, weight); }
+                    self.deposit(cell, CH_RUST, weight * rust);
+                    self.deposit(cell, CH_DIRT, weight * dirt);
+                    if flat { dirt = (dirt + 0.02).min(1.0); }
+                    // Crossing a sharp convex edge where paint chips: steel there rusts, and the
+                    // water carries it on.
+                    if let Some(i) = cell {
+                        let s = decode(self.field.cells[i], [0, 0, 0]);
+                        if let Some((_, _, angle)) = s.edge { if angle > 30.0 && s.open[2] > 0.72 { rust = (rust + 0.05).min(1.0); } }
+                    }
+                    if !flat { rust *= 0.992; dirt *= 0.99; }
+                }
+                Liquid::Oil => self.deposit(cell, CH_OIL, weight),
+            }
+            // An overhang's underside: the drop lets go.
+            let dir = if flat { (meander - n * n.dot(meander)).normalize_or_zero() } else { tangent / slope };
+            if n.y < -0.35 || dir == Vec3::ZERO {
+                match self.hit(p - Vec3::Y * 0.002, Vec3::NEG_Y, 2.5) {
+                    Some((q, m, f)) if m.y > 0.2 => { p = q; n = m; frame = f; continue; }
+                    _ => break,
+                }
+            }
+            let next = p + dir * if flat { FLOW_STEP * 1.4 } else { FLOW_STEP };
+            if let Some((q, m, f)) = self.hit(next + n * 0.004, -n, 0.012).filter(|(_, m, _)| m.dot(n) > 0.2) {
+                p = q; n = m; frame = f;
+                continue;
+            }
+            // Past an edge: round it if the next face does not overhang much, else drip.
+            let around = (dir - n).normalize_or_zero();
+            if let Some((q, m, f)) = self.hit(next + n * 0.002, around, 0.015).filter(|(_, m, _)| m.y > -0.6 && m.dot(-around) > 0.1) {
+                p = q; n = m; frame = f;
+                continue;
+            }
+            match self.hit(next, Vec3::NEG_Y, 2.5) {
+                Some((q, m, f)) if m.y > 0.2 => { p = q; n = m; frame = f; }
+                _ => break,
+            }
+        }
+    }
+
+    /// A clod off the moving track (hull frame), flown ballistically until it strikes the vehicle or
+    /// the ground; where it strikes, mud.
+    fn throw(&self, mut p: Vec3, mut v: Vec3, weight: f32) {
+        let dt = 0.004f32;
+        for _ in 0..300 {
+            let next_v = v + Vec3::NEG_Y * GRAVITY * dt;
+            let step = (v + next_v) * 0.5 * dt;
+            let len = step.length();
+            if len < 1e-7 { break; }
+            let d = step / len;
+            if let Some((q, m, f)) = self.hit(p, d, len) {
+                if m.dot(d) < 0.0 { self.deposit(self.cell_at(f, q, m), CH_MUD, weight); }
+                return;
+            }
+            p += step;
+            v = next_v;
+            if p.y < 0.0 { return; }
+        }
+    }
+
+    /// Exhaust gas from an outlet: buoyant, turbulent (a random walk), drifting back with the
+    /// vehicle's way; its soot settles where it touches.
+    fn plume(&self, mut p: Vec3, seed: u64) {
+        let a = unit_hash(seed, 2) * std::f32::consts::TAU;
+        let c = 0.2 + 0.8 * unit_hash(seed, 3);
+        let mut d = Vec3::new(a.cos() * (1.0 - c * c).sqrt(), c, a.sin() * (1.0 - c * c).sqrt());
+        // The air the gas meets: the vehicle's way (rearward), a cross wind, and the eddy behind a
+        // bluff rear plate that turns some of it down and forward over the deck and the plate.
+        let w = unit_hash(seed, 4) * std::f32::consts::TAU;
+        let wind = Vec3::new(w.cos() * 0.10, -0.05 * unit_hash(seed, 5), w.sin() * 0.10 - 0.06);
+        for k in 0..110u64 {
+            let jitter = Vec3::new(unit_hash(seed, 10 + 3 * k) - 0.5, unit_hash(seed, 11 + 3 * k) - 0.5, unit_hash(seed, 12 + 3 * k) - 0.5);
+            d = (d + jitter * 0.9 + Vec3::new(0.0, 0.03, 0.0) + wind).normalize_or(Vec3::Y);
+            let step = 0.02;
+            if let Some((q, m, f)) = self.hit(p, d, step) {
+                if m.dot(d) < 0.0 { self.deposit(self.cell_at(f, q, m), CH_SOOT, 1.0 - k as f32 / 110.0); }
+                // It slides along rather than stopping.
+                d = (d - m * d.dot(m) * 1.5).normalize_or(Vec3::Y);
+                p = q + m * 0.003;
+                continue;
+            }
+            p += d * step;
+        }
+    }
+}
+
+fn processes(field: &Field, points: &[[f32; 6]], bvh: &Bvh, frames_src: &[Vec<SrcTri>], offsets: [Vec3; FRAMES]) -> Vec<[u32; 2]> {
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+    let n_cells = field.cells.len();
+    let sim = Sim { field, bvh, offsets, acc: (0..n_cells * CHANNELS).map(|_| AtomicU32::new(0)).collect() };
+    // Which frame each cell is in: the brick index runs frame by frame.
+    let mut frame_of = vec![0u8; n_cells];
+    for f in 0..FRAMES {
+        let m = field.frames[f];
+        let n = (m.dims[0] * m.dims[1] * m.dims[2]) as usize;
+        for &b in &field.index[m.brick_base as usize..m.brick_base as usize + n] {
+            if b == u32::MAX { continue; }
+            let w = field.mask_base as usize + b as usize * 4;
+            let count = field.index[w].count_ones() + field.index[w + 1].count_ones();
+            let base = field.index[w + 2] as usize;
+            for i in base..base + count as usize { frame_of[i] = f as u8; }
+        }
+    }
+    let par = |items: usize, work: &(dyn Fn(usize) + Sync)| {
+        let next = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..threads() {
+                scope.spawn(|| loop {
+                    let start = next.fetch_add(256, Ordering::Relaxed);
+                    if start >= items { break; }
+                    for i in start..(start + 256).min(items) { work(i); }
+                });
+            }
+        });
+    };
+    let point = |i: usize| (Vec3::new(points[i][0], points[i][1], points[i][2]), Vec3::new(points[i][3], points[i][4], points[i][5]));
+    // Rain and melt: a drop from every third cell the sky reaches, weighted by the sky it sees and
+    // how much it faces up (wind drives some onto walls).
+    let t0 = std::time::Instant::now();
+    par(n_cells, &|i| {
+        let s = decode(field.cells[i], [0, 0, 0]);
+        if s.sky < 0.1 { return; }
+        let (p, n) = point(i);
+        let f = frame_of[i] as usize;
+        let weight = s.sky * (0.25 + 0.75 * n.y.max(0.0));
+        let t = n.cross(if n.y.abs() < 0.9 { Vec3::Y } else { Vec3::X }).normalize();
+        let b = n.cross(t);
+        for k in 0..3u64 {
+            let seed = (i as u64) << 2 | k;
+            let start = p + (t * (unit_hash(seed, 8) - 0.5) + b * (unit_hash(seed, 9) - 0.5)) * CELL;
+            sim.run(start + offsets[f], n, f, weight, seed, Liquid::Water);
+        }
+    });
+    println!("[vsm] water: {:.1} s", t0.elapsed().as_secs_f32());
+    // The tracks' throw: every third link cell launches clods at three speeds, forward and back.
+    let t0 = std::time::Instant::now();
+    par(n_cells, &|i| {
+        if frame_of[i] != 0 { return; }
+        let s = decode(field.cells[i], [0, 0, 0]);
+        if s.class != Class::Track as u8 { return; }
+        let (p, n) = point(i);
+        // Where on the run: the wraps fling hardest, the top run lifts a little, the bottom run is
+        // on the ground; the outer side sheds some.
+        let weight = if n.y < -0.7 { 0.0 } else if n.z.abs() > 0.5 { 1.0 } else if n.y > 0.7 { 0.35 } else { 0.2 };
+        if weight == 0.0 { return; }
+        // The run's velocity in the hull frame for forward drive: top forward, front down, bottom
+        // back, rear up (the track turns about +X).
+        let around = Vec3::new(0.0, n.y, n.z).normalize_or(Vec3::Y);
+        let along = Vec3::X.cross(around);
+        for (k, speed) in [1.5f32, 2.5, 4.0, 5.5, 7.5, 10.0, -2.5, -4.5].into_iter().enumerate() {
+            let seed = (i as u64) << 4 | k as u64;
+            let spread = Vec3::new(unit_hash(seed, 5) - 0.5, unit_hash(seed, 6) - 0.5, unit_hash(seed, 7) - 0.5) * 0.5 * speed.abs();
+            let v = along * speed + n * (0.15 * speed.abs()) + spread;
+            sim.throw(p + n * 0.01, v, weight * if speed < 0.0 { 0.5 } else { 1.0 });
+        }
+    });
+    println!("[vsm] track throw: {:.1} s", t0.elapsed().as_secs_f32());
+    // The exhaust: heat by distance from the pipes' steel, soot from their outlets.
+    let t0 = std::time::Instant::now();
+    let pipes: Vec<Vec3> = frames_src[0].iter().filter(|t| t.class == Class::Exhaust as u8)
+        .flat_map(|t| t.v.into_iter()).collect();
+    if !pipes.is_empty() {
+        let stride = (pipes.len() / 4000).max(1);
+        let samples: Vec<Vec3> = pipes.iter().step_by(stride).copied().collect();
+        let (lo, hi) = samples.iter().fold((Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)), |(a, b), p| (a.min(*p), b.max(*p)));
+        par(n_cells, &|i| {
+            if frame_of[i] != 0 { return; }
+            let (p, _) = point(i);
+            if p.cmplt(lo - Vec3::splat(0.45)).any() || p.cmpgt(hi + Vec3::splat(0.45)).any() { return; }
+            let d = samples.iter().map(|q| (*q - p).length_squared()).fold(f32::INFINITY, f32::min).sqrt();
+            // Steel conducts and the hot gas washes the guard: an e-folding of 6 cm.
+            let heat = (-d / 0.06).exp();
+            sim.deposit(Some(i), CH_HEAT, heat * 64.0);
+        });
+        // Outlets: the top 2 cm of each pipe (by side).
+        for side in [-1.0f32, 1.0] {
+            let mine: Vec<Vec3> = pipes.iter().copied().filter(|p| p.x * side > 0.0).collect();
+            let Some(top) = mine.iter().map(|p| p.y).reduce(f32::max) else { continue };
+            let rim: Vec<Vec3> = mine.iter().copied().filter(|p| p.y > top - 0.02).collect();
+            let outlet = rim.iter().copied().sum::<Vec3>() / rim.len().max(1) as f32;
+            par(60_000, &|k| sim.plume(outlet + Vec3::Y * 0.01, (k as u64) << 1 | (side > 0.0) as u64));
+        }
+    }
+    println!("[vsm] exhaust: {:.1} s", t0.elapsed().as_secs_f32());
+    // Oil weeping from the final drives' seals: at each sprocket's hub (the running gear's
+    // steel forward of the first road wheel), drops run down the hub and the hull's nose.
+    let t0 = std::time::Instant::now();
+    for side in [-1.0f32, 1.0] {
+        let hub: Vec<Vec3> = frames_src[0].iter().filter(|t| t.class == Class::RunningGear as u8)
+            .map(|t| (t.v[0] + t.v[1] + t.v[2]) / 3.0).filter(|c| c.z > 2.35 && c.x * side > 0.0).collect();
+        if hub.is_empty() { continue; }
+        let centre = hub.iter().copied().sum::<Vec3>() / hub.len() as f32;
+        par(1500, &|k| {
+            let seed = 0xF1A1 ^ (k as u64) << 1 | (side > 0.0) as u64;
+            let a = unit_hash(seed, 1) * std::f32::consts::TAU;
+            let r = 0.06 * unit_hash(seed, 2).sqrt();
+            let start = centre + Vec3::new(0.0, a.sin() * r, a.cos() * r) + Vec3::X * side * 0.6;
+            if let Some((q, m, f)) = sim.hit(start, Vec3::X * -side, 1.2) {
+                sim.run(q, m, f, 1.0, seed, Liquid::Oil);
+            }
+        });
+    }
+    println!("[vsm] oil: {:.1} s", t0.elapsed().as_secs_f32());
+    // Normalise each channel over its own 99th percentile with a saturating curve.
+    let raw: Vec<u32> = sim.acc.iter().map(|a| a.load(Ordering::Relaxed)).collect();
+    let mut scale = [1.0f32; CHANNELS];
+    for ch in 0..CHANNELS {
+        let mut v: Vec<u32> = raw.iter().skip(ch).step_by(CHANNELS).copied().filter(|v| *v > 0).collect();
+        if v.is_empty() { continue; }
+        let k = (v.len() * 99 / 100).min(v.len() - 1);
+        let p99 = *v.select_nth_unstable(k).1 as f32;
+        scale[ch] = 2.0 / p99.max(1.0);
+        println!("[vsm] channel {ch}: {} cells, 99th percentile {:.1}", v.len(), p99 / 256.0);
+    }
+    (0..n_cells).map(|i| {
+        let b = |ch: usize| ((1.0 - (-(raw[i * CHANNELS + ch] as f32) * scale[ch]).exp()) * 255.0).round() as u32;
+        [b(CH_FLOW) | b(CH_RUST) << 8 | b(CH_DIRT) << 16 | b(CH_MUD) << 24,
+         b(CH_HEAT) | b(CH_SOOT) << 8 | b(CH_OIL) << 16 | b(CH_POOL) << 24]
+    }).collect()
 }
 
 // ---- Access ----
@@ -871,7 +1210,16 @@ pub fn prefetch() {
 pub fn ready() -> Option<Arc<Field>> { FIELD.get().and_then(|r| r.as_ref().ok().cloned()) }
 
 /// `KESSEL_VSM_VIEW`: a measured channel drawn as false colour on the vehicle (a review view).
-pub const VIEWS: [&str; 10] = ["off", "class", "open_fine", "open_mid", "open_coarse", "sky", "enclosure", "edge", "thickness", "cells"];
+pub const VIEWS: [&str; 22] = ["off", "class", "open_fine", "open_mid", "open_coarse", "sky", "enclosure", "edge", "thickness", "cells",
+    "albedo", "roughness", "metallic", "rounding",
+    "flow", "rust_carried", "dirt_carried", "mud", "heat", "soot", "oil", "standing_water"];
+/// The review views drawn from the field (the rest are the finish's).
+pub fn field_view(view: usize) -> bool { (1..10).contains(&view) || view >= 14 }
+/// The finish's layers in physical order (`rm_vsm.wgsl`); `KESSEL_VSM_LAYERS=N` keeps 1..N (0 all,
+/// 255 the field unused: the former noise finish, for the before/after).
+pub const LAYERS: [&str; 14] = ["substrate", "primer", "topcoat", "rounding", "chips", "contact", "corrosion", "deposits", "weather",
+    "streaks", "mud", "heat", "soot", "oil"];
+pub const LAYERS_OFF: u32 = 255;
 pub fn view_from_env() -> u32 {
     std::env::var("KESSEL_VSM_VIEW").ok().and_then(|v| VIEWS.iter().position(|n| *n == v.trim()).or_else(|| v.trim().parse().ok()))
         .unwrap_or(0) as u32
@@ -1008,12 +1356,13 @@ mod tests {
         for i in 0..500i32 {
             let c = [(i * 7) % 23 - 5, (i * 13) % 17 - 9, (i * 3) % 29];
             let f = (i % 3) as usize;
-            records.push((cell_key(f, c), [i as u32, 0, 0, 0]));
+            records.push((cell_key(f, c), [i as u32, 0, 0, 0], [i as f32; 6]));
         }
         records.sort_unstable_by_key(|r| r.0);
         records.dedup_by_key(|r| r.0);
-        let field = pack(records.clone(), 1);
-        for (k, rec) in &records {
+        let (field, points) = pack(records.clone(), 1);
+        for (i, c) in field.cells.iter().enumerate() { assert_eq!(points[i][0], c[0] as f32); }
+        for (k, rec, _) in &records {
             let (f, c) = key_cell(*k);
             assert_eq!(field.cells[field.cell_index(f, c).unwrap()][0], rec[0]);
         }

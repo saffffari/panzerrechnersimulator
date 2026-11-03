@@ -184,3 +184,24 @@ weather.
    lattice's solved deformation.
 6. **Every other vehicle**: the T-34s and the rest through the same model with their own paint (4BO)
    and classes.
+
+## Status (2 November 2026)
+
+What the live code computes, with its limits, is in `docs/PHYSICAL_TRUTH_AUDIT.md` ("The vehicle
+surface model"); this section only says where the phases stand.
+
+- Phase 1, the field: implemented (`src/vehicle_surface.rs`, `shaders/rm_vsm.wgsl`). Openness at
+  0.6, 2 and 6 cm, sky, enclosure, wall thickness, the nearest sharp edge as an exact line, and
+  the material class, at 1 cm on the hull, turret and gun.
+- Phase 2, paint and steel: implemented as layers 1-9 (substrate, primer, topcoat, rounding,
+  chips, contact, corrosion, deposits, weather) on the hull, turret, gun, roof hatches, visor holder
+  and cupola grip; the noise layers and screen-space worn edges stand down there.
+- Phase 3, processes: implemented as layers 10-14 (water and its streaks, track throw, exhaust heat
+  and soot, the gun's heat and soot, final-drive oil), simulated at bake time.
+- Phase 4, snow and season: the whitewash no longer reaches the player's vehicle; the lying snow is
+  still the earlier relief, not yet placed by the field's sky, heat and contact.
+- Phases 5 and 6 (battle damage written into the field, the solved lattice drawn; other vehicles):
+  not started.
+
+Review: `fx-review` part `materials` and `tools/vsm_contact_sheet.py` (each layer's stills, lit and
+as unlit albedo, beside the former finish).

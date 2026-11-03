@@ -12908,6 +12908,12 @@ impl Game {
         // on a worker (a minute and a half the first time, the cache after) and installed when ready.
         if renderer.meadow_supported() {
             for (frame, slot) in slots.tiger.iter().enumerate() { renderer.mark_vsm_frame(*slot, frame as u8 + 1); }
+            // The roof hatches turn about their hinges in their frame's coordinates (driver and
+            // radio operator on the hull, loader and escape on the turret); the visor holder is
+            // drawn at the hull's model; the cupola's grip sits in the cupola hinge's frame.
+            for (slot, frame) in slots.roof_hatches.iter().zip([1u8, 2, 1, 2]) { renderer.mark_vsm_part(*slot, frame, Vec3::ZERO); }
+            renderer.mark_vsm_part(slots.driver_visor_holder, 1, Vec3::ZERO);
+            renderer.mark_vsm_part(slots.cupola_grip, 2, CUPOLA_HINGE);
             crate::vehicle_surface::prefetch();
         }
         for (prototype, kind) in prototypes.iter().zip([

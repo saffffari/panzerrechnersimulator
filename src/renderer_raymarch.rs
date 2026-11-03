@@ -707,7 +707,7 @@ pub(super) struct Backend {
     /// The vehicle surface model on the GPU (`install_vehicle_surface`): its two storage buffers
     /// and uniform lanes; None until the bake is ready. The G-buffer bind group's other inputs are
     /// kept to rebuild it with them.
-    vsm: Option<(wgpu::Buffer, wgpu::Buffer, [[f32; 4]; 8])>,
+    vsm: Option<(wgpu::Buffer, wgpu::Buffer, wgpu::Buffer, [[f32; 4]; 8])>,
     gbuffer_inputs: (wgpu::TextureView, wgpu::Sampler, wgpu::TextureView),
     history_valid: bool,
     shadow_views: [Mat4; SHADOW_VIEWS],
@@ -1259,9 +1259,9 @@ impl Backend {
                 // The cabin air's columns (`rm_gbuffer.wgsl` gb_cabin_air; 3 and 4 are the scars').
                 tex2d_entry(5, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array),
                 // The vehicle surface model's bricks and cells (rm_vsm.wgsl).
-                readonly_storage(6, S::FRAGMENT), readonly_storage(7, S::FRAGMENT)],
+                readonly_storage(6, S::FRAGMENT), readonly_storage(7, S::FRAGMENT), readonly_storage(8, S::FRAGMENT)],
         });
-        let vsm_placeholder = (storage("rm-vsm-index", 16), storage("rm-vsm-cells", 16));
+        let vsm_placeholder = (storage("rm-vsm-index", 16), storage("rm-vsm-cells", 16), storage("rm-vsm-proc", 16));
         let gbuffer_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-gbuffer"), layout: &gbuffer_bgl, entries: &[
                 entry(0, frame_buf.as_entire_binding()),
@@ -1272,6 +1272,7 @@ impl Backend {
                 entry(5, wgpu::BindingResource::TextureView(cabin_medium_view)),
                 entry(6, vsm_placeholder.0.as_entire_binding()),
                 entry(7, vsm_placeholder.1.as_entire_binding()),
+                entry(8, vsm_placeholder.2.as_entire_binding()),
             ],
         });
         let vis_stages = S::FRAGMENT | S::COMPUTE;
@@ -1940,6 +1941,7 @@ impl Backend {
         };
         let index = make("rm-vsm-index", bytemuck::cast_slice(&field.index));
         let cells = make("rm-vsm-cells", bytemuck::cast_slice(&field.cells));
+        let proc = make("rm-vsm-proc", bytemuck::cast_slice(&field.proc));
         let (terrain_view, terrain_sampler, cabin_view) = &self.gbuffer_inputs;
         self.gbuffer_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-gbuffer"), layout: &self.gbuffer_bgl, entries: &[
@@ -1951,13 +1953,14 @@ impl Backend {
                 entry(5, wgpu::BindingResource::TextureView(cabin_view)),
                 entry(6, index.as_entire_binding()),
                 entry(7, cells.as_entire_binding()),
+                entry(8, proc.as_entire_binding()),
             ],
         });
         println!("[vsm] installed: {} cells, {:.0} MB on the GPU", field.cells.len(), field.bytes() as f64 / 1.0e6);
         let mut lanes = field.uniform(0, 0);
         // The review view's emission gain (`KESSEL_VSM_VIEW_GAIN`): false colour drawn unlit.
         lanes[7][0] = std::env::var("KESSEL_VSM_VIEW_GAIN").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(1.0);
-        self.vsm = Some((index, cells, lanes));
+        self.vsm = Some((index, cells, proc, lanes));
     }
 
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -2356,7 +2359,7 @@ impl Backend {
                 [band.x as f32, band.y as f32, band.z as f32, (atmosphere.planet_center_m.y + atmosphere.planet_radius_m) as f32]
             },
             soot: [if r.atmo_enabled { r.atmo_soot * SOOT_EXTINCTION_PER_M } else { 0.0 }, 0.0, 0.0, 0.0],
-            vsm: self.vsm.as_ref().map_or([[0.0; 4]; 8], |(_, _, lanes)| {
+            vsm: self.vsm.as_ref().map_or([[0.0; 4]; 8], |(_, _, _, lanes)| {
                 let mut lanes = *lanes;
                 lanes[6][2] = r.vsm_view as f32;
                 lanes[6][3] = r.vsm_layers as f32;
@@ -3859,6 +3862,24 @@ impl Renderer {
 #[cfg(test)]
 mod shader_tests {
     use super::*;
+
+    /// The vehicle surface model's finish changes a surface's albedo, roughness, metallic and
+    /// shading normal only: no layer writes emission, and its false colour is drawn only in the
+    /// review views (KESSEL_VSM_VIEW, off unless set).
+    #[test]
+    fn the_vehicle_surface_finish_writes_no_light() {
+        let vsm = rm_source("rm_vsm.wgsl");
+        let finish = &vsm[vsm.find("fn vsm_finish(").expect("vsm_finish")..];
+        for word in ["g2", "emiss", "glow", "radiance", "fr.sun", "light"] {
+            assert!(!finish.contains(word), "the finish mentions {word}");
+        }
+        let gbuffer = rm_source("rm_gbuffer.wgsl");
+        let block = &gbuffer[gbuffer.find("var vsm_used = false;").expect("vsm block")..gbuffer.find("if (!vsm_used && kind < 0.5 && gb_in_cabin").expect("block end")];
+        // The only emission in the block is the review view's, behind its gate.
+        assert_eq!(block.matches("out.g2").count(), 1);
+        assert!(block.contains("if (vsm_view >= 10u && vsm_view < 14u)"));
+        assert!(gbuffer.contains("if (vsm_frame > 0u && ((vsm_view > 0u && vsm_view < 10u) || vsm_view >= 14u) && kind < 0.5)"));
+    }
 
     fn validate(label: &str, source: &str) {
         let module = wgpu::naga::front::wgsl::parse_str(source)

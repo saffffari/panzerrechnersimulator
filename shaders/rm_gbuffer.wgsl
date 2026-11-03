@@ -419,10 +419,11 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     // The vehicle surface model's review view (KESSEL_VSM_VIEW): a measured channel as unlit false
     // colour on the player's hull, turret and gun, for checking placement before materials.
     let vsm_frame = (u32(pc.extra.z + 0.5) >> 1u) & 3u;
-    if (vsm_frame > 0u && fr.vsm[6].z > 0.5 && kind < 0.5) {
+    let vsm_view = u32(fr.vsm[6].z + 0.5);
+    if (vsm_frame > 0u && ((vsm_view > 0u && vsm_view < 10u) || vsm_view >= 14u) && kind < 0.5) {
         let linear = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
         let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
-        let colour = vsm_view_colour(u32(fr.vsm[6].z + 0.5), vsm_frame - 1u, in.local / metric,
+        let colour = vsm_view_colour(vsm_view, vsm_frame - 1u, in.local / metric + pc.vehicle.xyz,
             normalize(transpose(linear) * face_n));
         out.g0 = vec4(0.0, 0.0, 0.0, 9.0);
         out.g1 = vec4(n, 1.0);
@@ -531,14 +532,49 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
             n = normalize(n + vec3(gx, 0.0, gz) * 1.2);
         }
     }
-    if (kind < 0.5 && gb_in_cabin && all(abs(albedo - RM_TIGER_PAINT) < vec3(0.006))) {
+    // The player's Tiger with its vehicle surface model installed (rm_vsm.wgsl): every layer from
+    // its cause in the field, in place of the noise layers below (paint_source_metal,
+    // apply_whitewash, apply_wear, cabin_grime) and the shade pass's screen-space worn edges.
+    var vsm_used = false;
+    if (vsm_frame > 0u && fr.vsm[6].y > 0.5 && fr.vsm[6].w < 254.5 && kind < 0.5 && !housing) {
+        let linear = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
+        let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+        let to_local = transpose(linear);
+        // A separate part (a hatch lid, the visor holder) carries its rest offset into the frame in
+        // the vehicle lane (`Renderer::mark_vsm_part`); the hull, turret and gun carry zero.
+        let p_local = in.local / metric + pc.vehicle.xyz;
+        let s = vsm_sample(vsm_frame - 1u, p_local, normalize(to_local * face_n));
+        if (s.found > 0.0) {
+            let fin = vsm_finish(vsm_frame - 1u, s, p_local, normalize(to_local * face_n), normalize(to_local * vec3(0.0, 1.0, 0.0)),
+                gb_in_cabin, albedo, roughness, metallic, u32(fr.vsm[6].w + 0.5));
+            if (vsm_view >= 10u && vsm_view < 14u) {
+                out.g0 = vec4(0.0, 0.0, 0.0, 9.0);
+                out.g1 = vec4(n, 1.0);
+                out.g2 = vec4(vsm_finish_view(vsm_view, fin) * fr.vsm[7].x, 0.0);
+                return out;
+            }
+            albedo = fin.albedo;
+            roughness = fin.roughness;
+            metallic = fin.metallic;
+            if (fin.bend > 0.0) {
+                let t = normalize(linear * fin.bend_dir);
+                n = normalize(n * cos(fin.bend) + t * sin(fin.bend));
+            }
+            if (fin.bend2 > 0.0) {
+                let t = normalize(linear * fin.bend2_dir);
+                n = normalize(n * cos(fin.bend2) + t * sin(fin.bend2));
+            }
+            vsm_used = true;
+        }
+    }
+    if (!vsm_used && kind < 0.5 && gb_in_cabin && all(abs(albedo - RM_TIGER_PAINT) < vec3(0.006))) {
         // The exterior's Panzergrau carried onto the cabin's side of an exterior-painted part (the
         // cupola's ring, the hatches): that side was ivory like the rest of the compartment.
         albedo = RM_INTERIOR_PAINT;
         roughness = 0.70;
         metallic = 0.0;
     }
-    if (kind < 0.5 && pc.extra.y > 0.5) {
+    if (!vsm_used && kind < 0.5 && pc.extra.y > 0.5) {
         let painted = paint_source_metal(albedo, metallic, in.relative + fr.cam_pos.xyz, normalize(in.normal));
         if (painted.w >= 0.0) {
             albedo = painted.rgb;
@@ -560,7 +596,7 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
             metallic = dirty.metal;
         }
     }
-    if (kind < 0.5 && pc.extra.y < 0.5 && pc.vehicle.x > 0.5) {
+    if (kind < 0.5 && pc.extra.y < 0.5 && vsm_frame == 0u && pc.vehicle.x > 0.5) {
         let finished = vehicle_finish(albedo, roughness, metallic, in.relative + fr.cam_pos.xyz, n, in.local);
         albedo = finished.albedo;
         roughness = finished.roughness;

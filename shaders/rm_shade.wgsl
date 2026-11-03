@@ -599,6 +599,11 @@ fn fs(in: VsOut) -> ShadeOut {
                 }
             }
         }
+        // The player's vehicle carries its worn edges and gathered grime in its own surface model
+        // once that is installed (rm_vsm.wgsl, from the measured field, not the screen).
+        if (fr.vsm[6].y > 0.5 && fr.vsm[6].w < 254.5 && !terrain && !thin && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5) {
+            vehicle = 0.0;
+        }
         if (vehicle > 0.0 && max(mech, max(fr.wear.x, outside_grime)) > 0.0) {
             let dims = vec2<i32>(fr.res.xy) - vec2(1);
             var crease = 0.0;
