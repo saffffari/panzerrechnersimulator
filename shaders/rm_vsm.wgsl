@@ -228,14 +228,16 @@ fn vsm_view_colour(view: u32, frame: u32, p: vec3<f32>, n: vec3<f32>) -> vec3<f3
 //   9 weather     UV chalking of the paint where the sky sees it
 // Reflectances are linear sRGB; the paints from their RAL CIELAB (L* 25 / 75 / 30), steel and
 // oxides from published ranges (docs/PHYSICAL_TRUTH_AUDIT.md names each estimate).
-const VSM_GREY: vec3<f32> = vec3<f32>(0.041, 0.045, 0.051);
+// The exterior topcoat: a neutral grey a little lighter than RAL 7021's blue-black (L* 34 against
+// 25), the owner's choice of 2 November 2026 ("too dark and blue and green ... more neutral").
+const VSM_GREY: vec3<f32> = vec3<f32>(0.080, 0.079, 0.076);
 // The fighting compartment's paint: a neutral white (the owner's choice, 2 November 2026, over the
 // period's Elfenbein RAL 1001; the light is to carry the warmth).
 const VSM_IVORY: vec3<f32> = vec3<f32>(0.70, 0.69, 0.645);
 const VSM_OIL: vec3<f32> = vec3<f32>(0.022, 0.016, 0.010);
 const VSM_PRIMER: vec3<f32> = vec3<f32>(0.156, 0.039, 0.034);
-const VSM_STEEL: vec3<f32> = vec3<f32>(0.56, 0.57, 0.58);
-const VSM_DARK_STEEL: vec3<f32> = vec3<f32>(0.28, 0.28, 0.29);
+const VSM_STEEL: vec3<f32> = vec3<f32>(0.56, 0.56, 0.555);
+const VSM_DARK_STEEL: vec3<f32> = vec3<f32>(0.28, 0.28, 0.275);
 const VSM_RUST: vec3<f32> = vec3<f32>(0.155, 0.045, 0.012);
 const VSM_OLD_RUST: vec3<f32> = vec3<f32>(0.060, 0.022, 0.010);
 const VSM_GRIME: vec3<f32> = vec3<f32>(0.030, 0.026, 0.021);
@@ -382,7 +384,7 @@ fn vsm_finish(frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32>, up: vec3<f32
         } else {
             // Rolled plate (mill scale over steel) or sheet: what wear exposes.
             let sheet = s.thickness < 0.012;
-            steel = select(vec3(0.48, 0.48, 0.49), vec3(0.56, 0.57, 0.58), sheet);
+            steel = select(vec3(0.48, 0.48, 0.475), VSM_STEEL, sheet);
             f.albedo = steel;
             f.roughness = steel_rough;
             f.metallic = 1.0;
