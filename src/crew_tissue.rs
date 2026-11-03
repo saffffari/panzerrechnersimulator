@@ -48,6 +48,8 @@ const FORWARD: f32 = 0.95;
 const OUTWARD: f32 = 0.3;
 /// Simulated time after the strikes, and the per-step velocity damping (named numerical damping).
 const SOLVE_S: f32 = 0.008;
+/// Worker threads for a body's lattice solve (its result is the same for any count).
+pub(super) const SOLVE_THREADS: usize = 8;
 /// Cells this far from a fragment's path move in the solve; farther ones hold them (anchored).
 const ACTIVE_REACH_M: f32 = 0.12;
 const DAMPING: f32 = 0.001;
@@ -731,6 +733,11 @@ impl CasualtyTissue {
 
     /// Solve one killing event's strikes on the lattice (see the module doc).
     pub(super) fn solve(&mut self, model: &TissueModel, strikes: &[Strike]) -> Solve {
+        let threads = std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, SOLVE_THREADS);
+        self.solve_with_threads(model, strikes, threads)
+    }
+
+    fn solve_with_threads(&mut self, model: &TissueModel, strikes: &[Strike], threads: usize) -> Solve {
         let n = model.cells.len();
         let mut struck = [false; PARTS];
         for strike in strikes.iter().filter(|s| s.work_j.is_finite() && s.work_j > 0.0) {
@@ -808,35 +815,99 @@ impl CasualtyTissue {
         }
         let dt = 0.6 * period;
         let steps = (SOLVE_S / dt).ceil() as usize;
-        let mut disp = vec![Vec3::ZERO; n];
-        let mut force = vec![Vec3::ZERO; n];
+        // In parallel and the same for any thread count: each live bond's force from both ends'
+        // displacements, then each moving cell gathers its bonds' forces in a fixed order.
+        let threads = threads.max(1);
+        let mut slot = vec![u32::MAX; n];
+        for (i, &c) in moving.iter().enumerate() {
+            slot[c] = i as u32;
+        }
+        let mut gather_start = vec![0u32; moving.len() + 1];
+        for &b in &live {
+            let bond = model.bonds[b as usize];
+            for end in [bond.a, bond.b] {
+                if slot[end as usize] != u32::MAX {
+                    gather_start[slot[end as usize] as usize + 1] += 1;
+                }
+            }
+        }
+        for i in 1..gather_start.len() {
+            gather_start[i] += gather_start[i - 1];
+        }
+        let mut fill = gather_start.clone();
+        let mut gather = vec![(0u32, 0.0f32); *gather_start.last().unwrap_or(&0) as usize];
+        for (li, &b) in live.iter().enumerate() {
+            let bond = model.bonds[b as usize];
+            for (end, sign) in [(bond.a, 1.0f32), (bond.b, -1.0)] {
+                let m = slot[end as usize];
+                if m != u32::MAX {
+                    gather[fill[m as usize] as usize] = (li as u32, sign);
+                    fill[m as usize] += 1;
+                }
+            }
+        }
+        let mut intact: Vec<bool> = live.iter().map(|&b| !self.broken[b as usize]).collect();
+        let mut bond_force = vec![Vec3::ZERO; live.len()];
+        let mut mdisp = vec![Vec3::ZERO; moving.len()];
+        let mut mvel: Vec<Vec3> = moving.iter().map(|&c| vel[c]).collect();
+        let bond_chunk = live.len().div_ceil(threads).max(1);
+        let cell_chunk = moving.len().div_ceil(threads).max(1);
         for _ in 0..steps {
-            for &c in &moving {
-                force[c] = Vec3::ZERO;
-            }
-            for &b in &live {
-                if self.broken[b as usize] {
-                    continue;
+            let (slot, mdisp_ref) = (&slot, &mdisp);
+            std::thread::scope(|scope| {
+                for ((bonds, alive), forces) in live.chunks(bond_chunk).zip(intact.chunks_mut(bond_chunk)).zip(bond_force.chunks_mut(bond_chunk)) {
+                    scope.spawn(move || {
+                        for i in 0..bonds.len() {
+                            if !alive[i] {
+                                forces[i] = Vec3::ZERO;
+                                continue;
+                            }
+                            let bond = model.bonds[bonds[i] as usize];
+                            let (bond_stiffness, bond_critical) = bond_law(&bond);
+                            let at = |cell: u32| {
+                                let m = slot[cell as usize];
+                                model.cells[cell as usize].at + if m == u32::MAX { Vec3::ZERO } else { mdisp_ref[m as usize] }
+                            };
+                            let d = at(bond.b) - at(bond.a);
+                            let length = d.length();
+                            if ((length - bond.rest_m) / bond.rest_m).abs() > bond_critical {
+                                alive[i] = false;
+                                forces[i] = Vec3::ZERO;
+                                continue;
+                            }
+                            forces[i] = d / length.max(1.0e-9) * (bond_stiffness * (length - bond.rest_m));
+                        }
+                    });
                 }
-                let bond = model.bonds[b as usize];
-                let (a, c) = (bond.a as usize, bond.b as usize);
-                let d = (model.cells[c].at + disp[c]) - (model.cells[a].at + disp[a]);
-                let length = d.length();
-                let stretch = (length - bond.rest_m) / bond.rest_m;
-                let (bond_stiffness, bond_critical) = bond_law(&bond);
-                if stretch.abs() > bond_critical {
-                    self.broken[b as usize] = true;
-                    out.bonds_broken += 1;
-                    continue;
+            });
+            let (gather, gather_start, bond_force, moving) = (&gather, &gather_start, &bond_force, &moving);
+            std::thread::scope(|scope| {
+                for (k, (vels, disps)) in mvel.chunks_mut(cell_chunk).zip(mdisp.chunks_mut(cell_chunk)).enumerate() {
+                    scope.spawn(move || {
+                        for j in 0..vels.len() {
+                            let m = k * cell_chunk + j;
+                            let mut f = Vec3::ZERO;
+                            for &(li, sign) in &gather[gather_start[m] as usize..gather_start[m + 1] as usize] {
+                                f += bond_force[li as usize] * sign;
+                            }
+                            let c = moving[m];
+                            vels[j] = (vels[j] + f / mass[c] * dt) * (1.0 - DAMPING);
+                            disps[j] += vels[j] * dt;
+                        }
+                    });
                 }
-                let f = d / length.max(1.0e-9) * (bond_stiffness * (length - bond.rest_m));
-                force[a] += f;
-                force[c] -= f;
+            });
+        }
+        for (li, &b) in live.iter().enumerate() {
+            if !intact[li] && !self.broken[b as usize] {
+                self.broken[b as usize] = true;
+                out.bonds_broken += 1;
             }
-            for &c in &moving {
-                vel[c] = (vel[c] + force[c] / mass[c] * dt) * (1.0 - DAMPING);
-                disp[c] += vel[c] * dt;
-            }
+        }
+        let mut disp = vec![Vec3::ZERO; n];
+        for (m, &c) in moving.iter().enumerate() {
+            disp[c] = mdisp[m];
+            vel[c] = mvel[m];
         }
         out.steps = steps;
         if std::env::var("KESSEL_TISSUE_DEBUG").as_deref() == Ok("cells") {
@@ -1233,6 +1304,24 @@ mod tests {
     }
 
     #[test]
+    fn the_solve_is_the_same_on_one_thread_or_many() {
+        let model = toy();
+        let part = crew_physics::CrewBodyPart::Torso;
+        let strikes = [Strike { part, at: Vec3::new(0.07, 1.1, 0.03), dir: Vec3::NEG_X, work_j: 0.5 * 0.01 * 600.0 * 600.0, speed_mps: 600.0 },
+            Strike { part, at: Vec3::new(0.0, 1.1, 0.6), dir: Vec3::ZERO, work_j: 2_000.0, speed_mps: 0.0 }];
+        let mut one = CasualtyTissue::new(&model);
+        let a = one.solve_with_threads(&model, &strikes, 1);
+        let mut many = CasualtyTissue::new(&model);
+        let b = many.solve_with_threads(&model, &strikes, 7);
+        assert_eq!((a.bonds_broken, a.chunks.len(), a.crushed), (b.bonds_broken, b.chunks.len(), b.crushed));
+        assert_eq!(one.present, many.present);
+        assert_eq!(one.broken, many.broken);
+        for (x, y) in a.chunks.iter().zip(&b.chunks) {
+            assert_eq!(x.velocity.to_array().map(f32::to_bits), y.velocity.to_array().map(f32::to_bits));
+        }
+    }
+
+    #[test]
     fn a_fast_fragment_tears_a_channel_and_a_slow_one_does_not() {
         let model = toy();
         let part = crew_physics::CrewBodyPart::Torso;
@@ -1377,6 +1466,16 @@ mod tests {
             println!("{part:?}: skin {} muscle {} bone {}, {part_drawn} cubes drawn", t(Tissue::Skin), t(Tissue::Muscle), t(Tissue::Bone));
         }
         println!("whole body: {drawn} cubes drawn; {} cells blended at joints", model.blend.iter().filter(|b| b.is_some()).count());
+        // A burst on every part (a cook-off's), on one thread and on the solve's workers.
+        let blast: Vec<Strike> = crew_physics::CrewBodyPart::ALL.iter().map(|&part| Strike { part, at: part.rest_center() + Vec3::new(0.0, 0.0, 0.8),
+            dir: Vec3::ZERO, work_j: 600.0, speed_mps: 0.0 }).collect();
+        for threads in [1, SOLVE_THREADS] {
+            let mut tissue = CasualtyTissue::new(&model);
+            let start = std::time::Instant::now();
+            let solve = tissue.solve_with_threads(&model, &blast, threads);
+            println!("whole-body burst on {threads} threads: {} bonds broken, {} pieces, {} steps in {:.0} ms", solve.bonds_broken,
+                solve.chunks.len(), solve.steps, start.elapsed().as_secs_f32() * 1000.0);
+        }
         // A 57 mm shot's 3.1 kg at 377 m/s through the torso, and a 20 g fragment at 700 m/s.
         let part = crew_physics::CrewBodyPart::Torso;
         let centre = part.rest_center();

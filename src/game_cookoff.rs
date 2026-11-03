@@ -357,44 +357,32 @@ impl Game {
         self.cookoff_events(events);
     }
 
+    /// Rounds that go in the same update are one volley (the owner, 2026-11-03: a full load need
+    /// not be presented shell by shell): each round's heat, fuel and stowage are its own, but the
+    /// volley has one bang of their summed TNT, one flash and one log line, at their TNT-weighted
+    /// centre.
     fn cookoff_events(&mut self, events: Vec<HeatEvent>) {
         let hull = self.player.hull_model();
+        // (id, place, TNT kg, detonated, cause) of every round going now.
+        let mut volley: Vec<(u32, Vec3, f32, bool, cabin_heat::Cause)> = Vec::new();
         for event in events {
             match event {
                 HeatEvent::Ignited { id, center, cause } => {
-                    let at = hull.transform_point3(center);
                     self.cookoff.ignitions += 1;
                     self.cookoff.fuel_kg += charge_kg();
-                    self.cookoff.tnt_kg += crate::sound_levels::TNT_PER_KG_PROPELLANT * charge_kg();
-                    self.consume_live_round(id);
                     let tnt_kg = crate::sound_levels::TNT_PER_KG_PROPELLANT * charge_kg();
-                    if self.cookoff.first_s.is_none() {
-                        self.cookoff.first_s = Some(self.cookoff.clock_s);
-                        self.cookoff.first_at = Some(at);
-                        println!("[cookoff] the first round ({id:#x}, {cause:?}) ignites at {:.1} s: gas {:.0} K", self.cookoff.clock_s,
-                            self.cookoff.heat.as_ref().map_or(0.0, CabinHeat::gas_k));
-                        self.cookoff_first_bang(id, at, cause, tnt_kg);
-                    } else {
-                        self.cookoff_pop(at, tnt_kg, false);
-                    }
+                    self.cookoff.tnt_kg += tnt_kg;
+                    self.consume_live_round(id);
+                    volley.push((id, hull.transform_point3(center), tnt_kg, false, cause));
                 }
                 HeatEvent::Detonated { id, center, filler_kg, cause } => {
-                    let at = hull.transform_point3(center);
                     self.cookoff.ignitions += 1;
                     self.cookoff.detonations += 1;
                     self.cookoff.fuel_kg += charge_kg() + filler_kg * crate::fea_damage::compartment::TNT_J_PER_KG / cabin_heat::PROPELLANT_J_PER_KG;
-                    self.cookoff.tnt_kg += filler_kg + crate::sound_levels::TNT_PER_KG_PROPELLANT * charge_kg();
+                    let tnt_kg = filler_kg + crate::sound_levels::TNT_PER_KG_PROPELLANT * charge_kg();
+                    self.cookoff.tnt_kg += tnt_kg;
                     self.consume_live_round(id);
-                    println!("[cookoff] an HE shell ({id:#x}, {cause:?}) detonates at {:.2} s: {:.2} kg filler, gas {:.0} K, {:.0} kPa",
-                        self.cookoff.clock_s, filler_kg, self.cookoff.heat.as_ref().map_or(0.0, CabinHeat::gas_k),
-                        self.cookoff.heat.as_ref().map_or(0.0, |h| h.gauge_pa() / 1000.0));
-                    if self.cookoff.first_s.is_none() {
-                        self.cookoff.first_s = Some(self.cookoff.clock_s);
-                        self.cookoff.first_at = Some(at);
-                        self.cookoff_first_bang(id, at, cause, filler_kg);
-                    } else {
-                        self.cookoff_pop(at, filler_kg, true);
-                    }
+                    volley.push((id, hull.transform_point3(center), tnt_kg, true, cause));
                 }
                 HeatEvent::HatchBlown { index } => {
                     match index {
@@ -407,6 +395,26 @@ impl Game {
                 }
                 HeatEvent::TurretLaunched { speed_mps, gauge_pa } => self.throw_player_turret(speed_mps, gauge_pa),
             }
+        }
+        let Some(&(first_id, _, _, _, first_cause)) = volley.first() else { return };
+        let tnt_kg: f32 = volley.iter().map(|v| v.2).sum();
+        let at = volley.iter().map(|v| v.1 * v.2).sum::<Vec3>() / tnt_kg.max(1e-9);
+        let detonated = volley.iter().filter(|v| v.3).count();
+        let gas_k = self.cookoff.heat.as_ref().map_or(0.0, CabinHeat::gas_k);
+        let gauge_kpa = self.cookoff.heat.as_ref().map_or(0.0, |h| h.gauge_pa() / 1000.0);
+        if volley.len() == 1 {
+            println!("[cookoff] round {first_id:#x} ({first_cause:?}) {} at {:.2} s: {tnt_kg:.2} kg TNT, gas {gas_k:.0} K, {gauge_kpa:.0} kPa",
+                if detonated > 0 { "detonates" } else { "ignites" }, self.cookoff.clock_s);
+        } else {
+            println!("[cookoff] {} rounds go together at {:.2} s ({detonated} filled shells detonate): {tnt_kg:.2} kg TNT, gas {gas_k:.0} K, {gauge_kpa:.0} kPa",
+                volley.len(), self.cookoff.clock_s);
+        }
+        if self.cookoff.first_s.is_none() {
+            self.cookoff.first_s = Some(self.cookoff.clock_s);
+            self.cookoff.first_at = Some(at);
+            self.cookoff_first_bang(first_id, at, first_cause, tnt_kg);
+        } else {
+            self.cookoff_pop(at, tnt_kg, detonated > 0);
         }
     }
 
