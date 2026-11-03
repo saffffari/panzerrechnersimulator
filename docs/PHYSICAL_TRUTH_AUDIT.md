@@ -432,6 +432,30 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   (2026-11-02): 2.5 % at 1,100 K, 1.3e-4 at 900 K, 4e-7 at 750 K of the 1,300 K band's, so the
   pages' display scale (lifted and drawn hotter for legibility) no longer lights the cabin's dust
   orange from a floor of resting dull-red chips.
+- The behind-armour flash (2026-11-02; `behind_armour_flash_peak`, the owner: a flash of light
+  as the round bursts through, seen from inside). A perforation of the player's vehicle lights a
+  modelled emitter 12 cm inside the hole: 1 % of the steel the round displaces (the calibre's
+  disc over the oblique path) leaves as fine dust and burns in the compartment's air to magnetite
+  (6.7 MJ/kg) over a 20 ms time constant, 30 % of the power radiated at a luminous efficacy of
+  18 lm/W at about 2,800 K (its colour on the shared Planck law). A 76 mm round through 80 mm
+  peaks near 4 Mcd, about five times the 88's muzzle flash light; a 14.5 mm bullet's is a
+  fiftieth of a unit. Each frame shows the flash's mean over its own exposure, so it is equally
+  bright at every frame rate. Named estimates: the 1 % fine share, the burn time, the radiant
+  share and the efficacy; it lights through the scene's shadow rays like any lamp.
+- Inside a perforation (2026-11-02, the owner): sparks thrown inward from the back face (the
+  exterior strike's 0.6 % share of the plate's work, as incandescent dust along the shot line);
+  an armour-piercing round with no filler that comes through above 60 m/s draws its base tracer
+  across the compartment as the tracer strip, exposed over exactly the time the round takes to
+  reach the first surface on its line (a few milliseconds, so one frame holds its whole path, as
+  a camera records it; named: a tracer is assumed on every such round); the authored fragment
+  sizes reach 1.2-1.8 cm instead of 7-9 mm (behind-armour debris has a centimetre tail; the drawn
+  body is the physical one, so the larger pieces are heavier and hit harder), and a cooled chip's
+  colour is a reddish-brown oxide (sRGB 104, 66, 52) instead of plain grey.
+- Every wound glows with a radial temperature falloff (2026-11-02): where the lattice solved the
+  strike, its own field; otherwise the rim estimate's temperature at the bore falling outward
+  exponentially over a third of the hole's radius (0.3 R from a dent's centre; named), drawn,
+  like the chips, at 1.7 times its temperature from 750 K up, so the bore reads white-yellow and
+  the colour runs through orange, red and deep red to raw steel instead of one flat colour.
 - A penetration's trapped interior smoke is a third as dense as its exterior vent (0.55 against
   1.6) and clears in six seconds instead of ten (2026-11-02): at the vent's density the six
   puffs were opaque across the turret, and an interior camera saw only sky-lit fog for ten
