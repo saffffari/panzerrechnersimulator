@@ -197,14 +197,32 @@ struct Section {
 }
 
 impl Section {
+    /// The plane's normal in the hull frame: always one of the hull's axes, either side (the owner,
+    /// 2026-11-03: "no more oblique sections only ortho"); any yaw and pitch fall to the nearest.
     fn normal_hull(&self) -> Vec3 {
         let (y, p) = (self.yaw.to_radians(), self.pitch.to_radians());
-        Vec3::new(p.cos() * y.sin(), p.sin(), p.cos() * y.cos())
+        ortho_axis(Vec3::new(p.cos() * y.sin(), p.sin(), p.cos() * y.cos()))
     }
     fn set_normal_hull(&mut self, n: Vec3) {
-        let n = n.normalize_or_zero();
-        self.yaw = n.x.atan2(n.z).to_degrees();
+        let n = ortho_axis(n);
+        self.yaw = if n.y.abs() > 0.5 { 0.0 } else { n.x.atan2(n.z).to_degrees() };
         self.pitch = n.y.clamp(-1.0, 1.0).asin().to_degrees();
+    }
+    /// Its yaw and pitch put on the axis they lie nearest (a saved oblique plane, a turned dial).
+    fn snap(&mut self) {
+        self.set_normal_hull(self.normal_hull());
+    }
+}
+
+/// The hull axis (signed) nearest `n`.
+fn ortho_axis(n: Vec3) -> Vec3 {
+    let a = n.abs();
+    if a.x >= a.y && a.x >= a.z {
+        Vec3::X * n.x.signum()
+    } else if a.y >= a.z {
+        Vec3::Y * n.y.signum()
+    } else {
+        Vec3::Z * if n.z < 0.0 { -1.0 } else { 1.0 }
     }
 }
 
@@ -1557,8 +1575,14 @@ impl Range {
                 self.section.offset = if next == 0 { 0.5 } else { 0.0 };
                 self.section.on = true;
             }
-            Knob::SectionYaw => self.section.yaw = ((self.section.yaw + 45.0 * s + 180.0).rem_euclid(360.0)) - 180.0,
-            Knob::SectionPitch => self.section.pitch = (self.section.pitch + 45.0 * s).clamp(-90.0, 90.0),
+            Knob::SectionYaw => {
+                self.section.yaw = ((self.section.yaw + 90.0 * s + 180.0).rem_euclid(360.0)) - 180.0;
+                self.section.snap();
+            }
+            Knob::SectionPitch => {
+                self.section.pitch = (self.section.pitch + 90.0 * s).clamp(-90.0, 90.0);
+                self.section.snap();
+            }
             Knob::SectionOffset => self.section.offset = (self.section.offset + 0.02 * s).clamp(-6.0, 6.0),
             Knob::Day => self.sky.day = (self.sky.day + s as i32).clamp(-365, 365),
             Knob::Time => self.sky.local_h = (self.sky.local_h + 0.25 * s).rem_euclid(24.0),
@@ -1745,8 +1769,8 @@ impl Range {
                 [self.r.player_snow_load, self.r.world_snow_load] = sn;
             }
             Knob::Focal => self.focal_mm = v,
-            Knob::SectionYaw => { self.section.yaw = v; self.section.on = true; }
-            Knob::SectionPitch => { self.section.pitch = v; self.section.on = true; }
+            Knob::SectionYaw => { self.section.yaw = v; self.section.snap(); self.section.on = true; }
+            Knob::SectionPitch => { self.section.pitch = v; self.section.snap(); self.section.on = true; }
             Knob::SectionOffset => { self.section.offset = v; self.section.on = true; }
             Knob::Time => self.sky.local_h = v.min(23.99),
             Knob::SkyRate => self.sky.rate = v,
@@ -1805,6 +1829,7 @@ impl Range {
             self.focal_mm = c.focal_mm;
             if let Some(sec) = c.section {
                 self.section = Section { on: sec.on, yaw: sec.yaw, pitch: sec.pitch, offset: sec.offset };
+                self.section.snap();
             }
             self.camera_at = Some(i);
             self.status = format!("CAMERA {}: {} ({:.0} MM)", i + 1, c.name.to_uppercase(), c.focal_mm);
@@ -2489,6 +2514,7 @@ impl Range {
         if let Some(x) = se["on"].as_bool() { self.section.on = x; }
         if let Some(x) = f(&se["yaw"]) { self.section.yaw = x; }
         if let Some(x) = f(&se["pitch"]) { self.section.pitch = x; }
+        self.section.snap();
         if let Some(x) = f(&se["offset"]) { self.section.offset = x; }
         let b = &v["battle"];
         if let Some(x) = b["on"].as_bool() { self.battle = x; }
@@ -2722,14 +2748,16 @@ impl Range {
         }
     }
 
-    /// Turn the section by whole 45° steps: `horizontal` about the hull's vertical (yaw),
+    /// Turn the section by whole 90° steps (axis to axis): `horizontal` about the hull's vertical (yaw),
     /// `vertical` tilting the normal (pitch, held within ±90°). The plane first snaps to the
     /// 45° grid, so free adjustments land back on it.
     fn rotate_section(&mut self, horizontal: i32, vertical: i32) {
-        let snap = |a: f32| (a / 45.0).round() * 45.0;
+        // Axis to axis: a quarter turn a step (sections are orthogonal only).
+        let snap = |a: f32| (a / 90.0).round() * 90.0;
         self.section.on = true;
-        self.section.yaw = ((snap(self.section.yaw) + 45.0 * horizontal as f32 + 180.0).rem_euclid(360.0)) - 180.0;
-        self.section.pitch = (snap(self.section.pitch) + 45.0 * vertical as f32).clamp(-90.0, 90.0);
+        self.section.yaw = ((snap(self.section.yaw) + 90.0 * horizontal as f32 + 180.0).rem_euclid(360.0)) - 180.0;
+        self.section.pitch = (snap(self.section.pitch) + 90.0 * vertical as f32).clamp(-90.0, 90.0);
+        self.section.snap();
         self.status = format!("SECTION NORMAL YAW {:+.0}, PITCH {:+.0} (HULL FRAME)", self.section.yaw, self.section.pitch);
     }
 
@@ -3047,7 +3075,7 @@ impl Range {
                 "ALT+LMB: ORBIT    ALT+MMB (OR MMB): PAN    ALT+RMB: DOLLY    DOUBLE-CLICK: THE ORBIT POINT    CLICK X/Y/Z: VIEW ALONG IT",
                 "LMB ON THE TANK: AIM (DIRECTION FROM THE CAMERA)    CTRL+LMB: AIM, KEEP DIRECTION",
                 "SHOT HANDLES: GREEN ON THE RING SETS THE BEARING, RED ON THE ARC THE ELEVATION (SHIFT+LMB DRAG: BOTH)",
-                "C: SECTION ON/OFF    V: FACING THE CAMERA    G: IN THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 45",
+                "C: SECTION ON/OFF    V: AXIS NEAREST THE CAMERA    G: AXIS NEAREST THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 90",
                 "PANEL: A TAB OPENS/CLOSES ITS GROUP (SHIFT: ALONE); DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
                 "F: FIRE THE SHOT NOW (INTO THE PRESENT STATE)    ENTER: RUN ON A FRESH TIGER    Z (OR .): CENTRE ON THE TIGER",
@@ -3400,7 +3428,7 @@ enum Drag {
     ShotHandle(usize),
     /// LMB on a dial: the dial, its position when taken and the cursor's height then.
     Dial(Knob, f32, f32),
-    /// LMB on the section handle's pad: 45° steps per `HANDLE_DRAG_STEP` of motion (the motion
+    /// LMB on the section handle's pad: 90° steps per `HANDLE_DRAG_STEP` of motion (the motion
     /// not yet spent).
     Rotate([f32; 2]),
     /// LMB on a placed T-34 in BATTLE edit: moving it over the snow.
@@ -4417,6 +4445,23 @@ mod tests {
             }
         }
         assert_eq!(section_setters, vec!["game_fea_range.rs".to_string()]);
+    }
+
+    /// Sections are orthogonal: any yaw and pitch (a dial, a saved oblique plane) draw on the
+    /// hull axis nearest them, either side.
+    #[test]
+    fn the_section_is_always_on_a_hull_axis() {
+        for yaw in (-180..=180).step_by(15) {
+            for pitch in (-90..=90).step_by(15) {
+                let mut s = super::Section { on: true, yaw: yaw as f32, pitch: pitch as f32, offset: 0.0 };
+                let n = s.normal_hull();
+                assert_eq!(n.abs().max_element(), 1.0);
+                assert_eq!(n.abs().element_sum(), 1.0);
+                s.snap();
+                assert_eq!(s.normal_hull(), n);
+                assert!(s.yaw % 90.0 == 0.0 && s.pitch % 90.0 == 0.0, "{} {}", s.yaw, s.pitch);
+            }
+        }
     }
 
     /// Each EFFECTS toggle switched off reaches the frame: `apply_eye_fx` runs last in both of
