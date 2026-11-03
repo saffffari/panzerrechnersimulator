@@ -258,7 +258,7 @@ enum Knob {
     Focal, SavedCam, AddCam, DeleteCam, ExportCams,
     SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset,
     Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure,
-    Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
+    Look, LookEv, LocalEye, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
     WhiteBalance, WhiteBalanceStrength, Fog, LookDefaults,
     Tear(usize), Stretch(usize), Forward, Outward, Reach, Spread, Landing, TissueAuthored,
 }
@@ -298,6 +298,7 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
         RunLength => (0.1, 20.0, true),
         TimeSpeed => (0.01, 4.0, true),
         Focal => (12.0, 400.0, true),
+        LocalEye => (0.0, 1.0, false),
         SectionYaw => (-180.0, 180.0, false),
         SectionPitch => (-90.0, 90.0, false),
         SectionOffset => (-3.0, 3.0, false),
@@ -336,7 +337,7 @@ fn group_rows(group: usize) -> Vec<Knob> {
         2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams, MovingCamera],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
         4 => vec![Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure],
-        5 => vec![Look, LookEv, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
+        5 => vec![Look, LookEv, LocalEye, Saturation, Warmth, Gamma, DitherPattern, PaletteLevels, OrderedDither, LdrDither, Retro,
             WhiteBalance, WhiteBalanceStrength, Fog, LookDefaults],
         6 => vec![Wear(1), Wear(0), Wear(2), Wear(3), SnowTank, SnowWorld, MaterialsGame],
         7 => vec![SmokeDensity, SmokeDelay, EffectsAuthored],
@@ -380,6 +381,13 @@ const RIGHT_W: f32 = 0.15;
 const RIGHT_X: f32 = 1.0 - 0.006 - RIGHT_W;
 const BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
     ("LOOP", 0, 2)];
+/// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
+/// the saved layouts (`BATTLE_LAYOUTS`).
+const BATTLE_BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("WATCH", 1, 0), ("PLAY", 2, 0), ("SAVE", 0, 1), ("REC", 1, 1),
+    ("STILL", 2, 1), ("LAYOUTS", 0, 2)];
+/// The editor's modes, as tabs at the panel's top left. WORLD (placing objects from the asset
+/// browser, the old `edit` worldbuilder's replacement) is promised and not built: greyed out.
+const MODES: [&str; 3] = ["RANGE", "BATTLE", "WORLD"];
 const BUTTON_H: f32 = 0.028;
 /// The groups' area: its left edge, the tabs' row and the rows' columns.
 const GROUPS_X: f32 = 0.168;
@@ -462,6 +470,50 @@ fn display_scale(ih: u32) -> u32 {
 fn capture_stamp() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
+
+impl Game {
+    /// The FEA range's battle: the placed T-34s in the act's enemy slots (as a campaign contact
+    /// streams in, `campaign`'s wave code), live and fighting with their own AI; every other slot
+    /// empty and far away. Returns how many were placed (the pool's size bounds it).
+    fn range_stage_battle(&mut self, t34s: &[(Vec2, f32)]) -> usize {
+        let n = t34s.len().min(self.enemies.len());
+        for i in 0..self.enemies.len() {
+            self.enemy_active[i] = false;
+            self.enemy_skill[i] = 0;
+            self.enemy_concealed[i] = false;
+            self.enemies[i].alive = false;
+            self.enemies[i].speed = 0.0;
+            self.enemies[i].pos = Vec3::new(3000.0 + 40.0 * i as f32, 0.0, 3000.0);
+            self.wrecks[i] = Wreck::default();
+            self.enemy_crew.clear_tank(i);
+        }
+        for (i, &(p, heading)) in t34s.iter().take(n).enumerate() {
+            let mut enemy = Tank::new(p.x, p.y, heading, &self.hf, tank::T34_PARTS);
+            enemy.kind = EnemyKind::T34;
+            enemy.reload = ENEMY_RELOAD * (i as f32 + 0.7) / n.max(1) as f32;
+            self.enemies[i] = enemy;
+            self.enemy_active[i] = true;
+            self.enemy_skill[i] = 42;
+        }
+        self.stealth = stealth::Stealth::new(self.enemies.len());
+        self.projectiles.retain(|p| matches!(p.shooter, ProjectileShooter::Player));
+        self.targets_only = false;
+        n
+    }
+}
+
+/// A battle layout for level design (`BATTLE_LAYOUTS`): the Tiger's start, the T-34s and the
+/// Tiger's route.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct BattleLayout {
+    name: String,
+    tiger_at: [f32; 2],
+    tiger_heading: f32,
+    t34s: Vec<[f32; 3]>,
+    route: Vec<[f32; 2]>,
+}
+
+const BATTLE_LAYOUTS: &str = "catalog/fea_range_battle_layouts.v1.json";
 
 /// A saved camera (`target/fea_range_cameras.json`; the shared set in `CAMERA_CATALOG`): its name,
 /// its place and view in the Tiger's hull frame (it follows the Tiger wherever it stands), and the
@@ -598,6 +650,17 @@ struct Range {
     dial_defaults: Vec<(Knob, f32)>,
     /// Smoothed frame time (s), simulation and render time (ms) a frame, for the readout.
     perf: [f32; 3],
+    /// BATTLE mode: the placed T-34s (x, z, heading), the Tiger's route, the Tiger's AI crew while
+    /// watching, the player at the controls (and paused), the input from the window.
+    battle: bool,
+    t34s: Vec<(Vec2, f32)>,
+    route: Vec<Vec2>,
+    pilot: Option<CanyonPilot>,
+    pilot_t: f32,
+    player_control: bool,
+    play_paused: bool,
+    play_input: TankInput,
+    layout_at: Option<usize>,
     /// The orbit point set by a double click.
     orbit_pivot: Option<Vec3>,
     /// The cursor as of the last interface drawn (window 0..1).
@@ -635,6 +698,7 @@ fn fmt_kj(v: f32) -> String {
 
 impl Range {
     fn new(device: wgpu::Device, queue: wgpu::Queue, headless: bool) -> anyhow::Result<Self> {
+        // The Canyon run's own course (`canyon::manifest_path`, as `canyon_game` selects it).
         act_manifest::select_runtime_manifest(Some(crate::canyon::manifest_path()))?;
         let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
         let frame_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -702,6 +766,15 @@ impl Range {
             axis_labels: [[-1.0, -1.0]; 3],
             cursor: [0.5, 0.5],
             orbit_pivot: None,
+            battle: false,
+            t34s: Vec::new(),
+            route: Vec::new(),
+            pilot: None,
+            pilot_t: 0.0,
+            player_control: false,
+            play_paused: false,
+            play_input: TankInput::default(),
+            layout_at: None,
             perf: [1.0 / 60.0, 0.0, 0.0],
             hide_ui: false,
             recorder: None,
@@ -728,6 +801,9 @@ impl Range {
         range.dial_image = range.r.upload_image(&range.device, &range.queue, &dial_face(), DIAL_FACE, DIAL_FACE);
         range.look_start = (range.r.look, range.r.display_grade, range.r.display_dither_pattern, range.r.display_tuning,
             range.r.fog_density);
+        // The eye's local adaptation (2026-11-03, `observer::local_cone_gain`) flattens the range's
+        // review picture; the range starts with the single global adaptation (LOCAL EYE dial).
+        range.r.set_local_adaptation(0.0);
         range.dial_defaults = range.dial_values();
         let saved = !headless && std::path::Path::new(STATE_PATH).exists();
         if saved {
@@ -784,8 +860,19 @@ impl Range {
     }
 
     fn step(&mut self, dt: f32) {
-        self.g.engine_on = self.engine;
-        self.g.update(&TankInput::default(), dt, &mut self.r);
+        // The battle's driver: the Tiger's AI crew while watching, the player's keys while playing.
+        let input = if let Some(mut pilot) = self.pilot.take() {
+            let input = pilot.step(&mut self.g, &self.r, self.pilot_t, dt);
+            self.pilot_t += dt;
+            self.pilot = Some(pilot);
+            input
+        } else if self.player_control && !self.play_paused {
+            self.play_input.clone()
+        } else {
+            TankInput::default()
+        };
+        self.g.engine_on = self.engine || self.pilot.is_some() || self.player_control;
+        self.g.update(&input, dt, &mut self.r);
         self.tape.push(Tape::Step(dt));
     }
 
@@ -803,6 +890,12 @@ impl Range {
         self.g.debug_place_tiger(self.tiger_at, self.tiger_heading);
         if !self.scene.racks_loaded {
             self.g.debug_empty_ammunition();
+        }
+        if self.battle {
+            let placed = self.g.range_stage_battle(&self.t34s);
+            if placed < self.t34s.len() {
+                self.status = format!("{} T-34S PLACED: THE ACT'S POOL HOLDS {placed}", self.t34s.len());
+            }
         }
         self.g.set_cabin_lights(self.scene.cabin_lamps);
         self.g.jump_station(Station::Commander);
@@ -997,6 +1090,19 @@ impl Range {
 
     /// The camera, the section and the crew drawing for this frame.
     fn pose_view(&mut self) {
+        // Playing the Tiger: the game placed its own camera, sights and crew for the player's
+        // station; the editor's camera follows it so a pause (Esc) orbits from there.
+        if self.player_control && !self.play_paused {
+            self.apply_sky();
+            self.g.drive_lights(&mut self.r);
+            self.g.drive_armor_scars(&mut self.r);
+            self.r.set_film_section(None, &[]);
+            self.eye = self.r.camera.pos;
+            self.yaw = self.r.camera.yaw;
+            self.pitch = self.r.camera.pitch;
+            self.last_pose = None;
+            return;
+        }
         self.apply_sky();
         // The lamps, fires and scene emitters from the present state (the simulation may be held:
         // a lamp switched or its power changed shows without a game step).
@@ -1180,6 +1286,7 @@ impl Range {
             Knob::AutoExposure => ("AUTO EXPOSURE".into(), if self.sky.exposure.is_none() { "ON (EYE)" } else { "OFF (HELD)" }.into()),
             Knob::Look => ("LOOK".into(), LOOKS.iter().find(|(v, _)| (*v - self.r.look).abs() < 0.1).map_or("?", |(_, n)| *n).into()),
             Knob::LookEv => ("EXPOSURE COMP".into(), format!("{:+.2} EV", self.r.display_grade[0].max(1e-4).log2())),
+            Knob::LocalEye => ("LOCAL EYE".into(), format!("{:.2}", self.r.local_adaptation())),
             Knob::Saturation => ("SATURATION".into(), format!("{:.2}", self.r.display_grade[1])),
             Knob::Warmth => ("WARMTH".into(), format!("{:+.2}", self.r.display_grade[2])),
             Knob::Gamma => ("GAMMA".into(), format!("{:.2}", self.r.display_grade[3])),
@@ -1405,6 +1512,7 @@ impl Range {
             Knob::Weather => self.sky.weather,
             Knob::Exposure => self.sky.exposure.unwrap_or(1000.0),
             Knob::LookEv => self.r.display_grade[0],
+            Knob::LocalEye => self.r.local_adaptation(),
             Knob::Saturation => self.r.display_grade[1],
             Knob::Warmth => self.r.display_grade[2],
             Knob::Gamma => self.r.display_grade[3],
@@ -1464,6 +1572,7 @@ impl Range {
             Knob::Weather => self.sky.weather = v,
             Knob::Exposure => self.sky.exposure = Some(v),
             Knob::LookEv => self.r.display_grade[0] = v,
+            Knob::LocalEye => self.r.set_local_adaptation(v),
             Knob::Saturation => self.r.display_grade[1] = v,
             Knob::Warmth => self.r.display_grade[2] = v,
             Knob::Gamma => self.r.display_grade[3] = v,
@@ -1894,6 +2003,189 @@ impl Range {
         }).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(role, _)| role)
     }
 
+    /// BATTLE mode on or off: a fresh Tiger, with the placed T-34s live (held) or with none.
+    fn set_battle(&mut self, on: bool) {
+        self.battle = on;
+        self.stop_battle();
+        self.run = None;
+        self.frame_at = None;
+        self.playing = !on;
+        self.fresh();
+        self.status = if on {
+            "BATTLE: CLICK THE MAP FOR A T-34, DRAG TO MOVE, CTRL+CLICK A ROUTE POINT, DELETE REMOVES, T PLACES THE TIGER".into()
+        } else {
+            "RANGE".into()
+        };
+    }
+
+    fn stop_battle(&mut self) {
+        self.pilot = None;
+        self.player_control = false;
+        self.play_paused = false;
+    }
+
+    /// WATCH (the Tiger's AI crew, `CanyonPilot`, along the route: the drawn one, else the
+    /// course's) or PLAY (the player at the controls): a fresh Tiger and the placed T-34s, live.
+    fn start_battle(&mut self, player: bool) {
+        self.stop_battle();
+        self.run = None;
+        self.frame_at = None;
+        self.fresh();
+        let at = Vec2::new(self.g.player.pos.x, self.g.player.pos.z);
+        if player {
+            self.player_control = true;
+            self.g.jump_station(Station::Commander);
+            self.status = "PLAYING: WASD DRIVE, MOUSE LOOK, ARROWS TRAVERSE, LMB FIRE, 1-5 STATIONS, ESC PAUSES".into();
+        } else {
+            let pilot = if self.route.len() >= 2 {
+                let mut route = vec![at];
+                route.extend(self.route.iter().copied());
+                CanyonPilot::from_route(route, at)
+            } else if self.g.canyon_spec.is_some() {
+                CanyonPilot::new(&self.g)
+            } else {
+                let target = if self.t34s.is_empty() { at + Vec2::new(0.0, 200.0) }
+                    else { self.t34s.iter().map(|t| t.0).sum::<Vec2>() / self.t34s.len() as f32 };
+                CanyonPilot::from_route(vec![at, at.lerp(target, 0.5), target], at)
+            };
+            self.pilot = Some(pilot);
+            self.pilot_t = 0.0;
+            self.status = format!("WATCHING: THE TIGER'S AI CREW AGAINST {} T-34S", self.t34s.len().min(self.g.enemies.len()));
+        }
+        self.playing = true;
+        self.mode = Mode::Live;
+    }
+
+    /// The placed T-34 under `c` (window), if any.
+    fn t34_at(&self, c: [f32; 2]) -> Option<usize> {
+        let aspect = self.win[0] / self.win[1].max(1.0);
+        self.t34s.iter().enumerate().filter_map(|(i, (p, _))| {
+            let w = Vec3::new(p.x, self.g.hf.height_at(p.x, p.y) + 1.2, p.y);
+            self.project(w).map(|s| (i, ((s[0] - c[0]) * aspect).hypot(s[1] - c[1])))
+        }).filter(|(_, d)| *d < 0.03).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i)
+    }
+
+    /// A T-34 on the snow under `c`, facing the Tiger.
+    fn place_t34(&mut self, c: [f32; 2]) {
+        if let Some(p) = self.ground_at(c) {
+            let at = Vec2::new(p.x, p.z);
+            let tiger = Vec2::new(self.g.player.pos.x, self.g.player.pos.z);
+            let to = tiger - at;
+            self.t34s.push((at, to.x.atan2(to.y)));
+            self.g.range_stage_battle(&self.t34s);
+            self.status = format!("T-34 {} AT X {:.0} Z {:.0}, {:.0} M FROM THE TIGER", self.t34s.len(), at.x, at.y, to.length());
+        }
+    }
+
+    fn move_t34(&mut self, i: usize, c: [f32; 2]) {
+        if let (Some(p), Some(slot)) = (self.ground_at(c), self.t34s.get(i).copied()) {
+            let at = Vec2::new(p.x, p.z);
+            let tiger = Vec2::new(self.g.player.pos.x, self.g.player.pos.z);
+            let to = tiger - at;
+            self.t34s[i] = (at, if to.length() > 1.0 { to.x.atan2(to.y) } else { slot.1 });
+            self.g.range_stage_battle(&self.t34s);
+        }
+    }
+
+    fn add_route_point(&mut self, c: [f32; 2]) {
+        if let Some(p) = self.ground_at(c) {
+            self.route.push(Vec2::new(p.x, p.z));
+            self.status = format!("ROUTE POINT {}", self.route.len());
+        }
+    }
+
+    /// Delete: the T-34 or route point nearest the cursor.
+    fn delete_near(&mut self, c: [f32; 2]) {
+        if let Some(i) = self.t34_at(c) {
+            self.t34s.remove(i);
+            self.g.range_stage_battle(&self.t34s);
+            self.status = format!("T-34 REMOVED ({} LEFT)", self.t34s.len());
+            return;
+        }
+        let aspect = self.win[0] / self.win[1].max(1.0);
+        let near = self.route.iter().enumerate().filter_map(|(i, p)| {
+            self.project(Vec3::new(p.x, self.g.hf.height_at(p.x, p.y) + 0.3, p.y))
+                .map(|s| (i, ((s[0] - c[0]) * aspect).hypot(s[1] - c[1])))
+        }).filter(|(_, d)| *d < 0.03).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i);
+        if let Some(i) = near {
+            self.route.remove(i);
+            self.status = format!("ROUTE POINT REMOVED ({} LEFT)", self.route.len());
+        }
+    }
+
+    fn save_layout(&mut self) {
+        let mut layouts: Vec<BattleLayout> = std::fs::read_to_string(BATTLE_LAYOUTS).ok()
+            .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        let name = format!("layout {}", layouts.len() + 1);
+        layouts.push(BattleLayout { name: name.clone(), tiger_at: self.tiger_at.to_array(), tiger_heading: self.tiger_heading,
+            t34s: self.t34s.iter().map(|(p, h)| [p.x, p.y, *h]).collect(), route: self.route.iter().map(|p| p.to_array()).collect() });
+        self.status = match std::fs::write(BATTLE_LAYOUTS, serde_json::to_string_pretty(&layouts).unwrap_or_default()) {
+            Ok(()) => format!("{} SAVED TO {BATTLE_LAYOUTS}", name.to_uppercase()),
+            Err(e) => format!("LAYOUT NOT SAVED: {e}"),
+        };
+        self.layout_at = Some(layouts.len() - 1);
+    }
+
+    fn load_layout(&mut self, dir: i32) {
+        let layouts: Vec<BattleLayout> = std::fs::read_to_string(BATTLE_LAYOUTS).ok()
+            .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        if layouts.is_empty() {
+            self.status = "NO SAVED LAYOUTS (SAVE LAYOUT KEEPS ONE)".into();
+            return;
+        }
+        let n = layouts.len() as i32;
+        let i = self.layout_at.map_or(if dir > 0 { 0 } else { n - 1 }, |i| (i as i32 + dir).rem_euclid(n)) as usize;
+        let l = &layouts[i];
+        self.tiger_at = Vec2::from_array(l.tiger_at);
+        self.tiger_heading = l.tiger_heading;
+        self.t34s = l.t34s.iter().map(|t| (Vec2::new(t[0], t[1]), t[2])).collect();
+        self.route = l.route.iter().map(|p| Vec2::from_array(*p)).collect();
+        self.layout_at = Some(i);
+        let name = l.name.to_uppercase();
+        self.stop_battle();
+        self.playing = false;
+        self.fresh();
+        self.status = format!("{name} LOADED");
+    }
+
+    /// A ring on the ground about `centre` (a live object's mark in the battle editor).
+    fn ground_ring(&mut self, centre: Vec2, radius: f32, colour: [f32; 4]) {
+        for k in 0..72 {
+            let a = k as f32 / 72.0 * std::f32::consts::TAU;
+            let p = centre + Vec2::new(a.sin(), a.cos()) * radius;
+            if let Some(s) = self.project(Vec3::new(p.x, self.g.hf.height_at(p.x, p.y) + 0.08, p.y)) {
+                self.dot(s, 0.004, colour);
+            }
+        }
+    }
+
+    /// The battle's marks in edit (none while watching or playing): a white ring at the Tiger's
+    /// base, a red ring at each T-34's with its number and heading, and the Tiger's route.
+    fn draw_battle_marks(&mut self) {
+        let tiger = Vec2::new(self.g.player.pos.x, self.g.player.pos.z);
+        self.ground_ring(tiger, 4.2, INK);
+        let marks: Vec<(Vec2, f32)> = self.t34s.clone();
+        for (i, (p, h)) in marks.into_iter().enumerate() {
+            self.ground_ring(p, 3.8, RED);
+            let ahead = p + Vec2::new(h.sin(), h.cos()) * 5.0;
+            let (a, b) = (Vec3::new(p.x, self.g.hf.height_at(p.x, p.y) + 0.1, p.y),
+                Vec3::new(ahead.x, self.g.hf.height_at(ahead.x, ahead.y) + 0.1, ahead.y));
+            self.line(a, b, RED);
+            if let Some(s) = self.project(Vec3::new(p.x, self.g.hf.height_at(p.x, p.y) + 3.4, p.y)) {
+                self.text_bold(&format!("{}", i + 1), s[0], s[1], TEXT * 0.8, RED, crate::ui::Align::Center);
+            }
+        }
+        let mut last = Vec3::new(tiger.x, self.g.player.pos.y + 0.3, tiger.y);
+        let points: Vec<Vec3> = self.route.iter().map(|p| Vec3::new(p.x, self.g.hf.height_at(p.x, p.y) + 0.3, p.y)).collect();
+        for p in points {
+            self.line(last, p, INK);
+            if let Some(s) = self.project(p) {
+                self.dot(s, 0.008, INK);
+            }
+            last = p;
+        }
+    }
+
     /// The viewport's height: the whole window, the panel laid over its foot (hiding the panel
     /// uncovers the view; it does not change it).
     fn view_h(&self) -> f32 {
@@ -1958,11 +2250,14 @@ impl Range {
             "look": {"look": self.r.look, "grade": self.r.display_grade, "dither": self.r.display_dither_pattern,
                 "palette_levels": d.palette_levels, "ordered_dither": d.ordered_dither, "ldr_dither": d.ldr_dither,
                 "retro": d.retro_strength, "white_balance": d.ambient_white_balance,
-                "white_balance_strength": d.ambient_white_balance_strength, "tuned": self.r.display_tuning.is_some(), "fog": self.fog},
+                "white_balance_strength": d.ambient_white_balance_strength, "tuned": self.r.display_tuning.is_some(), "fog": self.fog,
+                "local_eye": self.r.local_adaptation()},
             "lamp_gain": review_lamp_gain(), "time_speed": self.time_speed, "looping": self.looping,
             "engine": self.engine, "accumulate_moving": self.accumulate_moving, "wear": self.wear, "snow": self.snow,
             "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm},
             "tiger": {"at": self.tiger_at.to_array(), "heading": self.tiger_heading},
+            "battle": {"on": self.battle, "t34s": self.t34s.iter().map(|(p, h)| [p.x, p.y, *h]).collect::<Vec<_>>(),
+                "route": self.route.iter().map(|p| p.to_array()).collect::<Vec<_>>()},
             "open": self.open,
         })
     }
@@ -2001,6 +2296,20 @@ impl Range {
         if let Some(x) = f(&se["yaw"]) { self.section.yaw = x; }
         if let Some(x) = f(&se["pitch"]) { self.section.pitch = x; }
         if let Some(x) = f(&se["offset"]) { self.section.offset = x; }
+        let b = &v["battle"];
+        if let Some(x) = b["on"].as_bool() { self.battle = x; }
+        if let Some(list) = b["t34s"].as_array() {
+            self.t34s = list.iter().filter_map(|t| {
+                let a = t.as_array()?;
+                Some((Vec2::new(f(a.first()?)?, f(a.get(1)?)?), f(a.get(2)?)?))
+            }).collect();
+        }
+        if let Some(list) = b["route"].as_array() {
+            self.route = list.iter().filter_map(|t| {
+                let a = t.as_array()?;
+                Some(Vec2::new(f(a.first()?)?, f(a.get(1)?)?))
+            }).collect();
+        }
         let sk = &v["sky"];
         if let Some(x) = sk["day"].as_i64() { self.sky.day = x as i32; }
         if let Some(x) = f(&sk["local_h"]) { self.sky.local_h = x.rem_euclid(24.0); }
@@ -2022,6 +2331,7 @@ impl Range {
         let l = &v["look"];
         if let Some(x) = f(&l["look"]) { self.r.look = x; }
         if let Some(x) = arr4(&l["grade"]) { self.r.display_grade = x; }
+        if let Some(x) = f(&l["local_eye"]) { self.r.set_local_adaptation(x); }
         if let Some(x) = f(&l["dither"]) { self.r.display_dither_pattern = x; }
         if l["tuned"].as_bool() == Some(true) {
             let mut d = self.tuning_display();
@@ -2382,6 +2692,13 @@ impl Range {
         if self.captured || self.live_image {
             self.r.draw_image(self.frame_image, 0.0, 0.0, 1.0, self.view_h(), [1.0, 1.0, 1.0, 1.0]);
         }
+        // Playing the Tiger: the game's own view, nothing of the editor over it.
+        if self.player_control && !self.play_paused {
+            return;
+        }
+        if self.battle && self.pilot.is_none() && !self.player_control {
+            self.draw_battle_marks();
+        }
         if self.hide_ui {
             self.draw_timeline(cursor);
             let [x, y, w, h] = hide_rect(true);
@@ -2389,7 +2706,7 @@ impl Range {
             self.text_bold("PANEL", x + w * 0.5, y + h * 0.5, TEXT * 0.75, INK, crate::ui::Align::Center);
             return;
         }
-        if self.mode == Mode::Live {
+        if self.mode == Mode::Live && !self.battle {
             self.draw_gizmos();
         }
         let top = 1.0 - PANEL_H;
@@ -2406,16 +2723,30 @@ impl Range {
             Mode::Scrub(i) => self.frame_time(i as u32),
             _ => self.shot_t,
         };
-        self.label_box("FEA RANGE", LEFT_X, top + 0.018, TEXT * 0.85);
-        self.text(&format!("{mode}  T {:.4} S", t), LEFT_X + LEFT_W, top + 0.018, TEXT * 0.8, INK, crate::ui::Align::Right);
+        let chosen = if self.battle { 1 } else { 0 };
+        for (m, [x, y, w, h]) in self.mode_tab_rects().into_iter().enumerate() {
+            let (fill, ink) = if m == chosen { (INK, BLACK) } else if m == 2 { (BOX, [0.28, 0.28, 0.28, 1.0]) } else { (BOX, INK) };
+            self.r.fill_rect(x, y, w, h, fill);
+            self.text_bold(MODES[m], x + w * 0.5, y + h * 0.5, TEXT * 0.72, ink, crate::ui::Align::Center);
+        }
+        let mode = if self.battle {
+            if self.player_control { if self.play_paused { "PLAYING, PAUSED".into() } else { "PLAYING".into() } }
+            else if self.pilot.is_some() { if self.playing { "WATCHING".into() } else { "WATCHING, PAUSED".into() } }
+            else { format!("EDIT: {} T-34S", self.t34s.len()) }
+        } else { mode };
+        self.text(&format!("{mode}  T {:.2} S", t), LEFT_X + LEFT_W, top + 0.040, TEXT * 0.75, INK, crate::ui::Align::Right);
         self.text(&format!("{:.0} FPS  SIM {:.0} MS  DRAW {:.0} MS", 1.0 / self.perf[0].max(1.0e-4), self.perf[1], self.perf[2]),
-            LEFT_X + LEFT_W, top + 0.035, TEXT * 0.65, DIM, crate::ui::Align::Right);
-        self.draw_crew_plan([LEFT_X, top + 0.036], 0.09);
-        for (label, col, row) in BUTTONS {
+            LEFT_X + LEFT_W, top + 0.056, TEXT * 0.62, DIM, crate::ui::Align::Right);
+        self.draw_crew_plan([LEFT_X, top + 0.040], 0.09);
+        for (label, col, row) in self.buttons() {
             let [x, y, w, h] = button_rect(col, row);
-            let lit = (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some()) || (label == "LOOP" && self.looping);
+            let lit = if self.battle {
+                (label == "WATCH" && self.pilot.is_some()) || (label == "PLAY" && self.player_control) || (label == "REC" && self.recorder.is_some())
+            } else {
+                (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some()) || (label == "LOOP" && self.looping)
+            };
             let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
-            let fill = if label == "FIRE" { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
+            let fill = if label == "FIRE" || (self.battle && label == "PLAY" && !lit) { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
                 else if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX };
             self.r.fill_rect(x, y, w, h, fill);
             let rec_label = self.recorder.as_ref().map(|r| format!("REC {:.0} S", r.frames as f32 / 30.0));
@@ -2425,7 +2756,9 @@ impl Range {
                 (false, _) => "LOOP OFF",
             };
             let text = match label {
-                "PLAY" if self.playing => "PAUSE",
+                "WATCH" | "PLAY" if self.battle && lit => "STOP",
+                "LAYOUTS" => "NEXT SAVED LAYOUT",
+                "PLAY" if !self.battle && self.playing => "PAUSE",
                 "LOOP" => loop_label,
                 "REC" if rec_label.is_some() => rec_label.as_deref().unwrap_or("REC"),
                 other => other,
@@ -2433,6 +2766,9 @@ impl Range {
             self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.85, if lit { BLACK } else { INK }, crate::ui::Align::Center);
         }
         let mut notes: Vec<(String, [f32; 4])> = vec![(self.status.to_uppercase(), INK)];
+        if self.battle && self.pilot.is_none() && !self.player_control {
+            notes.push(("CLICK: A T-34  DRAG: MOVE IT  CTRL+CLICK: ROUTE POINT  DEL: REMOVE  T: THE TIGER  ENTER: WATCH".into(), DIM));
+        }
         if !self.last_chain.is_empty() {
             notes.push((self.last_chain.to_uppercase(), DIM));
         }
@@ -2586,12 +2922,16 @@ impl Range {
         if !self.in_panel(cursor) {
             return Click::Viewport;
         }
-        for (label, col, row) in BUTTONS {
+        for (label, col, row) in self.buttons() {
             let [x, y, w, h] = button_rect(col, row);
             if cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h {
                 self.button(label);
                 return Click::Used;
             }
+        }
+        if let Some(m) = self.mode_tab_rects().iter().position(|[x, y, w, h]| cursor[0] >= *x && cursor[0] <= x + w && cursor[1] >= *y && cursor[1] <= y + h) {
+            self.choose_mode(m);
+            return Click::Used;
         }
         if let Some(g) = self.tab_rects().iter().position(|[x, y, w, h]| cursor[0] >= *x && cursor[0] <= x + w && cursor[1] >= *y && cursor[1] <= y + h) {
             // A tab opens or closes its group; Shift opens it alone.
@@ -2642,7 +2982,60 @@ impl Range {
             .then(|| ((cursor[0].clamp(0.0, 1.0) * n as f32) as usize).min(n - 1))
     }
 
+    fn buttons(&self) -> [(&'static str, usize, usize); 7] {
+        if self.battle { BATTLE_BUTTONS } else { BUTTONS }
+    }
+
+    /// The mode tabs' rectangles (x, y, w, h), as `MODES`.
+    fn mode_tab_rects(&self) -> Vec<[f32; 4]> {
+        let size = TEXT * 0.72;
+        let mut x = LEFT_X;
+        MODES.iter().map(|name| {
+            let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.010;
+            let rect = [x, 1.0 - PANEL_H + 0.008, w, 0.020];
+            x += w + 0.003;
+            rect
+        }).collect()
+    }
+
+    /// A mode tab clicked: RANGE, BATTLE, or WORLD (not built yet).
+    fn choose_mode(&mut self, m: usize) {
+        match m {
+            0 if self.battle => self.set_battle(false),
+            1 if !self.battle => self.set_battle(true),
+            2 => self.status = "WORLD EDITOR: NOT BUILT YET (TAB WILL SWITCH BATTLE AND WORLD)".into(),
+            _ => {}
+        }
+    }
+
     fn button(&mut self, label: &str) {
+        if self.battle {
+            match label {
+                "RESET" => {
+                    self.stop_battle();
+                    self.playing = false;
+                    self.fresh();
+                    self.status = "RESET: THE TIGER AND THE T-34S BACK AT THEIR MARKS".into();
+                }
+                "WATCH" | "PLAY" => {
+                    let running = if label == "WATCH" { self.pilot.is_some() } else { self.player_control };
+                    if running {
+                        self.stop_battle();
+                        self.playing = false;
+                        self.fresh();
+                        self.status = "STOPPED: BACK AT THE MARKS".into();
+                    } else {
+                        self.start_battle(label == "PLAY");
+                    }
+                }
+                "SAVE" => self.save_layout(),
+                "LAYOUTS" => self.load_layout(1),
+                "REC" => self.toggle_recording(),
+                "STILL" => self.still(),
+                _ => {}
+            }
+            return;
+        }
         match label {
             "RESET" => self.reset(),
             "RUN" => self.run(),
@@ -2811,6 +3204,8 @@ enum Drag {
     /// LMB on the section handle's pad: 45° steps per `HANDLE_DRAG_STEP` of motion (the motion
     /// not yet spent).
     Rotate([f32; 2]),
+    /// LMB on a placed T-34 in BATTLE edit: moving it over the snow.
+    T34(usize),
 }
 
 struct WindowState {
@@ -2844,6 +3239,11 @@ struct App {
     /// The last plain click in the viewport (a double click sets the orbit point): when, where,
     /// and the shot before it aimed.
     last_click: Option<(std::time::Instant, [f32; 2], ShotSetup)>,
+    /// Playing the Tiger: the mouse buttons held (left, middle, right), the mouse's motion since
+    /// the last frame, and whether the cursor is held by the game.
+    play_buttons: [bool; 3],
+    play_mouse: Vec2,
+    grabbed: bool,
 }
 
 impl App {
@@ -2858,6 +3258,56 @@ impl App {
     fn key(&mut self, code: KeyCode, event_loop: &ActiveEventLoop) {
         let Some(st) = self.state.as_mut() else { return };
         let rg = &mut st.range;
+        // Playing the Tiger: Esc pauses (the editor's camera then orbits from the game's view);
+        // 1-5 take a station; the other keys drive the game (`frame`).
+        if rg.player_control {
+            match code {
+                KeyCode::Escape => {
+                    rg.play_paused = !rg.play_paused;
+                    rg.playing = !rg.play_paused;
+                    rg.status = if rg.play_paused { "PAUSED: ORBIT AND LOOK AROUND, ESC PLAYS ON, STOP ENDS".into() } else { "PLAYING".into() };
+                    return;
+                }
+                KeyCode::Digit1 | KeyCode::Digit2 | KeyCode::Digit3 | KeyCode::Digit4 | KeyCode::Digit5 if !rg.play_paused => {
+                    let station = [Station::Commander, Station::Gunner, Station::Loader, Station::Driver, Station::Radioman]
+                        [[KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5].iter().position(|k| *k == code).unwrap_or(0)];
+                    rg.g.jump_station(station);
+                    return;
+                }
+                KeyCode::F12 => {
+                    rg.still();
+                    return;
+                }
+                _ if !rg.play_paused => return,
+                _ => {}
+            }
+        }
+        if rg.battle {
+            match code {
+                KeyCode::Tab => {
+                    rg.choose_mode(2);
+                    return;
+                }
+                KeyCode::Enter | KeyCode::NumpadEnter => {
+                    rg.button("WATCH");
+                    return;
+                }
+                KeyCode::Backspace => {
+                    rg.button("RESET");
+                    return;
+                }
+                KeyCode::Space => {
+                    rg.playing = !rg.playing;
+                    return;
+                }
+                KeyCode::Delete | KeyCode::KeyX if rg.pilot.is_none() && !rg.player_control => {
+                    let c = self.input.cursor;
+                    rg.delete_near(c);
+                    return;
+                }
+                _ => {}
+            }
+        }
         match code {
             KeyCode::Escape => {
                 if self.escape.is_some_and(|t| t.elapsed().as_secs_f32() < 2.0) {
@@ -2941,8 +3391,54 @@ impl App {
         let input = &mut self.input;
         let Some(st) = self.state.as_mut() else { return };
         let rg = &mut st.range;
+        // Playing the Tiger: the keys and mouse are the game's (as `Keys::tank_input`).
+        let in_play = rg.player_control && !rg.play_paused;
+        if in_play {
+            let held = |k: KeyCode| input.keys.contains(&k) as i32 as f32;
+            let [lmb, mmb, rmb] = self.play_buttons;
+            rg.play_input = TankInput {
+                drive: held(KeyCode::KeyW) - held(KeyCode::KeyS),
+                steer: held(KeyCode::KeyA) - held(KeyCode::KeyD),
+                traverse: held(KeyCode::ArrowLeft) - held(KeyCode::ArrowRight),
+                elevate: held(KeyCode::ArrowUp) - held(KeyCode::ArrowDown),
+                mg_coax: lmb,
+                trigger: lmb,
+                fire2: lmb,
+                coax: mmb,
+                aim: rmb,
+                look_dx: self.play_mouse.x,
+                look_dy: self.play_mouse.y,
+                run: input.shift,
+                crouch: input.ctrl,
+                jump: input.keys.contains(&KeyCode::Space),
+                enter: input.keys.contains(&KeyCode::KeyE),
+                ignition: input.keys.contains(&KeyCode::KeyZ),
+                repair: input.keys.contains(&KeyCode::KeyG),
+                reload: input.keys.contains(&KeyCode::KeyR),
+                fire_order: input.keys.contains(&KeyCode::KeyK),
+                crew_yes: input.keys.contains(&KeyCode::KeyY),
+                crew_no: input.keys.contains(&KeyCode::KeyN),
+                ..TankInput::default()
+            };
+        } else {
+            self.play_buttons = [false; 3];
+        }
+        self.play_mouse = Vec2::ZERO;
+        let want_grab = in_play || input.look;
+        if want_grab != self.grabbed {
+            if want_grab {
+                let _ = st.window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| st.window.set_cursor_grab(CursorGrabMode::Confined));
+            } else {
+                let _ = st.window.set_cursor_grab(CursorGrabMode::None);
+            }
+            st.window.set_cursor_visible(!want_grab);
+            self.grabbed = want_grab;
+        }
         // Fly camera.
-        if input.look {
+        if in_play {
+            input.mouse = Vec2::ZERO;
+        }
+        if input.look && !in_play {
             rg.yaw += input.mouse.x * 0.0025;
             rg.pitch = (rg.pitch - input.mouse.y * 0.0025).clamp(-1.55, 1.55);
         }
@@ -2951,7 +3447,7 @@ impl App {
         let right = f.cross(Vec3::Y).normalize_or_zero();
         let mut v = Vec3::ZERO;
         let held = |k: KeyCode| input.keys.contains(&k);
-        if !input.ctrl || input.look {
+        if !in_play && (!input.ctrl || input.look) {
             if held(KeyCode::KeyW) { v += f; }
             if held(KeyCode::KeyS) { v -= f; }
             if held(KeyCode::KeyD) { v += right; }
@@ -3104,6 +3600,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         Drag::ShotHandle(which) => rg.drag_shot_handle(which, c),
+                        Drag::T34(i) => rg.move_t34(i, c),
                         Drag::Clip(a) => {
                             if let Some(b) = rg.track_hit([c[0], rg.timeline_y()]) {
                                 rg.clip = (a != b).then(|| (a.min(b) as u32, a.max(b) as u32));
@@ -3141,6 +3638,35 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let pressed = state == ElementState::Pressed;
+                // Playing the Tiger: the buttons are the game's.
+                if self.state.as_ref().is_some_and(|st| st.range.player_control && !st.range.play_paused) {
+                    match button {
+                        MouseButton::Left => self.play_buttons[0] = pressed,
+                        MouseButton::Middle => self.play_buttons[1] = pressed,
+                        MouseButton::Right => self.play_buttons[2] = pressed,
+                        _ => {}
+                    }
+                    return;
+                }
+                // BATTLE edit: a click on the snow places a T-34, on one drags it, Ctrl+click adds
+                // a route point (Alt keeps the camera's orbit; the panel and timeline as ever).
+                if button == MouseButton::Left && pressed && !self.input.alt && !self.input.shift {
+                    let (c, ctrl) = (self.input.cursor, self.input.ctrl);
+                    if let Some(st) = self.state.as_mut() {
+                        let rg = &mut st.range;
+                        if rg.battle && rg.pilot.is_none() && !rg.player_control && !rg.in_panel(c) && !rg.on_hide_button(c)
+                            && rg.track_hit(c).is_none() && rg.axis_hit(c).is_none() {
+                            if ctrl {
+                                rg.add_route_point(c);
+                            } else if let Some(i) = rg.t34_at(c) {
+                                self.input.drag = Some((Drag::T34(i), c));
+                            } else {
+                                rg.place_t34(c);
+                            }
+                            return;
+                        }
+                    }
+                }
                 match button {
                     MouseButton::Right if pressed && self.state.as_ref().is_some_and(|st| st.range.in_panel(self.input.cursor)
                         && st.range.track_hit(self.input.cursor).is_none()) => {
@@ -3179,17 +3705,8 @@ impl ApplicationHandler for App {
                         self.input.drag = None;
                     }
                     MouseButton::Right => {
+                        // The cursor is held while looking (`frame` grabs and lets go).
                         self.input.look = pressed;
-                        if let Some(st) = self.state.as_ref() {
-                            if pressed {
-                                let _ = st.window.set_cursor_grab(CursorGrabMode::Locked)
-                                    .or_else(|_| st.window.set_cursor_grab(CursorGrabMode::Confined));
-                                st.window.set_cursor_visible(false);
-                            } else {
-                                let _ = st.window.set_cursor_grab(CursorGrabMode::None);
-                                st.window.set_cursor_visible(true);
-                            }
-                        }
                     }
                     MouseButton::Left if pressed => {
                         let (c, shift, ctrl, alt) = (self.input.cursor, self.input.shift, self.input.ctrl, self.input.alt);
@@ -3282,6 +3799,10 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _l: &ActiveEventLoop, _id: winit::event::DeviceId, event: winit::event::DeviceEvent) {
         if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            if self.grabbed && !self.input.look {
+                self.play_mouse += Vec2::new(dx as f32, dy as f32);
+                self.active = Some(std::time::Instant::now());
+            }
             if self.input.look {
                 self.input.mouse += Vec2::new(dx as f32, dy as f32);
                 self.active = Some(std::time::Instant::now());
@@ -3312,7 +3833,8 @@ pub fn run(shots: Option<&str>) -> anyhow::Result<()> {
     }
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App { state: None, input: Input::default(), last: None, active: None, escape: None, error: None, saved: None, last_click: None };
+    let mut app = App { state: None, input: Input::default(), last: None, active: None, escape: None, error: None, saved: None, last_click: None,
+        play_buttons: [false; 3], play_mouse: Vec2::ZERO, grabbed: false };
     event_loop.run_app(&mut app)?;
     if let Some(e) = app.error {
         anyhow::bail!(e);

@@ -154,7 +154,7 @@ impl CanyonPilot {
         Self::from_route(route, Vec2::new(g.player.pos.x, g.player.pos.z))
     }
 
-    fn from_route(route: Vec<Vec2>, pos: Vec2) -> Self {
+    pub(crate) fn from_route(route: Vec<Vec2>, pos: Vec2) -> Self {
         assert!(!route.is_empty(), "Canyon pilot needs a route");
         let cursor = (0..route.len())
             .min_by(|&a, &b| {
