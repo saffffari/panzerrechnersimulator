@@ -13,7 +13,7 @@
   "ICRP110": "ICRP Publication 110 (2009), Adult Reference Computational Phantoms: organ media and densities of the adult male phantom.",
   "ITIS41": "IT'IS Foundation Tissue Properties Database V4.1 (Hasgall et al., 2022): density, mean value.",
   "AIR": "Dry air at 20 degC and 101.325 kPa (standard atmosphere), 1.204 kg/m3, rounded.",
-  "CREW_TISSUE": "src/crew_tissue.rs (fea-damage line, 2026-11-02): TEAR_J = [0.4, 1.0, 3.2] J per 0.02 m cell and CRITICAL_STRETCH = [0.6, 0.35, 0.05] for skin, muscle, bone. Authored game-level values in the owner's order, not measured tissue properties."
+  "CREW_TISSUE": "src/crew_tissue.rs (branch claude/fea-damage-20261102, 2026-11-02): TEAR_J_M3 = [50000, 125000, 400000, 12500] J/m3 and CRITICAL_STRETCH = [0.6, 0.35, 0.05, 1.0] for skin, muscle, bone, fluid (0.4, 1.0, 3.2 and 0.1 J per 0.02 m cell). Authored game-level values in the owner's order, not measured tissue properties."
  },
  "transcription_note": "Reference values were transcribed offline from the cited publications as standard tabulated values; no network access was used in this session. Verify against the publications before citing them outside the project. No human-injury criteria or wound-ballistics thresholds are used anywhere in this table: the strength classes are the owner's authored game values.",
  "blood": {
@@ -47,11 +47,11 @@
    "note": "Existing crew_tissue class, unchanged. Assigned to cortical bone and to spongiosa (trabecular bone with red marrow)."
   },
   "fluid": {
-   "game_tissue": null,
-   "tear_j_per_cell_0p02m": 0.0,
-   "critical_stretch": null,
-   "tear_energy_density_j_m3": 0,
-   "note": "Authored for this table: a fluid voxel holds no bonds (blood, CSF, urine, gut contents). It is a cell with mass but no strength; the blood-volume system owns its motion."
+   "game_tissue": "fluid (crew_tissue's fourth class)",
+   "tear_j_per_cell_0p02m": 0.1,
+   "critical_stretch": 1.0,
+   "tear_energy_density_j_m3": 12500,
+   "note": "crew_tissue's own class (authored there): blood, CSF, urine and gut contents are held by a quarter of skin's tear energy, so they stay until struck and then spill; their flow belongs to the blood-volume system."
   },
   "gas": {
    "game_tissue": null,

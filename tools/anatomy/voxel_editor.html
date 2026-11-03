@@ -1,0 +1,729 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crew Anatomy Editor</title>
+<!--
+  Offline slice editor for the crew anatomy voxel volume (KVOX, tools/anatomy/kvox.py).
+  Open it straight from disk in a browser: no server, no network, no libraries.
+
+  Open:   "Open volume" (.kvox) and optionally "Open tissue table" (catalog/crew_anatomy_tissues.v1.json);
+          or drop the files on the page. Served over http it also accepts ?volume=URL&table=URL.
+  Slices: mouse wheel over a view, the sliders, or the arrow / Page keys over a view.
+  Paint:  left drag paints the chosen label; right drag (or Shift + left) erases to the "erase to" label;
+          Alt + click (or middle click) picks the label under the cursor.
+  Brush:  radius in voxels; "disc" paints in the slice plane, "ball" in 3-D; "only over" limits a
+          stroke to voxels that currently hold one label (or to the body).
+  Undo:   Ctrl+Z, redo Ctrl+Shift+Z or Ctrl+Y (per stroke).
+  Save:   writes the same KVOX format (label and bone channels, header kept, an "edits" entry
+          appended). Chrome and Edge save back to the opened file; other browsers download it.
+  Read edits back into the build with:  python3 -I tools/anatomy/build_anatomy.py --capture-edits FILE
+-->
+<style>
+:root {
+  --bg: #f4f3ef; --panel: #ffffff; --ink: #1d1d1f; --muted: #6a6a70; --line: #d8d6cf;
+  --accent: #b3261e; --accent-ink: #ffffff; --view: #15151a; --cross: rgba(255, 255, 255, 0.35);
+  --cursor: #ffe14d;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111114; --panel: #1b1b20; --ink: #ececf0; --muted: #9a9aa4; --line: #2e2e36;
+    --accent: #e3473d; --accent-ink: #ffffff; --view: #0b0b0e;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111114; --panel: #1b1b20; --ink: #ececf0; --muted: #9a9aa4; --line: #2e2e36;
+  --accent: #e3473d; --accent-ink: #ffffff; --view: #0b0b0e;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); font: 13px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh;
+}
+header {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+header h1 { font-size: 14px; margin: 0 8px 0 0; font-weight: 650; letter-spacing: 0.01em; }
+.group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.group > span.lbl { color: var(--muted); }
+button, select, input[type="number"] {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 9px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+button:disabled { opacity: 0.45; cursor: default; }
+input[type="number"] { width: 4.2em; }
+input[type="file"] { display: none; }
+main { display: grid; grid-template-columns: 1fr 300px; min-height: 0; }
+#views { display: grid; gap: 8px; padding: 8px; min-width: 0; min-height: 0; }
+#views.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#views.one { grid-template-columns: minmax(0, 1fr); }
+.view { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: grid;
+  grid-template-rows: auto 1fr auto; min-height: 0; overflow: hidden; }
+.view.hidden { display: none; }
+.view .bar { display: flex; justify-content: space-between; gap: 8px; padding: 5px 8px; color: var(--muted); }
+.view .bar b { color: var(--ink); font-weight: 600; }
+.view .wrap { background: var(--view); display: flex; align-items: center; justify-content: center; overflow: auto;
+  min-height: 240px; }
+.view canvas { image-rendering: pixelated; image-rendering: crisp-edges; cursor: crosshair; display: block; }
+.view .slider { display: flex; gap: 8px; align-items: center; padding: 5px 8px; }
+.view .slider input { flex: 1; }
+aside { background: var(--panel); border-left: 1px solid var(--line); display: grid; grid-template-rows: auto 1fr;
+  min-height: 0; }
+aside .head { padding: 8px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 6px; flex-wrap: wrap;
+  align-items: center; }
+aside .head .title { font-weight: 650; margin-right: auto; }
+#legend { overflow: auto; padding: 4px 0; }
+.row { display: grid; grid-template-columns: 18px 16px 1fr auto; gap: 6px; align-items: center; padding: 3px 10px;
+  cursor: pointer; }
+.row:hover { background: var(--bg); }
+.row.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.row .sw { width: 16px; height: 16px; border-radius: 3px; border: 1px solid rgba(127, 127, 127, 0.5); }
+.row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .name small { color: var(--muted); }
+.row .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+footer { padding: 6px 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 4px 18px; font-variant-numeric: tabular-nums; }
+footer b { color: var(--ink); font-weight: 600; }
+#drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 20px; z-index: 10; }
+#drop.show { display: flex; }
+#empty { padding: 40px 20px; text-align: center; color: var(--muted); grid-column: 1 / -1; }
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  aside { border-left: 0; border-top: 1px solid var(--line); max-height: 40vh; }
+  #views.three { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Crew anatomy editor</h1>
+  <div class="group">
+    <button id="openVol" class="primary">Open volume…</button>
+    <button id="openTab">Open tissue table…</button>
+    <button id="save" disabled>Save volume</button>
+    <input type="file" id="fileVol" accept=".kvox,application/octet-stream">
+    <input type="file" id="fileTab" accept=".json,application/json">
+  </div>
+  <div class="group">
+    <span class="lbl">View</span>
+    <button data-mode="three" class="on">3 views</button>
+    <button data-mode="axial">Axial</button>
+    <button data-mode="coronal">Coronal</button>
+    <button data-mode="sagittal">Sagittal</button>
+    <span class="lbl">Zoom</span>
+    <input type="number" id="zoom" min="1" max="24" value="5" title="Screen pixels per voxel">
+  </div>
+  <div class="group">
+    <span class="lbl">Brush</span>
+    <input type="number" id="radius" min="0" max="20" value="1" title="Radius in voxels (0 = one voxel)">
+    <select id="shape" title="disc: in the slice plane; ball: in 3-D">
+      <option value="disc">disc</option><option value="ball">ball</option>
+    </select>
+    <span class="lbl">Paint</span><select id="paintLabel"></select>
+    <span class="lbl">Erase to</span><select id="eraseLabel"></select>
+    <span class="lbl">Only over</span><select id="onlyOver"></select>
+  </div>
+  <div class="group">
+    <button id="undo" disabled title="Ctrl+Z">Undo</button>
+    <button id="redo" disabled title="Ctrl+Shift+Z / Ctrl+Y">Redo</button>
+    <span class="lbl">Colour</span>
+    <select id="colourBy"><option value="label">tissue</option><option value="bone">rig bone</option></select>
+    <button id="theme" title="Light or dark">◐</button>
+  </div>
+</header>
+<main>
+  <section id="views" class="three">
+    <div id="empty">Open a crew anatomy volume (.kvox) to begin. The tissue table gives the names and
+      colours; without it the labels stored in the volume's header are used.</div>
+  </section>
+  <aside>
+    <div class="head">
+      <span class="title">Labels</span>
+      <button id="showAll">All</button><button id="showNone">None</button>
+    </div>
+    <div id="legend"></div>
+  </aside>
+</main>
+<footer>
+  <span id="info">No volume.</span>
+  <span id="hover"></span>
+  <span id="status"></span>
+</footer>
+<div id="drop">Drop a .kvox volume or the tissue table JSON</div>
+
+<script id="kvox-codec">
+// ---- KVOX codec and editing model (no DOM: also run by tools/anatomy/test_crew_anatomy.py in Node) ----
+var KVOX = (function () {
+  "use strict";
+  var MAGIC = "KVOXANAT";
+  var VERSION = 1;
+
+  function parse(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var magic = String.fromCharCode.apply(null, bytes.subarray(0, 8));
+    if (magic !== MAGIC) throw new Error("not a KVOX anatomy volume (bad magic)");
+    var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    var version = view.getUint32(8, true);
+    if (version !== VERSION) throw new Error("unsupported KVOX version " + version);
+    var length = view.getUint32(12, true);
+    var header = JSON.parse(new TextDecoder("utf-8").decode(bytes.subarray(16, 16 + length)));
+    if (header.format !== "kessel.crew-anatomy-voxels") throw new Error("unexpected format " + header.format);
+    var d = header.dims, count = d[0] * d[1] * d[2];
+    var expected = 16 + length + count * header.channels.length;
+    if (bytes.length !== expected) throw new Error("KVOX length " + bytes.length + " != " + expected);
+    var channels = {}, at = 16 + length;
+    header.channels.forEach(function (c) {
+      channels[c.name] = bytes.slice(at, at + count);
+      at += count;
+    });
+    return { header: header, channels: channels };
+  }
+
+  function hex(buffer) {
+    return Array.prototype.map.call(new Uint8Array(buffer), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+  }
+
+  // Serialise. Returns a Promise of Uint8Array; each channel's payload_sha256 is refreshed when
+  // SubtleCrypto is available (a file:// page may not have it; then the digest is removed, and
+  // the Python reader simply skips the check).
+  function encode(header, channels) {
+    var h = JSON.parse(JSON.stringify(header));
+    var d = h.dims, count = d[0] * d[1] * d[2];
+    var subtle = (typeof crypto !== "undefined" && crypto.subtle) ? crypto.subtle : null;
+    var digests = h.channels.map(function (c) {
+      var data = channels[c.name];
+      if (!data || data.length !== count) throw new Error("channel " + c.name + " has the wrong size");
+      c.type = "u8";
+      return subtle ? subtle.digest("SHA-256", data).then(hex).catch(function () { return null; }) : Promise.resolve(null);
+    });
+    return Promise.all(digests).then(function (list) {
+      h.channels.forEach(function (c, n) {
+        if (list[n]) c.payload_sha256 = list[n]; else delete c.payload_sha256;
+      });
+      var text = new TextEncoder().encode(JSON.stringify(h, null, 1));
+      var pad = (8 - ((16 + text.length) % 8)) % 8;
+      var total = 16 + text.length + pad + count * h.channels.length;
+      var out = new Uint8Array(total);
+      for (var i = 0; i < 8; i++) out[i] = MAGIC.charCodeAt(i);
+      var view = new DataView(out.buffer);
+      view.setUint32(8, VERSION, true);
+      view.setUint32(12, text.length + pad, true);
+      out.set(text, 16);
+      for (var p = 0; p < pad; p++) out[16 + text.length + p] = 0x20;
+      var at = 16 + text.length + pad;
+      h.channels.forEach(function (c) { out.set(channels[c.name], at); at += count; });
+      return out;
+    });
+  }
+
+  // The editable volume: labels in KVOX order, index = (y * nz + z) * nx + x.
+  function Model(parsed) {
+    this.header = parsed.header;
+    this.channels = parsed.channels;
+    this.labels = parsed.channels.label;
+    this.base = this.labels.slice();
+    var d = this.header.dims;
+    this.nx = d[0]; this.ny = d[1]; this.nz = d[2];
+    this.h = this.header.voxel_size_m;
+    this.origin = this.header.origin_m;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.stroke = null;
+    this.counts = new Uint32Array(256);
+    for (var i = 0; i < this.labels.length; i++) this.counts[this.labels[i]]++;
+  }
+  Model.prototype.index = function (x, y, z) { return (y * this.nz + z) * this.nx + x; };
+  Model.prototype.inBounds = function (x, y, z) {
+    return x >= 0 && y >= 0 && z >= 0 && x < this.nx && y < this.ny && z < this.nz;
+  };
+  Model.prototype.get = function (x, y, z) { return this.labels[this.index(x, y, z)]; };
+  Model.prototype.centre = function (x, y, z) {
+    var h = this.h, o = this.origin;
+    return [o[0] + (x + 0.5) * h, o[1] + (y + 0.5) * h, o[2] + (z + 0.5) * h];
+  };
+  Model.prototype.beginStroke = function () { this.stroke = new Map(); };
+  Model.prototype.set = function (i, value) {
+    var old = this.labels[i];
+    if (old === value) return false;
+    if (this.stroke && !this.stroke.has(i)) this.stroke.set(i, old);
+    this.labels[i] = value;
+    this.counts[old]--; this.counts[value]++;
+    return true;
+  };
+  // Paint `value` in a brush about (x, y, z). axis: "x", "y" or "z" (the slice normal) for a
+  // disc; "ball" paints a sphere. only: null (any voxel), -1 (any voxel inside the body: not
+  // label 0) or a label id that must be present.
+  Model.prototype.paint = function (x, y, z, radius, value, axis, only) {
+    var r = Math.max(0, Math.floor(radius)), changed = 0;
+    for (var dy = -r; dy <= r; dy++) {
+      for (var dz = -r; dz <= r; dz++) {
+        for (var dx = -r; dx <= r; dx++) {
+          if (axis === "x" && dx !== 0) continue;
+          if (axis === "y" && dy !== 0) continue;
+          if (axis === "z" && dz !== 0) continue;
+          if (dx * dx + dy * dy + dz * dz > r * r + r) continue;
+          var X = x + dx, Y = y + dy, Z = z + dz;
+          if (!this.inBounds(X, Y, Z)) continue;
+          var i = this.index(X, Y, Z), cur = this.labels[i];
+          if (only === -1 && cur === 0) continue;
+          if (only !== null && only !== undefined && only >= 0 && cur !== only) continue;
+          if (this.set(i, value)) changed++;
+        }
+      }
+    }
+    return changed;
+  };
+  Model.prototype.endStroke = function () {
+    var s = this.stroke;
+    this.stroke = null;
+    if (!s || s.size === 0) return 0;
+    var idx = new Uint32Array(s.size), before = new Uint8Array(s.size), after = new Uint8Array(s.size), n = 0;
+    var self = this;
+    s.forEach(function (old, i) { idx[n] = i; before[n] = old; after[n] = self.labels[i]; n++; });
+    this.undoStack.push({ idx: idx, before: before, after: after });
+    if (this.undoStack.length > 400) this.undoStack.shift();
+    this.redoStack.length = 0;
+    return n;
+  };
+  Model.prototype.apply = function (step, field) {
+    for (var n = 0; n < step.idx.length; n++) {
+      var i = step.idx[n], old = this.labels[i], v = step[field][n];
+      this.labels[i] = v; this.counts[old]--; this.counts[v]++;
+    }
+  };
+  Model.prototype.undo = function () {
+    var step = this.undoStack.pop(); if (!step) return false;
+    this.apply(step, "before"); this.redoStack.push(step); return true;
+  };
+  Model.prototype.redo = function () {
+    var step = this.redoStack.pop(); if (!step) return false;
+    this.apply(step, "after"); this.undoStack.push(step); return true;
+  };
+  // Voxels that differ from the volume as it was opened, by (from, to) pair.
+  Model.prototype.diff = function () {
+    var pairs = {}, total = 0;
+    for (var i = 0; i < this.labels.length; i++) {
+      if (this.labels[i] !== this.base[i]) {
+        var k = this.base[i] + "->" + this.labels[i];
+        pairs[k] = (pairs[k] || 0) + 1; total++;
+      }
+    }
+    return { total: total, pairs: pairs };
+  };
+  // The header to save: unchanged, plus one entry in "edits".
+  Model.prototype.saveHeader = function (tool, when) {
+    var h = JSON.parse(JSON.stringify(this.header));
+    var d = this.diff();
+    h.edits = (h.edits || []).concat([{ tool: tool, date: when, voxels_changed: d.total, from_to: d.pairs }]);
+    return h;
+  };
+  Model.prototype.save = function (tool, when) {
+    var channels = {};
+    var self = this;
+    this.header.channels.forEach(function (c) { channels[c.name] = c.name === "label" ? self.labels : self.channels[c.name]; });
+    return encode(this.saveHeader(tool, when), channels);
+  };
+
+  return { parse: parse, encode: encode, Model: Model, MAGIC: MAGIC, VERSION: VERSION };
+})();
+if (typeof module !== "undefined" && module.exports) module.exports = KVOX;
+</script>
+
+<script>
+"use strict";
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var model = null, table = null, fileName = "anatomy.kvox", fileHandle = null;
+  var labelInfo = [];          // id -> {id, key, name, colour:[r,g,b]}
+  var visible = new Uint8Array(256).fill(1);
+  var paintLabel = 3, eraseLabel = 3;
+  var slice = { axial: 0, coronal: 0, sagittal: 0 };
+  var mode = "three";
+  var views = {};
+  var bonePalette = null;
+
+  // ---- labels ----
+  function hexColour(s) {
+    s = (s || "#808080").replace("#", "");
+    return [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)];
+  }
+  function rebuildLabels() {
+    labelInfo = [];
+    var rows = (table && table.labels) ? table.labels : (model && model.header.labels) ? model.header.labels : [];
+    rows.forEach(function (r) {
+      labelInfo[r.id] = { id: r.id, key: r.key, name: r.name, colour: hexColour(r.colour),
+        density: r.density_kg_m3, strength: r.strength_class, blood: r.blood_volume_fraction };
+    });
+    if (model) {
+      for (var v = 0; v < 256; v++) {
+        if (model.counts[v] && !labelInfo[v]) labelInfo[v] = { id: v, key: "label_" + v, name: "unknown label " + v, colour: [255, 0, 255] };
+      }
+    }
+    fillSelects();
+    renderLegend();
+  }
+  function labelName(v) { var l = labelInfo[v]; return l ? l.key : "label " + v; }
+  function fillSelects() {
+    var opts = labelInfo.filter(Boolean).map(function (l) { return '<option value="' + l.id + '">' + l.id + " " + l.key + "</option>"; }).join("");
+    $("paintLabel").innerHTML = opts; $("paintLabel").value = String(paintLabel);
+    $("eraseLabel").innerHTML = opts; $("eraseLabel").value = String(eraseLabel);
+    $("onlyOver").innerHTML = '<option value="any">any voxel</option><option value="body">inside the body</option>' + opts;
+  }
+  function renderLegend() {
+    var html = labelInfo.filter(Boolean).map(function (l) {
+      var c = "rgb(" + l.colour.join(",") + ")";
+      var n = model ? model.counts[l.id] : 0;
+      var ml = model ? (n * Math.pow(model.h, 3) * 1e6).toFixed(0) + " mL" : "";
+      return '<div class="row' + (l.id === paintLabel ? " sel" : "") + '" data-id="' + l.id + '" title="' +
+        (l.name || l.key) + (l.density ? " · " + l.density + " kg/m³" : "") + (l.strength ? " · " + l.strength : "") + '">' +
+        '<input type="checkbox" data-vis="' + l.id + '"' + (visible[l.id] ? " checked" : "") + '>' +
+        '<span class="sw" style="background:' + c + '"></span>' +
+        '<span class="name">' + l.id + " " + l.key + "</span>" +
+        '<span class="count">' + (model ? n + " · " + ml : "") + "</span></div>";
+    }).join("");
+    $("legend").innerHTML = html;
+  }
+  $("legend").addEventListener("click", function (e) {
+    var vis = e.target.getAttribute && e.target.getAttribute("data-vis");
+    if (vis !== null && vis !== undefined) { visible[+vis] = e.target.checked ? 1 : 0; drawAll(); return; }
+    var row = e.target.closest(".row"); if (!row) return;
+    paintLabel = +row.getAttribute("data-id"); $("paintLabel").value = String(paintLabel); renderLegend();
+  });
+  $("showAll").onclick = function () { visible.fill(1); renderLegend(); drawAll(); };
+  $("showNone").onclick = function () { visible.fill(0); renderLegend(); drawAll(); };
+  $("paintLabel").onchange = function () { paintLabel = +this.value; renderLegend(); };
+  $("eraseLabel").onchange = function () { eraseLabel = +this.value; };
+
+  // ---- views ----
+  var AXES = {
+    axial:    { normal: "y", title: "Axial (from below: front up, figure's left on the right)", w: "nx", h: "nz" },
+    coronal:  { normal: "z", title: "Coronal (from the front: figure's left on the right)", w: "nx", h: "ny" },
+    sagittal: { normal: "x", title: "Sagittal (from the figure's right: front on the right)", w: "nz", h: "ny" }
+  };
+  // screen (column c, row r) of a view -> voxel (x, y, z)
+  function toVoxel(name, c, r) {
+    var m = model;
+    if (name === "axial") return [c, slice.axial, m.nz - 1 - r];
+    if (name === "coronal") return [c, m.ny - 1 - r, slice.coronal];
+    return [slice.sagittal, m.ny - 1 - r, c];
+  }
+  function buildViews() {
+    var host = $("views");
+    host.innerHTML = "";
+    Object.keys(AXES).forEach(function (name) {
+      var a = AXES[name];
+      var div = document.createElement("div");
+      div.className = "view";
+      div.innerHTML = '<div class="bar"><b>' + a.title + '</b><span class="pos"></span></div>' +
+        '<div class="wrap"><canvas></canvas></div>' +
+        '<div class="slider"><span>' + a.normal + '</span><input type="range" min="0" value="0"><span class="num"></span></div>';
+      host.appendChild(div);
+      var canvas = div.querySelector("canvas");
+      var v = { name: name, div: div, canvas: canvas, ctx: canvas.getContext("2d"), off: document.createElement("canvas"),
+        range: div.querySelector('input[type="range"]'), pos: div.querySelector(".pos"), num: div.querySelector(".num") };
+      v.offCtx = v.off.getContext("2d");
+      views[name] = v;
+      v.range.addEventListener("input", function () { slice[name] = +this.value; drawAll(); });
+      attachPointer(v);
+    });
+    setMode(mode);
+  }
+  function setMode(m) {
+    mode = m;
+    $("views").className = m === "three" ? "three" : "one";
+    Object.keys(views).forEach(function (n) { views[n].div.classList.toggle("hidden", !(m === "three" || m === n)); });
+    document.querySelectorAll("header [data-mode]").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-mode") === m); });
+    drawAll();
+  }
+  document.querySelectorAll("header [data-mode]").forEach(function (b) {
+    b.addEventListener("click", function () { setMode(b.getAttribute("data-mode")); });
+  });
+  $("zoom").addEventListener("input", drawAll);
+  $("colourBy").addEventListener("change", drawAll);
+
+  function colourOf(i) {
+    var m = model;
+    var v = m.labels[i];
+    if (!visible[v] || v === 0) return null;
+    if ($("colourBy").value === "bone" && m.channels.bone) {
+      var b = m.channels.bone[i];
+      if (b === 255) return null;
+      if (!bonePalette) {
+        bonePalette = [];
+        for (var k = 0; k < 256; k++) {
+          var hh = (k * 137.508) % 360, s = 55 + (k % 3) * 12, l = 42 + (k % 4) * 8;
+          bonePalette.push(hsl(hh, s, l));
+        }
+      }
+      return bonePalette[b];
+    }
+    var l = labelInfo[v];
+    return l ? l.colour : [255, 0, 255];
+  }
+  function hsl(h, s, l) {
+    s /= 100; l /= 100;
+    var k = function (n) { return (n + h / 30) % 12; }, a = s * Math.min(l, 1 - l);
+    var f = function (n) { return l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); };
+    return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
+  }
+  function drawView(v) {
+    if (!model || v.div.classList.contains("hidden")) return;
+    var m = model, a = AXES[v.name];
+    var W = m[a.w], H = m[a.h];
+    var max = v.name === "axial" ? m.ny - 1 : v.name === "coronal" ? m.nz - 1 : m.nx - 1;
+    v.range.max = String(max);
+    if (slice[v.name] > max) slice[v.name] = max;
+    v.range.value = String(slice[v.name]);
+    v.off.width = W; v.off.height = H;
+    var img = v.offCtx.createImageData(W, H), px = img.data;
+    var bg = getComputedStyle(document.documentElement).getPropertyValue("--view").trim() || "#15151a";
+    var bgc = hexColour(bg);
+    for (var r = 0; r < H; r++) {
+      for (var c = 0; c < W; c++) {
+        var p = toVoxel(v.name, c, r), i = m.index(p[0], p[1], p[2]);
+        var col = colourOf(i) || bgc, o = (r * W + c) * 4;
+        px[o] = col[0]; px[o + 1] = col[1]; px[o + 2] = col[2]; px[o + 3] = 255;
+      }
+    }
+    v.offCtx.putImageData(img, 0, 0);
+    var z = Math.max(1, +$("zoom").value || 1);
+    v.canvas.width = W * z; v.canvas.height = H * z;
+    var ctx = v.ctx;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(v.off, 0, 0, W * z, H * z);
+    // crosshair at the other two slices
+    ctx.strokeStyle = "rgba(255,255,255,0.28)"; ctx.lineWidth = 1;
+    var cx, cy;
+    if (v.name === "axial") { cx = slice.sagittal; cy = m.nz - 1 - slice.coronal; }
+    else if (v.name === "coronal") { cx = slice.sagittal; cy = m.ny - 1 - slice.axial; }
+    else { cx = slice.coronal; cy = m.ny - 1 - slice.axial; }
+    ctx.beginPath(); ctx.moveTo((cx + 0.5) * z, 0); ctx.lineTo((cx + 0.5) * z, H * z);
+    ctx.moveTo(0, (cy + 0.5) * z); ctx.lineTo(W * z, (cy + 0.5) * z); ctx.stroke();
+    if (v.hover) {
+      var rr = +$("radius").value || 0;
+      ctx.strokeStyle = "#ffe14d";
+      ctx.strokeRect((v.hover[0] - rr) * z + 0.5, (v.hover[1] - rr) * z + 0.5, (2 * rr + 1) * z - 1, (2 * rr + 1) * z - 1);
+    }
+    var label = v.name === "axial" ? "y" : v.name === "coronal" ? "z" : "x";
+    var coord = m.centre(slice.sagittal, slice.axial, slice.coronal);
+    var value = label === "y" ? coord[1] : label === "z" ? coord[2] : coord[0];
+    v.num.textContent = slice[v.name] + " / " + max;
+    v.pos.textContent = label + " = " + value.toFixed(3) + " m";
+  }
+  function drawAll() { Object.keys(views).forEach(function (n) { drawView(views[n]); }); }
+
+  // ---- painting ----
+  var painting = null;
+  function cell(v, e) {
+    var rect = v.canvas.getBoundingClientRect();
+    var z = Math.max(1, +$("zoom").value || 1);
+    var c = Math.floor((e.clientX - rect.left) / z), r = Math.floor((e.clientY - rect.top) / z);
+    var a = AXES[v.name];
+    if (c < 0 || r < 0 || c >= model[a.w] || r >= model[a.h]) return null;
+    return [c, r];
+  }
+  function onlyOver() {
+    var o = $("onlyOver").value;
+    return o === "any" ? null : o === "body" ? -1 : +o;
+  }
+  function stamp(v, cr, value) {
+    var p = toVoxel(v.name, cr[0], cr[1]);
+    var shape = $("shape").value === "ball" ? "ball" : AXES[v.name].normal;
+    return model.paint(p[0], p[1], p[2], +$("radius").value || 0, value, shape, onlyOver());
+  }
+  function line(v, from, to, value) {
+    var n = Math.max(Math.abs(to[0] - from[0]), Math.abs(to[1] - from[1]), 1);
+    for (var s = 0; s <= n; s++) {
+      stamp(v, [Math.round(from[0] + (to[0] - from[0]) * s / n), Math.round(from[1] + (to[1] - from[1]) * s / n)], value);
+    }
+  }
+  function attachPointer(v) {
+    var cv = v.canvas;
+    cv.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    cv.addEventListener("pointerdown", function (e) {
+      if (!model) return;
+      var cr = cell(v, e); if (!cr) return;
+      var p = toVoxel(v.name, cr[0], cr[1]);
+      if (e.altKey || e.button === 1) {
+        paintLabel = model.get(p[0], p[1], p[2]); $("paintLabel").value = String(paintLabel); renderLegend();
+        status("Picked " + paintLabel + " " + labelName(paintLabel)); e.preventDefault(); return;
+      }
+      var erase = e.button === 2 || e.shiftKey;
+      painting = { view: v, value: erase ? eraseLabel : paintLabel, last: cr };
+      model.beginStroke();
+      stamp(v, cr, painting.value);
+      cv.setPointerCapture(e.pointerId);
+      drawAll(); e.preventDefault();
+    });
+    cv.addEventListener("pointermove", function (e) {
+      if (!model) return;
+      var cr = cell(v, e);
+      v.hover = cr; showHover(v, cr);
+      if (painting && painting.view === v && cr) {
+        line(v, painting.last, cr, painting.value);
+        painting.last = cr;
+        drawAll();
+      } else {
+        drawView(v);
+      }
+    });
+    cv.addEventListener("pointerup", finishStroke);
+    cv.addEventListener("pointercancel", finishStroke);
+    cv.addEventListener("pointerleave", function () { v.hover = null; drawView(v); });
+    cv.addEventListener("wheel", function (e) {
+      if (!model) return;
+      e.preventDefault();
+      step(v.name, e.deltaY > 0 ? -1 : 1);
+    }, { passive: false });
+  }
+  function finishStroke() {
+    if (!painting) return;
+    var n = model.endStroke();
+    painting = null;
+    if (n) status("Stroke: " + n + " voxels changed (" + model.diff().total + " since opening)");
+    updateButtons(); renderLegend(); drawAll();
+  }
+  function step(name, d) {
+    var max = +views[name].range.max;
+    slice[name] = Math.max(0, Math.min(max, slice[name] + d));
+    drawAll();
+  }
+  function showHover(v, cr) {
+    if (!cr) { $("hover").textContent = ""; return; }
+    var p = toVoxel(v.name, cr[0], cr[1]), i = model.index(p[0], p[1], p[2]);
+    var c = model.centre(p[0], p[1], p[2]), lab = model.labels[i];
+    var b = model.channels.bone ? model.channels.bone[i] : 255;
+    var joints = (model.header.rig && model.header.rig.joints) || [];
+    var bn = b === 255 ? "–" : (joints[b] ? joints[b].name : String(b));
+    $("hover").innerHTML = "voxel <b>(" + p.join(", ") + ")</b> · centre <b>(" + c.map(function (q) { return q.toFixed(3); }).join(", ") +
+      ") m</b> · label <b>" + lab + " " + labelName(lab) + "</b> · bone <b>" + bn + "</b>";
+  }
+  function status(t) { $("status").textContent = t; }
+  function updateButtons() {
+    $("undo").disabled = !model || !model.undoStack.length;
+    $("redo").disabled = !model || !model.redoStack.length;
+    $("save").disabled = !model;
+  }
+  $("undo").onclick = function () { if (model && model.undo()) { updateButtons(); renderLegend(); drawAll(); } };
+  $("redo").onclick = function () { if (model && model.redo()) { updateButtons(); renderLegend(); drawAll(); } };
+  var hovered = null;
+  document.addEventListener("pointerover", function (e) {
+    var v = e.target.closest && e.target.closest(".view"); hovered = null;
+    Object.keys(views).forEach(function (n) { if (views[n].div === v) hovered = n; });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    var k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === "z" && !e.shiftKey) { $("undo").click(); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (k === "y" || (k === "z" && e.shiftKey))) { $("redo").click(); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && k === "s") { $("save").click(); e.preventDefault(); return; }
+    if (!model) return;
+    var name = hovered || (mode === "three" ? "axial" : mode);
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") { step(name, 1); e.preventDefault(); }
+    if (e.key === "ArrowDown" || e.key === "ArrowLeft") { step(name, -1); e.preventDefault(); }
+    if (e.key === "PageUp") { step(name, 10); e.preventDefault(); }
+    if (e.key === "PageDown") { step(name, -10); e.preventDefault(); }
+  });
+
+  // ---- open and save ----
+  function loadVolume(buffer, name, handle) {
+    var parsed = KVOX.parse(buffer);
+    model = new KVOX.Model(parsed);
+    fileName = name || fileName; fileHandle = handle || null;
+    slice.axial = Math.floor(model.ny * 0.72); slice.coronal = Math.floor(model.nz / 2);
+    var mid = model.header.landmarks && model.header.landmarks.midline_x_m;
+    slice.sagittal = mid !== undefined ? Math.max(0, Math.min(model.nx - 1, Math.floor((mid - model.origin[0]) / model.h))) : Math.floor(model.nx / 2);
+    bonePalette = null;
+    if (!$("views").querySelector(".view")) buildViews();
+    var fit = Math.max(1, Math.min(12, Math.floor(Math.min(window.innerHeight * 0.62 / model.ny, (window.innerWidth - 360) / 3 / Math.max(model.nx, model.nz)))));
+    $("zoom").value = String(fit);
+    rebuildLabels();
+    $("info").innerHTML = "<b>" + fileName + "</b> · " + model.nx + "×" + model.ny + "×" + model.nz + " · " +
+      (model.h * 1000).toFixed(1) + " mm · " + Object.keys(model.channels).join(", ") +
+      ((model.header.edits || []).length ? " · " + model.header.edits.length + " earlier edit(s)" : "");
+    status("Opened " + fileName);
+    updateButtons(); drawAll();
+  }
+  function loadTable(text) {
+    table = JSON.parse(text);
+    if (!table.labels) throw new Error("not a crew anatomy tissue table");
+    rebuildLabels(); drawAll();
+    status("Tissue table: " + table.labels.length + " labels");
+  }
+  function readFile(file) {
+    return new Promise(function (ok, bad) {
+      var r = new FileReader();
+      r.onload = function () { ok(r.result); }; r.onerror = function () { bad(r.error); };
+      if (/\.json$/i.test(file.name)) r.readAsText(file); else r.readAsArrayBuffer(file);
+    });
+  }
+  function openAny(file, handle) {
+    return readFile(file).then(function (data) {
+      if (typeof data === "string") loadTable(data); else loadVolume(data, file.name, handle);
+    }).catch(function (err) { status("Could not open " + file.name + ": " + err.message); });
+  }
+  $("openVol").onclick = function () {
+    if (window.showOpenFilePicker) {
+      window.showOpenFilePicker({ types: [{ description: "KVOX volume", accept: { "application/octet-stream": [".kvox"] } }] })
+        .then(function (hs) { return hs[0].getFile().then(function (f) { return openAny(f, hs[0]); }); })
+        .catch(function (e) { if (e.name !== "AbortError") $("fileVol").click(); });
+    } else $("fileVol").click();
+  };
+  $("openTab").onclick = function () { $("fileTab").click(); };
+  $("fileVol").onchange = function () { if (this.files[0]) openAny(this.files[0]); this.value = ""; };
+  $("fileTab").onchange = function () { if (this.files[0]) openAny(this.files[0]); this.value = ""; };
+  $("save").onclick = function () {
+    if (!model) return;
+    model.save("tools/anatomy/voxel_editor.html", new Date().toISOString()).then(function (bytes) {
+      var d = model.diff();
+      if (fileHandle && fileHandle.createWritable) {
+        return fileHandle.createWritable().then(function (w) { return w.write(bytes).then(function () { return w.close(); }); })
+          .then(function () { status("Saved " + fileName + " (" + d.total + " voxels changed)"); });
+      }
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+      a.download = fileName; document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      status("Downloaded " + fileName + " (" + d.total + " voxels changed)");
+    }).catch(function (err) { status("Save failed: " + err.message); });
+  };
+  // drag and drop
+  var drop = $("drop"), depth = 0;
+  window.addEventListener("dragenter", function (e) { e.preventDefault(); depth++; drop.classList.add("show"); });
+  window.addEventListener("dragleave", function () { if (--depth <= 0) { depth = 0; drop.classList.remove("show"); } });
+  window.addEventListener("dragover", function (e) { e.preventDefault(); });
+  window.addEventListener("drop", function (e) {
+    e.preventDefault(); depth = 0; drop.classList.remove("show");
+    Array.prototype.forEach.call(e.dataTransfer.files, function (f) { openAny(f); });
+  });
+  // theme
+  $("theme").onclick = function () {
+    var cur = document.documentElement.getAttribute("data-theme");
+    var dark = cur ? cur === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+    drawAll();
+  };
+  // ?volume=URL&table=URL when served over http
+  var q = new URLSearchParams(location.search);
+  var jobs = [];
+  if (q.get("table")) jobs.push(fetch(q.get("table")).then(function (r) { return r.text(); }).then(loadTable));
+  Promise.all(jobs).then(function () {
+    if (q.get("volume")) {
+      return fetch(q.get("volume")).then(function (r) { return r.arrayBuffer(); })
+        .then(function (b) { loadVolume(b, q.get("volume").split("/").pop()); });
+    }
+  }).catch(function (err) { status("Could not load from the URL: " + err.message); });
+  // for scripted checks
+  window.anatomyEditor = { get model() { return model; }, slice: slice, KVOX: KVOX };
+})();
+</script>
+</body>
+</html>

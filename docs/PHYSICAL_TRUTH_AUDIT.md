@@ -1457,10 +1457,10 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
     (48 bursts) and the raymarch's event list (96), crowding the fireball out. The fireball is
     kept in the pool like the plume and the vents, and the raymarch takes a scaled detonation
     first, in place of the oldest ordinary event when its list is full.
-- **The crew's anatomical tissue** (2026-11-02, preliminary; `crew_anatomy`, `crew_tissue`; the
+- **The crew's anatomical tissue** (2026-11-02; `crew_anatomy`, `crew_tissue`; the
   owner: build the crew's voxels from the character model with the skeleton and organs inside,
   each tissue with its physical properties). When an anatomical volume is present (the asset
-  path, or `KESSEL_CREW_ANATOMY` for a preliminary one), the casualties' cells are its voxels:
+  path, where the anatomy build now stands, or `KESSEL_CREW_ANATOMY`), the casualties' cells are its voxels:
   1 cm, in the relaxed figure's frame, labelled by the tissue table
   (`catalog/crew_anatomy_tissues.v1.json`: densities from the IT'IS Foundation database, blood
   fractions from ICRP 89, built by `tools/anatomy/build_anatomy.py`). Each cell's mass is its
