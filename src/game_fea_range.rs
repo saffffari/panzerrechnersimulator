@@ -361,10 +361,15 @@ const LOOKS: [(f32, &str); 7] = [(0.0, "STANDARD"), (6.0, "DELTAP REAL"), (1.0, 
     (4.0, "PASTEL"), (2.0, "PICO-8"), (3.0, "DELTAP RAW")];
 const DITHERS: [&str; 4] = ["SCREEN BAYER4", "BLUE NOISE", "SPHERE BAYER8", "SCREEN BAYER8"];
 
-// The panel along the bottom (window fractions, top-left origin): the viewport above it is the
-// window's whole width. Left, the title, the buttons, the status and the hull's axes; right, the
-// groups as tabs, the chosen group's rows in columns.
-const PANEL_H: f32 = 0.215;
+// The panel down the left (window fractions, top-left origin), the viewport to its right (the
+// owner, 2026-11-03: "lets go back to vertical left sidebar"). Top to bottom: the mode tabs and the
+// hide button, the time, the crew plan and the hull's axes, the buttons, the status, the groups as
+// tabs, then the open groups' rows.
+const SIDE_W: f32 = 0.2;
+/// The buttons' top, the status lines' top and the group tabs' top.
+const BUTTONS_Y: f32 = 0.150;
+const NOTES_Y: f32 = 0.262;
+const TABS_Y: f32 = 0.352;
 /// The timeline line's thickness (px) and the clip's colour (Blender's orange, linear).
 const TL_PX: f32 = 5.0;
 const AMBER: [f32; 4] = [0.807, 0.205, 0.006, 1.0];
@@ -379,11 +384,9 @@ const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const BOX: [f32; 4] = [0.035, 0.035, 0.035, 1.0];
 const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
-/// The left block (title, crew, axes, status), and the right block (buttons) with its width.
-const LEFT_X: f32 = 0.008;
-const LEFT_W: f32 = 0.15;
-const RIGHT_W: f32 = 0.15;
-const RIGHT_X: f32 = 1.0 - 0.006 - RIGHT_W;
+/// The sidebar's inner left edge and width (every block in it).
+const LEFT_X: f32 = 0.007;
+const LEFT_W: f32 = SIDE_W - 2.0 * LEFT_X;
 const BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("RUN", 1, 0), ("PLAY", 2, 0), ("FIRE", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
     ("LOOP", 0, 2)];
 /// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
@@ -394,10 +397,9 @@ const BATTLE_BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("WATCH", 1,
 /// browser, the old `edit` worldbuilder's replacement) is promised and not built: greyed out.
 const MODES: [&str; 3] = ["RANGE", "BATTLE", "WORLD"];
 const BUTTON_H: f32 = 0.028;
-/// The groups' area: its left edge, the tabs' row and the rows' columns.
-const GROUPS_X: f32 = 0.168;
-const COLS_W: f32 = 0.166;
-const ROWS_PER_COL: usize = 9;
+/// The groups' rows: their left edge and width (one column, the sidebar's).
+const GROUPS_X: f32 = LEFT_X;
+const COLS_W: f32 = LEFT_W;
 const BTN_W: f32 = 0.011;
 /// The panel's hide button (its show button sits in the same corner when it is hidden).
 const HIDE_W: f32 = 0.045;
@@ -413,21 +415,22 @@ const HANDLE_NEAR: f32 = 0.06;
 /// Screen distance of a centre-pad drag per 45° step.
 const HANDLE_DRAG_STEP: f32 = 0.04;
 
-/// A button's rectangle (x, y, w, h) in the panel's left block.
+/// A button's rectangle (x, y, w, h) in the sidebar.
 fn button_rect(col: usize, row: usize) -> [f32; 4] {
     let gap = 0.004;
-    let w = (RIGHT_W - 2.0 * gap) / 3.0;
-    let y = 1.0 - PANEL_H + 0.040 + row as f32 * (BUTTON_H + 0.005);
+    let w = (LEFT_W - 2.0 * gap) / 3.0;
+    let y = BUTTONS_Y + row as f32 * (BUTTON_H + 0.005);
     // The third row is one wide button (LOOP).
     if row == 2 {
-        return [RIGHT_X, y, RIGHT_W, BUTTON_H];
+        return [LEFT_X, y, LEFT_W, BUTTON_H];
     }
-    [RIGHT_X + col as f32 * (w + gap), y, w, BUTTON_H]
+    [LEFT_X + col as f32 * (w + gap), y, w, BUTTON_H]
 }
 
-/// The panel's hide (or, hidden, show) button.
+/// The panel's hide button (the sidebar's top right), or, hidden, its show button (the window's
+/// bottom right).
 fn hide_rect(hidden: bool) -> [f32; 4] {
-    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [RIGHT_X + RIGHT_W - HIDE_W, 1.0 - PANEL_H + 0.008, HIDE_W, 0.024] }
+    if hidden { [1.0 - HIDE_W - 0.006, 1.0 - 0.034, HIDE_W, 0.026] } else { [LEFT_X + LEFT_W - HIDE_W, 0.008, HIDE_W, 0.020] }
 }
 
 
@@ -2366,10 +2369,14 @@ impl Range {
         }
     }
 
-    /// The viewport's height: the whole window, the panel laid over its foot (hiding the panel
-    /// uncovers the view; it does not change it).
+    /// The viewport's height: the whole window.
     fn view_h(&self) -> f32 {
         1.0
+    }
+
+    /// The viewport's left edge: right of the sidebar (the window's edge with the panel hidden).
+    fn view_x(&self) -> f32 {
+        if self.hide_ui { 0.0 } else { SIDE_W }
     }
 
     /// Whether `c` is on the panel's hide (or show) button.
@@ -2380,12 +2387,12 @@ impl Range {
 
     /// Whether `c` is on the panel.
     fn in_panel(&self, c: [f32; 2]) -> bool {
-        !self.hide_ui && c[1] >= 1.0 - PANEL_H
+        !self.hide_ui && c[0] <= SIDE_W
     }
 
-    /// The timeline line's height (the panel's top edge, or the window's bottom when hidden).
+    /// The timeline line's height: the window's bottom, across the viewport.
     fn timeline_y(&self) -> f32 {
-        if self.hide_ui { 1.0 } else { 1.0 - PANEL_H }
+        1.0
     }
 
     /// Frame the Tiger: the camera keeps its direction and stands 10 m from the hull's middle.
@@ -2611,8 +2618,8 @@ impl Range {
         let up = right.cross(f).normalize_or_zero();
         let depth = (pivot - self.eye).dot(f).max(0.5);
         let span = 2.0 * depth * (self.fov_deg().to_radians() * 0.5).tan();
-        let aspect = self.win[0] / (self.view_h() * self.win[1].max(1.0));
-        self.eye += (-right * dx * aspect + up * dy / self.view_h()) * span;
+        let aspect = (1.0 - self.view_x()) * self.win[0] / (self.view_h() * self.win[1].max(1.0));
+        self.eye += (-right * dx / (1.0 - self.view_x()) * aspect + up * dy / self.view_h()) * span;
         self.keep_above_ground();
         self.camera_at = None;
     }
@@ -2692,7 +2699,7 @@ impl Range {
         let right = f.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(f).normalize_or_zero();
         // On the panel, right of the buttons; with the panel hidden, the viewport's corner.
-        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [LEFT_X + LEFT_W - 0.06 / aspect, 1.0 - PANEL_H + 0.085] };
+        let centre = if self.hide_ui { [0.06 / aspect, 1.0 - 0.07] } else { [LEFT_X + LEFT_W - 0.06 / aspect, 0.100] };
         let hull = self.g.player.hull_model();
         for (axis, colour, name) in [(Vec3::X, RED, "X"), (Vec3::Y, GREEN, "Y"), (Vec3::Z, BLUE, "Z")] {
             let d = hull.transform_vector3(axis).normalize_or_zero();
@@ -2788,24 +2795,22 @@ impl Range {
     /// The open groups laid out as one flow down and across the columns: each group's name, then
     /// its rows, ROW_H a line, as far as the columns reach (no space left between groups).
     fn layout(&self) -> (Vec<(Knob, f32, f32)>, Vec<(usize, f32, f32)>) {
-        let top = 1.0 - PANEL_H + 0.042;
+        let top = self.tab_rects().iter().map(|[_, y, _, h]| y + h).fold(TABS_Y, f32::max) + 0.008;
+        let bottom = 1.0 - 0.012;
         let (mut rows, mut headers) = (Vec::new(), Vec::new());
         let mut line = 0usize;
-        let place = |line: usize| (GROUPS_X + (line / ROWS_PER_COL) as f32 * COLS_W, top + ((line % ROWS_PER_COL) as f32 + 0.5) * ROW_H);
+        let place = |line: usize| (GROUPS_X, top + (line as f32 + 0.5) * ROW_H);
         for g in (0..GROUPS.len()).filter(|&g| self.open[g]) {
-            // A group's name never ends a column.
-            if line % ROWS_PER_COL == ROWS_PER_COL - 1 {
-                line += 1;
-            }
-            let (x, y) = place(line);
-            if x + COLS_W > RIGHT_X + 0.002 {
+            // A group's name never ends the sidebar.
+            let (x, y) = place(line + 1);
+            if y > bottom {
                 break;
             }
-            headers.push((g, x, y));
+            headers.push((g, x, place(line).1));
             line += 1;
             for k in group_rows(g) {
                 let (x, y) = place(line);
-                if x + COLS_W > RIGHT_X + 0.002 {
+                if y > bottom {
                     return (rows, headers);
                 }
                 rows.push((k, x, y));
@@ -2830,12 +2835,17 @@ impl Range {
 
     /// The tabs' rectangles (x, y, w, h), one a group.
     fn tab_rects(&self) -> Vec<[f32; 4]> {
+        // Wrapped onto as many lines as the sidebar needs.
         let size = TEXT * 0.8;
-        let mut x = GROUPS_X + 0.004;
+        let (mut x, mut y) = (LEFT_X, TABS_Y);
         GROUPS.iter().map(|name| {
             let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.012;
-            let rect = [x, 1.0 - PANEL_H + 0.008, w, 0.022];
-            x += w + 0.006;
+            if x > LEFT_X && x + w > LEFT_X + LEFT_W {
+                x = LEFT_X;
+                y += 0.026;
+            }
+            let rect = [x, y, w, 0.022];
+            x += w + 0.005;
             rect
         }).collect()
     }
@@ -2865,7 +2875,8 @@ impl Range {
         // for the timeline (or, headless, the live frame); otherwise `render` blits the live view.
         // The timeline keeps no pictures: dragging it moves only the playhead; the view stays live.
         if self.captured || self.live_image {
-            self.r.draw_image(self.frame_image, 0.0, 0.0, 1.0, self.view_h(), [1.0, 1.0, 1.0, 1.0]);
+            let x0 = self.view_x();
+            self.r.draw_image(self.frame_image, x0, 0.0, 1.0 - x0, self.view_h(), [1.0, 1.0, 1.0, 1.0]);
         }
         // Playing the Tiger: the game's own view, nothing of the editor over it.
         if self.player_control && !self.play_paused {
@@ -2884,8 +2895,8 @@ impl Range {
         if self.mode == Mode::Live && !self.battle {
             self.draw_gizmos();
         }
-        let top = 1.0 - PANEL_H;
-        self.r.fill_rect(0.0, top, 1.0, PANEL_H, PANEL_FILL);
+        let top = 0.0;
+        self.r.fill_rect(0.0, 0.0, SIDE_W, 1.0, PANEL_FILL);
         self.draw_axes_gizmo();
         // The left block: title and time, the buttons, the status.
         let mode = match (self.mode, self.run) {
@@ -2909,10 +2920,10 @@ impl Range {
             else if self.pilot.is_some() { if self.playing { "WATCHING".into() } else { "WATCHING, PAUSED".into() } }
             else { format!("EDIT: {} T-34S", self.t34s.len()) }
         } else { mode };
-        self.text(&format!("{mode}  T {:.2} S", t), LEFT_X + LEFT_W, top + 0.040, TEXT * 0.75, INK, crate::ui::Align::Right);
+        self.text(&format!("{mode}  T {:.2} S", t), LEFT_X, top + 0.044, TEXT * 0.75, INK, crate::ui::Align::Left);
         self.text(&format!("{:.0} FPS  SIM {:.0} MS  DRAW {:.0} MS", 1.0 / self.perf[0].max(1.0e-4), self.perf[1], self.perf[2]),
-            LEFT_X + LEFT_W, top + 0.056, TEXT * 0.62, DIM, crate::ui::Align::Right);
-        self.draw_crew_plan([LEFT_X, top + 0.040], 0.09);
+            LEFT_X, top + 0.060, TEXT * 0.62, DIM, crate::ui::Align::Left);
+        self.draw_crew_plan([LEFT_X, top + 0.052 + 0.018], 0.07);
         for (label, col, row) in self.buttons() {
             let [x, y, w, h] = button_rect(col, row);
             let lit = if self.battle {
@@ -2953,11 +2964,11 @@ impl Range {
         if scrubbing {
             notes.push(("LET GO OF THE TIMELINE TO TAKE THE SIMULATION TO THIS FRAME".into(), INK));
         }
-        let chars = ((GROUPS_X - LEFT_X - 0.01) * self.win[0] / (0.45 * TEXT * 0.72 * self.win[1])).max(10.0) as usize;
-        let mut y = top + 0.142;
+        let chars = ((LEFT_W - 0.004) * self.win[0] / (0.45 * TEXT * 0.72 * self.win[1])).max(10.0) as usize;
+        let mut y = NOTES_Y;
         'notes: for (text, colour) in notes {
             for line in Self::wrap(&text, chars).into_iter().take(3) {
-                if y > 0.992 {
+                if y > TABS_Y - 0.012 {
                     break 'notes;
                 }
                 self.text(&line, LEFT_X, y, TEXT * 0.72, colour, crate::ui::Align::Left);
@@ -2980,7 +2991,7 @@ impl Range {
         let [x, y, w, h] = hide_rect(false);
         self.r.fill_rect(x, y, w, h, BOX);
         self.text_bold("HIDE", x + w * 0.5, y + h * 0.5, TEXT * 0.75, INK, crate::ui::Align::Center);
-        self.text("H: HELP", x - 0.008, y + h * 0.5, TEXT * 0.7, DIM, crate::ui::Align::Right);
+        self.text("H: HELP", LEFT_X + LEFT_W, 0.044, TEXT * 0.62, DIM, crate::ui::Align::Right);
         // The chosen group's rows.
         let aspect = self.win[0] / self.win[1].max(1.0);
         for (knob, cx, y) in self.rows() {
@@ -3061,8 +3072,9 @@ impl Range {
                 Mode::Live if self.past_run => n,
                 Mode::Live => self.frame_at.map_or(0.0, |f| f as f32 + 1.0),
             };
-            let x = |k: f32| 0.0 + (1.0 - 0.0) * k / n;
-            self.r.fill_rect(0.0, base - thick, x(at) - 0.0, thick, INK);
+            let x0 = self.view_x();
+            let x = |k: f32| x0 + (1.0 - x0) * k / n;
+            self.r.fill_rect(x0, base - thick, x(at) - x0, thick, INK);
             // The clip over the line, its ends ticked.
             if let Some((a, b)) = self.clip {
                 self.r.fill_rect(x(a as f32), base - thick, x(b as f32 + 1.0) - x(a as f32), thick, AMBER);
@@ -3083,7 +3095,7 @@ impl Range {
                 self.text(&label, head + if head > 0.85 { -0.004 } else { 0.004 }, base - 4.0 * thick - 0.008, TEXT * 0.7, INK, align);
             }
         } else if hovered {
-            self.text("NO RUN YET (ENTER RUNS)", 0.5, base - 0.012, TEXT * 0.7, DIM, crate::ui::Align::Center);
+            self.text("NO RUN YET (ENTER RUNS)", 0.5 * (1.0 + self.view_x()), base - 0.012, TEXT * 0.7, DIM, crate::ui::Align::Center);
         }
     }
 
@@ -3153,8 +3165,9 @@ impl Range {
 
     fn track_hit(&self, cursor: [f32; 2]) -> Option<usize> {
         let n = self.run.map_or(0, |r| r.total as usize);
-        (n > 0 && (cursor[1] - self.timeline_y()).abs() < 0.012)
-            .then(|| ((cursor[0].clamp(0.0, 1.0) * n as f32) as usize).min(n - 1))
+        let x0 = self.view_x();
+        (n > 0 && cursor[0] >= x0 && (cursor[1] - self.timeline_y()).abs() < 0.012)
+            .then(|| ((((cursor[0] - x0) / (1.0 - x0)).clamp(0.0, 1.0) * n as f32) as usize).min(n - 1))
     }
 
     fn buttons(&self) -> [(&'static str, usize, usize); 7] {
@@ -3167,7 +3180,7 @@ impl Range {
         let mut x = LEFT_X;
         MODES.iter().map(|name| {
             let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.010;
-            let rect = [x, 1.0 - PANEL_H + 0.008, w, 0.020];
+            let rect = [x, 0.008, w, 0.020];
             x += w + 0.003;
             rect
         }).collect()
@@ -3250,7 +3263,7 @@ impl Range {
     /// The window's crop of the internal frame shown in the viewport (uv offset, uv size): the
     /// centre of the frame at the viewport's own aspect, so pixels stay square.
     fn crop(&self) -> [f32; 4] {
-        let viewport = self.win[0] / (self.view_h() * self.win[1].max(1.0));
+        let viewport = (1.0 - self.view_x()) * self.win[0] / (self.view_h() * self.win[1].max(1.0));
         let frame = self.r.iw as f32 / self.r.ih.max(1) as f32;
         if viewport <= frame {
             let w = viewport / frame;
@@ -3263,18 +3276,20 @@ impl Range {
 
     /// A window point (0..1) as a point of the internal frame (0..1); None in the sidebar.
     fn to_frame(&self, c: [f32; 2]) -> Option<[f32; 2]> {
-        if c[1] > self.view_h() {
+        let x0 = self.view_x();
+        if c[1] > self.view_h() || c[0] < x0 {
             return None;
         }
         let k = self.crop();
-        Some([k[0] + c[0] * k[2], k[1] + c[1] / self.view_h() * k[3]])
+        Some([k[0] + (c[0] - x0) / (1.0 - x0) * k[2], k[1] + c[1] / self.view_h() * k[3]])
     }
 
     /// A point of the internal frame as a window point; None outside the viewport.
     fn to_window(&self, f: [f32; 2]) -> Option<[f32; 2]> {
         let k = self.crop();
         let (x, y) = ((f[0] - k[0]) / k[2], (f[1] - k[1]) / k[3]);
-        ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| [x, y * self.view_h()])
+        let x0 = self.view_x();
+        ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| [x0 + x * (1.0 - x0), y * self.view_h()])
     }
 
     /// The crop of a full internal-grid frame the viewport shows, and its size.
@@ -3351,7 +3366,7 @@ impl Range {
             self.pose_view();
             self.r.set_active_view(0);
             let rect = crate::renderer::BlitRect { src_uv: self.crop(),
-                dst_px: [0.0, 0.0, w as f32, self.view_h() * h as f32], clear: true };
+                dst_px: [self.view_x() * w as f32, 0.0, (1.0 - self.view_x()) * w as f32, self.view_h() * h as f32], clear: true };
             self.r.render_to_surface_view(&self.device, &self.queue, view, format, &rect);
         }
         self.draw_ui(cursor);
