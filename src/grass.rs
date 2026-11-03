@@ -220,6 +220,7 @@ struct SpringMeadow {
     mean_wind: Vec2,
     sun_altitude_deg: f32,
     rain: f32,
+    eye: Vec3,
     time: f32,
     cleared_legacy: bool,
 }
@@ -327,7 +328,7 @@ impl Grass {
             if river.is_some() { "excluded" } else { "none" }, started.elapsed().as_secs_f32());
         self.meadow = Some(Box::new(SpringMeadow {
             wind: Default::default(), mirror: Default::default(), cover, butterflies: Default::default(), wing_batches,
-            fireflies: Vec::new(), mean_wind: Vec2::ZERO, sun_altitude_deg: 30.0, rain: 0.0, time: 0.0, cleared_legacy: false,
+            fireflies: Vec::new(), mean_wind: Vec2::ZERO, sun_altitude_deg: 30.0, rain: 0.0, eye: Vec3::ZERO, time: 0.0, cleared_legacy: false,
         }));
     }
 
@@ -335,7 +336,9 @@ impl Grass {
         if let Some(m) = &self.meadow {
             return serde_json::json!({"spring_meadow": true, "tread_pages": m.mirror.slots.len(),
                 "tread_pages_dropped": m.mirror.dropped, "butterflies": m.butterflies.alive.len(),
-                "fireflies_lit": m.fireflies.len(), "sun_altitude_deg": m.sun_altitude_deg,
+                "fireflies_lit": m.fireflies.len(),
+                "fireflies_lit_within_30_m": m.fireflies.iter().filter(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye) < 30.0).count(),
+                "nearest_lit_firefly_m": m.fireflies.iter().map(|f| Vec3::new(f[0], f[1], f[2]).distance(m.eye)).fold(f32::INFINITY, f32::min), "sun_altitude_deg": m.sun_altitude_deg,
                 "near_density_per_m2": crate::meadow::NEAR_DENSITY, "draw_radius_m": crate::meadow::FAR_RADIUS_M,
                 "ground_class_loaded": self.mask.is_some(), "primary_raster_only": false,
                 "casts_near_cascade_and_sky_cover_within_m": crate::meadow::SHADOW_RADIUS_M});
@@ -569,6 +572,7 @@ impl Grass {
             let eye = Vec2::new(cam.x, cam.z);
             m.wind.advance(eye, dt, &wind_at, &gust_at);
             m.mean_wind = wind_at(cam);
+            m.eye = cam;
             m.time = time;
             for (key, cells) in self.tracks.take_dirty() { m.mirror.push(key, &cells); }
             let cover = m.cover.clone();
@@ -670,6 +674,13 @@ impl Grass {
                 r.set_dynamic_instanced_mats(*batch, &mats[..n]);
             }
             r.fireflies.clone_from(&m.fireflies);
+            // Debug only: one lantern held lit at peak 3 m before the eye (the transport check).
+            if std::env::var("KESSEL_FIREFLY_PROBE").as_deref() == Ok("1") {
+                let (_, per_watt, _) = crate::meadow_fauna::firefly_lanes();
+                let p = r.camera.pos + r.camera.forward() * 3.0;
+                let gain: f32 = std::env::var("KESSEL_FIREFLY_PROBE_GAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+                r.fireflies.push([p.x, p.y, p.z, (crate::meadow_fauna::flash_peak_radiant_intensity() * per_watt) as f32 * gain]);
+            }
             return;
         }
         self.build_mats();
