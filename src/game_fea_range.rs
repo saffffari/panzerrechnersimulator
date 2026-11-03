@@ -3345,7 +3345,9 @@ impl Range {
         if self.recorder.is_some() && self.mode == Mode::Live {
             self.record_frame();
         }
-        if self.mode == Mode::Live && !self.captured {
+        // Drawn while the timeline is dragged too: the timeline keeps no pictures, so skipping the
+        // view there left the window black (owner, 2026-11-03).
+        if !self.captured {
             self.pose_view();
             self.r.set_active_view(0);
             let rect = crate::renderer::BlitRect { src_uv: self.crop(),

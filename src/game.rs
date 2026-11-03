@@ -2391,8 +2391,8 @@ const CREW_STEEL_HELMET_GLB: &str = "assets/flavor/Characters/german-ww2-soldier
 const CREW_RELAXED_HEAD_MIN: Vec3 = Vec3::new(-0.094_941_74, 1.262_698_7, -0.127_659_84);
 const CREW_RELAXED_HEAD_MAX: Vec3 = Vec3::new(0.060_105_927, 1.533_565_2, 0.073_475_61);
 
-/// The crew's steel helmet drawn at 1.5x its source size (owner-directed, cosmetic).
-const CREW_HELMET_SCALE: f32 = 1.5;
+/// The crew's steel helmet drawn at 1.25x its source size (owner-directed, cosmetic; 1.5x was a bit big).
+const CREW_HELMET_SCALE: f32 = 1.25;
 
 fn load_crew_steel_helmet() -> anyhow::Result<CpuMesh> {
     let mut mesh = crate::gltf_load::load_glb(CREW_STEEL_HELMET_GLB)?;
