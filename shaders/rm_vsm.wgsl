@@ -137,6 +137,7 @@ fn vsm_class_colour(c: u32) -> vec3<f32> {
         case 7u: { return vec3(0.40, 0.25, 0.15); }  // seat
         case 8u: { return vec3(0.10, 0.75, 0.80); }  // instrument
         case 9u: { return vec3(0.95, 0.45, 0.60); }  // cable
+        case 10u: { return vec3(0.30, 0.85, 0.35); } // mechanical
         default: { return vec3(1.0, 0.0, 1.0); }
     }
 }
@@ -228,7 +229,10 @@ fn vsm_view_colour(view: u32, frame: u32, p: vec3<f32>, n: vec3<f32>) -> vec3<f3
 // Reflectances are linear sRGB; the paints from their RAL CIELAB (L* 25 / 75 / 30), steel and
 // oxides from published ranges (docs/PHYSICAL_TRUTH_AUDIT.md names each estimate).
 const VSM_GREY: vec3<f32> = vec3<f32>(0.041, 0.045, 0.051);
-const VSM_IVORY: vec3<f32> = vec3<f32>(0.6105, 0.4910, 0.2462);
+// The fighting compartment's paint: a neutral white (the owner's choice, 2 November 2026, over the
+// period's Elfenbein RAL 1001; the light is to carry the warmth).
+const VSM_IVORY: vec3<f32> = vec3<f32>(0.70, 0.69, 0.645);
+const VSM_OIL: vec3<f32> = vec3<f32>(0.022, 0.016, 0.010);
 const VSM_PRIMER: vec3<f32> = vec3<f32>(0.156, 0.039, 0.034);
 const VSM_STEEL: vec3<f32> = vec3<f32>(0.56, 0.57, 0.58);
 const VSM_DARK_STEEL: vec3<f32> = vec3<f32>(0.28, 0.28, 0.29);
@@ -364,6 +368,11 @@ fn vsm_finish(frame: u32, s: VsmSample, p: vec3<f32>, n: vec3<f32>, up: vec3<f32
             f.albedo = vec3(0.065, 0.048, 0.040);
             f.roughness = 0.82;
             f.metallic = 0.35;
+        } else if (cls == 10u) {
+            // The machinery: cast iron, steel and aluminium alloy, bare under its oil.
+            f.albedo = vec3(0.30, 0.30, 0.31) * (0.85 + 0.3 * vsm_noise(p * 6.0));
+            f.roughness = 0.45;
+            f.metallic = 0.85;
         } else if (breech_steel) {
             // The breech's machined steel: blackened (bluing, oxide) under a film of oil and the
             // compartment's dust, which scatters most of what it reflects.
@@ -413,7 +422,7 @@ fn vsm_after_paint(f_in: VsmFinish, frame: u32, s: VsmSample, p: vec3<f32>, n: v
         f.albedo = mix(f.albedo, VSM_STEEL * 0.8, polish * 0.5);
         f.metallic = mix(f.metallic, 1.0, polish * 0.6);
     }
-    if (keep >= 7u && !own && !inside) {
+    if (keep >= 7u && !own && !inside && s.material != 10u) {
         let wet = 0.35 + 0.65 * s.sky;
         let rust = smoothstep(0.35, 0.75, vsm_fbm(p * 38.0)) * wet * (1.0 - contact);
         f.albedo = mix(f.albedo, mix(VSM_RUST, VSM_OLD_RUST, vsm_noise(p * 11.0)), rust * 0.75);
@@ -566,6 +575,22 @@ fn vsm_deposits(f_in: VsmFinish, frame: u32, s: VsmSample, p: vec3<f32>, n: vec3
     f.albedo = mix(f.albedo, VSM_GRIME, g);
     f.roughness = mix(f.roughness, select(0.82, 0.55, inside), g);
     f.metallic = mix(f.metallic, 0.0, g);
+    // Inside the compartment and on the machinery: oil and grime gather in the corners and run
+    // down to the lower walls and the floor (spilt oil, grease, the crew's boots, condensation),
+    // a dark film glossier where it is fresh.
+    let height = p.y + select(0.0, 0.524, frame != 0u);
+    if (inside || s.material == 10u) {
+        let low = smoothstep(1.6, 0.55, height);
+        let corner = clamp(crease * 1.4 + enclosed * 0.8, 0.0, 1.0);
+        let film = clamp((0.25 + 0.75 * load) * (0.2 + 0.75 * low + 0.85 * corner + select(0.0, 0.45, s.material == 10u))
+            * (0.55 + 0.9 * vsm_fbm(p * vec3(14.0, 6.0, 14.0))), 0.0, 0.94);
+        // Every surface the crew live among is dulled by a thin film of the same grime: smudged,
+        // wiped, never clean.
+        f.albedo *= 0.78 + 0.14 * vsm_fbm(p * 5.0 + vec3(9.1));
+        f.albedo = mix(f.albedo, VSM_OIL, film * 0.85);
+        f.roughness = mix(f.roughness, 0.32, film * 0.7);
+        f.metallic = mix(f.metallic, 0.0, film * 0.6);
+    }
     if (inside) {
         // Dust settles on what faces up where boots and hands do not sweep it.
         let dust = load * 0.55 * smoothstep(0.35, 0.9, face_up) * (1.0 - contact) * (0.6 + 0.8 * vsm_fbm(p * 15.0));

@@ -52,7 +52,7 @@ const THICKNESS_REACH: f32 = 0.25;
 /// Edge record offsets are stored in units of this many frame units (0.1 mm).
 pub const EDGE_UNIT: f32 = 1.0e-4;
 /// Bump when the bake changes, so a stale cache is not read.
-const CACHE_VERSION: u32 = 8;
+const CACHE_VERSION: u32 = 9;
 
 /// What a part is made of, for the layer stack (`rm_vsm.wgsl` names the same numbers).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,8 +78,12 @@ pub enum Class {
     Instrument = 8,
     /// The tow cables along the hull's sides (the rest of `CABLE_EXHAUST_STEEL`).
     Cable = 9,
+    /// The machinery: engine, radiators and fans, transmission and steering. Bare metal under oil
+    /// (the owner's choice, 2 November 2026: the period finish is not firmly documented, sources
+    /// give a blue-grey or grey-green compartment and a satin black engine, none all red).
+    Mechanical = 10,
 }
-pub const CLASS_NAMES: [&str; 10] = ["none", "painted", "track", "exhaust", "running_gear", "gun", "floor", "seat", "instrument", "cable"];
+pub const CLASS_NAMES: [&str; 11] = ["none", "painted", "track", "exhaust", "running_gear", "gun", "floor", "seat", "instrument", "cable", "mechanical"];
 /// The two exhaust pipes on the rear plate (of `CABLE_EXHAUST_STEEL`; the other four are cables).
 pub const EXHAUST_PIPES: [&str; 2] = ["Hull_1207", "Hull_1208"];
 
@@ -293,10 +297,20 @@ fn classify(frame: usize, node: &NodeInfo) -> Class {
     let folder = cad_folders().get(&format!("{}:{}", FRAME_NAMES[frame], name)).map(String::as_str);
     match folder {
         Some(f) if f.contains("Rollor System") || f.contains("Drive Rollar") || f.contains("Guide Roller") => return Class::RunningGear,
+        Some(f) if f.contains("EngineRoom") || f.contains("EngineSystem") => return Class::Mechanical,
         Some(f) if f.contains("88 Barrel") => return Class::Gun,
         _ => {}
     }
     if frame == 2 { return if node.material.as_deref() == Some("Interior Paint") { Class::Painted } else { Class::Gun }; }
+    if frame == 0 && !lists::PAINTED.contains(&name) {
+        // The machinery by where it stands (a node, not a plate: under a metre and a half across):
+        // the engine compartment behind the firewall with its radiators and fans, and the
+        // transmission and steering between the driver and the radio operator.
+        let (c, size) = ((node.min + node.max) * 0.5, (node.max - node.min).max_element());
+        let engine_bay = c.z < -1.3 && c.x.abs() < 1.6 && c.y > 0.45 && c.y < 1.9;
+        let gearbox = c.x.abs() < 0.7 && c.y > 0.5 && c.y < 1.35 && c.z > 1.0 && c.z < 2.6;
+        if size < 1.5 && (engine_bay || gearbox) { return Class::Mechanical; }
+    }
     if frame == 0 {
         // Road wheels, sprocket and idler: the steel between the hull's side and the track, under
         // the run's top (`TIGER_RUNNING_GEAR`), that is not a link.
@@ -1226,6 +1240,9 @@ pub fn crew_routes_outside(frame: usize, p: Vec3, n: Vec3) -> f32 {
     c.clamp(0.0, 1.0)
 }
 
+/// The share of the field's catch the player's vehicle keeps: none, the crew keep it brushed off.
+pub const SNOW_KEPT: f32 = 0.0;
+
 /// Per cell, the share of the lying snow a surface keeps: falling snow reaches only what the sky
 /// sees; the exhaust's heat and the warm engine deck over the radiators melt it; the crew's routes
 /// tread it off.
@@ -1253,6 +1270,9 @@ fn snow_catch(field: &Field, points: &[[f32; 6]]) -> Vec<u32> {
         // The engine deck: radiator air through the grilles and the compartment's warmth beneath.
         if f == 0 && p.z < -1.25 && p.y > 1.85 && p.x.abs() < 1.45 { k *= 0.15; }
         k *= 1.0 - 0.85 * crew_routes_outside(f, p, n);
+        // The crew brush the lying snow off their vehicle and it slides off the barrel (the owner,
+        // 2 November 2026: keep the Tiger grey; snow on it is to come from the particle system).
+        k *= SNOW_KEPT;
         (k.clamp(0.0, 1.0) * 255.0).round() as u8
     }).collect();
     catch.chunks(4).map(|b| b.iter().enumerate().fold(0u32, |w, (j, v)| w | (*v as u32) << (8 * j))).collect()
