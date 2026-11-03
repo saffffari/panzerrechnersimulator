@@ -914,12 +914,8 @@ impl Range {
                 false
             }
         });
-        if restored {
-            // The checkpoint is the world save's state, which keeps no cook-off: a turret thrown in
-            // an earlier run stayed thrown through every reset. A fresh Tiger has none.
-            self.g.cookoff.reset();
-            self.g.player.turret_thrown = None;
-        }
+        // The cook-off and a thrown turret are in the checkpoint (`rewind::Unsaved`): a turret
+        // thrown in an earlier run is put back on its ring with the rest of the fresh Tiger.
         if !restored {
             self.build_fresh();
             // Kept, and put back at once: the first run starts as every later one does.
