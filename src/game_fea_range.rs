@@ -953,7 +953,10 @@ impl Range {
         // a lamp switched or its power changed shows without a game step).
         self.g.drive_lights(&mut self.r);
         self.g.drive_armor_scars(&mut self.r);
-        self.g.drive_singleplayer_crew_rigs_for_view(None, &mut self.r);
+        // The crewman the camera stands inside is not drawn (a first-person view from his post), as
+        // the game leaves the player's own body out of his view.
+        let inside = self.crew_at_eye();
+        self.g.drive_singleplayer_crew_rigs_for_view(inside, &mut self.r);
         self.r.camera.pos = self.eye;
         self.r.camera.yaw = self.yaw;
         self.r.camera.pitch = self.pitch;
@@ -1767,6 +1770,18 @@ impl Range {
             Err(e) => format!("STILL FAILED: {e:#}"),
         };
         println!("[fea-range] {}", self.status);
+    }
+
+    /// The crewman whose body the camera is inside: within 0.3 m of the line from his torso up
+    /// to his head (0.6 m along the hull's up).
+    fn crew_at_eye(&self) -> Option<CrewRole> {
+        let up = self.g.player.hull_model().transform_vector3(Vec3::Y).normalize_or_zero();
+        CrewRole::ALL.iter().copied().filter_map(|role| {
+            let torso = self.g.crew_solo_man_point(role);
+            let along = (self.eye - torso).dot(up);
+            let off = (self.eye - torso - up * along.clamp(0.0, 0.6)).length();
+            (along > -0.35 && along < 0.75 && off < 0.3).then_some((role, off))
+        }).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(role, _)| role)
     }
 
     /// The viewport's height (the whole window while the panel is hidden).
