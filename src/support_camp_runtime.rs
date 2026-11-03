@@ -94,7 +94,13 @@ impl CampRuntime {
             .collect();
         // The support camp is a compact set of independently seated shelters on existing
         // terrain. Do not flatten a rectangular campground or erase its original material.
-        let root = select_site(hf,act,local_lo,local_hi,&obstacles,&forbidden,0.60,1.0)?;
+        // A course may set where its camp stands (`canyon_course.camp_at` [x, z], e.g. just over
+        // the first rise behind the start): the site search starts there instead of at the spawn.
+        let sited_act = manifest.and_then(|m| m.edits())
+            .and_then(|e| e["canyon_course"]["camp_at"].as_array().cloned())
+            .and_then(|a| Some(Vec2::new(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32)))
+            .map(|at| { let mut a = act.clone(); a.spawn = at; a });
+        let root = select_site(hf,sited_act.as_ref().unwrap_or(act),local_lo,local_hi,&obstacles,&forbidden,0.60,1.0)?;
         camp.conform_to_terrain(root,hf)?;
         let grading = None;
         let (local_lo,local_hi)=camp.bounds();

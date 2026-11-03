@@ -63,6 +63,15 @@ pub fn varied_beat(points: &[Vec2], seed: u64) -> Vec<Vec2> {
 /// The selected course asks for the expedition camp and half-track (`"camp": true` in its
 /// `canyon_course` block): the world is built as the expedition builds it, the camp is sited from
 /// the course's start, and the commander begins on foot at the camp.
+/// The selected course keeps the commander in the Tiger at the start while its camp stands
+/// behind (`"camp_start": "tank"`); otherwise a camp course begins on foot at the camp.
+pub fn selected_course_camp_start_in_tank() -> bool {
+    let Some((_, path)) = crate::act_manifest::selected_runtime_manifest() else { return false };
+    std::fs::read_to_string(path.with_file_name("manifest_edits.json")).ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|edits| edits[KEY]["camp_start"].as_str() == Some("tank"))
+}
+
 pub fn selected_course_wants_camp() -> bool {
     let Some((_, path)) = crate::act_manifest::selected_runtime_manifest() else { return false };
     std::fs::read_to_string(path.with_file_name("manifest_edits.json")).ok()

@@ -109,6 +109,7 @@ mod repair_manual_capture;
 mod sky_review;
 mod canyon;
 mod canyon_attempt;
+mod t34_canyon_training;
 mod mission;
 mod mission_capture;
 mod radio_llm;
@@ -152,6 +153,7 @@ mod grass;
 mod meadow;
 mod meadow_fauna;
 mod leaf_optics;
+mod meadow_film;
 mod infantry;
 mod infantry_combat;
 mod interior_rig;
@@ -2901,7 +2903,7 @@ fn run_campaign_ai(
             std::fs::create_dir_all(parent)?;
         }
     }
-    let t34_brain = ai::Mlp::load(t34_weights)?;
+    let t34_brain = ai::Mlp::load_t34(t34_weights)?;
     let tiger_brain = ai::Mlp::load(tiger_weights)?;
 
     let instance = create_instance();
@@ -9071,7 +9073,7 @@ fn run_brawl(outdir: &str, weights: Option<&str>) -> anyhow::Result<()> {
     g.player.pos = glam::Vec3::new(0.0, g.hf.height_at(0.0, -400.0), -400.0);
 
     let wpath = weights.unwrap_or("assets/ai/weights_academy.bin");
-    match ai::Mlp::load(wpath) {
+    match ai::Mlp::load_t34(wpath) {
         Ok(net) => {
             println!("[brawl] both teams driven by {wpath}");
             g.enemy_policy = Some(net);
@@ -9318,7 +9320,7 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
 
     // Drive the T-34s with the evolved brain when available (default: the smoke-test artifact).
     let wpath = weights.unwrap_or("assets/ai/weights_test.bin");
-    match ai::Mlp::load(wpath) {
+    match ai::Mlp::load_t34(wpath) {
         Ok(net) => {
             println!("[duel] T-34s driven by {wpath}");
             g.enemy_policy = Some(net);
@@ -9769,7 +9771,7 @@ fn run_train(
         // These seeds never select a champion during evolution; use them for promotion only.
         const PROMOTION_SEEDS: [u32; K_SEEDS] = [0xE7B1_0001, 0xE7B1_0002, 0xE7B1_0003, 0xE7B1_0005, 0xE7B1_0008];
         for path in evaluate_paths {
-            let net = ai::Mlp::load(path)?;
+            let net = ai::Mlp::load_t34(path)?;
             let (score, scores) = eval(&net, &PROMOTION_SEEDS, STAGES[2])?;
             let (replay, replay_scores) = eval(&net, &PROMOTION_SEEDS, STAGES[2])?;
             let deterministic = scores.iter().zip(&replay_scores).all(|(a,b)| a.to_bits() == b.to_bits());
@@ -9908,7 +9910,7 @@ fn run_train(
     // Final artifact + load-path determinism proof (on the exam seeds — the shipped metric).
     anyhow::ensure!(gen_done > 0, "no generation completed before the wall cap");
     let path = artifact.as_str();
-    let reloaded = ai::Mlp::load(path)?;
+    let reloaded = ai::Mlp::load_t34(path)?;
     let (f_replay, _) = eval(
         &reloaded,
         &EXAM_SEEDS,
@@ -13475,12 +13477,17 @@ impl WindowState {
                         .and_then(|value| value.parse::<u64>().ok()).unwrap_or(1944);
                     let enabled = g.expedition_initial_camp_position()
                         .and_then(|position| g.enable_expedition(seed, position))
-                        .and_then(|()| g.begin_expedition_at_camp(&mut r));
+                        .and_then(|()| if canyon::selected_course_camp_start_in_tank() {
+                            // In the Tiger at the course's start; the camp and the half-track
+                            // stand behind, to walk or drive back to.
+                            g.sync_expedition_now()
+                        } else { g.begin_expedition_at_camp(&mut r) });
                     if let Err(error) = enabled {
                         eprintln!("[canyon] cannot set up the course's camp: {error:#}");
                         return false;
                     }
-                    println!("[canyon] the course's camp and half-track are installed; the commander starts at the camp");
+                    println!("[canyon] the course's camp and half-track are installed; the commander starts {}",
+                        if canyon::selected_course_camp_start_in_tank() { "in the Tiger" } else { "at the camp" });
                 }
                 if let Some(start) = campaign_start.as_ref() {
                     if let Err(error) = g.configure_campaign(&start, &mut r) {
@@ -17263,6 +17270,10 @@ fn main() -> anyhow::Result<()> {
         let seeds = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
         return game::game_fea_section::bench(seeds, &capture_arg(&args, 3, "artifacts/perf/fea_bench.json"));
     }
+    if args.len() >= 2 && args[1] == "meadow-film" {
+        // GPU: review clips of the spring meadow by day and at dusk (KESSEL_RENDERER=raymarch).
+        return meadow_film::run(&capture_arg(&args, 2, "meadow_film"));
+    }
     if args.len() >= 2 && args[1] == "fea-film" {
         // GPU: video clips of the layered damage model in play (KESSEL_RENDERER=raymarch).
         return game::game_fea_film::run(&capture_arg(&args, 2, "fea_film"));
@@ -17314,6 +17325,19 @@ fn main() -> anyhow::Result<()> {
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(200.0),
         );
     }
+    if args.len() >= 2 && args[1] == "t34-seed" {
+        return t34_canyon_training::write_seed(
+            args.get(2).map(String::as_str).unwrap_or("assets/ai/weights_t34_seed.bin"),
+            args.get(3).map(String::as_str).unwrap_or("assets/ai/weights_academy.bin"));
+    }
+    if args.len() >= 2 && args[1] == "t34-canyon-eval" {
+        // Worker for tools/t34_canyon_es.py: comma-separated Canyon seeds, episode seconds; reads
+        // weight-artifact paths on stdin, prints one `[t34-eval]` line per path and seed.
+        let seeds: Vec<u64> = args.get(2).map(String::as_str).unwrap_or("3,11")
+            .split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60.0f32);
+        return t34_canyon_training::serve(&seeds, secs);
+    }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {
         return canyon_attempt::run(
             &capture_arg(&args, 2, "canyon_ai_attempt"),
@@ -17337,6 +17361,10 @@ fn main() -> anyhow::Result<()> {
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(220.0),
             args.get(5).and_then(|s| s.parse().ok()).unwrap_or(240.0),
         );
+    }
+    if args.len() >= 2 && args[1] == "course-camp-check" {
+        return canyon_attempt::course_camp_check(&capture_arg(&args, 2, "course_camp_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29));
     }
     if args.len() >= 2 && args[1] == "bridge-check" {
         return canyon_attempt::bridge_check(

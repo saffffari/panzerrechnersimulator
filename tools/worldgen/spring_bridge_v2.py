@@ -68,9 +68,9 @@ SQUARE_R = 16.0
 
 VARIANTS = {
     'playtest': dict(dest='spring-bridge-v2', houses=14, lot_gap=(0.0, 3.0), outer_gap=(4.0, 10.0), dressing=1.0,
-                     kerbs=True, trees=26000, street_tree_m=13.0, craters=16, alleys=False),
+                     kerbs=True, trees=26000, street_tree_m=13.0, craters=16, alleys=False, low_clouds=18),
     'render': dict(dest='spring-bridge-lite-v2', houses=10, lot_gap=(3.0, 8.0), outer_gap=(10.0, 20.0), dressing=0.35,
-                   kerbs=False, trees=7000, street_tree_m=24.0, craters=12, alleys=False),
+                   kerbs=False, trees=7000, street_tree_m=24.0, craters=12, alleys=False, low_clouds=8),
 }
 CONDITIONS = [('intact', .15), ('shelled', .30), ('burned', .25), ('partly_collapsed', .30)]
 
@@ -624,6 +624,17 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     s = int(np.argmin(np.abs(route[:, 0]-start_x)+1e3*(route[:, 0] > cx)))
     heading = math.degrees(math.atan2(cx-route[s][0], cz-route[s][1]))   # facing the bridge
     course['start'] = dict(x=cc.r3(route[s, 0]), z=cc.r3(route[s, 1]), heading_deg=cc.r3(heading))
+    # The camp stands just over the first rise behind the start, in its lee, out of the town's
+    # sight (the owner, 2 Nov): walk the road back west to the first crest, then 70 m beyond.
+    back = route[:s+1][::-1]
+    hs = np.array([grid.sample(H, float(x), float(z)) for x, z in back])
+    along_back = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(back, axis=0).T))])
+    crest = next((i for i in range(4, len(hs)-4) if along_back[i] > 60 and hs[i] >= hs[i-4:i+5].max() - 1e-3), None)
+    if crest is None:
+        crest = int(np.searchsorted(along_back, 250.0))
+    k = min(int(np.searchsorted(along_back, along_back[crest]+70.0)), len(back)-1)
+    course['camp_at'] = [cc.r3(float(back[k][0])), cc.r3(float(back[k][1]))]
+    print('[spring-bridge-v2] camp:', course['camp_at'], f'{along_back[k]:.0f} m behind the start, crest at {along_back[crest]:.0f} m')
     course['goal'] = dict(x=cc.r3(route[-1, 0]), z=cc.r3(route[-1, 1]), radius_m=85.0)
     street = edits['street_encounter']
     remap, sites = {}, []
@@ -687,7 +698,7 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     course['garrison'] = posts[:24]+field_posts
     print('[spring-bridge-v2] garrison posts:', len(posts[:24]), 'in the houses,', len(field_posts), 'on the approaches')
     course.update(variant=variant['dest'], tool='tools/worldgen/spring_bridge_v2.py', finish='mission', director=False,
-                  opening_platoons=False, headline='The bridge is held', camp=False)
+                  opening_platoons=False, headline='The bridge is held', camp=True, camp_start='tank')
     course['provenance'] = dict(
         terrain='Generated spring steppe with a river valley; not a survey of real ground.',
         buildings=cc.PROVENANCE['buildings']+' A river town on organic streets on both banks, most of it in ruins.',
@@ -738,6 +749,11 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     # A bright, warm afternoon in May, the sun in the south-west, thin high cloud, blue haze.
     edits['environment_lighting'] = dict(enabled=True, fog_density=0.00045, overcast=0.06, storm=0.0,
         schema='kessel.environment-authoring', utc='1943-05-12T14:10:00Z', version=2)
+    # Low cloud and mist banks inside the map (src/low_clouds.rs): liquid-water volumes lit and
+    # shadowed through the raymarch transport, drifting with the wind (the owner, 2 Nov 2026).
+    edits['low_clouds'] = dict(seed=11, count=variant['low_clouds'],
+        area=[-CROP_HALF+100, -CROP_HALF+100, CROP_HALF-100, CROP_HALF-100], base_m=[0, 60], size_m=[50, 260],
+        depth_m=[15, 70], lwc_g_m3=[0.08, 0.3], droplet_radius_um=8, drift=1.0)
     edits['base_placements'] = len(manifest['placements'])
     edits['base_markers'] = len(manifest['markers'])
     edits['ops'] = []

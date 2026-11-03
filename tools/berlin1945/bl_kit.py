@@ -27,19 +27,20 @@ import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
-# Linear base colour, roughness, metallic. Stone and brick values are mid-grey to dark: Silesian
+# Linear base colour, roughness, metallic. Weathered and soot-darkened (the first in-engine still of
+# 2026-11-02 read far too pale against BU 8573). Stone and brick values are mid-grey to dark: Silesian
 # and Elbe sandstone weather to grey-ochre, and in 1945 the Reichstag and the Gate were soot-black
 # in streaks (R1, R2 and B3 in docs/BERLIN_REICHSTAG_1945.md).
 MATERIALS = {
-    'sandstone':       ((0.38, 0.34, 0.27, 1.0), 0.88, 0.0),
-    'sandstone_light': ((0.47, 0.43, 0.35, 1.0), 0.86, 0.0),
-    'sandstone_dark':  ((0.20, 0.18, 0.15, 1.0), 0.90, 0.0),
+    'sandstone':       ((0.2, 0.185, 0.16, 1.0), 0.88, 0.0),
+    'sandstone_light': ((0.25, 0.235, 0.2, 1.0), 0.86, 0.0),
+    'sandstone_dark':  ((0.1, 0.095, 0.085, 1.0), 0.90, 0.0),
     'soot':            ((0.045, 0.040, 0.036, 1.0), 0.95, 0.0),
-    'brick_infill':    ((0.29, 0.16, 0.10, 1.0), 0.92, 0.0),
-    'brick':           ((0.26, 0.15, 0.10, 1.0), 0.92, 0.0),
-    'plaster':         ((0.42, 0.39, 0.33, 1.0), 0.90, 0.0),
-    'plaster_dark':    ((0.24, 0.22, 0.19, 1.0), 0.92, 0.0),
-    'render_grey':     ((0.33, 0.32, 0.30, 1.0), 0.90, 0.0),
+    'brick_infill':    ((0.15, 0.095, 0.07, 1.0), 0.92, 0.0),
+    'brick':           ((0.14, 0.085, 0.065, 1.0), 0.92, 0.0),
+    'plaster':         ((0.23, 0.215, 0.19, 1.0), 0.90, 0.0),
+    'plaster_dark':    ((0.12, 0.11, 0.1, 1.0), 0.92, 0.0),
+    'render_grey':     ((0.18, 0.175, 0.165, 1.0), 0.90, 0.0),
     'granite':         ((0.24, 0.23, 0.22, 1.0), 0.80, 0.0),
     'steel':           ((0.055, 0.052, 0.050, 1.0), 0.62, 0.85),
     'steel_rust':      ((0.13, 0.065, 0.035, 1.0), 0.85, 0.30),
@@ -51,7 +52,7 @@ MATERIALS = {
     'glass':           ((0.05, 0.06, 0.06, 1.0), 0.08, 0.0),
     'rubble':          ((0.30, 0.27, 0.23, 1.0), 0.95, 0.0),
     'bark':            ((0.085, 0.072, 0.060, 1.0), 0.92, 0.0),
-    'sandstone_red':   ((0.30, 0.135, 0.095, 1.0), 0.88, 0.0),
+    'sandstone_red':   ((0.2, 0.1, 0.075, 1.0), 0.88, 0.0),
     'water':           ((0.035, 0.045, 0.040, 1.0), 0.16, 0.0),
     'cloth_red':       ((0.35, 0.02, 0.02, 1.0), 0.90, 0.0),
 }

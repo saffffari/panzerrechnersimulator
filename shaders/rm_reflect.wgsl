@@ -71,6 +71,16 @@ fn offscreen_reflection(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<
     let dist = length(rel);
     let origin_rel = rel + n * (0.02 + 0.002 * dist);
     let t = rm_ray_nearest(fr.cam_pos.xyz + origin_rel, dir, 0.0, RM_REFLECT_RANGE_M);
+    // The meadow's canopy along the ray (rm_canopy_transmittance) hides what lies past it
+    // behind its own radiance: the deep canopy's two-stream reflectance under the sun and sky.
+    let through = rm_canopy_transmittance(fr.cam_pos.xyz + origin_rel, dir, select(RM_REFLECT_RANGE_M, t, t >= 0.0));
+    var canopy_light = rm_sky_hemisphere(vec3(0.0, 1.0, 0.0));
+    if (fr.sun_radiance.w > 0.5) { canopy_light += fr.sun_radiance.rgb * max(fr.sun_dir.y, 0.0) / RM_PI; }
+    let canopy = RM_CANOPY_R * canopy_light * (1.0 - through);
+    return canopy + through * offscreen_hit(origin_rel, dir, t, sky);
+}
+
+fn offscreen_hit(origin_rel: vec3<f32>, dir: vec3<f32>, t: f32, sky: vec3<f32>) -> vec3<f32> {
     if (t < 0.0) {
         // A ray from inside the cabin that meets nothing has slipped through a seam of the model
         // or a periscope's window: it sees sky only as far as the cover map opens the point to it

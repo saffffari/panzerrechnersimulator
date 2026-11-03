@@ -16,14 +16,16 @@
 //!   own axis-aligned bounds in the model frame; the generator reports the largest excess;
 //! - collision boxes are world axis-aligned, as every story-cover proxy is. A model placed at a
 //!   yaw that is not a quarter turn has each box split along its local X and Z until the world
-//!   box of every piece exceeds the rotated piece by at most `MAX_ROTATION_EXCESS_M`.
+//!   box of every piece exceeds the rotated piece by at most `MAX_ROTATION_EXCESS_M`. A box large
+//!   in both directions keeps the pieces of its rim and one inner box, used only when the inner
+//!   box's world bounds stay inside the turned box widened by that bound (checked, not assumed).
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use glam::{Mat4, Vec3};
 
 /// Largest distance a split piece's world AABB may reach beyond the rotated piece itself.
-pub const MAX_ROTATION_EXCESS_M: f32 = 0.25;
+pub const MAX_ROTATION_EXCESS_M: f32 = 0.4;
 const SCHEMA: &str = "panzer.authored-colliders";
 
 type Boxes = Arc<Vec<(Vec3, Vec3)>>;
@@ -85,27 +87,49 @@ fn split(local: &[(Vec3, Vec3)], model: Mat4) -> Vec<(Vec3, Vec3)> {
     // A piece of local footprint (a, b) turned by `off` overhangs its world box by at most
     // max(a, b) * sin(off) (the triangle cut off at each corner); bound the piece size.
     let max_piece = if off.sin() * scale > 1e-4 { MAX_ROTATION_EXCESS_M / (off.sin() * scale) } else { f32::INFINITY };
+    let world_box = |a: Vec3, b: Vec3| {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for c in 0..8u32 {
+            let p = Vec3::new(if c & 1 == 0 { a.x } else { b.x }, if c & 2 == 0 { a.y } else { b.y },
+                if c & 4 == 0 { a.z } else { b.z });
+            let w = model.transform_point3(p);
+            min = min.min(w);
+            max = max.max(w);
+        }
+        (min, max)
+    };
+    let inverse = model.inverse();
     let mut out = Vec::with_capacity(local.len());
     for &(lo, hi) in local.iter() {
         let size = hi - lo;
         let nx = ((size.x / max_piece).ceil() as usize).clamp(1, 512);
         let nz = ((size.z / max_piece).ceil() as usize).clamp(1, 512);
+        let cell = |i: usize, k: usize| (
+            Vec3::new(lo.x + size.x * i as f32 / nx as f32, lo.y, lo.z + size.z * k as f32 / nz as f32),
+            Vec3::new(lo.x + size.x * (i + 1) as f32 / nx as f32, hi.y, lo.z + size.z * (k + 1) as f32 / nz as f32));
+        // One inner box for the cells off the rim, when its world box stays within the bound.
+        let mut inner = None;
+        if nx >= 3 && nz >= 3 {
+            let (a, _) = cell(1, 1);
+            let (_, b) = cell(nx - 2, nz - 2);
+            let (wmin, wmax) = world_box(a, b);
+            let e = MAX_ROTATION_EXCESS_M;
+            let inside = [(wmin.x, wmin.z), (wmax.x, wmin.z), (wmin.x, wmax.z), (wmax.x, wmax.z)].iter().all(|&(x, z)| {
+                let q = inverse.transform_point3(Vec3::new(x, (wmin.y + wmax.y) * 0.5, z));
+                q.x >= lo.x - e && q.x <= hi.x + e && q.z >= lo.z - e && q.z <= hi.z + e
+            });
+            if inside { inner = Some((wmin, wmax)); }
+        }
         for i in 0..nx {
             for k in 0..nz {
-                let a = Vec3::new(lo.x + size.x * i as f32 / nx as f32, lo.y, lo.z + size.z * k as f32 / nz as f32);
-                let b = Vec3::new(lo.x + size.x * (i + 1) as f32 / nx as f32, hi.y, lo.z + size.z * (k + 1) as f32 / nz as f32);
-                let mut min = Vec3::splat(f32::INFINITY);
-                let mut max = Vec3::splat(f32::NEG_INFINITY);
-                for c in 0..8u32 {
-                    let p = Vec3::new(if c & 1 == 0 { a.x } else { b.x }, if c & 2 == 0 { a.y } else { b.y },
-                        if c & 4 == 0 { a.z } else { b.z });
-                    let w = model.transform_point3(p);
-                    min = min.min(w);
-                    max = max.max(w);
-                }
-                out.push((min, max));
+                let rim = i == 0 || k == 0 || i + 1 == nx || k + 1 == nz;
+                if inner.is_some() && !rim { continue; }
+                let (a, b) = cell(i, k);
+                out.push(world_box(a, b));
             }
         }
+        out.extend(inner);
     }
     out
 }
@@ -119,7 +143,7 @@ mod tests {
         let wall = [(Vec3::new(-12.0, 0.0, -0.4), Vec3::new(12.0, 8.0, 0.4))];
         let turn = 6.3f32.to_radians();
         let pieces = split(&wall, Mat4::from_translation(Vec3::new(100.0, 0.0, -50.0)) * Mat4::from_rotation_y(turn));
-        assert!(pieces.len() >= 11, "a 24 m wall at 6.3 deg needs at least 11 pieces, got {}", pieces.len());
+        assert!(pieces.len() >= 7, "a 24 m wall at 6.3 deg needs at least 7 pieces, got {}", pieces.len());
         let along = 24.0 / pieces.len() as f32;
         for (lo, hi) in &pieces {
             let ext = *hi - *lo;
@@ -131,6 +155,11 @@ mod tests {
         // A quarter-turned or unturned model is not split at all.
         assert_eq!(split(&wall, Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)).len(), 1);
         assert_eq!(split(&wall, Mat4::IDENTITY).len(), 1);
+        // A large solid keeps its rim pieces and one inner box inside the bound.
+        let block = [(Vec3::new(-12.0, 0.0, -8.0), Vec3::new(12.0, 20.0, 8.0))];
+        let pieces = split(&block, Mat4::from_rotation_y(turn));
+        let full = (24.0f32 / (MAX_ROTATION_EXCESS_M / turn.sin())).ceil() * (16.0f32 / (MAX_ROTATION_EXCESS_M / turn.sin())).ceil();
+        assert!((pieces.len() as f32) < full, "{} pieces against {full} for the full grid", pieces.len());
     }
 
     #[test]

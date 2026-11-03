@@ -673,6 +673,8 @@ pub(super) struct Backend {
     reflect_pipe: wgpu::RenderPipeline,
     lens_pipe: wgpu::RenderPipeline,
     points_pipe: wgpu::RenderPipeline,
+    /// A 1 x 1 canopy grid with no canopy (no meadow on this map).
+    no_canopy: Target,
     /// Firefly lanterns into the point layer (crush.wgsl rod pooling).
     point_layer_pipe: wgpu::RenderPipeline,
     sparks_pipe: wgpu::RenderPipeline,
@@ -818,7 +820,14 @@ fn rm_source(name: &str) -> String {
         let c = crate::meadow_fauna::firefly_lanes().0;
         return format!("const RM_FIREFLY_LANES: vec3<f32> = vec3({:?}, {:?}, {:?});\n{text}", c[0], c[1], c[2]);
     }
+    if name == "rm_reflect.wgsl" {
+        let (rho, tau) = crate::leaf_optics::lanes(crate::leaf_optics::SPRING_GRASS);
+        let r: Vec<f32> = (0..3).map(|i| crate::leaf_optics::km_infinite_reflectance(rho[i] as f64, tau[i] as f64) as f32).collect();
+        return format!("@group(0) @binding(9) var canopy_map: texture_2d<f32>;\nconst RM_CANOPY_R: vec3<f32> = vec3({:?}, {:?}, {:?});\n{}\n{text}",
+            r[0], r[1], r[2], CANOPY_FN);
+    }
     if name == "rm_shade.wgsl" {
+        let text = format!("@group(0) @binding(13) var canopy_map: texture_2d<f32>;\n{}\n{text}", CANOPY_FN);
         // The meadow's leaves (leaf_optics.rs, meadow.rs): cuticle f0, the canopy's leaf angle
         // projection G (spherical distribution), the radius within which blades cast into the
         // near cascade.
@@ -847,6 +856,41 @@ fn rm_source(name: &str) -> String {
     }
     text
 }
+
+/// The meadow canopy as a medium for the shade and reflection passes' rays (both bind the grid).
+const CANOPY_FN: &str = r#"
+// The meadow as a medium for secondary rays (meadow.rs canopy_grid): a uniform turbid canopy of
+// spherical leaves (G 0.5) between the ground and the stand's canopy height, extinction
+// G LAI / H. Six samples over the first 12 m of a ray; 1 where the map has no meadow.
+fn rm_canopy_at(p: vec2<f32>) -> vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(canopy_map));
+    let half = textureLoad(canopy_map, vec2<i32>(0), 0).a;
+    if (half <= 0.0 || dims.x < 2) { return vec4(0.0); }
+    let spacing = 2.0 * half / f32(dims.x - 1);
+    let g = (p + vec2(half)) / spacing;
+    let i = vec2<i32>(floor(g));
+    if (any(i < vec2(0)) || any(i >= dims - vec2(1))) { return vec4(0.0); }
+    let t = g - floor(g);
+    let a = textureLoad(canopy_map, i, 0);
+    let b = textureLoad(canopy_map, i + vec2(1, 0), 0);
+    let c = textureLoad(canopy_map, i + vec2(0, 1), 0);
+    let d = textureLoad(canopy_map, i + vec2(1, 1), 0);
+    return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+}
+fn rm_canopy_transmittance(origin: vec3<f32>, dir: vec3<f32>, tmax: f32) -> f32 {
+    let here = rm_canopy_at(origin.xz);
+    if (here.w <= 0.0) { return 1.0; }
+    let len = min(tmax, 12.0);
+    let step = len / 6.0;
+    var tau = 0.0;
+    for (var k = 0; k < 6; k += 1) {
+        let p = origin + dir * ((f32(k) + 0.5) * step);
+        let c = rm_canopy_at(p.xz);
+        if (c.y > 0.01 && p.y > c.x && p.y < c.x + c.y) { tau += 0.5 * c.z / c.y * step; }
+    }
+    return exp(-tau);
+}
+"#;
 
 fn rm_source_text(name: &str) -> String {
     let compiled = match name {
@@ -1234,6 +1278,7 @@ impl Backend {
                 depth_tex(4, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), tex3d(7, S::FRAGMENT), sampler_filtering(8, S::FRAGMENT), tex3d(9, S::FRAGMENT),
                 float_tex_unfiltered(10, S::FRAGMENT), float_tex_unfiltered(11, S::FRAGMENT), float_tex_unfiltered(12, S::FRAGMENT),
+                float_tex_unfiltered(13, S::FRAGMENT),
             ],
         });
         let points_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1255,6 +1300,7 @@ impl Backend {
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT),
                 float_tex_unfiltered(3, S::FRAGMENT), float_tex_unfiltered(4, S::FRAGMENT), depth_tex(5, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), sampler_filtering(7, S::FRAGMENT), float_tex_unfiltered(8, S::FRAGMENT),
+                float_tex_unfiltered(9, S::FRAGMENT),
             ],
         });
 
@@ -1551,6 +1597,7 @@ impl Backend {
             fragment: Some(wgpu::FragmentState { module: &points_shader, entry_point: Some("fs"), targets: std::slice::from_ref(&premultiplied), compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
+        let no_canopy = target(device, "rm-no-canopy", 1, 1, wgpu::TextureFormat::Rgba32Float, wgpu::TextureUsages::TEXTURE_BINDING);
         let point_layer_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("rm-point-layer"), layout: Some(&points_pl),
             vertex: wgpu::VertexState { module: &points_shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout {
@@ -1589,7 +1636,7 @@ impl Backend {
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
-            points_pipe, point_layer_pipe, sparks_pipe, tracers_pipe,
+            points_pipe, no_canopy, point_layer_pipe, sparks_pipe, tracers_pipe,
             binds: None, history_valid: false,
             glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             whitewash: std::env::var("KESSEL_WHITEWASH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
@@ -1665,6 +1712,7 @@ impl Backend {
     pub(super) fn terrain_lod(&self) -> Option<&crate::terrain_lod::TerrainLod> { self.terrain.as_ref().map(|t| &t.lod) }
 
     pub(super) fn invalidate_terrain_detail(&mut self) { self.terrain = None; }
+    pub(super) fn invalidate_binds(&mut self) { self.binds = None; }
 
     fn make_binds(&self, device: &wgpu::Device, r: &Renderer) -> Binds {
         let frame = self.frame_buf.as_entire_binding();
@@ -1727,6 +1775,7 @@ impl Backend {
                 entry(10, wgpu::BindingResource::TextureView(&t.history.view)),
                 entry(11, wgpu::BindingResource::TextureView(&t.ao[1 - i].view)),
                 entry(12, wgpu::BindingResource::TextureView(&t.bounce[1 - i].view)),
+                entry(13, wgpu::BindingResource::TextureView(r.meadow.as_ref().map_or(&self.no_canopy.view, |m| m.canopy_view()))),
             ],
         }))).collect();
         let points = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1759,6 +1808,7 @@ impl Backend {
                 entry(6, wgpu::BindingResource::TextureView(&self.integrated.view)),
                 entry(7, wgpu::BindingResource::Sampler(&self.linear_sampler)),
                 entry(8, wgpu::BindingResource::TextureView(&t.refl[1 - i].view)),
+                entry(9, wgpu::BindingResource::TextureView(r.meadow.as_ref().map_or(&self.no_canopy.view, |m| m.canopy_view()))),
             ],
         }))).collect();
         Binds { depth, visibility, volume, integrate, shade, points, reflect: post("rm-reflect"), reflect_t, lens: post("rm-lens") }

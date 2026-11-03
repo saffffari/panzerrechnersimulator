@@ -557,6 +557,42 @@ impl Game {
             OPENING_PLATOON_FRACTIONS.len());
     }
 
+    /// Trainer only (`t34-canyon-eval`): restore the build's lighting and drop every tank slot appended since the world was built
+    /// (`append_canyon_platoon`), so a re-fielded episode numbers and seats its crews as a fresh
+    /// process would. The renderer's cloned meshes for the dropped slots stay allocated, hidden.
+    /// Trainer telemetry (`t34-canyon-eval`): can the Tiger's crew see enemy `i` from the cupola
+    /// (the real sight line through terrain and cover), and the cosine of the T-34's bearing off
+    /// the Tiger's hull front (1 dead ahead of it, -1 behind it).
+    pub(crate) fn tiger_view_of(&self, i: usize) -> (bool, f32) {
+        let e = &self.enemies[i];
+        let eye = self.player.center() + Vec3::Y * 1.6;
+        let to = e.center() - self.player.center();
+        let flat = Vec3::new(to.x, 0.0, to.z).normalize_or_zero();
+        (self.optical_los_clear(eye, e.center() + Vec3::Y * 0.8), flat.dot(self.player.forward()))
+    }
+    /// Trainer telemetry: seconds enemy `i` has been driving without moving (`enemy_stall_s`).
+    pub(crate) fn enemy_stall(&self, i: usize) -> f32 { self.enemy_stall_s.get(i).copied().unwrap_or(0.0) }
+    pub(crate) fn training_baseline(&self) -> TrainingBaseline {
+        TrainingBaseline { enemies: self.enemies.len(), platoons: self.stealth.platoons.len(),
+            lighting: self.scene_environment.lighting.clone() }
+    }
+    /// Also restores the authored lighting: `enable_canyon_course_seeded` offsets the clock from
+    /// whatever it finds, so a second episode would otherwise start hours later.
+    pub(crate) fn debug_restore_training_baseline(&mut self, base: &TrainingBaseline) {
+        self.scene_environment.lighting = base.lighting.clone();
+        let (enemies, platoons) = (base.enemies, base.platoons);
+        self.enemies.truncate(enemies);
+        self.enemy_active.truncate(enemies); self.enemy_skill.truncate(enemies); self.enemy_concealed.truncate(enemies);
+        self.enemy_gun_shots.truncate(enemies); self.enemy_mg_cd.truncate(enemies); self.wrecks.truncate(enemies);
+        self.mixed_combat.tank_weapons.truncate(enemies);
+        for rigs in [&mut self.slots.t34,&mut self.slots.su100,&mut self.slots.kv2,
+            &mut self.slots.isu152,&mut self.slots.is2,&mut self.slots.is3] { rigs.truncate(enemies); }
+        self.slots.flame.truncate(enemies);
+        self.stealth.meters.truncate(enemies); self.stealth.spotted.truncate(enemies);
+        self.stealth.platoons.truncate(platoons);
+        self.enemy_track_age.truncate(enemies); self.enemy_stall_s.truncate(enemies); self.enemy_room.truncate(enemies); self.enemy_struck.truncate(enemies);
+    }
+
     pub(super) fn append_canyon_platoon(&mut self, route: Vec<Vec2>, positions: Vec<Vec2>, count: usize, r: &mut Renderer) {
         let heading=(route[1]-route[0]).x.atan2((route[1]-route[0]).y);
         let first=self.winter_encounter.as_mut().unwrap().append_platoon(route.clone(),count);
@@ -1025,4 +1061,11 @@ mod tests {
         assert!(g.canyon_snapshot().unwrap()["elapsed_s"].as_f64().unwrap() > 0.0);
         Ok(())
     }
+}
+
+/// What a training episode restores before it re-fields the Canyon (`t34-canyon-eval`).
+pub(crate) struct TrainingBaseline {
+    enemies: usize,
+    platoons: usize,
+    lighting: crate::environment_authoring::LightingTuning,
 }

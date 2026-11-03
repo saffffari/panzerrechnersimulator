@@ -206,7 +206,8 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, hi
         let d = t * (cos(phi) * s) + b * (sin(phi) * s) + n * sqrt(max(1.0 - r1, 0.0));
         var escaped = false;
         if (sealed) { escaped = rm_ray_open_sealed(origin, d, RM_AO_RANGE_M); } else { escaped = rm_ray_open(origin, d, RM_AO_RANGE_M); }
-        if (escaped) { open += 1.0; }
+        // The meadow's canopy round the point is a medium the ray crosses (rm_canopy_transmittance).
+        if (escaped) { open += rm_canopy_transmittance(origin, d, RM_AO_RANGE_M); }
     }
     let fresh = open / f32(rays);
     return select(fresh, mix(history.local_shares.x, share_clamped(fresh, history.local_shares.x), RM_AO_BLEND), history.valid);
@@ -757,6 +758,7 @@ fn fs(in: VsOut) -> ShadeOut {
                 // its own fixture (the emitter sits inside its housing).
                 let reach = s.dist - clamp(4.0 * lights[index].a.w, 0.15, 0.3);
                 if (reach > 0.02 && rm_ray_blocked(world + n * (0.01 + 0.002 * dist), s.dir, 0.0, reach) >= 0.0) { continue; }
+                vis *= rm_canopy_transmittance(world + n * (0.01 + 0.002 * dist), s.dir, max(reach, 0.0));
             } else {
                 vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, still));
             }
@@ -796,7 +798,8 @@ fn fs(in: VsOut) -> ShadeOut {
                 color += (diffuse + env_brdf(f0, roughness, ndv) / RM_PI) * radiance * omega;
             }
         }
-        if (!leaf) { color += g2.rgb; }
+        // A leaf's and the canopy slab's g2 holds tau and leaf area, not emission.
+        if (!leaf && !slab) { color += g2.rgb; }
     }
     let fog = fog_to(in.uv, ray, dist);
     return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), shares_out, bounce_out);

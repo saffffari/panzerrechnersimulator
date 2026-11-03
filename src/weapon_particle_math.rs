@@ -341,14 +341,16 @@ mod tests {
     use super::*;
     #[test] fn hot_rim_respects_heat_budget_cools_in_real_time_and_has_no_filled_center() {
         let heat=rim_heat(88.0,90.0,1_200_000.0).unwrap();
-        assert!(heat.heat_j<=1_200_000.0*0.015);
+        // The rim takes RIM_HEAT_SHARE of the lost work (calibrated on the lattice's rims), bounded by its glow ceiling.
+        assert!(heat.heat_j<=1_200_000.0*RIM_HEAT_SHARE+0.01);
         assert!((heat.mass_kg*500.0*(heat.initial_kelvin-293.0)-heat.heat_j).abs()<0.01);
         assert!(rim_heat(88.0,90.0,0.0).is_none());
         let cold=rim_heat(88.0,90.0,10.0).unwrap();assert!(cold.initial_kelvin<300.0);
         assert!(heat.initial_kelvin<=RIM_KELVIN_MAX+0.01,"{}",heat.initial_kelvin);
-        // A full 88 mm perforation of a 45 mm plate (some 3.3 MJ lost) sits on the bound.
+        // A full 88 mm perforation of a 45 mm plate (some 3.3 MJ lost) heats its quarter-calibre
+        // worked zone to a bright glow well above the Draper point and under the solidus bound.
         let full=rim_heat(88.0,45.0,3_300_000.0).unwrap();
-        assert!((full.initial_kelvin-RIM_KELVIN_MAX).abs()<0.5,"{}",full.initial_kelvin);
+        assert!(full.initial_kelvin>1000.0 && full.initial_kelvin<=RIM_KELVIN_MAX,"{}",full.initial_kelvin);
         for hz in [30,60,144] {
             let time=(0..hz*2).fold(0.0_f64,|t,_|t+1.0/hz as f64) as f32;
             assert!((rim_temperature(heat.initial_kelvin,time,heat.tau_s)-rim_temperature(heat.initial_kelvin,2.0,heat.tau_s)).abs()<0.001);

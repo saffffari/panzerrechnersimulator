@@ -321,6 +321,45 @@ pub fn bridge_check(prefix: &str, seed: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `course-camp-check PREFIX SEED`: a course with `camp` builds as the expedition builds, fields the
+/// course, installs the camp and the half-track and starts the commander where the course says
+/// (in the Tiger with `camp_start: "tank"`), then runs ten seconds. Prints where everything stands.
+pub fn course_camp_check(prefix: &str, seed: u64) -> anyhow::Result<()> {
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    anyhow::ensure!(crate::canyon::selected_course_wants_camp(), "the course does not ask for a camp");
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_expedition_act(&device, &queue, false, &world::act(1))?;
+    g.enable_canyon_course_seeded(seed)?;
+    let in_tank = crate::canyon::selected_course_camp_start_in_tank();
+    let camp = g.expedition_initial_camp_position()?;
+    g.enable_expedition(seed, camp)?;
+    if in_tank { g.sync_expedition_now()?; } else { g.begin_expedition_at_camp(&mut r)?; }
+    g.enable_singleplayer_crew();
+    g.set_defer_rtt_to_render(true);
+    g.mute_audio();
+    let start = g.player.pos;
+    for step in 0..600 {
+        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+        if step % 8 == 0 { crate::simulation_uploads::drain(&device, &queue)?; }
+    }
+    let receipt = serde_json::json!({"schema": "panzer.course-camp-check.v1", "manifest": manifest, "seed": seed,
+        "camp_start_in_tank": in_tank, "camp": camp.to_array(), "tiger": g.player.pos.to_array(),
+        "tiger_start": start.to_array(), "camp_to_tiger_m": Vec2::new(camp.x - g.player.pos.x, camp.z - g.player.pos.z).length(),
+        "in_tank": g.mode == crate::game::Mode::Tank, "game_over": g.game_over().map(|c| format!("{c:?}")),
+        "halftrack": g.halftrack_receipt()});
+    std::fs::write(format!("{prefix}_result.json"), serde_json::to_vec_pretty(&receipt)?)?;
+    println!("[course-camp-check] {receipt}");
+    anyhow::ensure!(g.game_over().is_none(), "FAIL: the run ended");
+    anyhow::ensure!(!in_tank || g.mode == crate::game::Mode::Tank, "FAIL: the commander is not in the Tiger");
+    println!("PASS: camp at ({:.0}, {:.0}), {:.0} m from the Tiger; commander {}", camp.x, camp.z,
+        Vec2::new(camp.x - g.player.pos.x, camp.z - g.player.pos.z).length(), if in_tank { "in the Tiger" } else { "at the camp" });
+    Ok(())
+}
+
 /// The point `back_m` metres before the goal along the authored route, and the heading of travel there.
 fn route_point_before_goal(route: &[Vec2], back_m: f32) -> (Vec2, f32) {
     let mut idx = route.len() - 1;

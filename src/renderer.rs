@@ -609,6 +609,8 @@ fn day_night_cycle_enabled() -> bool {
 /// Exposure and saturation of the display grade at full boost.
 pub const VISION_BOOST_EXPOSURE: f32 = 1.9;
 pub const VISION_BOOST_SATURATION: f32 = 1.18;
+/// The smoked boost's factor on the rods' gain at full boost (night vision).
+const VISION_BOOST_NIGHT: f32 = 2.0;
 fn boosted_display_grade(grade: [f32; 4], boost: f32) -> [f32; 4] {
     let boost = if boost.is_finite() { boost.clamp(0.0, 1.0) } else { 0.0 };
     [grade[0] * (1.0 + (VISION_BOOST_EXPOSURE - 1.0) * boost),
@@ -1167,6 +1169,8 @@ struct CrushUniform {
     loupe: [f32; 4],
     /// The realism look (mode 6): contrast, saturation, dithered steps per channel. Appended lane.
     real: [f32; 4],
+    /// Debug only (`KESSEL_POINT_LAYER_VIEW=1`): x 1 shows the point layer (rod pooling check).
+    debug: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -7190,6 +7194,8 @@ impl Renderer {
     /// Install the map's spring meadow on the GPU (`meadow.rs`).
     pub fn install_meadow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, build: crate::meadow::Build) {
         if self.raymarch.is_some() { self.meadow = Some(renderer_meadow::MeadowGpu::new(device, queue, build)); }
+        // The shade and reflection passes bind the canopy for their rays: rebuild their groups.
+        if let Some(rm) = &mut self.raymarch { rm.invalidate_binds(); }
     }
     /// This frame's wind grid and new tread pages for the meadow.
     pub fn set_meadow_frame(&mut self, frame: crate::meadow::Frame) {
@@ -8705,7 +8711,10 @@ impl Renderer {
             // The Strichbild is drawn by the blit at the output's resolution (`blit_reticle`).
             reticle: 0.0,
             frame: (self.frame & 0xFFFF) as f32,
-            rod_exposure: if self.exposure_override.is_some() { 0.0 } else { unmetered.rod_exposure as f32 },
+            // The smoked boost also lifts the rods' gain (night vision; owner-directed, ledger),
+            // still capped at the display's key in crush.wgsl.
+            rod_exposure: if self.exposure_override.is_some() { 0.0 } else {
+                unmetered.rod_exposure as f32 * (1.0 + (VISION_BOOST_NIGHT - 1.0) * self.vision_boost.clamp(0.0, 1.0)) },
             rod_inverse_saturation: unmetered.rod_inverse_saturation as f32,
             ambient_white_balance: self.display_tuning
                 .filter(|p| p.ambient_white_balance)
@@ -8730,6 +8739,7 @@ impl Renderer {
             look: [self.look, DELTAP_PAIR_PENALTY, self.tonemap, self.palette_smooth],
             loupe: self.loupe,
             real: self.real,
+            debug: [if std::env::var("KESSEL_POINT_LAYER_VIEW").as_deref() == Ok("1") { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {
@@ -12665,7 +12675,7 @@ mod atmosphere_tests {
         assert_eq!(ranks.iter().map(|r|(r+0.5)/16.0-0.5).sum::<f32>(),0.0);
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 160); // the look lane at 128, the loupe lane at 144
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 192); // the look lane at 128, the loupe at 144, the realism lane at 160, the debug-view lane at 176
         assert_eq!(std::mem::offset_of!(CrushUniform, look), 128);
         assert_eq!(std::mem::offset_of!(CrushUniform, loupe), 144);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
@@ -13454,7 +13464,8 @@ mod atmosphere_tests {
         }
         // The crush applies the eye's two channels and nothing else before ACES.
         let crush = include_str!("../shaders/crush.wgsl");
-        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
+        // The eye takes the frame and the sub-pixel emitters' point layer (fireflies; `observer.rs`).
+        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion));"));
         assert!(crush.contains("let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));"));
         assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
             "owner-directed cabin reproduction still acts only on the display rod term");

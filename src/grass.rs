@@ -212,6 +212,7 @@ impl Layer {
 /// the raymarch backend, where it replaces the three legacy layers.
 struct SpringMeadow {
     wind: crate::meadow::WindGrid,
+    push: crate::meadow::PushGrid,
     mirror: crate::meadow::TrackMirror,
     cover: std::sync::Arc<crate::meadow::CoverMap>,
     butterflies: crate::meadow_fauna::Butterflies,
@@ -324,10 +325,10 @@ impl Grass {
             r.add_dynamic_instanced_pool(device, queue, &crate::meadow_fauna::wing_mesh(s), 2 * 96)).collect();
         self.tracks.mark_all_dirty();
         println!("[meadow] spring meadow over {:.1} % of the map ({}), river {}, built in {:.2} s",
-            presence * 100.0, if material.is_some() { "ground material green" } else { "ground-class red" },
+            presence * 100.0, if mask.is_some() { "ground-class red" } else { "ground material green" },
             if river.is_some() { "excluded" } else { "none" }, started.elapsed().as_secs_f32());
         self.meadow = Some(Box::new(SpringMeadow {
-            wind: Default::default(), mirror: Default::default(), cover, butterflies: Default::default(), wing_batches,
+            wind: Default::default(), push: Default::default(), mirror: Default::default(), cover, butterflies: Default::default(), wing_batches,
             fireflies: Vec::new(), mean_wind: Vec2::ZERO, sun_altitude_deg: 30.0, rain: 0.0, eye: Vec3::ZERO, time: 0.0, cleared_legacy: false,
         }));
     }
@@ -394,6 +395,15 @@ impl Grass {
             "visible_triangles":(0..LAYERS).map(|i|visible[i]*triangles[i]).sum::<usize>(),
             "ground_class_loaded":self.mask.is_some(),"ground_class_requested":self.mask_requested,
             "winter_stems":self.winter,"winter_fallback":self.mask.is_none(),"primary_raster_only":true,"secondary_visibility_and_self_shadow":false})
+    }
+    /// A hull standing or moving in the meadow lays the blades round it aside (they spring back
+    /// once it has gone; treads lodge them for good through `trample`). No-op off the meadow.
+    pub fn press_hull(&mut self, centre: Vec3, heading: f32, half_extents: Vec2) {
+        if let Some(m) = self.meadow.as_deref_mut() { m.push.press_box(Vec2::new(centre.x, centre.z), heading, half_extents); }
+    }
+    /// A walker's legs part the blades round him.
+    pub fn press_walker(&mut self, position: Vec3) {
+        if let Some(m) = self.meadow.as_deref_mut() { m.push.press_disc(Vec2::new(position.x, position.z), 0.45); }
     }
     pub fn trample(&mut self, position: Vec3, heading: f32) {
         self.tracks.stamp(position, heading);
@@ -574,6 +584,8 @@ impl Grass {
         if let Some(m) = self.meadow.as_deref_mut() {
             let eye = Vec2::new(cam.x, cam.z);
             m.wind.advance(eye, dt, &wind_at, &gust_at);
+            m.push.recentre(eye);
+            m.push.relax(dt);
             m.mean_wind = wind_at(cam);
             m.eye = cam;
             m.time = time;
@@ -665,6 +677,7 @@ impl Grass {
             m.sun_altitude_deg = r.sun_altitude_deg();
             m.rain = r.precipitation;
             r.set_meadow_frame(crate::meadow::Frame {
+                push_origin: m.push.origin_m(), push: m.push.upload(),
                 wind_origin: m.wind.origin_m(), wind: m.wind.upload(), mean_wind: m.mean_wind, time: m.time,
                 track_pages: std::mem::take(&mut m.mirror.pending),
             });
