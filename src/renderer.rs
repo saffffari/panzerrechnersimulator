@@ -601,6 +601,24 @@ fn day_phase(sun_altitude_deg: f64) -> usize {
     if sun_altitude_deg < BLUE_FROM_DEG { 0 } else if sun_altitude_deg < TWILIGHT_FROM_DEG { 1 }
     else if sun_altitude_deg < TWILIGHT_TO_DEG { 2 } else { 3 }
 }
+/// Half the width of the band over which the clock's pace passes from one phase's to the next.
+const PACE_BLEND_HALF_DEG: f64 = 2.0;
+/// The clock's rate at a Sun altitude from the four phases' rates (night, blue hour, twilight,
+/// day): their logarithms blended by a smoothstep `PACE_BLEND_HALF_DEG` either side of each edge,
+/// so the pace never changes at a step. The bridge's authored pacing runs its blue hour some
+/// seventy times slower than the night beside it; the former linear ramp over one degree turned
+/// the blue hour's end into a lurch the eye's pigment rate (which follows the clock) lurched with
+/// (3 November 2026). The phases' play times move by a few per cent; named in
+/// docs/PHYSICAL_TRUTH_AUDIT.md with the day cycle.
+fn blended_clock_rate(rates: [f64; 4], sun_altitude_deg: f64) -> f64 {
+    let step = |edge: f64| {
+        let t = ((sun_altitude_deg - edge) / (2.0 * PACE_BLEND_HALF_DEG) + 0.5).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let ln = rates.map(|r| r.max(1.0e-6).ln());
+    (ln[0] + (ln[1] - ln[0]) * step(BLUE_FROM_DEG) + (ln[2] - ln[1]) * step(TWILIGHT_FROM_DEG)
+        + (ln[3] - ln[2]) * step(TWILIGHT_TO_DEG)).exp()
+}
 /// On in play. Off for unit tests and wherever `KESSEL_DAY_NIGHT=0` asks for the real-time clock
 /// (stills and films that must hold their authored light).
 fn day_night_cycle_enabled() -> bool {
@@ -6674,12 +6692,7 @@ impl Renderer {
                 [dark, dark, rate(2, 2.0 * TWILIGHT_S), rate(3, FULL_DAY_S)]
             }
         };
-        // Blend across a degree at each boundary so the clock never jumps.
-        let altitude = self.celestial.sun_altitude_deg();
-        let ramp = |edge: f64| ((altitude - edge) / 1.0 + 0.5).clamp(0.0, 1.0);
-        let (above_night, above_blue, above_twilight) = (ramp(BLUE_FROM_DEG), ramp(TWILIGHT_FROM_DEG), ramp(TWILIGHT_TO_DEG));
-        (rates[0] * (1.0 - above_night) + rates[1] * (above_night - above_blue).max(0.0)
-            + rates[2] * (above_blue - above_twilight).max(0.0) + rates[3] * above_twilight) * self.sky_time_scale as f64
+        blended_clock_rate(rates, self.celestial.sun_altitude_deg()) * self.sky_time_scale as f64
     }
 
     pub fn advance_sky_clock(&mut self, dt_s: f32) {
@@ -12406,6 +12419,25 @@ fn fullscreen_pipe_cached(
 #[cfg(test)]
 mod atmosphere_tests {
     use super::*;
+
+    #[test]
+    fn the_clocks_pace_passes_between_phases_without_a_step() {
+        // The spring bridge's authored pacing: a slow blue hour between a fast night and twilight.
+        let rates = [25.0, 0.33, 3.5, 26.0];
+        assert!((blended_clock_rate(rates, -40.0) - 25.0).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, -10.0) - 0.33).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, 0.0) - 3.5).abs() < 1e-9);
+        assert!((blended_clock_rate(rates, 30.0) - 26.0).abs() < 1e-9);
+        // A tenth of a degree never changes the pace by more than a few per cent.
+        let mut worst: f64 = 0.0;
+        let mut altitude = -30.0;
+        while altitude < 20.0 {
+            let (a, b) = (blended_clock_rate(rates, altitude), blended_clock_rate(rates, altitude + 0.1));
+            worst = worst.max((b / a).ln().abs());
+            altitude += 0.1;
+        }
+        assert!(worst < 0.25, "the pace steps by {:.0} % in a tenth of a degree", (worst.exp() - 1.0) * 100.0);
+    }
 
     #[test]
     fn replay_capture_policies_isolate_history_from_exposure() {

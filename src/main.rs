@@ -726,6 +726,31 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         g.prepare_world_survey(&mut r, 1.0 / 60.0);
         println!("[grass] survey {}", g.world_survey_grass_stats());
     }
+    // KESSEL_SHOT_AIM=sun|moon|antisun[:PITCH_OFFSET_DEG] turns the recon camera to face that
+    // body's compass bearing (the antisolar point's for `antisun`) at its altitude plus the offset
+    // (`sun:8` puts the setting Sun low in the frame), for the sky's look-development stills;
+    // KESSEL_SHOT_FOV=DEG narrows the view. Headless only; the bodies are where the clock puts them.
+    if let (Some(_), Ok(aim)) = (cam, std::env::var("KESSEL_SHOT_AIM")) {
+        let mut parts = aim.split(':');
+        let body = parts.next().unwrap_or("");
+        let offset = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+        let state = r.celestial().state;
+        let (position, flip) = match body {
+            "sun" => (state.sun, false),
+            "moon" => (state.moon, false),
+            "antisun" => (state.sun, true),
+            other => anyhow::bail!("unknown KESSEL_SHOT_AIM {other:?}; use sun, moon or antisun"),
+        };
+        let azimuth = if flip { position.azimuth_deg + 180.0 } else { position.azimuth_deg };
+        let altitude = if flip { 0.0 } else { position.altitude_deg };
+        r.camera.yaw = (azimuth as f32).to_radians();
+        r.camera.pitch = (altitude as f32 + offset).to_radians();
+        println!("[sky] aim {body}: azimuth {azimuth:.2} altitude {:.2} (sun {:+.2}, moon {:+.2}, lit {:.3})",
+            position.altitude_deg, state.sun.altitude_deg, state.moon.altitude_deg, state.moon_phase.illuminated_fraction);
+    }
+    if let Some(fov) = std::env::var("KESSEL_SHOT_FOV").ok().and_then(|v| v.parse::<f32>().ok()) {
+        r.camera.fov_y = fov.clamp(1.0, 120.0).to_radians();
+    }
     if std::env::var("KESSEL_DEMOLISH_BUILDING").is_ok() {
         // The build hook exercised the real damage/state/render path. The requested aftermath frame
         // is deliberately after its short-lived masonry impact beat, with persistent grounded rubble
