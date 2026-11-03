@@ -120,6 +120,33 @@ fn md_track(p: vec2<f32>) -> u32 {
     return textureLoad(track_atlas, atlas, 0).r;
 }
 
+// The tussock round a point (meadow.rs clump_at): xy its centre, z the nearest seed distance,
+// w the second nearest; and its seed hash.
+struct MdClump { centre: vec2<f32>, f1: f32, f2: f32, seed: u32 };
+fn md_clump(p: vec2<f32>) -> MdClump {
+    let g = p / MD_CLUMP;
+    let i = vec2<i32>(floor(g));
+    var best = MdClump(vec2(0.0), 1e9, 1e9, 0u);
+    for (var dz = -1; dz <= 1; dz += 1) {
+        for (var dx = -1; dx <= 1; dx += 1) {
+            let cell = i + vec2(dx, dz);
+            let h = md_hash2(cell.x, cell.y, MD_SALT_CLUMP);
+            let c = (vec2<f32>(cell) + vec2(0.1) + vec2(md_unit(h), md_unit(md_hash(h ^ 0x51u))) * 0.8) * MD_CLUMP;
+            let d = distance(c, p);
+            if (d < best.f1) {
+                best.f2 = best.f1;
+                best.f1 = d;
+                best.centre = c;
+                best.seed = h;
+            } else if (d < best.f2) {
+                best.f2 = d;
+            }
+        }
+    }
+    return best;
+}
+fn md_gap(c: MdClump) -> f32 { return 1.0 - smoothstep(0.04, 0.30, c.f2 - c.f1); }
+
 fn md_bed(s: u32, x: f32, z: f32) -> f32 {
     let scale = MD_SP_SCALE[s];
     let salt = MD_SP_SALT[s];
@@ -162,7 +189,7 @@ fn md_emit(world: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, tau: vec3<f32
 // area per ground area: density x width x mean height, conserved by the LOD).
 fn md_canopy(cv: vec2<f32>) -> vec2<f32> {
     let h = (MD_HEIGHT_MIN + MD_HEIGHT_SPAN * cv.y) * (0.55 + 0.45 * cv.x);
-    return vec2(h, MD_NEAR_DENSITY * MD_BLADE_WIDTH * h * 0.81 * cv.x);
+    return vec2(h, MD_NEAR_DENSITY * MD_BLADE_WIDTH * h * 0.75 * cv.x);
 }
 // Leaf area above a point at height y over the ground: a uniform vertical distribution.
 fn md_lai_above(canopy: vec2<f32>, above_ground: f32) -> f32 {
@@ -251,12 +278,21 @@ fn vs_blade(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsO
     let r4 = md_unit(md_hash(h ^ 0x04u));
     let r5 = md_unit(md_hash(h ^ 0x05u));
     let r6 = md_unit(md_hash(h ^ 0x06u));
+    // The blade's tussock: its height (0.8-1.15, lower toward the clump's edge), a lean away from
+    // its centre and a shift of leaf state.
+    let clump = md_clump(root2);
+    let ch = clump.seed;
+    let rim = clamp(clump.f1 / (0.6 * MD_CLUMP), 0.0, 1.0);
+    let clump_height = (0.80 + 0.35 * md_unit(md_hash(ch ^ 0x11u))) * (1.0 - 0.25 * rim * rim);
     // 0.30-0.60 m by lushness; thin cover (the tan dry ground) carries shorter grass.
-    let height = (MD_HEIGHT_MIN + MD_HEIGHT_SPAN * cv.y) * (0.62 + 0.38 * r0) * (0.55 + 0.45 * cv.x) * grow;
+    let height = (MD_HEIGHT_MIN + MD_HEIGHT_SPAN * cv.y) * (0.70 + 0.30 * r0) * clump_height * (0.55 + 0.45 * cv.x) * grow;
     let blade_w = width * (0.7 + 0.6 * r1);
-    let azimuth = r2 * MD_TAU;
+    let outward = root2 - clump.centre;
+    let out_angle = atan2(outward.y, outward.x);
+    // Blades fan out from their tussock's centre, more at its rim.
+    let azimuth = mix(r2 * MD_TAU, out_angle + (r2 - 0.5) * 1.2, 0.65 * smoothstep(0.02, 0.2, length(outward)));
     let facing = vec3(cos(azimuth), 0.0, sin(azimuth));
-    let lean = 0.10 + 0.50 * r3 * r3;
+    let lean = 0.08 + 0.30 * r3 * r3 + (0.10 + 0.25 * md_unit(md_hash(ch ^ 0x12u))) * rim;
 
     // The wind grid's bend for this blade's height and stiffness, and the blade's own flutter at
     // its hashed natural frequency (named in the ledger).
@@ -301,7 +337,7 @@ fn vs_blade(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsO
     let field = md_noise(root2.x / 31.0, root2.y / 31.0, 0x600du) * 0.75 + md_noise(root2.x / 9.0, root2.y / 9.0, 0x601du) * 0.25;
     // Leaf state: fresh and paler blades in world-fixed 9 m / 31 m patches, senescent straw on the
     // thin (tan) ground and toward some old tips; each blade's vigour scales its reflectance.
-    let pale = smoothstep(0.30, 0.75, field) * 0.7;
+    let pale = clamp(smoothstep(0.30, 0.75, field) * 0.7 + (md_unit(md_hash(ch ^ 0x13u)) - 0.5) * 0.5, 0.0, 1.0);
     let dry = max(smoothstep(0.95, 0.60, cv.x) * 0.75, t * t * (0.05 + 0.35 * r6));
     var rho = mix(mix(MD_LEAF_RHO_FRESH, MD_LEAF_RHO_PALE, pale), MD_LEAF_RHO_DRY, dry) * (0.85 + 0.30 * r1);
     var tau = mix(mix(MD_LEAF_TAU_FRESH, MD_LEAF_TAU_PALE, pale), MD_LEAF_TAU_DRY, dry);
@@ -325,8 +361,10 @@ fn vs_flower(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> Vs
     let pick = md_unit(h) * MD_FLOWER_CAP;
     var cumulative = 0.0;
     var s = MD_SPECIES;
+    // Flowers stand in the gaps between tussocks (meadow.rs flower_at).
+    let in_gap = cv.x * (0.45 + 0.8 * md_gap(md_clump(root2)));
     for (var i = 0u; i < MD_SPECIES; i++) {
-        cumulative += MD_SP_PEAK[i] * md_bed(i, root2.x, root2.y) * cv.x;
+        cumulative += MD_SP_PEAK[i] * md_bed(i, root2.x, root2.y) * in_gap;
         if (pick < cumulative) { s = i; break; }
     }
     if (s == MD_SPECIES) { return md_culled(); }

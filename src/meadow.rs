@@ -138,6 +138,45 @@ pub fn blade_root(tx: i32, tz: i32, j: u32) -> Vec2 {
     (Vec2::new(tx as f32, tz as f32) + r2_point(hash2(tx, tz, SALT_TILE), j)) * TILE_M
 }
 
+/// Tussocks (after Ghost of Tsushima's Voronoi clumps, Wohllaib GDC 2021): a world-fixed Voronoi
+/// tessellation of jittered seeds, `CLUMP_M` apart; each blade takes its clump's attributes
+/// (height, lean away from the clump's centre, leaf state) without moving its R2 root, and flowers
+/// favour the gaps between clumps. Attributes only: no root is re-placed.
+pub const CLUMP_M: f32 = 0.9;
+pub const SALT_CLUMP: u32 = 0x7475_7373;
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Clump {
+    pub centre: Vec2,
+    /// Distance to the nearest seed and to the second nearest.
+    pub f1: f32,
+    pub f2: f32,
+    pub seed: u32,
+}
+impl Clump {
+    /// 0 deep inside a tussock, 1 on the gap between two.
+    pub fn gap(&self) -> f32 { 1.0 - smoothstep(0.04, 0.30, self.f2 - self.f1) }
+}
+pub fn clump_at(p: Vec2) -> Clump {
+    let g = p / CLUMP_M;
+    let (ix, iz) = (g.x.floor() as i32, g.y.floor() as i32);
+    let mut best = Clump { centre: Vec2::ZERO, f1: f32::MAX, f2: f32::MAX, seed: 0 };
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let (cx, cz) = (ix + dx, iz + dz);
+            let h = hash2(cx, cz, SALT_CLUMP);
+            let c = (Vec2::new(cx as f32, cz as f32) + Vec2::splat(0.1) + Vec2::new(unit(h), unit(hash(h ^ 0x51))) * 0.8) * CLUMP_M;
+            let d = c.distance(p);
+            if d < best.f1 {
+                best.f2 = best.f1;
+                best = Clump { centre: c, f1: d, f2: best.f2, seed: h };
+            } else if d < best.f2 {
+                best.f2 = d;
+            }
+        }
+    }
+    best
+}
+
 /// One flower species: its clump field, its stem and head, and its display-equivalent linear
 /// albedo (centre, petals). Bright pigments, never emission.
 #[derive(Clone, Copy, Debug)]
@@ -193,6 +232,8 @@ pub fn flower_at(tx: i32, tz: i32, k: u32, cover: impl Fn(Vec2) -> f32) -> Optio
     let pick = unit(h) * FLOWER_CAP_PER_M2;
     let grass = cover(root);
     if grass <= 0.0 { return None; }
+    // Flowers stand in the gaps between tussocks: 0.45 of the rate inside one, 1.25 on a gap.
+    let grass = grass * (0.45 + 0.8 * clump_at(root).gap());
     let mut cumulative = 0.0;
     for s in 0..SPECIES.len() {
         cumulative += SPECIES[s].peak * bed(s, root.x, root.y) * grass;
@@ -211,12 +252,13 @@ pub fn wgsl_constants() -> String {
     f("MD_TILE", TILE_M); f("MD_NEAR_DENSITY", NEAR_DENSITY); f("MD_BLADE_WIDTH", BLADE_WIDTH_M);
     f("MD_MIN_PIXELS", MIN_PIXELS); f("MD_NEAR_RADIUS", NEAR_RADIUS_M); f("MD_BAND", BAND_M);
     f("MD_FAR_RADIUS", FAR_RADIUS_M); f("MD_FAR_TILE", FAR_TILE_M);
+    f("MD_CLUMP", CLUMP_M);
     f("MD_SLAB_START", SLAB_START_M); f("MD_SLAB_FULL", SLAB_FULL_M); f("MD_SLAB_TILE", SLAB_TILE_M); f("MD_SLAB_TILE_FAR", SLAB_TILE_FAR_M);
     f("MD_SHADOW_RADIUS", SHADOW_RADIUS_M); f("MD_FLOWER_RADIUS", FLOWER_RADIUS_M); f("MD_FLOWER_CAP", FLOWER_CAP_PER_M2);
     f("MD_HEIGHT_MIN", HEIGHT_MIN_M); f("MD_HEIGHT_SPAN", HEIGHT_SPAN_M); f("MD_R2_A1", R2_A1); f("MD_R2_A2", R2_A2);
     f("MD_WIND_REFERENCE_HEIGHT", WIND_REFERENCE_HEIGHT_M); f("MD_TRACK_CELL", TRACK_CELL_M);
-    s.push_str(&format!("const MD_SALT_TILE: u32 = {}u;\nconst MD_SALT_FLOWER: u32 = {}u;\nconst MD_FLOWER_SLOTS: u32 = {}u;\nconst MD_SALT_FAR: u32 = {}u;\n",
-        SALT_TILE, SALT_FLOWER, FLOWER_SLOTS, SALT_FAR));
+    s.push_str(&format!("const MD_SALT_TILE: u32 = {}u;\nconst MD_SALT_FLOWER: u32 = {}u;\nconst MD_FLOWER_SLOTS: u32 = {}u;\nconst MD_SALT_FAR: u32 = {}u;\nconst MD_SALT_CLUMP: u32 = {}u;\n",
+        SALT_TILE, SALT_FLOWER, FLOWER_SLOTS, SALT_FAR, SALT_CLUMP));
     // Leaf states (leaf_optics.rs, PROSPECT-D at 680 / 550 / 440 nm).
     for (name, leaf) in [("FRESH", crate::leaf_optics::SPRING_GRASS), ("PALE", crate::leaf_optics::PALE_GRASS), ("DRY", crate::leaf_optics::DRY_GRASS)] {
         let (rho, tau) = crate::leaf_optics::lanes(leaf);
@@ -518,7 +560,7 @@ pub fn canopy_grid(heights: &[f32], res: usize, spacing: f32, cover: &CoverMap) 
                 let (presence, lush) = (cover.presence(px, pz), cover.lush(px, pz));
                 let height = (HEIGHT_MIN_M + HEIGHT_SPAN_M * lush) * (0.55 + 0.45 * presence);
                 h += height * (presence > 0.004) as u32 as f32;
-                lai += NEAR_DENSITY * BLADE_WIDTH_M * height * 0.81 * presence;
+                lai += NEAR_DENSITY * BLADE_WIDTH_M * height * 0.75 * presence;
             }
             out.push([heights[j * res + i], h / 5.0, lai / 5.0, extent]);
         }
@@ -699,6 +741,30 @@ mod tests {
         assert_eq!(c[3], 40.0);
         let bare = build_cover(Some((&[36u8, 36, 36, 255].repeat(32 * 32), 32)), None, 40.0, None, &|_, _| 0.0);
         assert_eq!(canopy_grid(&vec![0.0; 81], 9, 10.0, &bare)[40][2], 0.0);
+    }
+
+    #[test]
+    fn tussocks_are_world_fixed_and_flowers_favour_their_gaps() {
+        let p = Vec2::new(12.3, -4.7);
+        assert_eq!(clump_at(p), clump_at(p));
+        let c = clump_at(p);
+        assert!(c.f1 <= c.f2 && c.f1 < CLUMP_M * 1.2);
+        // The mean gap over flower roots exceeds the mean over all ground.
+        let full = |_: Vec2| 1.0;
+        let (mut flower_gap, mut flowers) = (0.0f32, 0usize);
+        for tz in -20..20 {
+            for tx in -20..20 {
+                for k in 0..FLOWER_SLOTS {
+                    if let Some(f) = flower_at(tx, tz, k, full) { flower_gap += clump_at(f.root).gap(); flowers += 1; }
+                }
+            }
+        }
+        let mut ground_gap = 0.0f32;
+        for k in 0..20_000u32 {
+            ground_gap += clump_at(Vec2::new(unit(hash(k)) * 80.0 - 40.0, unit(hash(k ^ 0xabc)) * 80.0 - 40.0)).gap();
+        }
+        let (fg, gg) = (flower_gap / flowers as f32, ground_gap / 20_000.0);
+        assert!(fg > gg * 1.1, "flowers {fg} vs ground {gg}");
     }
 
     #[test]
