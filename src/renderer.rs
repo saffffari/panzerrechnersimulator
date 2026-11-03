@@ -1169,6 +1169,8 @@ struct CrushUniform {
     loupe: [f32; 4],
     /// The realism look (mode 6): contrast, saturation, dithered steps per channel. Appended lane.
     real: [f32; 4],
+    /// Debug only (`KESSEL_POINT_LAYER_VIEW=1`): x 1 shows the point layer (rod pooling check).
+    debug: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -8730,6 +8732,7 @@ impl Renderer {
             look: [self.look, DELTAP_PAIR_PENALTY, self.tonemap, self.palette_smooth],
             loupe: self.loupe,
             real: self.real,
+            debug: [if std::env::var("KESSEL_POINT_LAYER_VIEW").as_deref() == Ok("1") { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {

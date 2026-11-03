@@ -39,6 +39,8 @@ struct Crush {
     // shipped); z = dithered steps of red and green (8 = deltaP's); w = blue's (0: as z; 3 with
     // z 7 is the 8-bit 3-3-2 split, 256 colours). Appended lane.
     real: vec4<f32>,
+    // Debug only: x 1 shows the point layer (KESSEL_POINT_LAYER_VIEW, the rod pooling check).
+    debug: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 
@@ -518,6 +520,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         + textureSample(hdr, samp, in.uv - vec2(0.0, radius.y)).rgb * 0.15;
     let point = textureLoad(point_layer, clamp(vec2<i32>(in.uv * hd), vec2(0), vec2<i32>(hd) - vec2(1)), 0).rgb;
     var c = eye_response(mix(centre, blur, concussion), point * (1.0 - concussion));
+    if (cr.debug.x > 0.5) { c = vec3(select(0.0, 4.0, dot(point, vec3(1.0)) > 0.0), dot(centre, vec3(1.0)) * cr.exposure, 0.0); }
     // Explicit user camera/display reproduction. Identity by default; black stays black.
     c *= cr.display_grade.x * vec3(1.0 + 0.2 * cr.display_grade.z, 1.0, 1.0 - 0.2 * cr.display_grade.z);
     c = eye_range(c);
