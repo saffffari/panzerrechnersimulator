@@ -388,13 +388,13 @@ def block_lots(osm, landmark_rects, water, sm):
         ux, un = math.cos(a), math.sin(a)          # along the long side
         vx, vn = -un, ux                            # across
         if L <= 34 and S <= 26:
-            # one house: the frontage on the long side facing the nearer street
-            nx, nn = vx, vn
-            front = sum(sm.near(cx+vx*(S/2+k), cn+vn*(S/2+k), 3.0) for k in (2.0, 6.0, 10.0))
-            back = sum(sm.near(cx-vx*(S/2+k), cn-vn*(S/2+k), 3.0) for k in (2.0, 6.0, 10.0))
-            if back > front:
-                nx, nn = -vx, -vn
-            lots.append((cx, cn, L, max(S, 10.0), math.degrees(math.atan2(nx, nn)), e['id']))
+            # one house: its front on the side that faces a street (the long side when both do)
+            sides = [(vx, vn, L, S, 0.1), (-vx, -vn, L, S, 0.1), (ux, un, S, L, 0.0), (-ux, -un, S, L, 0.0)]
+            def score(sd):
+                ox, on, wide, deep, bias = sd
+                return sum(sm.near(cx+ox*(deep/2+k), cn+on*(deep/2+k), 3.0) for k in (2.0, 6.0, 10.0))+bias
+            nx, nn, wide, deep, _ = max(sides, key=score)
+            lots.append((cx, cn, wide, max(min(deep, 30.0), 10.0), math.degrees(math.atan2(nx, nn)), e['id']))
         else:
             # a block: houses along each side, 16 m deep, the frontage outward
             depth = min(16.0, S/2-1.0) if S < 34 else 16.0
@@ -430,11 +430,32 @@ def block_lots(osm, landmark_rects, water, sm):
             continue
         if sm.near(cx, cn, 3.0):
             continue
-        if any(math.hypot(cx-px, cn-pn) < (min(w, d)+min(pw, pd))*0.42 for px, pn, pw, pd in rects):
+        poly = lot_polygon(cx, cn, w-1.0, d-1.0, out_deg)
+        if any(polygons_overlap(poly, q) for q in rects):
             continue
         kept.append(lot)
-        rects.append((cx, cn, w, d))
+        rects.append(poly)
     return kept
+
+
+def lot_polygon(cx, cn, w, d, out_deg):
+    a = math.radians(out_deg)
+    fx, fn = math.sin(a), math.cos(a)          # outward (front) direction
+    sx, sn = fn, -fx                            # along the frontage
+    return [(cx+sx*u*w/2+fx*v*d/2, cn+sn*u*w/2+fn*v*d/2) for u, v in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+
+
+def polygons_overlap(p, q):
+    """Separating-axis test for two convex quadrilaterals."""
+    for poly in (p, q):
+        for i in range(4):
+            (ax, an), (bx, bn) = poly[i], poly[(i+1) % 4]
+            nx, nn = -(bn-an), bx-ax
+            pa = [nx*x+nn*n for x, n in p]
+            qa = [nx*x+nn*n for x, n in q]
+            if max(pa) < min(qa) or max(qa) < min(pa):
+                return False
+    return True
 
 
 class StreetMask:
@@ -806,10 +827,12 @@ def plant(P, H, tier, sm, water, lots):
 def course_route():
     """The tank's way for the course machinery: in from the Tiergarten on the Charlottenburger
     Chaussee, north up the old Siegesallee's line onto Koenigsplatz, across the square past the
-    Reichstag's west front, and on to the Moltke Bridge's south end."""
+    Reichstag's west front, round the cut's north end and on to the Moltke Bridge's south end."""
     knots = [(-870.0, -345.0), (-700.0, -328.0), (-420.0, -298.0), (-285.0, -284.0), (-273.0, -240.0),
-             (-273.0, -110.0), (-200.0, -60.0), (-110.0, -20.0), (-100.0, 60.0), (-180.0, 110.0),
-             (-300.0, 140.0), (-366.0, 150.0), (-372.0, 250.0), (-440.0, 318.0)]
+             (-273.0, -110.0), (-230.0, -110.0), (-200.0, -60.0), (-110.0, -20.0), (-100.0, 60.0),
+             (-180.0, 150.0), (-245.0, 250.0), (-280.0, 300.0), (-380.0, 300.0), (-440.0, 322.0)]
+    # (round the flooded cut's south end and its north end by the Swiss legation: a tank cannot
+    # cross the cut)
     pts = []
     for a, b in zip(knots, knots[1:]):
         L = math.dist(a, b)
@@ -933,8 +956,8 @@ def mission_sheet(route):
              'map': {'mark': 'circle', 'bearing': True}},
             {'id': 'square', 'title': 'Hold Koenigsplatz', 'goal': 'hold', 'at': p(-180.0, -10.0), 'radius_m': 80.0,
              'complete': {'kind': 'capture', 'seconds': 90.0, 'contest_radius_m': 220.0},
-             'pacing': {'release': {'count': 3, 'fraction': frac(-372.0, 240.0)}},
-             'cues': [{'kind': 'alert', 'at': p(-372.0, 240.0), 'radius_m': 500.0}],
+             'pacing': {'release': {'count': 3, 'fraction': frac(-380.0, 300.0)}},
+             'cues': [{'kind': 'alert', 'at': p(-380.0, 300.0), 'radius_m': 500.0}],
              'lines': {'open': line('Kiebitz, Adler. Tanks from the ministry. Hold the square. Out.'),
                        'done': line('The square is held. Out.')},
              'map': {'mark': 'circle', 'bearing': True}},
@@ -994,6 +1017,24 @@ def ground(osm, H, streets, tier, water, lots, rng):
         grass[walk] = 0.0
         colour[core] = np.array(tint, np.float32)*(0.9+0.12*fine[core])[:, None]
         grass[core] = 0.0
+    # tram tracks: Hermann-Goering-Strasse and Sommerstrasse past the gate and the Reichstag, and
+    # Unter den Linden (B2, R4 and R7 in docs/BERLIN_REICHSTAG_1945.md show the rails)
+    im = Image.new('L', (TEX, TEX), 0)
+    d = ImageDraw.Draw(im)
+    for st in streets:
+        if st['name'] not in ('Ebertstraße', 'Sommerstrasse', 'Unter den Linden'):
+            continue
+        pts = st['pts']
+        for off in (-2.9, -1.4, 1.4, 2.9):
+            line = []
+            for k, (x, n) in enumerate(pts):
+                a_, b_ = pts[max(k-1, 0)], pts[min(k+1, len(pts)-1)]
+                dx, dn = b_[0]-a_[0], b_[1]-a_[1]
+                L = math.hypot(dx, dn) or 1.0
+                line.append(tex_px(x-dn/L*off, n+dx/L*off))
+            d.line(line, fill=255, width=1)
+    rails = np.asarray(im) > 0
+    colour[rails] = (0.12, 0.115, 0.11)
     # Koenigsplatz's ring road and radial paths (1928), the Platz vor dem Brandenburger Tor, Pariser Platz
     ring = (rr > 90) & (rr < 102)
     colour[ring] = (0.29, 0.28, 0.26)
