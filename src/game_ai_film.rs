@@ -426,8 +426,20 @@ fn kill_wide_frame(g: &Game, enemy: usize, aspect: f32) -> (Vec3, Vec3, f32) {
     let bottom = -8.0;
     let half_v = 0.5 * (top - bottom);
     let distance = (half_v / tan_v).max((0.5 * (land - ring).length() + 35.0) / tan_h).max(110.0);
-    let eye = lift(g, mid + perp * distance + Vec3::Y * 6.0, 6.0);
     let target = Vec3::new(mid.x, ring.y + bottom + half_v, mid.z);
+    // The first stand (side of the throw first, then turned round the wreck in 30-degree steps,
+    // at eye height and then from rooftop height) whose sight lines to the wreck, the throw's
+    // middle height and the landing are not cut by hard cover, terrain or trees (`los_clear`).
+    let turned = |v: Vec3, a: f32| Vec3::new(v.x * a.cos() - v.z * a.sin(), 0.0, v.x * a.sin() + v.z * a.cos());
+    let mut stands = Vec::new();
+    for height in [6.0f32, 26.0] {
+        for k in [0.0f32, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0, 4.0, -4.0, 5.0, -5.0, 6.0] {
+            stands.push(lift(g, mid + turned(perp, k * std::f32::consts::FRAC_PI_6) * distance + Vec3::Y * height, height));
+        }
+    }
+    let sees = |eye: Vec3| g.los_clear(eye, ring + Vec3::Y * 2.5) && g.los_clear(eye, mid + Vec3::Y * (0.6 * apex))
+        && g.los_clear(eye, land + Vec3::Y * 2.0);
+    let eye = stands.iter().copied().find(|&e| sees(e)).unwrap_or(stands[0]);
     (eye, target, fov)
 }
 
