@@ -2944,6 +2944,7 @@ impl Backend {
     /// muzzle's snow blast; burning fragments as embers. Every shape is a function of (seed, age).
     fn event_parcels(&mut self, now: f32) {
         use renderer_weapon_particles::math::random;
+        use renderer_weapon_particles::math as wm;
         let wind = self.wind;
         let mut volumes: Vec<Parcel> = Vec::new();
         for e in self.events.clone() {
@@ -2960,9 +2961,14 @@ impl Backend {
             // its base at `base` (the ground, when it stands on it) or centred on `base` + its
             // half height, `lift` above that, drifting with `drift`.
             let explosion = self.explosion_slots.as_ref();
+            // A weapon's smoke (a detonation's cloud, a penetration's vent, a stowage vent's) keeps
+            // `weapon_smoke_scale` of its extinction: thinner and gone by 2.5 s (the owner, 2026-11-03).
+            // Its glow is untouched.
+            let smoke = if matches!(e.kind, EVENT_DETONATION | EVENT_PENETRATION | EVENT_VENT) { wm::weapon_smoke_scale(t) } else { 1.0 };
             let mut volume = |role: crate::explosion_volumes::Role, pick: f32, yaw: f32, size: f32, base: Vec3,
                               colour: [f32; 3], emission: f32, extinction: f32, temperature: f32| {
                 let Some((slot, aspect)) = explosion.and_then(|v| v.pick(role, pick)) else { return };
+                let extinction = extinction * smoke;
                 if size <= 0.05 || emission + extinction <= 0.0 { return; }
                 let half = aspect * size;
                 let centre = base + Vec3::Y * half.y;
@@ -2974,6 +2980,7 @@ impl Backend {
                 });
             };
             let mut push = |center: Vec3, radius: f32, colour: [f32; 3], kind: f32, emission: f32, extinction: f32, noise: f32, age: f32| {
+                let extinction = extinction * smoke;
                 if radius <= 0.01 || extinction + emission <= 0.0 { return; }
                 self.parcels.push(Parcel {
                     a: [center.x, center.y, center.z, radius],

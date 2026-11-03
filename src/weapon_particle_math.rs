@@ -127,6 +127,17 @@ pub fn rim_heat(caliber_mm:f32,plate_mm:f32,deposited_j:f32)->Option<RimHeat> {
     let heat_j=(deposited_j*RIM_HEAT_SHARE).min(mass_kg*500.0*(RIM_KELVIN_MAX-293.0));
     Some(RimHeat {radius,width,mass_kg,heat_j,initial_kelvin:293.0+heat_j/(mass_kg*500.0),tau_s:rim_tau_s(caliber_mm)})
 }
+/// Weapon smoke (impact, penetration, blast and vent; the owner, 2026-11-03: "please turn down the
+/// smoke", "next one needs to run in real time"): every cloud is gone by this age, s, fading over
+/// its last 40 %, and its density is this share of the former. Owner-directed, not measured.
+pub const WEAPON_SMOKE_LIFE_S:f32=2.5;
+pub const WEAPON_SMOKE_DENSITY:f32=0.35;
+/// The share of a weapon smoke's former density it keeps at `age` s.
+pub fn weapon_smoke_scale(age:f32)->f32 {
+    if !(age<WEAPON_SMOKE_LIFE_S) {return 0.0;}
+    let t=((age-0.6*WEAPON_SMOKE_LIFE_S)/(0.4*WEAPON_SMOKE_LIFE_S)).clamp(0.0,1.0);
+    WEAPON_SMOKE_DENSITY*(1.0-t*t*(3.0-2.0*t))
+}
 pub fn rim_temperature(initial:f32,age:f32,tau_s:f32)->f32 {293.0+(initial-293.0).max(0.0)*(-age.max(0.0)/tau_s.max(0.05)).exp()}
 pub fn rim_sample(r:Record,index:u32)->Option<Sample> {
     if r.meta[3]!=HOT_RIM || !r.active() || index>=r.meta[1] {return None;}

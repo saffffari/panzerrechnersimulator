@@ -927,6 +927,11 @@ impl Game {
         smoke.sort_by(|a,b|a.pos.distance_squared(r.camera.pos).total_cmp(&b.pos.distance_squared(r.camera.pos)));
         for mut b in smoke {
             if !b.kind.emits_smoke(){continue;}
+            // A weapon's smoke keeps `weapon_smoke_scale` of its density and is gone by 2.5 s (the
+            // owner, 2026-11-03: "please turn down the smoke"); the muzzle's and a full cook-off's
+            // plume are not weapon impact smoke and keep theirs.
+            let keep=if matches!(b.kind,BurstKind::Muzzle|BurstKind::FullCookoff(_)) {1.0} else {gpu_weapon::weapon_smoke_scale(b.age)};
+            if keep<=0.0 {continue;}
             // A cook-off's fireball smokes as a blast at its (bounded) size on this path.
             if let BurstKind::CookoffFireball(scale)=b.kind { b.kind=BurstKind::Blast; b.radius=(2.9*scale).min(9.0); }
             if let BurstKind::PenetrationSmoke(normal)=b.kind {
@@ -935,7 +940,7 @@ impl Game {
                 let tangent_wind=wind-normal*wind.dot(normal);
                 let source=b.pos+normal*radius;
                 r.add_smoke_sweep(source,source+normal*b.age*0.6+tangent_wind*b.age*0.20,
-                    radius,0.24*(1.0-b.age/b.life).max(0.0).powi(2)*impact_smoke_build(b.age),
+                    radius,0.24*(1.0-b.age/b.life).max(0.0).powi(2)*impact_smoke_build(b.age)*keep,
                     crate::particle_motion::seed_phase(b.seed)+b.age*0.8,0.35);
                 continue;
             }
@@ -945,7 +950,7 @@ impl Game {
             if matches!(b.kind,BurstKind::Blast) {b.radius*=gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER;}
             if let BurstKind::PressureVent(normal,_)=b.kind {
                 let advance=(b.age*26.0).min(12.0);let fade=(1.0-b.age/b.life).max(0.0);
-                r.add_smoke_sweep(b.pos,b.pos+normal*advance,0.35+advance*0.035,0.14*fade,b.age*2.0,0.20);
+                r.add_smoke_sweep(b.pos,b.pos+normal*advance,0.35+advance*0.035,0.14*fade*keep,b.age*2.0,0.20);
                 continue;
             }
             if let BurstKind::FullCookoff(_)=b.kind {
@@ -968,7 +973,7 @@ impl Game {
             let center=if muzzle {b.pos+propellant_offset(b.dir,Vec3::ZERO,age,b.radius,0.5,wind)}
                 else {b.pos+Vec3::new(wind.x*age*0.55,age*b.radius*0.32,wind.y*age*0.55)};
             let onset=if matches!(b.kind,BurstKind::Impact|BurstKind::ArmorImpact(_)) {impact_smoke_build(age)} else {smoothstep(0.0,0.08,age)};
-            let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*onset;
+            let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*onset*keep;
             for lobe in 0..3 {
                 let phase=crate::particle_motion::seed_phase(b.seed)+lobe as f32*2.1;
                 let offset=Vec3::new(phase.sin(),0.3*phase.cos(),phase.cos())*radius*0.30;

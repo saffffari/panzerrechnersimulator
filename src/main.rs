@@ -180,6 +180,8 @@ mod cabin_fumes;
 mod hot_surfaces;
 #[cfg(test)]
 mod point_footprint;
+#[cfg(test)]
+mod smoke_cost;
 mod heat_haze;
 mod world_doors;
 mod prims;
@@ -8102,6 +8104,91 @@ fn run_haze() -> anyhow::Result<()> {
 /// stored 3D cabin volume toggled: OFF proves the underlying black point/geometry did not change;
 /// ON shows the tight own-colour halos around lamps and annunciators plus aperture shafts. Keeping
 /// the comparison independent from `run_haze` makes it fast enough for iterative lighting work.
+/// Headless cost of the smoke supports (the owner, 2026-11-03: "smoke is killing me"). The act-1
+/// field, the camera 3 m up looking along the ground, N supports of a grown impact cloud (3 m
+/// radius, the impact smoke's density at a few seconds) spread 12 m ahead, at density x1 and x0.25,
+/// and the camera inside a cloud as at a close impact. GPU pass timestamps over 60 frames each
+/// (`KESSEL_GPU_PROFILE=1` is set here). Prints each case's per-pass ms and the totals.
+fn run_smoke_bench() -> anyhow::Result<()> {
+    std::env::set_var(crate::gpu_profile::ENV, "1");
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(1))?;
+    g.mute_audio();
+    g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    let base = g.player_center() + Vec3::new(14.0, 0.0, 14.0);
+    let ground = g.hf.height_at(base.x, base.z);
+    let eye = Vec3::new(base.x, ground + 3.0, base.z);
+    let ahead = Vec3::new(1.0, 0.0, 0.3).normalize();
+    let mut cases: Vec<(String, usize, f32, bool)> = Vec::new();
+    for &(n, k) in &[(0usize, 1.0f32), (5, 1.0), (5, 0.25), (12, 1.0), (12, 0.25)] {
+        cases.push((format!("{n} supports x{k}"), n, k, false));
+    }
+    cases.push(("12 supports x1, eye inside".into(), 12, 1.0, true));
+    cases.push(("12 supports x0.25, eye inside".into(), 12, 0.25, true));
+    let mut table = Vec::new();
+    for (name, n, k, inside) in cases {
+        let place = |r: &mut renderer::Renderer| {
+            r.camera.pos = eye;
+            r.camera.set_forward(ahead + Vec3::new(0.0, -0.05, 0.0));
+            r.camera.fov_y = 60f32.to_radians();
+            r.clear_smoke();
+            for i in 0..n {
+                let a = i as f32 * 2.399;
+                let centre = if inside { eye + Vec3::new(a.cos(), 0.2 * a.sin(), a.sin()) * (0.6 + 0.25 * i as f32) }
+                    else { eye + ahead * (12.0 + 1.5 * a.sin()) + Vec3::new(-ahead.z, 0.0, ahead.x) * (2.5 * a.cos()) - Vec3::Y * 1.5 };
+                // A grown impact cloud: radius 3 m, density (1 - f)^2 x 0.45 x 0.4 at a few seconds.
+                r.add_smoke_volume(centre, 3.0 * 0.76, 0.12 * k, a, 0.08);
+            }
+        };
+        place(&mut r);
+        r.reset_history();
+        crate::converge_headless_screenshot(&mut r, &device, &queue, 8)?;
+        let mut summary = crate::gpu_profile::GpuProfileSummary::default();
+        for _ in 0..60 {
+            place(&mut r);
+            r.begin_gpu_profile_frame();
+            r.render_offscreen(&device, &queue);
+            summary.record(r.read_gpu_profile_frame(&device, &queue)?);
+        }
+        println!("[smoke-bench] == {name}");
+        let report = summary.report();
+        let total: f64 = report["passes"].as_array().map_or(0.0, |rows| rows.iter().map(|p| p["mean_ms_per_frame"].as_f64().unwrap_or(0.0)).sum());
+        println!("[smoke-bench] {name}: total {total:.2} ms");
+        table.push((name, total, report));
+    }
+    // A real hit: the main gun into the enemy, the passes timed 3 to 10 s after impact with the
+    // simulation running, then the same span with the smoke supports cleared each frame (what is
+    // left is scars, fire, blood, the explosion volumes and the rest).
+    let dt = 1.0 / 60.0;
+    for clear in [false, true] {
+        g.aim_at_enemy();
+        g.debug_fire(&mut r);
+        for _ in 0..(3 * 60) { g.update(&TankInput::default(), dt, &mut r); }
+        let mut summary = crate::gpu_profile::GpuProfileSummary::default();
+        for _ in 0..(7 * 60) {
+            g.update(&TankInput::default(), dt, &mut r);
+            if clear { r.clear_smoke(); }
+            r.begin_gpu_profile_frame();
+            r.render_offscreen(&device, &queue);
+            summary.record(r.read_gpu_profile_frame(&device, &queue)?);
+        }
+        let name = if clear { "real hit, 3-10 s, smoke cleared" } else { "real hit, 3-10 s" };
+        println!("[smoke-bench] == {name}");
+        let report = summary.report();
+        let total: f64 = report["passes"].as_array().map_or(0.0, |rows| rows.iter().map(|p| p["mean_ms_per_frame"].as_f64().unwrap_or(0.0)).sum());
+        table.push((name.to_string(), total, report));
+    }
+    println!("[smoke-bench] summary:");
+    for (name, total, report) in &table {
+        let pass = |label: &str| report["passes"].as_array().and_then(|rows| rows.iter().find(|p| p["pass"] == label))
+            .and_then(|p| p["mean_ms_per_frame"].as_f64()).unwrap_or(0.0);
+        println!("[smoke-bench]   {name:<32} total {total:7.2}  rm-volume {:6.2}  rm-shade {:6.2}  rm-integrate {:6.2}", pass("rm-volume"), pass("rm-shade"), pass("rm-integrate"));
+    }
+    Ok(())
+}
+
 /// Headless check of the froxel medium's history (the owner, 2026-11-03: the cabin's haze builds up
 /// while the camera is held and vanishes the moment it moves). The frozen Loader view of `atmo`,
 /// rendered three ways with the eye left as it is: converged (history kept for N frames: a held
@@ -18388,6 +18475,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "haze" {
         return run_haze();
+    }
+    if args.len() >= 2 && args[1] == "smoke-bench" {
+        return run_smoke_bench();
     }
     if args.len() >= 2 && args[1] == "haze-history" {
         let prefix = capture_arg(&args, 2, "haze_history");
