@@ -3396,8 +3396,10 @@ impl Backend {
                 // mesh's faces: a moving pool's bodies (fragments, a body's cells, lodged rounds,
                 // pieces in flight) carry none, so their cubes stay closed (the owner, 2026-11-03:
                 // "the faces are like offset in this like accordion shape").
+                // y: a point-like body drawn as a filled pixel square in the G-buffer (rm_gbuffer.wgsl vs_inst).
                 extra: [if b.moving_rt_pool || b.raster_only_dynamic || aboard(b.world_min, b.world_max) { 0.0 }
-                    else { self.snow_load(r.world_snow_load) }, 0.0, 0.0, 0.0],
+                    else { self.snow_load(r.world_snow_load) },
+                    if b.point_square && !shadow { 1.0 } else { 0.0 }, 0.0, 0.0],
                 // The film section (camera only) cuts a moving pool's bodies with the vehicle they
                 // fly in; cut, a cell or fragment shows its own material (bit 25: no steel cut face).
                 scars: [0, 0, 0, if b.moving_rt_pool { section_bit(r.film_section(), true, shadow) * (1 << SECTION_BIT_SHIFT | 1 << (SECTION_BIT_SHIFT + 1)) } else { 0 }],

@@ -226,6 +226,15 @@ fn direction(seed: u32) -> Vec3 {
     Vec3::new(r * a.cos(), z, r * a.sin())
 }
 impl Effects {
+    /// The penetrations' glowing rims still drawn: centre (world, re-posed with the struck part
+    /// each frame), the plate's normal, the rim's heat and its age, s (`hot_surfaces`).
+    pub(super) fn hot_rims(&self) -> impl Iterator<Item = (Vec3, Vec3, gpu_weapon::RimHeat, f32)> + '_ {
+        self.bursts.iter().flatten().filter(|b| b.age < b.life).filter_map(|b| match b.kind {
+            BurstKind::HotRim { normal, heat } => Some((b.pos, normal, heat, b.age)),
+            _ => None,
+        })
+    }
+
     fn burst(&mut self, pos: Vec3, dir: Vec3, radius: f32, life: f32,
         kind: BurstKind, weapon: Weapon) {
         if !pos.is_finite() || !dir.is_finite() || !radius.is_finite() { return; }

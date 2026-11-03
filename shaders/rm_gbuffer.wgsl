@@ -52,6 +52,9 @@ struct VsOut {
     // Where the snow breakup field is sampled: the mesh's own frame in metres for a single
     // (possibly moving) mesh, world space for static instances.
     @location(4) local: vec3<f32>,
+    // The share of each pixel a point-like body drawn as a pixel square covers (vs_inst), its glow
+    // scaled by it so its light is unchanged; 1 for everything else.
+    @location(5) coverage: f32,
 };
 
 fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
@@ -77,6 +80,35 @@ fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>,
     out.normal = n;
     out.tangent = vec4(t, tangent.w);
     out.local = local;
+    out.coverage = 1.0;
+    return out;
+}
+
+// A point-like body (a hot chip; Renderer::set_batch_point_square) projecting under 3 pixels across
+// is drawn as a filled square of whole pixels, ceil(its size) on a side, about the pixel (odd sides)
+// or the pixel corner (even) nearest its centre, all at its centre's depth; its glow is scaled by its
+// projected area over the square's so its light is unchanged. A 2-3 pixel cube rasterised at true
+// size covered the four axial pixel centres and not the diagonals: a plus (the owner, 2026-11-03:
+// fill the full square, never a star). Its local x and y pick the square's corner, so the faces
+// across z fill the square and the rest fold to lines. Mirrored in src/point_footprint.rs.
+fn point_square(model: mat4x4<f32>, pos: vec3<f32>, base: VsOut) -> VsOut {
+    let edge = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
+    let centre = model[3].xyz - fr.cam_pos.xyz;
+    let clip = fr.view_proj * vec4(centre, 1.0);
+    if (edge <= 0.0 || clip.w <= 1e-4) { return base; }
+    let size_px = edge * fr.view_proj[1][1] * fr.res.y * 0.5 / clip.w;
+    if (size_px >= 3.0) { return base; }
+    let side = max(ceil(size_px), 1.0);
+    let ndc = clip.xy / clip.w;
+    let pixel = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * fr.res.xy;
+    let lo = floor(pixel - vec2(side * 0.5) + vec2(0.5));
+    let corner = lo + select(vec2(0.0), vec2(side), vec2<bool>(pos.x > 0.0, pos.y > 0.0));
+    let edge_ndc = corner / fr.res.xy;
+    var out = base;
+    out.clip = vec4(vec2(edge_ndc.x * 2.0 - 1.0, 1.0 - edge_ndc.y * 2.0) * clip.w, clip.z, clip.w);
+    out.relative = centre;
+    out.normal = -normalize(centre);
+    out.coverage = min(size_px * size_px / (side * side), 1.0);
     return out;
 }
 
@@ -108,7 +140,9 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
         n.y -= dot(derivative, n) / max(1.0 + derivative.y, 0.1);
         t += derivative * t.y;
     }
-    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz, vec3(0.0), 1.0);
+    let base = project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz, vec3(0.0), 1.0);
+    if (pc.extra.y > 0.5) { return point_square(model, pos, base); }
+    return base;
 }
 
 // The crew compartment's air (cabin_medium.rs; as rm_visibility.wgsl rm_cabin_domain): a surface
@@ -355,7 +389,7 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         if (any(glow > vec3(0.0))) {
             out.g0 = vec4(0.0, 0.0, 0.0, 9.0);
             out.g1 = vec4(n, 1.0);
-            out.g2 = vec4(glow, 0.0);
+            out.g2 = vec4(glow * in.coverage, 0.0);
             return out;
         }
     }

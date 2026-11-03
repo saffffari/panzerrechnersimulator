@@ -105,3 +105,49 @@ fn every_point_particle_is_one_pixel_square() {
         assert_eq!(compact.matches(unit).count(), quads, "{name}: a point quad that is not the one-pixel square");
     }
 }
+
+/// rm_gbuffer.wgsl `point_square`: the pixels a point-like body of `size_px` across, its centre at
+/// `pixel` (pixel units, y down), covers, and the glow scale over them.
+fn point_square(pixel: Vec2, size_px: f32) -> Option<(Vec<IVec2>, f32)> {
+    if size_px >= 3.0 { return None; }
+    let side = size_px.ceil().max(1.0);
+    let lo = (pixel - Vec2::splat(side * 0.5) + Vec2::splat(0.5)).floor();
+    let n = side as i32;
+    let cells = (0..n).flat_map(|y| (0..n).map(move |x| IVec2::new(lo.x as i32 + x, lo.y as i32 + y))).collect();
+    Some((cells, (size_px * size_px / (side * side)).min(1.0)))
+}
+
+#[test]
+fn a_small_chip_fills_its_whole_square_and_keeps_its_light() {
+    for i in 0..400u32 {
+        let h = |k: u32| ((i.wrapping_mul(2654435761) ^ k.wrapping_mul(40503)) >> 8) as f32 / 16_777_216.0;
+        let size = 0.05 + 2.94 * h(1);
+        let centre = Vec2::new(100.0 + h(2), 50.0 + h(3));
+        let (cells, coverage) = point_square(centre, size).expect("under 3 px");
+        let side = size.ceil().max(1.0) as i32;
+        // A filled square: side x side distinct pixels, every diagonal of the block included.
+        assert_eq!(cells.len() as i32, side * side);
+        let (min, max) = (cells.iter().fold(IVec2::MAX, |a, &c| a.min(c)), cells.iter().fold(IVec2::MIN, |a, &c| a.max(c)));
+        assert_eq!(max - min, IVec2::splat(side - 1));
+        // About the body: the pixel holding its centre lies in the square.
+        let held = IVec2::new(centre.x.floor() as i32, centre.y.floor() as i32);
+        assert!(cells.contains(&held), "size {size} centre {centre} misses its own pixel");
+        // Its light is unchanged: the square's covered area is the body's projected area.
+        assert!((coverage * (side * side) as f32 - size * size).abs() < 1e-3);
+    }
+    assert!(point_square(Vec2::ZERO, 3.0).is_none(), "3 px and up is drawn at true size");
+}
+
+#[test]
+fn the_gbuffer_draws_the_mirrored_square_for_the_chips() {
+    let gbuffer = include_str!("../shaders/rm_gbuffer.wgsl");
+    for needle in ["if (size_px >= 3.0) { return base; }", "let side = max(ceil(size_px), 1.0);",
+        "let lo = floor(pixel - vec2(side * 0.5) + vec2(0.5));",
+        "out.coverage = min(size_px * size_px / (side * side), 1.0);", "out.g2 = vec4(glow * in.coverage, 0.0);",
+        "if (pc.extra.y > 0.5) { return point_square(model, pos, base); }"] {
+        assert!(gbuffer.contains(needle), "rm_gbuffer.wgsl lacks {needle}");
+    }
+    let game = include_str!("game.rs");
+    let pool = game.find("slots.hot_fragment_batch = std::array::from_fn").expect("the chip pool");
+    assert!(game[pool..pool + 900].contains("set_batch_point_square(batch, true)"), "the chips are not point squares");
+}

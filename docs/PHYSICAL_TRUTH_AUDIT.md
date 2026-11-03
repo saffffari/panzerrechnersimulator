@@ -4993,8 +4993,23 @@ every penetration of the player's own tank, when the chips are in view.
 | Part | What the live code computes | Named approximation and source |
 | --- | --- | --- |
 | Concussion defocus | A blur circle: every internal pixel within 2 to 5.5 pixels (2 + 3.5 times the concussion), weighted by its share inside the circle (its centre's distance from the rim, a pixel wide), normalised; the frame mixes toward it by the concussion as before. From 2 pixels up the diagonal neighbours are as fully covered as the axial ones (test `the_concussed_eye_spreads_a_point_into_a_disc_not_a_cross`, which also fails the old five taps). | The defocus itself stays an authored effect of a concussion (its strength and timing from `concussion_visual_strength`); the disc is geometric optics' uniform blur circle without diffraction or aberration; the radius starts at 2 pixels (was 1) because a smaller disc on the pixel grid covers the axial neighbours more than the diagonal. Up to 109 nearest fetches a pixel, only while a concussion lasts. |
-| Chip cubes | Each glowing chip is its unit cube at true size in the G-buffer (no pixel-size inflation). | Rasterisation at true size: a chip projecting to 2-3 pixels can cover the four axial pixel centres and not the diagonals, evenly bright (a true-size silhouette, not a kernel). |
+| Chip cubes | A chip (`Renderer::set_batch_point_square`, the hot-fragment head pages) projecting 3 pixels or more is its unit cube at true size; under 3 pixels it is a filled square of whole pixels, ceil(its size) on a side, about the pixel (or pixel corner) nearest its centre, at its centre's depth, its glow scaled by its projected area over the square's so its light is unchanged (rm_gbuffer.wgsl `point_square`; tests `a_small_chip_fills_its_whole_square_and_keeps_its_light`, `the_gbuffer_draws_the_mirrored_square_for_the_chips`). A 2-3 pixel cube at true size covered the four axial pixel centres and not the diagonals: a plus (the owner: fill the full square). | The square is the pixel-scale stand-in for the cube's silhouette: its area is the cube's edge squared (one face on), its glow spread evenly (not each pixel's own coverage); a cooled chip's albedo is not scaled (no coverage blending in the G-buffer). Shadows and ray-traced geometry keep the true cube. The tails stay true-size boxes. |
 
 Open: the shade pass's screen gather truncates its sample offsets toward zero (`rm_shade.wgsl`, the
 gather's `vec2<i32>(step * radius_px * t)`), so a surface pixel beside a bright resting chip gathers
 it a little more along the axes than the diagonals (weak: blended at 0.2 with a 2x history cap).
+
+## Hot bodies for the heat shimmer, 2026-11-03 (`src/hot_surfaces.rs`, `Game::hot_surfaces`)
+
+The owner wants the air to shimmer round hot things; the refraction is fea-damage's. This side
+reports what it owns, once a frame, from the models that already carry each temperature: a
+penetration's rim (`rim_temperature`: its worked steel cooling by conduction, the plate's normal,
+the ring's area), a hot fragment (its solved temperature, its cube's area), the cabin fire's burning
+patches and the burning wrecks (at a flame temperature, their area times the fire model's
+intensity), and a spent case (its wall cooling from the breech, on a clock started when it is drawn
+out, kept until within 5 K of the surroundings).
+
+| Part | What the live code computes | Named approximation and source |
+| --- | --- | --- |
+| Fires | A cabin patch: its surface point and normal, 0.12 m radius, area pi r² times its intensity; a wreck: its deck anchor or fire entry, 0.72 m (the drawn crown), area times its strength; both at 1,150 K. | The flame temperature is McCaffrey's continuous-flame region of a buoyant diffusion flame (about 1,100-1,200 K), not solved; the area scaling by intensity is named; no heat release rate is reported. The FEA breaches' fires (`fea_fire_sources`) are fea-damage's own. |
+| Spent cases | The wall at 423 K as it leaves the breech, cooling toward 293 K with a 360 s time constant: rho c t / (h_conv + h_rad), steel 7,850 kg/m³ and 490 J/kg K, a 1.5 mm wall, 8 W/m²K of natural convection and 8 of radiation (emissivity 0.8 near 360 K); 0.22 m² of wall; reported for about 18 minutes. | Estimates: the initial 423 K (a fired large-calibre case is far too hot to hold; no 8.8 cm measurement found), the wall, the film coefficients; one lumped temperature for the whole case. |
