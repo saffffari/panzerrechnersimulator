@@ -193,7 +193,7 @@ impl MeadowGpu {
             vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_slab"), buffers: std::slice::from_ref(&instance), compilation_options: Default::default() },
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less,
-                stencil: Default::default(), bias: Default::default() }),
+                stencil: Default::default(), bias: wgpu::DepthBiasState { constant: -16, slope_scale: -4.0, clamp: 0.0 } }),
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState { module: &module, entry_point: Some("fs_slab"), targets: &targets, compilation_options: Default::default() }),
             multiview: None, cache: None,
