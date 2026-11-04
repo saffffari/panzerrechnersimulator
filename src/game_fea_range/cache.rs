@@ -18,6 +18,10 @@ struct Render {
     recorder: Recorder,
 }
 impl Cache {
+    pub(super) fn label(&self) -> String {
+        let state = if self.baking { "CACHING" } else if self.frames.is_empty() { "CACHE EMPTY" } else { "CACHED" };
+        format!("{state}: {} FRAMES / {:.0} MB | RESET CLEARS CACHE", self.frames.len(), self.bytes as f64 / 1e6)
+    }
     pub(super) fn busy(&self) -> bool { self.baking || self.render.is_some() }
     pub(super) fn rendering(&self) -> bool { self.render.is_some() }
     fn ready(&self) -> bool { !self.baking && !self.frames.is_empty() }
@@ -62,15 +66,31 @@ impl Range {
     }
     pub(super) fn cache_simulation(&mut self) {
         if self.cache.busy() {
-            self.clear_caches(); self.playing = false;
-            self.status = "SIMULATION CACHE CANCELLED".into(); return;
+            self.status = "CACHE KEPT: RESUME WITH PLAY; RESET DISCARDS IT".into();
+            return;
         }
-        self.clear_caches();
         self.free_fire = false;
-        // Capture CPU deformations from the fresh scene onward, never retain a GPU frame per tick.
-        self.fresh();
-        // Show every newly solved frame on the first pass rather than hiding the solve.
-        self.fire_now();
+        if self.cache.frames.is_empty() {
+            // The current fresh scene becomes the first shot; no implicit reset.
+            self.fire_now();
+        } else {
+            // The physical world remains at the calculated end while cached views replay.
+            // New shots extend that world and keep all earlier cached frames.
+            let last = self.cache.frames.len() as u32 - 1;
+            let elapsed = self.frame_time(last);
+            self.apply_tuning();
+            self.fire();
+            self.shot_t = elapsed;
+            let extra = self.total_frames(&self.scene);
+            if let Some(run) = &mut self.run {
+                run.total = last.saturating_add(1).saturating_add(extra);
+                self.run_tape.resize(run.total as usize, usize::MAX);
+            }
+            self.frame_at = Some(last);
+            self.past_run = false;
+            self.mode = Mode::Live;
+            self.cache.applied = None;
+        }
         self.r.enable_scene_cache_capture(true);
         self.cache.baking = true;
         self.cache.key = self.simulation_key();
@@ -115,9 +135,6 @@ impl Range {
         if self.cache.baking {
             self.captured = false;
             if !self.playing { return true; }
-            if self.cache.key != self.simulation_key() {
-                self.reset();self.status="SHOT CHANGED: SIMULATE AGAIN".into();return true;
-            }
             self.g.settle_casualty_tissue(false);
             if self.g.casualty_tissue_pending() { return true; }
             if self.cache.pending_frame.is_none() {
@@ -141,9 +158,9 @@ impl Range {
                             self.run.map_or(0,|r|r.total),self.cache.bytes as f64/1e6);
                     }
                     result => {
-                        self.cache.baking = false; self.cache.frames.clear();
+                        self.cache.baking = false; self.playing = false;
                         self.status = match result { Err(e)=>format!("CACHE FAILED: {e:#}"),
-                            _=>"CACHE STOPPED AT THE 4 GB MEMORY LIMIT; SHORTEN THE RUN".into() };
+                            _=>"CACHE FULL (4 GB): EXISTING FRAMES KEPT; RESET TO CLEAR".into() };
                         return true;
                     }
                 }
@@ -156,11 +173,6 @@ impl Range {
             return true;
         }
         if !self.cache.ready() { return false; }
-        if self.cache.key != self.simulation_key() {
-            self.reset();
-            self.status = "SHOT OR PHYSICS SETTINGS CHANGED: SIMULATE AGAIN".into();
-            return true;
-        }
         if self.cache.render.is_some() {
             self.render_cache_tick(); return true;
         }
@@ -344,6 +356,27 @@ impl Range {
         self.cached_seek(0);self.tick(1.0/30.0);
         anyhow::ensure!(self.captured,"rendered frame was not served from the image cache");
         println!("[cache-probe] PNG frame cache and offline MP4 completed; cached image playback skips rendering");
+        self.playing = false;
+        let kept = self.cache.frames.len();
+        self.shot.range_m += 1.0;
+        self.tick(1.0/30.0);
+        anyhow::ensure!(self.cache.frames.len() == kept && self.g.armor_tick == clock,
+            "editing shot settings discarded the cache or advanced physics");
+        let first = self.cache.frames[0].content_hash();
+        self.cache_simulation();
+        anyhow::ensure!(self.cache.frames.len() == kept && self.cache.baking,
+            "firing again discarded existing frames");
+        while self.cache.baking {
+            self.tick(1.0/30.0);
+            if self.g.casualty_tissue_pending() { std::thread::sleep(std::time::Duration::from_millis(2)); }
+            anyhow::ensure!(started.elapsed().as_secs()<120,"append cache probe timed out");
+        }
+        anyhow::ensure!(self.cache.frames.len() > kept && self.cache.frames[0].content_hash() == first,
+            "second shot did not append while preserving the first shot");
+        self.button("RESET");
+        anyhow::ensure!(self.cache.frames.is_empty() && !self.playing && self.run.is_none(),
+            "RESET did not clear and pause the shot");
+        println!("[cache-probe] shot edits retain frames; second shot appends; RESET alone clears and pauses");
         Ok(())
     }
 }

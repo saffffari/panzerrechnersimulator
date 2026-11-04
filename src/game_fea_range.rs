@@ -1106,7 +1106,6 @@ impl Range {
 
     /// F: the shot fired into the present state at once; its run starts on the timeline.
     fn fire_now(&mut self) {
-        self.clear_caches();
         self.apply_tuning();
         self.shown_frame = None;
         let total = self.total_frames(&self.scene);
@@ -3075,7 +3074,7 @@ impl Range {
                 (false, _) => "LOOP OFF",
             };
             let text = match label {
-                "FIRE" if self.cache.busy() => "CANCEL",
+                "FIRE" if self.cache.busy() => "CACHING",
                 "SIMULATE" if self.cache.busy() => "CANCEL",
                 "RENDER" if !self.cache.rendering() => "EXPORT VIDEO",
                 "RENDER" if self.cache.rendering() => "CANCEL",
@@ -3191,6 +3190,9 @@ impl Range {
         // The timeline: a 5 px white line along the bottom edge from the left to the frame the
         // simulation stands at; a clip in orange; on hover the playhead's tick and a readout.
         let base = self.timeline_y();
+        if !self.battle {
+            self.text(&self.cache.label(), self.view_x() + 0.008, base - 0.034, TEXT * 0.75, AMBER, crate::ui::Align::Left);
+        }
         let hovered = (cursor[1] - base).abs() < 0.018 || matches!(self.mode, Mode::Scrub(_));
         if let Some(run) = self.run {
             let n = run.total.max(1) as f32;
@@ -3348,7 +3350,7 @@ impl Range {
         }
         match label {
             "LIVE" => {
-                if !self.free_fire { self.reset(); }
+                if !self.free_fire && self.run.is_none() { self.free_fire = true; }
                 self.mode = Mode::Live;
                 self.free_fire = true;
                 self.playing = true;
