@@ -179,7 +179,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let cos_t = sqrt(max(1.0 - sin_t * sin_t, 0.0));
     let path_m = max(pc.params.w, 0.001) / max(cos_t, 0.25);
     // Soda-lime laminate absorbs red and blue a little more than green over its thickness.
-    let tint = exp(-vec3(3.4, 2.0, 3.8) * path_m);
+    let tint = exp(-vec3(0.080, 0.035, 0.020) * path_m);
     let clear_transmit = (1.0 - fresnel) * (tint.r + tint.g + tint.b) / 3.0;
 
     // Grime: specks and smudges that block and scatter, in proportion to the glass load
@@ -206,6 +206,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let film = 0.01 + 0.01 * rm_noise(in.local * 60.0, 157u);
         dirt = max(dirt, clamp(fleck * 0.06 + film, 0.0, 1.0));
     }
+    let vision_scale = select(1.0, 0.2, pc.extra.w > 0.5);
+    dirt *= vision_scale;
+    groove.coverage *= vision_scale;
     let transmit = clear_transmit * (1.0 - dirt);
 
     // Reflection: the lit frame where the reflected ray lands, the cached sky beyond. With ray

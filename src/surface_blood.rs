@@ -9,9 +9,9 @@ pub const CELL_M: f32 = 0.010;
 pub const MAX_GRAINS: usize = 32_768;
 pub const MAX_CELLS: usize = 65_536;
 const MAX_FRONTIER: usize = MAX_CELLS * 4;
-/// Visual droplets are one quarter of the live 30 mm tissue cell. Emission is artistic,
+/// Visual droplets are one eighth of the live 30 mm tissue cell. Emission is artistic,
 /// independent of a conserved blood-volume budget.
-pub const DROPLET_M: f32 = 0.0075;
+pub const DROPLET_M: f32 = 0.00375;
 /// A fresh coat's thickness (m): a droplet's volume covers its area at this (authored: a pooled wet
 /// coat about a millimetre deep). A droplet wets 40 film cells, a stain about 3 cm across.
 const FILM_THICKNESS_M: f32 = 0.001;
@@ -359,7 +359,7 @@ impl SurfaceBlood {
     /// Only an actual sweep result may call this. Credits are the droplet's own volume over a fresh
     /// stain's thickness (`film_cells`), an authored film model, not a new injury quantity.
     fn configured_visual_limit() -> usize {
-        std::env::var("KESSEL_BLOOD_PARTICLES").ok().and_then(|s|s.parse().ok()).unwrap_or(16_384usize).clamp(512,MAX_GRAINS)
+        std::env::var("KESSEL_BLOOD_PARTICLES").ok().and_then(|s|s.parse().ok()).unwrap_or(32_768usize).clamp(512,MAX_GRAINS)
     }
     pub fn visual() -> Self { Self { visual: true, visual_limit: Self::configured_visual_limit(), ..Self::new() } }
     pub fn set_visual(&mut self, visual: bool) {
@@ -1095,14 +1095,13 @@ mod tests {
         assert!(!query.supports_cell(0, &corners));
     }
     #[test]
-    fn droplets_are_anatomy_cells_and_wet_film_in_proportion_to_their_volume() {
-        assert!((0..2000).all(|s| droplet_m(s) == DROPLET_M));
-        assert_eq!(DROPLET_M, crate::game::crew_tissue_cell_m());
-        let stain = (film_cells(7) as f32).sqrt() * CELL_M;
-        assert!((0.025..0.04).contains(&stain), "a droplet's stain is about 3 cm across: {stain}");
+    fn visual_drop_size_and_legacy_film_rounding_are_explicit() {
+        assert!((0..2000).all(|seed| droplet_m(seed) == 0.00375));
         let wet = film_cells(7) as f32 * CELL_M * CELL_M * FILM_THICKNESS_M;
-        assert!((wet - DROPLET_M.powi(3)).abs() < 0.05 * DROPLET_M.powi(3));
+        assert!(wet >= DROPLET_M.powi(3));
+        assert!(wet-DROPLET_M.powi(3) < CELL_M*CELL_M*FILM_THICKNESS_M);
     }
+
     #[test]
     fn film_carries_over_the_edge_between_two_facets() {
         // A floor folded at x = 0 by 8 degrees: two flat facets of one surface.

@@ -65,5 +65,6 @@ fn snow_gear_unpack(w: u32) -> vec3<f32> {
 // The lift (m) of a face along its world normal. `snow_catch` (0..1): the share of the lying snow
 // the surface keeps by the vehicle surface model (rm_vsm_core.wgsl), 1 for every other mesh.
 fn rm_snow_lift(local: vec3<f32>, n: vec3<f32>, load: f32, gear: vec3<f32>, snow_catch: f32) -> f32 {
-    return SNOW_LIFT_M * snow_lift_lying(local, n, load) * snow_catch + CRUST_LIFT_M * snow_gear_crust(local, gear);
+    // Per-face normal displacement splits hard edges. Snow remains in material shading.
+    return 0.0;
 }

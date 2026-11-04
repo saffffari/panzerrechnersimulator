@@ -33328,7 +33328,7 @@ impl Game {
         let sprays = self.crew_corpse_render.borrow_mut().as_mut()
             .map(|c|c.take_tissue_blood_seeds()).unwrap_or_default();
         for (batch,(actor,frame,at,velocity,cells)) in sprays.into_iter().enumerate() {
-            for j in 0..cells.saturating_mul(16).min(2048) {
+            for j in 0..cells.saturating_mul(32).min(4096) {
                 let seed = actor.wrapping_add((batch as u32).wrapping_mul(7919)).wrapping_add(j as u32 * 31);
                 let random = Vec3::new(hash01(seed^0x33)*2.0-1.0,hash01(seed^0x97)*2.0-1.0,hash01(seed^0xAF)*2.0-1.0);
                 let axis = velocity.normalize_or_zero();

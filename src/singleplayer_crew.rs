@@ -634,7 +634,7 @@ impl Game {
                 }
             }
             r.set_model(slot, model);
-            let witness = post==crate::lan::LanRole::Commander && role == aboard && self.first_person.is_some()
+            let witness = viewer == Some(role) && post==crate::lan::LanRole::Commander && role == aboard && self.first_person.is_some()
                 &&body.casualty.peer_id==casualty_identity(SINGLEPLAYER_CREWMAN).peer_id;
             if witness {
                 self.first_person.as_ref().unwrap().draw_commander_witness(model,self.living_wounds.missing(body.casualty.peer_id),r);

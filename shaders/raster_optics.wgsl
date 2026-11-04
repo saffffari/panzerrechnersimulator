@@ -224,8 +224,15 @@ fn optic_radiance(in: Out, dx: vec3<f32>, dy: vec3<f32>, pupil: f32) -> vec3<f32
         let r = relay_trace(eye, in.local + dx * o.x + dy * o.y - eye, count);
         if (r.valid) { admitted += r.throughput * 0.25; }
     }
+    // Playground presentation: at the correct eye alignment fill the clear pane instead of
+    // showing the finite-stop housing as a thick inner black frame. Off-axis vignetting stays.
+    // This is display-only; source-side light transport still uses the physical stop chain.
+    let pane_center=(panel.stops[0].c0.xyz+panel.stops[0].c1.xyz+panel.stops[0].c2.xyz+panel.stops[0].c3.xyz)*0.25;
+    let chief=relay_trace(eye,pane_center-eye,count);
+    let alignment=abs(dot(normalize(pane_center-eye),panel.stops[0].normal.xyz));
+    if (chief.valid) {admitted=mix(admitted,chief.throughput,smoothstep(0.96,0.995,alignment));}
     let image = relay_sample(in.source).rgb;
-    if (!centre.valid && all(admitted <= vec3(0.0))) { return vec3(0.0); }
+    if (all(admitted <= vec3(0.0))) { return vec3(0.0); }
     // Grooves on the eye-side face where the incident ray crosses it take their share of the
     // image out and spread the exterior light arriving across them (glass_scratches.wgsl).
     let face = panel.stops[0].normal.xyz;
@@ -250,8 +257,8 @@ fn optic_radiance(in: Out, dx: vec3<f32>, dy: vec3<f32>, pupil: f32) -> vec3<f32
             haze += sample.rgb * sample.a * r.throughput / f32(RELAY_HAZE_TAPS);
         }
     }
-    let clear = 1.0 - groove.coverage;
-    return (image * admitted * clear + haze * groove.coverage * SCRATCH_FORWARD) * pupil;
+    let clear = 1.0 - groove.coverage * 0.2;
+    return (image * admitted * clear + haze * groove.coverage * 0.2 * SCRATCH_FORWARD) * pupil;
 }
 
 // Exterior radiance along a capture-projected direction; w = 1 inside the captured field.

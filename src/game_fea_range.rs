@@ -286,7 +286,7 @@ enum Tape {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Knob {
     PlacedShot, Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot, CacheSim, RenderShot,
-    Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
+    Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, TimeStep, Loop,
     MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame, SmokeDensity, SmokeDelay, EffectsAuthored, Concussion, FlashAfterimage,
     Focal, SavedCam, AddCam, DeleteCam, ExportCams,
     SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset,
@@ -331,6 +331,7 @@ fn dial_range(knob: Knob) -> (f32, f32, bool) {
         SlowSpan => (0.0, 1.0, false),
         RunLength => (0.1, 20.0, true),
         TimeSpeed => (0.01, 4.0, true),
+        TimeStep => (SLOW_DT, TICK, true),
         Focal => (12.0, 400.0, true),
         SectionYaw => (-180.0, 180.0, false),
         SectionPitch => (-90.0, 90.0, false),
@@ -366,7 +367,7 @@ fn group_rows(group: usize) -> Vec<Knob> {
     use Knob::*;
     match group {
         0 => vec![PlacedShot, Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot],
-        1 => vec![TimeSpeed, Racks, Lamps, LampPower, Engine],
+        1 => vec![TimeSpeed, TimeStep, Racks, Lamps, LampPower, Engine],
         2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
         4 => vec![Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure],
@@ -393,17 +394,17 @@ const DITHERS: [&str; 4] = ["SCREEN BAYER4", "BLUE NOISE", "SPHERE BAYER8", "SCR
 // viewport the whole window (the owner, 2026-11-03: "disclosable bottom bar"). Its upper line the
 // status, the time and HIDE; its lower line the mode tabs, the buttons and the groups' headers,
 // each a disclosure (closed > / open v) whose rows open upward above it, several at once.
-const BAR_H: f32 = 0.056;
+const BAR_H: f32 = 0.116;
 const BAR_TOP: f32 = 1.0 - 0.008 - BAR_H;
 /// The bar's lower line (mode tabs, buttons, headers): its top and height.
 const BAR_ROW_Y: f32 = BAR_TOP + 0.028;
 const BAR_ROW_H: f32 = 0.024;
 /// The buttons' left edge, their width and the last (wide) one's.
-const BUTTONS_X: f32 = 0.150;
+const BUTTONS_X: f32 = 0.265;
 const BUTTON_W: f32 = 0.040;
 const BUTTON_WIDE: f32 = 0.066;
 /// The group headers' left edge.
-const HEADERS_X: f32 = BUTTONS_X + 6.0 * (BUTTON_W + 0.003) + BUTTON_WIDE + 0.012;
+const HEADERS_X: f32 = 0.765;
 /// The timeline line's thickness (px) and the clip's colour (Blender's orange, linear).
 const TL_PX: f32 = 5.0;
 const AMBER: [f32; 4] = [0.807, 0.205, 0.006, 1.0];
@@ -420,12 +421,11 @@ const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
 /// The bar's left margin.
 const LEFT_X: f32 = 0.007;
-const BUTTONS: [(&str, usize, usize); 5] = [("RESET", 0, 0), ("FIRE", 1, 0), ("PLAY", 2, 0),
-    ("REC", 0, 1), ("STILL", 1, 1)];
+const BUTTONS: [(&str, usize, usize); 4] = [("RESET", 0, 0), ("FIRE", 1, 0), ("PLAY", 0, 1), ("REC", 1, 1)];
 /// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
 /// the saved layouts (`BATTLE_LAYOUTS`).
-const BATTLE_BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("WATCH", 1, 0), ("PLAY", 2, 0), ("SAVE", 0, 1), ("REC", 1, 1),
-    ("STILL", 2, 1), ("LAYOUTS", 0, 2)];
+const BATTLE_BUTTONS: [(&str, usize, usize); 6] = [("RESET", 0, 0), ("WATCH", 1, 0), ("PLAY", 2, 0), ("SAVE", 0, 1), ("REC", 1, 1),
+    ("LAYOUTS", 0, 2)];
 /// The editor's modes, as tabs at the panel's top left. WORLD (placing objects from the asset
 /// browser, the old `edit` worldbuilder's replacement) is promised and not built: greyed out.
 const MODES: [&str; 3] = ["RANGE", "BATTLE", "WORLD"];
@@ -454,9 +454,7 @@ fn header_name(name: &str) -> &str {
 
 /// A button's rectangle (x, y, w, h) on the bar's lower line: in order, the last one wide.
 fn button_rect(col: usize, row: usize) -> [f32; 4] {
-    let index = row * 3 + col;
-    let x = BUTTONS_X + index as f32 * (BUTTON_W + 0.003);
-    [x, BAR_ROW_Y, if index == 6 { BUTTON_WIDE } else { BUTTON_W }, BAR_ROW_H]
+    [BUTTONS_X + col as f32 * (BUTTON_W + 0.003), BAR_ROW_Y + row as f32 * 0.027, BUTTON_W, BAR_ROW_H]
 }
 
 /// The panel's hide button (the bar's upper line, right), or, hidden, its show button (the
@@ -669,6 +667,7 @@ struct Range {
     /// seconds of game time per second past the run), the clock's owed fraction carried.
     playing: bool,
     time_speed: f32,
+    time_step: f32,
     play_clock: f32,
     /// The clip marked on the timeline (run frames, inclusive) and whether play loops over it
     /// (or over the whole run without one).
@@ -791,14 +790,14 @@ impl Range {
             device, queue, r, g,
             shot: ShotSetup { shell: 3, range_m: 400.0, target: Target::Man(CrewRole::Loader), from_az: -90.0, from_el: 0.0,
                 seed: 0x5EC7_A000 },
-            scene: SceneSetup { racks_loaded: false, cabin_lamps: true, fresh_each_run: true, slow_s: 0.25, run_s: 4.0 },
+            scene: SceneSetup { racks_loaded: true, cabin_lamps: true, fresh_each_run: true, slow_s: 0.25, run_s: 4.0 },
             section: Section { on: false, yaw: 0.0, pitch: 90.0, offset: 0.5 },
             sky,
             tuning: crew_tissue::TissueTuning::AUTHORED,
             mode: Mode::Live,
             tape: Vec::new(),
             rewind: rewind::Rewind::default(),
-            tape_base: (0, SceneSetup { racks_loaded: false, cabin_lamps: true, fresh_each_run: true, slow_s: 0.25, run_s: 4.0 },
+            tape_base: (0, SceneSetup { racks_loaded: true, cabin_lamps: true, fresh_each_run: true, slow_s: 0.25, run_s: 4.0 },
                 TIGER_AT, TIGER_HEADING),
             run_tape: Vec::new(),
             engine: false,
@@ -813,6 +812,7 @@ impl Range {
             shot_t: 0.0,
             playing: false,
             time_speed: 1.0,
+            time_step: TICK,
             play_clock: 0.0,
             clip: None,
             looping: true,
@@ -1109,6 +1109,15 @@ impl Range {
         self.clear_caches();
         self.mode = Mode::Live;
         self.fresh();
+        // Reset includes pressure-opened escape lids, not only the driver/loader pair.
+        // Snap the animation too: reset is paused, so it cannot ease closed on later ticks.
+        self.g.roof_hatches.open = [false; 4];
+        self.g.roof_hatches.phase = [0.0; 4];
+        self.g.hatch_open = false;
+        self.g.hatch_t = 0.0;
+        self.g.commander_outside = false;
+        self.g.debug_set_driver_visor(false, true);
+        self.g.drive_roof_hatches(&mut self.r);
         self.run = None;
         self.frame_at = None;
         self.past_run = false;
@@ -1524,6 +1533,7 @@ impl Range {
                 if review_smoke_delay() != super::weapon_vfx::IMPACT_SMOKE_DELAY_S { " * (REVIEW)" } else { "" })),
             Knob::EffectsAuthored => ("RESTORE AUTHORED".into(), "SMOKE AS AUTHORED".into()),
             Knob::MaterialsGame => ("GAME'S OWN".into(), if self.wear.is_none() && self.snow.is_none() { "IN FORCE".into() } else { "CLICK".into() }),
+            Knob::TimeStep => ("TIME STEP".into(),format!("{:.2} MS",self.time_step*1000.0)),
             Knob::TimeSpeed => ("TIME SPEED".into(), format!("X{:.2}{}", self.time_speed,
                 if self.time_speed < 1.0 { " (SLOWER)" } else if self.time_speed > 1.0 { " (FASTER)" } else { "" })),
             Knob::Loop => ("LOOP".into(), if self.looping { "ON" } else { "OFF" }.into()),
@@ -1798,6 +1808,7 @@ impl Range {
             Knob::SlowSpan => self.scene.slow_s,
             Knob::RunLength => self.scene.run_s,
             Knob::TimeSpeed => self.time_speed,
+            Knob::TimeStep => self.time_step,
             Knob::Wear(k) => self.r.wear[k],
             Knob::SmokeDensity => review_smoke_density(),
             Knob::SmokeDelay => review_smoke_delay(),
@@ -1845,6 +1856,7 @@ impl Range {
             Knob::LampPower => set_review_lamp_gain(if v < 1.01 { 1.0 } else { v }),
             Knob::SlowSpan => self.scene.slow_s = v,
             Knob::RunLength => self.scene.run_s = v,
+            Knob::TimeStep => self.time_step = v.clamp(SLOW_DT,TICK),
             Knob::TimeSpeed => self.time_speed = if (v - 1.0).abs() < 0.03 { 1.0 } else { v },
             Knob::Wear(k) => {
                 let mut w = self.wear.unwrap_or(self.r.wear);
@@ -2013,13 +2025,13 @@ impl Range {
                 let dt = if self.recorder.is_some() { TICK * REAL_TICKS_PER_FRAME as f32 } else { dt };
                 self.play_clock += dt * self.time_speed;
                 let mut steps = 0;
-                while self.play_clock >= TICK && steps < if self.recorder.is_some() { 64 } else { 4 } {
-                    self.play_clock -= TICK;
-                    self.step(TICK);
-                    self.shot_t += TICK;
+                while self.play_clock >= self.time_step && steps < if self.recorder.is_some() { 64 } else { 32 } {
+                    self.play_clock -= self.time_step;
+                    self.step(self.time_step);
+                    self.shot_t += self.time_step;
                     steps += 1;
                 }
-                self.play_clock = self.play_clock.min(TICK);
+                self.play_clock = self.play_clock.min(self.time_step);
                 self.past_run = self.run.is_some();
             }
             self.idle_s = 0.0;
@@ -2562,7 +2574,7 @@ impl Range {
                 "white_balance_strength": d.ambient_white_balance_strength, "tuned": self.r.display_tuning.is_some(), "fog": self.fog,
                 "eye_fx": {"concussion": self.eye_fx.concussion, "flash": self.eye_fx.flash}},
             "effects": {"smoke_density": review_smoke_density(), "smoke_delay": review_smoke_delay()},
-            "lamp_gain": review_lamp_gain(), "time_speed": self.time_speed, "looping": self.looping,
+            "lamp_gain": review_lamp_gain(), "time_speed": self.time_speed, "time_step":self.time_step, "looping": self.looping,
             "engine": self.engine, "accumulate_moving": self.accumulate_moving, "wear": self.wear, "snow": self.snow,
             "camera": {"eye": self.eye.to_array(), "yaw": self.yaw, "pitch": self.pitch, "focal_mm": self.focal_mm, "speed": self.speed},
             "tiger": {"at": self.tiger_at.to_array(), "heading": self.tiger_heading},
@@ -2669,6 +2681,7 @@ impl Range {
         }
         self.fog = f(&l["fog"]);
         if let Some(x) = f(&v["lamp_gain"]) { set_review_lamp_gain(x.max(1.0)); }
+        if let Some(x) = f(&v["time_step"]) { self.time_step=x.clamp(SLOW_DT,TICK); }
         if let Some(x) = f(&v["time_speed"]) { self.time_speed = x; }
         if let Some(x) = v["engine"].as_bool() { self.engine = x; }
         if let Some(x) = v["accumulate_moving"].as_bool() { self.accumulate_moving = x; }
@@ -2778,8 +2791,8 @@ impl Range {
 
     /// The axis label under `c`, if any (0 X, 1 Y, 2 Z).
     fn axis_hit(&self, c: [f32; 2]) -> Option<usize> {
-        let aspect = self.win[0] / self.win[1].max(1.0);
-        self.axis_labels.iter().position(|p| ((c[0] - p[0]) * aspect).hypot(c[1] - p[1]) < 0.018)
+        let _ = c;
+        None
     }
 
     /// Look along the hull's axis from its positive side at the tank (again: from the other side),
@@ -2805,29 +2818,7 @@ impl Range {
     /// left): each man at his seat, white alive, amber wounded, dim amber out cold, red with a
     /// cross dead.
     fn draw_crew_plan(&mut self, at: [f32; 2], height: f32) {
-        let aspect = self.win[0] / self.win[1].max(1.0);
-        let w = height * 0.55 / aspect;
-        let px = 1.0 / self.win[1].max(1.0);
-        let outline = [0.35, 0.35, 0.35, 1.0];
-        let frame = |r: &mut Renderer, x: f32, y: f32, fw: f32, fh: f32| {
-            r.fill_rect(x, y, fw, px, outline);
-            r.fill_rect(x, y + fh, fw, px, outline);
-            r.fill_rect(x, y, px / aspect, fh, outline);
-            r.fill_rect(x + fw, y, px / aspect, fh, outline);
-        };
-        frame(&mut self.r, at[0], at[1], w, height);
-        frame(&mut self.r, at[0] + w * 0.18, at[1] + height * 0.30, w * 0.64, height * 0.44);
-        let seats = [(CrewRole::Driver, 0.30, 0.15, "D"), (CrewRole::Radioman, 0.70, 0.15, "R"), (CrewRole::Gunner, 0.36, 0.40, "G"),
-            (CrewRole::Commander, 0.34, 0.63, "C"), (CrewRole::Loader, 0.67, 0.52, "L")];
-        for (role, u, v, letter) in seats {
-            let man = self.g.crew_solo.man(role);
-            let colour = if man.dead { RED } else if man.unconscious_s > 0.0 { [0.45, 0.2, 0.02, 1.0] }
-                else if !man.wounds.is_empty() { AMBER } else { INK };
-            let c = [at[0] + w * u, at[1] + height * v];
-            let d = height * 0.16;
-            self.r.fill_rect(c[0] - d * 0.5 / aspect, c[1] - d * 0.5, d / aspect, d, colour);
-            self.text_bold(if man.dead { "X" } else { letter }, c[0], c[1], TEXT * 0.6, BLACK, crate::ui::Align::Center);
-        }
+        self.draw_damage_hud(at,height);
     }
 
     /// The hull's axes as the camera sees them (X red, Y green, Z blue), in the viewport's corner;
@@ -2945,6 +2936,13 @@ impl Range {
                 rows.push((k, x, top + (i as f32 + 0.5) * ROW_H));
             }
         }
+        if !self.battle { for (i,k) in [Knob::PlacedShot,Knob::Shell,Knob::TimeStep].into_iter().enumerate() {
+            rows.push((k,0.365,BAR_ROW_Y+0.012+i as f32*0.027));
+        }}
+        if !self.battle {for (i,k) in [Knob::SavedCam,Knob::SavedShot,Knob::AddShot].into_iter().enumerate(){
+            rows.push((k,0.585,BAR_ROW_Y+0.012+i as f32*0.027));
+        }}
+        if !self.battle {rows.push((Knob::TimeSpeed,0.195,BAR_ROW_Y+0.012+2.0*0.027));}
         (rows, Vec::new())
     }
 
@@ -2963,14 +2961,7 @@ impl Range {
 
     /// The groups' headers on the bar (x, y, w, h), one a group.
     fn header_rects(&self) -> Vec<[f32; 4]> {
-        let size = TEXT * 0.68;
-        let mut x = HEADERS_X;
-        GROUPS.iter().map(|name| {
-            let w = (header_name(name).len() + 2) as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.006;
-            let rect = [x, BAR_ROW_Y, w, BAR_ROW_H];
-            x += w + 0.003;
-            rect
-        }).collect()
+        GROUPS.iter().enumerate().map(|(i,_)| [HEADERS_X + (i/3) as f32*0.076, BAR_ROW_Y+(i%3) as f32*0.027,0.073,BAR_ROW_H]).collect()
     }
 
     /// A small dial at (`x`, `y`) (its centre), turned to `t` of its range.
@@ -3020,7 +3011,9 @@ impl Range {
             self.draw_gizmos();
         }
         self.r.fill_rect(0.0, BAR_TOP, 1.0, 1.0 - BAR_TOP, PANEL_FILL);
-        self.draw_axes_gizmo();
+        for (i,line) in ["PANZER","RECHNER","SYSTEM"].into_iter().enumerate(){
+            self.text_bold(line,0.012,BAR_TOP+0.023+i as f32*0.036,0.030,INK,crate::ui::Align::Left);
+        }
         // The left block: title and time, the buttons, the status.
         let mode = match (self.mode, self.run) {
             (Mode::Scrub(i), _) => format!("TO FRAME {}", i + 1),
@@ -3045,8 +3038,8 @@ impl Range {
         } else { mode };
         let [hx, _, _, _] = hide_rect(false);
         self.text(&format!("{mode}  T {:.2} S   {:.0} FPS  SIM {:.0} MS  DRAW {:.0} MS   H: HELP", t, 1.0 / self.perf[0].max(1.0e-4),
-            self.perf[1], self.perf[2]), hx - 0.008, BAR_TOP + 0.013, TEXT * 0.66, DIM, crate::ui::Align::Right);
-        self.draw_crew_plan([LEFT_X, BAR_TOP - 0.088], 0.075);
+            self.perf[1], self.perf[2]), hx - 0.008, BAR_TOP - 0.010, TEXT * 0.66, DIM, crate::ui::Align::Right);
+        self.draw_crew_plan([LEFT_X, BAR_TOP - 0.230], 0.215);
         for (label, col, row) in self.buttons() {
             let [x, y, w, h] = button_rect(col, row);
             let lit = if self.battle {
@@ -3070,7 +3063,7 @@ impl Range {
                     "STILL" => "SAVE A CONVERGED STILL OF THE CURRENT VIEW",
                     _ => "REPEAT THE SHOT OR SELECTED CLIP",
                 };
-                self.text(hint, LEFT_X, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
+                self.text(hint, 0.205, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
             }
             let rec_label = self.recorder.as_ref().map(|r| format!("REC {:.0} S", r.frames as f32 / 30.0));
             let loop_label = match (self.looping, self.clip) {
@@ -3090,7 +3083,7 @@ impl Range {
                 "REC" if rec_label.is_some() => rec_label.as_deref().unwrap_or("REC"),
                 other => other,
             };
-            self.text_bold(text, x + w * 0.5, y + h * 0.5, TEXT * 0.68, if lit { BLACK } else { INK }, crate::ui::Align::Center);
+            self.draw_action_icon(label, text, [x,y,w,h], if lit { BLACK } else { INK });
         }
         let mut notes: Vec<(String, [f32; 4])> = vec![(self.status.to_uppercase(), INK)];
         if self.battle && self.pilot.is_none() && !self.player_control {
@@ -3109,7 +3102,7 @@ impl Range {
         let line: Vec<String> = notes.iter().map(|(t, _)| t.clone()).collect();
         let chars = ((hx - 0.36 - LEFT_X) * self.win[0] / (0.45 * TEXT * 0.66 * self.win[1])).max(10.0) as usize;
         let status: String = line.join("   ").chars().take(chars).collect();
-        self.text(&status, LEFT_X, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
+        self.text(&status, 0.205, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
         // The groups' headers: a disclosure each (closed >, open v), lit while open.
         for (g, [x, y, w, h]) in self.header_rects().into_iter().enumerate() {
             let open = self.open[g];
@@ -3136,6 +3129,8 @@ impl Range {
                 self.r.fill_rect(cx - 0.003, y - ROW_H * 0.5, right - cx + 0.006, ROW_H, [0.05, 0.05, 0.05, 1.0]);
             }
             let (label, value) = self.knob_label(knob);
+            let max_chars=((right-value_x-0.028)*aspect/(TEXT*0.8*0.55)).max(4.0) as usize;
+            let value=if value.chars().count()>max_chars {format!("{}…",value.chars().take(max_chars.saturating_sub(1)).collect::<String>())}else{value};
             self.text(&label, cx + 0.004, y, TEXT * 0.8, DIM, crate::ui::Align::Left);
             match kind(knob) {
                 Kind::Info => self.text(&value, value_x, y, TEXT * 0.72, DIM, crate::ui::Align::Left),
@@ -3199,7 +3194,7 @@ impl Range {
             let state = if self.playing { "LIVE" } else { "PAUSED" };
             let recording = if self.recorder.is_some() { "RECORDING VIDEO" } else { "VIDEO NOT RECORDING" };
             self.text(&format!("{state} | F: FIRE | SPACE: PAUSE / RESUME | BACKSPACE: RESET | {recording}"),
-                self.view_x() + 0.008, base - 0.034, TEXT * 0.75, AMBER, crate::ui::Align::Left);
+                if self.hide_ui {0.008}else{0.205}, if self.hide_ui {base-0.034}else{BAR_TOP-0.027}, TEXT * 0.75, AMBER, crate::ui::Align::Left);
         }
         let hovered = (cursor[1] - base).abs() < 0.018 || matches!(self.mode, Mode::Scrub(_));
         if let Some(run) = self.run {
@@ -3314,14 +3309,7 @@ impl Range {
 
     /// The mode tabs' rectangles (x, y, w, h), as `MODES`.
     fn mode_tab_rects(&self) -> Vec<[f32; 4]> {
-        let size = TEXT * 0.72;
-        let mut x = LEFT_X;
-        MODES.iter().map(|name| {
-            let w = name.len() as f32 * size * self.win[1] / self.win[0].max(1.0) + 0.010;
-            let rect = [x, BAR_ROW_Y, w, BAR_ROW_H];
-            x += w + 0.003;
-            rect
-        }).collect()
+        MODES.iter().take(2).enumerate().map(|(i,_)| [0.205,BAR_ROW_Y+i as f32*0.027,0.054,BAR_ROW_H]).collect()
     }
 
     /// A mode tab clicked: RANGE, BATTLE, or WORLD (not built yet).
@@ -3935,7 +3923,7 @@ impl ApplicationHandler for App {
                     let (dx, dy) = (c[0] - last[0], c[1] - last[1]);
                     let rg = &mut st.range;
                     match drag {
-                        Drag::AimSphere(_) => rg.drag_aim_sphere(dx,dy),
+                        Drag::AimSphere(_) => {rg.cursor=c;rg.drag_aim_sphere(dx,dy);},
                         Drag::Turn => {
                             rg.shot.from_az = ((rg.shot.from_az - dx * 180.0 + 180.0).rem_euclid(360.0)) - 180.0;
                             rg.shot.from_el = (rg.shot.from_el - dy * 90.0).clamp(-60.0, 80.0);
@@ -4258,6 +4246,12 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         anyhow::ensure!(exported["settings"]["shots"].as_array().is_some_and(|v|v.len()==2),"preset export lost authored shots");
         let n=rg.shot_presets.len();rg.save_named_preset("qa-popup-preset".into(),Some(n-1));
         anyhow::ensure!(rg.shot_presets.len()==n,"overwrite created duplicate preset");
+        rg.popup=None;rg.open=[false;GROUPS.len()];rg.pose_view();
+        crate::converge_headless_screenshot(&mut rg.r,&rg.device,&rg.queue,8)?;
+        rg.draw_ui([0.1,0.1]);
+        let bar=crate::capture_target(&format!("three-row-bar-{}.png",capture_stamp()));
+        rg.r.render_to_png_hud(&rg.device,&rg.queue,&bar,1920,1080)?;
+        println!("[menus-probe] bar capture {bar}");
         rg.open_menu(Knob::Shell,[0.12,0.75]);rg.pose_view();
         crate::converge_headless_screenshot(&mut rg.r,&rg.device,&rg.queue,8)?;
         rg.draw_ui([0.1,0.1]);rg.draw_popup([0.1,0.1]);
@@ -4281,6 +4275,10 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         rg.shot.from_el = 0.0;
         rg.shot.target = Target::Point(Vec3::new(-1.18158, 2.52072, 0.05853));
         for _ in 0..16 { rg.pose_view(); let _ = rg.r.render_to_rgba(&rg.device, &rg.queue, rg.r.iw, rg.r.ih)?; }
+        rg.g.roof_hatches.open=[true;4]; rg.g.roof_hatches.phase=[1.0;4];
+        rg.g.hatch_open=true;rg.g.hatch_t=1.0;
+        rg.reset();
+        anyhow::ensure!(rg.g.roof_hatches.open==[false;4] && rg.g.roof_hatches.phase==[0.0;4] && !rg.g.hatch_open && rg.g.hatch_t==0.0,"reset left hatches open");
         rg.button("FIRE");
         anyhow::ensure!(rg.playing && rg.free_fire && rg.run.is_none(), "FIRE did not start live simulation");
         let started = std::time::Instant::now();
@@ -4713,3 +4711,6 @@ mod tests {
         assert!(crush.contains("let concussion = clamp(cr.concussion, 0.0, 1.0);"));
     }
 }
+
+#[path = "game_fea_range/hud.rs"]
+mod hud;
