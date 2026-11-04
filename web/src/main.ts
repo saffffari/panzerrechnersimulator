@@ -2,6 +2,7 @@ import * as T from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import "./style.css";
+import { PlayView } from "./play-view";
 import { Simulation } from "./simulation";
 import {
   rounds,
@@ -238,6 +239,43 @@ function syncAim() {
   ]);
 }
 syncAim();
+const play = new PlayView(canvas);
+const modeSelect = document.querySelector<HTMLSelectElement>("#mode")!;
+const enemySelect = document.querySelector<HTMLSelectElement>("#enemy-count")!;
+for (let i = 1; i <= 10; i++) enemySelect.add(new Option(String(i), String(i)));
+enemySelect.value = "5";
+let mode: "sandbox" | "play" = "sandbox";
+const heldKeys = new Set<string>();
+function setMode() {
+  mode = modeSelect.value as typeof mode;
+  const active = mode === "play";
+  controls.enabled = !active;
+  play.setActive(active);
+  heldKeys.clear();
+  paused = false;
+  accumulator = 0;
+  drag = undefined;
+  document.querySelector<HTMLElement>("#shot-control")!.hidden = active;
+  document.querySelector<HTMLElement>("#step-control")!.hidden = active;
+  document.querySelector<HTMLElement>("#enemy-control")!.hidden = !active;
+  if (active) play.reset(Number(enemySelect.value));
+  fireButton.disabled = active ? false : !shotSupported;
+  document.querySelector("#hint")!.textContent = active
+    ? "W/S: drive · A/D: steer · Click: aim · F: fire · Right drag: orbit · Backspace: restart"
+    : "Click tank: impact · Hold + drag: aim sphere · Right drag: orbit · Wheel: zoom";
+  status.textContent = active ? play.hud() : "Sandbox · fixed native tuning";
+  modeSelect.blur();
+}
+modeSelect.onchange = setMode;
+enemySelect.onchange = () => {
+  if (mode === "play") {
+    play.reset(Number(enemySelect.value));
+    heldKeys.clear();
+    enemySelect.blur();
+  }
+};
+addEventListener("keyup", (e) => heldKeys.delete(e.code));
+addEventListener("blur", () => heldKeys.clear());
 const caster = new T.Raycaster(),
   pointer = new T.Vector2();
 function pick(e: PointerEvent) {
@@ -253,6 +291,10 @@ let drag: { x: number; y: number; time: number; aim: boolean } | undefined;
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
+  if (mode === "play") {
+    play.pick(e.clientX, e.clientY, canvas);
+    return;
+  }
   const hit = pick(e);
   if (hit && !caster.intersectObject(handle).length) {
     impact.copy(hit.point);
@@ -373,6 +415,11 @@ shotSelect.onchange = () => {
   }
 };
 function fire() {
+  if (mode === "play") {
+    play.fire(rounds[roundIndex]);
+    status.textContent = play.hud();
+    return;
+  }
   if (!shotSupported) return;
   // Keep the authored marker exact; resolve entry separately for this coarse hull.
   if (geometryDirty) syncCells();
@@ -396,11 +443,32 @@ document.querySelector<HTMLButtonElement>("#fire")!.onclick = fire;
 addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).matches("input,select,textarea") || e.repeat)
     return;
+  if (
+    [
+      "KeyW",
+      "KeyS",
+      "KeyA",
+      "KeyD",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+    ].includes(e.code)
+  ) {
+    heldKeys.add(e.code);
+    if (mode === "play") e.preventDefault();
+  }
   if (e.code === "KeyF") fire();
   if (e.code === "Backspace") {
     e.preventDefault();
+    if (mode === "play") {
+      play.reset(Number(enemySelect.value));
+      status.textContent = play.hud();
+      return;
+    }
     sim.reset();
     geometryDirty = true;
+    status.textContent = "Tank restored · F fires";
   }
   if (e.code === "Space") {
     e.preventDefault();
@@ -409,6 +477,7 @@ addEventListener("keydown", (e) => {
   }
 });
 addEventListener("resize", () => {
+  play.resize();
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
@@ -433,10 +502,19 @@ function frame(now: number) {
   if (frames.length > 600) frames.shift();
   if (!paused) {
     accumulator += elapsed;
-    const dt = Number(stepSelect.value);
+    const dt = mode === "play" ? 1 / 60 : Number(stepSelect.value);
     let work = 0;
     while (accumulator >= dt && work < 8) {
-      sim.step(dt);
+      if (mode === "sandbox") sim.step(dt);
+      else
+        play.battle.step(dt, {
+          forward:
+            Number(heldKeys.has("KeyW") || heldKeys.has("ArrowUp")) -
+            Number(heldKeys.has("KeyS") || heldKeys.has("ArrowDown")),
+          turn:
+            Number(heldKeys.has("KeyA") || heldKeys.has("ArrowLeft")) -
+            Number(heldKeys.has("KeyD") || heldKeys.has("ArrowRight")),
+        });
       accumulator -= dt;
       work++;
     }
@@ -446,6 +524,17 @@ function frame(now: number) {
     }
   }
   if (geometryDirty) syncCells();
+  if (mode === "play") {
+    play.sync();
+    renderer.render(play.scene, play.camera);
+    if (frames.length % 20 === 0) {
+      status.textContent = play.hud();
+      document.querySelector("#metrics")!.textContent =
+        `${(1000 / (frames.reduce((a, b) => a + b, 0) / frames.length)).toFixed(0)} FPS · ${renderer.info.render.calls} draws · ${play.battle.squad.enemies.length}/10 enemies`;
+    }
+    requestAnimationFrame(frame);
+    return;
+  }
   controls.update();
   let solidCount = 0,
     smokeCount = 0;
@@ -486,6 +575,15 @@ function frame(now: number) {
 Object.assign(window, {
   panzerQA: {
     snapshot: () => ({
+      mode,
+      roundIndex,
+      battle: {
+        player: { ...play.battle.player },
+        memory: structuredClone(play.battle.squad.memory),
+        enemies: play.battle.squad.enemies.map((e) => ({ ...e })),
+        time: play.battle.time,
+        shots: play.battle.shots,
+      },
       shots: sim.shots,
       cells: voxels.count,
       removed: sim.removed,

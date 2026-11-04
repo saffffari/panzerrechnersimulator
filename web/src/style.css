@@ -134,3 +134,29 @@ p {
     bottom: 10px;
   }
 }
+
+[hidden] {
+  display: none !important;
+}
+.mode-label {
+  position: absolute;
+  right: 18px;
+  top: 10px;
+}
+.mode-label select {
+  font-size: 11px;
+  padding: 5px;
+  width: 100px;
+}
+.brand {
+  padding-right: 115px;
+}
+.brand span {
+  display: block;
+  margin: 5px 0 0;
+  font-size: 8px;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

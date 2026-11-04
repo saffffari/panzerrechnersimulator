@@ -9,11 +9,17 @@
     <canvas id="view" aria-label="Interactive tank damage playground"></canvas>
     <main>
       <div class="brand">PANZER <span>LIVE RANGE / WEB</span></div>
+      <label class="mode-label"
+        >MODE<select id="mode" aria-label="Mode">
+          <option value="sandbox">Sandbox</option>
+          <option value="play">Play</option>
+        </select></label
+      >
       <div class="controls">
-        <label
+        <label id="shot-control"
           >SHOT<select id="shot" aria-label="Shot selection"></select></label
         ><button id="fire">FIRE <kbd>F</kbd></button
-        ><label
+        ><label id="step-control"
           >TIME STEP<select id="step" aria-label="Time step size">
             <option value="0.004166667">1/240 s</option>
             <option value="0.008333333">1/120 s</option>
@@ -21,6 +27,9 @@
             <option value="0.033333333">1/30 s</option>
           </select></label
         >
+        <label id="enemy-control" hidden
+          >T-34s<select id="enemy-count" aria-label="Enemy count"></select
+        ></label>
       </div>
       <p id="status" role="status">Loading fixed native preset…</p>
     </main>

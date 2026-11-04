@@ -1,0 +1,34 @@
+{
+  "date_local": "2026-11-03",
+  "commands": [
+    "npm run build --prefix web",
+    "npm test --prefix web"
+  ],
+  "tests_passed": 15,
+  "tests_failed": 0,
+  "full_battle": {
+    "enemies": 10,
+    "simulated_seconds": 120,
+    "steps": 7200,
+    "cpu_ms": 83.3,
+    "squad_decisions": 554,
+    "peak_events": 9,
+    "event_cap": 32
+  },
+  "squad_only": {
+    "enemies": 10,
+    "simulated_seconds": 200,
+    "cpu_ms": 22.8,
+    "decisions": 858
+  },
+  "road_json_bytes": 4686,
+  "build_js_bytes": 546470,
+  "build_js_gzip_bytes": 142290,
+  "native_export_source_at_build": "baseline",
+  "gpu_qa_state": "paused at parent request; own QA browsers closed; dev server only",
+  "notes": "CPU figures from actual test output on HAL; accelerated simulation, not frame time or laptop benchmark.",
+  "retained_dev_server": {
+    "rss_kib": 116992,
+    "cpu_percent_observed": 0.1
+  }
+}
