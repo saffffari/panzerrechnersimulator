@@ -412,9 +412,8 @@ const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
 /// The bar's left margin.
 const LEFT_X: f32 = 0.007;
-const BUTTONS: [(&str, usize, usize); 9] = [("RESET", 0, 0), ("FIRE", 1, 0), ("PLAY", 2, 0),
-    ("LIVE", 0, 1), ("SIMULATE", 1, 1), ("RENDER", 2, 1),
-    ("REC", 0, 2), ("STILL", 1, 2), ("LOOP", 2, 2)];
+const BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("FIRE", 1, 0), ("PLAY", 2, 0),
+    ("RENDER", 0, 1), ("REC", 1, 1), ("STILL", 2, 1), ("LOOP", 0, 2)];
 /// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
 /// the saved layouts (`BATTLE_LAYOUTS`).
 const BATTLE_BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("WATCH", 1, 0), ("PLAY", 2, 0), ("SAVE", 0, 1), ("REC", 1, 1),
@@ -1463,7 +1462,7 @@ impl Range {
         let a = crew_tissue::TissueTuning::AUTHORED;
         let mark = |changed: bool| if changed { " *" } else { "" };
         match knob {
-            Knob::CacheSim => ("CACHE SIM".into(), "BAKE / CANCEL".into()),
+            Knob::CacheSim => ("FIRE SHOT".into(), "WATCH AND CACHE / CANCEL".into()),
             Knob::RenderShot => ("RENDER SHOT".into(), "CACHE FRAMES + MP4".into()),
             Knob::SavedShot => ("SHOT PRESET".into(), self.shot_preset_at
                 .and_then(|i| self.shot_presets.get(i)).and_then(|v| v["name"].as_str())
@@ -3052,13 +3051,13 @@ impl Range {
                 (label == "PLAY" && !self.playing) || (label == "REC" && self.recorder.is_some()) || (label == "LOOP" && self.looping)
             };
             let hover = cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h;
-            let fill = if label == "SIMULATE" || (self.battle && label == "PLAY" && !lit) { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
+            let fill = if label == "FIRE" || (self.battle && label == "PLAY" && !lit) { if hover { [0.85, 0.12, 0.08, 1.0] } else { [0.62, 0.06, 0.04, 1.0] } }
                 else if lit { INK } else if hover { [0.09, 0.09, 0.09, 1.0] } else { BOX };
             self.r.fill_rect(x, y, w, h, fill);
             if hover && !self.battle {
                 let hint = match label {
                     "RESET" => "RESTORE A FRESH TANK AND CREW, PAUSED; KEEP CAMERA AND SHOT SETTINGS",
-                    "FIRE" => "FIRE ONE SHELL NOW (F); LIVE SIMULATION CONTINUES",
+                    "FIRE" => "FIRE ONE SHOT (F); WATCH THE FIRST PASS WHILE IT CALCULATES AND CACHES",
                     "LIVE" => "INTERACTIVE VIEW: F FIRES A SHELL; SPACE PAUSES / RESUMES",
                     "SIMULATE" => "FRESH TANK -> SIMULATE ONCE -> CACHE; CLICK AGAIN TO CANCEL",
                     "PLAY" => "PLAY / PAUSE THE CACHE; MOVE THE CAMERA WHILE IT PLAYS",
@@ -3076,7 +3075,9 @@ impl Range {
                 (false, _) => "LOOP OFF",
             };
             let text = match label {
+                "FIRE" if self.cache.busy() => "CANCEL",
                 "SIMULATE" if self.cache.busy() => "CANCEL",
+                "RENDER" if !self.cache.rendering() => "EXPORT VIDEO",
                 "RENDER" if self.cache.rendering() => "CANCEL",
                 "WATCH" | "PLAY" if self.battle && lit => "STOP",
                 "LAYOUTS" => "NEXT LAYOUT",
@@ -3171,7 +3172,7 @@ impl Range {
                 "C: SECTION ON/OFF    V: AXIS NEAREST THE CAMERA    G: AXIS NEAREST THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 90",
                 "PANEL: ONE TAB OPEN AT A TIME; DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
-                "F: FIRE A SHELL IN LIVE VIEW    ENTER: CALCULATE A FRESH SHOT    Z (OR .): CENTRE ON THE TIGER",
+                "F / ENTER: FIRE AND CACHE    BACKSPACE: RESET    Z (OR .): CENTRE ON THE TIGER",
                 "SPACE: PLAY / PAUSE THE CACHED SHOT    BACKSPACE: FIRST FRAME    RENDER: FRAMES + MP4",
                 "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
                 "CACHED PLAYBACK NEVER RE-RUNS PHYSICS; CAMERA, SECTION, LIGHTING AND LOOK STAY LIVE",
@@ -3223,7 +3224,7 @@ impl Range {
                 self.text(&label, head + if head > 0.85 { -0.004 } else { 0.004 }, base - 4.0 * thick - 0.008, TEXT * 0.7, INK, align);
             }
         } else if hovered {
-            self.text("SET UP SHOT, THEN SIMULATE (ENTER)", 0.5 * (1.0 + self.view_x()), base - 0.012, TEXT * 0.7, DIM, crate::ui::Align::Center);
+            self.text("SET UP SHOT, THEN FIRE (F / ENTER)", 0.5 * (1.0 + self.view_x()), base - 0.012, TEXT * 0.7, DIM, crate::ui::Align::Center);
         }
     }
 
@@ -3354,19 +3355,9 @@ impl Range {
                 self.status = "LIVE VIEW: F FIRES A SHELL NOW; SPACE PAUSES / RESUMES".into();
             }
             "START" | "RESET" => { self.reset(); self.free_fire = true; },
-            "FIRE" => {
-                self.button("LIVE");
-                self.clear_caches();
-                self.run = None;
-                self.frame_at = None;
-                self.play_clock = 0.0;
-                self.fire();
-                self.free_fire = true;
-                self.playing = true;
-                self.status = "LIVE: SHELL FIRED AT REAL-TIME SPEED".into();
-            },
+            "FIRE" => self.cache_simulation(),
             "SIMULATE" | "RUN" => self.cache_simulation(),
-            "PLAY" if self.free_fire => self.playing = !self.playing,
+            "PLAY" if self.free_fire && !self.cache.busy() => self.playing = !self.playing,
             "PLAY" => self.play_cached_shot(),
             "RENDER" => self.render_cached_shot(),
             "LOOP" => self.looping = !self.looping,
@@ -3654,7 +3645,7 @@ impl App {
                     rg.status = "ESC AGAIN TO QUIT".into();
                 }
             }
-            KeyCode::Enter | KeyCode::NumpadEnter => rg.button("SIMULATE"),
+            KeyCode::Enter | KeyCode::NumpadEnter => rg.button("FIRE"),
             KeyCode::Backspace => rg.button("START"),
             KeyCode::Space if self.input.shift => rg.button("PLAY"),
             KeyCode::Space => rg.button("PLAY"),

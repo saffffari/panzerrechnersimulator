@@ -34,7 +34,10 @@ impl Range {
         else { self.reset(); }
     }
     pub(super) fn play_cached_shot(&mut self) {
-        if self.cache.baking { return; }
+        if self.cache.baking { self.playing = !self.playing; return; }
+        if self.cache.ready() && self.cache.index + 1 == self.cache.frames.len() && !self.playing {
+            self.cache.index = 0; self.cache.clock = 0.0;
+        }
         if self.cache.ready() { self.playing = !self.playing; }
         else { self.cache_simulation(); self.cache.play_after_bake = true; }
     }
@@ -66,20 +69,36 @@ impl Range {
         self.free_fire = false;
         // Capture CPU deformations from the fresh scene onward, never retain a GPU frame per tick.
         self.fresh();
-        // Hold a clean setup image while physics bakes. Playback starts only when every frame exists.
-        self.pose_view();
-        let preview=self.r.render_to_rgba(&self.device,&self.queue,self.r.iw,self.r.ih).ok();
+        // Show every newly solved frame on the first pass rather than hiding the solve.
         self.fire_now();
-        if let Some(raw)=preview {
-            let (rgba,w,h)=self.crop_rgba(&raw);
-            self.upload_image(&rgba,w,h);self.last_rgba=Some((rgba,w,h));self.cache.preview=true;
-        }
         self.r.enable_scene_cache_capture(true);
         self.cache.baking = true;
         self.cache.key = self.simulation_key();
         self.cache.lamp_gain = review_lamp_gain().max(1e-6);
-        self.playing = false;
-        self.status = "CACHING SIMULATION: ONE FIXED STEP PER FRAME; CAMERA STAYS FREE".into();
+        self.playing = true;
+        self.status = "FIRST PASS: CALCULATING AND CACHING; CAMERA STAYS FREE".into();
+    }
+    // Cache the picture shown during calculation too. Camera/look changes begin a new
+    // image sequence; missing pictures are rendered from the unchanged simulation cache.
+    fn cache_first_pass_image(&mut self, index: usize) {
+        let key = self.image_key();
+        if self.cache.image_key != key || self.cache.image_dir.is_none() {
+            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+            let dir = PathBuf::from(format!("target/fea_range_frames/{stamp}"));
+            if std::fs::create_dir_all(&dir).is_err() { return; }
+            self.cache.image_dir = Some(dir);
+            self.cache.image_key = key;
+        }
+        self.pose_view();
+        if let Ok(raw) = self.r.render_to_rgba(&self.device, &self.queue, self.r.iw, self.r.ih) {
+            let (rgba,w,h) = self.crop_rgba(&raw);
+            if let Some(dir) = &self.cache.image_dir {
+                let _ = image::save_buffer(dir.join(format!("{index:06}.png")), &rgba,w,h,image::ColorType::Rgba8);
+            }
+            self.upload_image(&rgba,w,h);
+            self.last_rgba = Some((rgba,w,h));
+            self.captured = true;
+        }
     }
     pub(super) fn cached_seek(&mut self, index: usize) -> bool {
         if !self.cache.ready() { return false; }
@@ -94,7 +113,8 @@ impl Range {
     /// Returns true when the cache owns this tick. No call to Game::update exists on playback.
     pub(super) fn tick_cache(&mut self, dt: f32) -> bool {
         if self.cache.baking {
-            self.captured=self.cache.preview;
+            self.captured = false;
+            if !self.playing { return true; }
             if self.cache.key != self.simulation_key() {
                 self.reset();self.status="SHOT CHANGED: SIMULATE AGAIN".into();return true;
             }
@@ -116,6 +136,7 @@ impl Range {
                     Ok(frame) if self.cache.bytes.saturating_add(frame.bytes) <= MAX_BYTES => {
                         self.cache.bytes += frame.bytes;
                         self.cache.frames.push(Arc::new(frame));
+                        self.cache_first_pass_image(k as usize);
                         self.status = format!("CACHING SIMULATION {}/{} ({:.0} MB)",k+1,
                             self.run.map_or(0,|r|r.total),self.cache.bytes as f64/1e6);
                     }
@@ -128,8 +149,8 @@ impl Range {
                 }
             }
             if self.next_run_frame().is_none() {
-                self.cache.baking = false; self.cache.index = 0; self.playing = self.cache.play_after_bake;
-                self.status = format!("SIMULATION CACHED: {} FRAMES; SPACE PLAYS, CAMERA AND LOOK STAY LIVE",self.cache.frames.len());
+                self.cache.baking = false; self.cache.index = self.cache.frames.len().saturating_sub(1); self.playing = false;
+                self.status = format!("SHOT CACHED: {} FRAMES; PLAY REPLAYS; CAMERA AND LOOK STAY FREE",self.cache.frames.len());
                 if self.cache.export_after_bake { self.start_cached_render(); }
             }
             return true;
