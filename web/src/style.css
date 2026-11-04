@@ -160,3 +160,51 @@ button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+#damage-hud {
+  position: absolute;
+  right: 20px;
+  top: 20px;
+  width: 175px;
+  padding: 12px;
+  background: #17231dbb;
+  pointer-events: none;
+  border-top: 1px solid #8c9989;
+}
+.crew-silhouettes {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+.crew-silhouettes svg {
+  width: 25px;
+  height: 58px;
+}
+.tank-status {
+  display: block;
+  width: 110px;
+  height: 176px;
+  margin: 16px auto 0;
+  shape-rendering: crispEdges;
+}
+@media (max-width: 600px) {
+  #damage-hud {
+    top: auto;
+    bottom: 75px;
+    right: 10px;
+    width: 120px;
+    padding: 7px;
+  }
+  .crew-silhouettes {
+    gap: 3px;
+  }
+  .crew-silhouettes svg {
+    width: 18px;
+    height: 42px;
+  }
+  .tank-status {
+    width: 78px;
+    height: 120px;
+    margin-top: 9px;
+  }
+}

@@ -1,6 +1,20 @@
 import { Vector3 as V } from "three";
 import { penetration, slope, type Round } from "./preset";
-export type Cell = { p: V; origin: V; size: V; kind: number; alive: boolean };
+export type Cell = {
+  p: V;
+  origin: V;
+  size: V;
+  kind: number;
+  alive: boolean;
+  crew?: number;
+};
+export const crewSeats = [
+  { role: "Driver", at: [-0.55, 1.25, -1.45] },
+  { role: "Radio operator", at: [0.55, 1.25, -1.45] },
+  { role: "Gunner", at: [-0.65, 1.25, 0.2] },
+  { role: "Loader", at: [0.65, 1.25, 0.2] },
+  { role: "Commander", at: [0, 2.45, 0] },
+];
 export type Particle = { p: V; v: V; life: number; size: number; kind: number };
 export class Simulation {
   cells: Cell[] = [];
@@ -50,15 +64,11 @@ export class Simulation {
           if (Math.abs(x) === 6 || y === 16 || Math.abs(z) === 6)
             add(x * 0.2, y * 0.2, z * 0.2, 1);
     // Crew are small voxel assemblies, not skinned meshes; every part can break off.
-    for (const [cx, cy, cz] of [
-      [-0.65, 1.25, 0.2],
-      [0.65, 1.25, 0.2],
-      [-0.55, 1.25, -1.45],
-      [0.55, 1.25, -1.45],
-    ])
+    for (const [crew, seat] of crewSeats.entries()) {
+      const [cx, cy, cz] = seat.at;
       for (let x = -1; x <= 1; x++)
         for (let y = 0; y < 5; y++)
-          for (let z = -1; z <= 1; z++)
+          for (let z = -1; z <= 1; z++) {
             add(
               cx + x * 0.12,
               cy + y * 0.12,
@@ -66,7 +76,11 @@ export class Simulation {
               y === 4 ? 3 : 2,
               new V(0.115, 0.115, 0.115),
             );
+            this.cells[this.cells.length - 1].crew = crew;
+          }
+    }
   }
+
   emit(p: V, v: V, kind: number, size: number, life: number) {
     if (this.particles.length < 1200)
       this.particles.push({ p: p.clone(), v, kind, size, life });
@@ -121,7 +135,7 @@ export class Simulation {
               (this.random() - 0.5) * 4,
             ),
           );
-        this.emit(c.p, v, c.kind >= 2 ? 2 : 0, c.kind >= 2 ? 0.09 : 0.13, 3.5);
+        this.emit(c.p, v, c.kind >= 2 ? 4 : 0, c.kind >= 2 ? 0.09 : 0.13, 3.5);
       } else if (delta.length() < radius * 3 && c.kind < 2)
         c.p.addScaledVector(
           dir,
@@ -150,7 +164,7 @@ export class Simulation {
         2 + this.random() * 2,
       );
     if (crew)
-      for (let i = 0; i < Math.min(240, crew * 8); i++)
+      for (let i = 0; i < Math.min(640, crew * 20); i++)
         this.emit(
           point.clone().addScaledVector(dir, 0.8 + this.random() * 2),
           dir
@@ -164,7 +178,7 @@ export class Simulation {
               ),
             ),
           2,
-          0.035 + this.random() * 0.045,
+          0.00375,
           2,
         );
     return { passed, pen, effective, lost, crew, angle };

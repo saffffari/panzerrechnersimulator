@@ -3,6 +3,8 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import "./style.css";
 import { PlayView } from "./play-view";
+import { SphereAimDrag, markerWorldDiameter } from "./sphere-aim";
+import { DamageHud } from "./damage-hud";
 import { Simulation } from "./simulation";
 import {
   rounds,
@@ -134,6 +136,7 @@ staticTank.receiveShadow = true;
 scene.add(staticTank);
 for (const geo of staticParts) geo.dispose();
 const sim = new Simulation();
+const damageHud = new DamageHud();
 const voxels = new T.InstancedMesh(
   cube,
   new T.MeshStandardMaterial({ roughness: 0.83, metalness: 0.25 }),
@@ -192,39 +195,100 @@ function syncCells() {
   voxels.instanceMatrix.needsUpdate = true;
   if (voxels.instanceColor) voxels.instanceColor.needsUpdate = true;
   voxels.computeBoundingSphere();
+  damageHud.update(sim.cells);
   geometryDirty = false;
 }
 const impact = new T.Vector3(-1.6, 1.45, 0),
   from = new T.Vector3(-1, 0, 0),
   normal = new T.Vector3(-1, 0, 0);
 const radius = 0.85;
-const sphere = new T.Mesh(
-  new T.SphereGeometry(radius, 14, 8),
-  new T.MeshBasicMaterial({
-    color: "#e5bb77",
-    wireframe: true,
-    transparent: true,
-    opacity: 0.1,
-    depthTest: false,
-  }),
+// Dotted latitude/longitude guides, with short angular ticks, in two bounded draws.
+const guidePoints: T.Vector3[] = [];
+const tickPoints: T.Vector3[] = [];
+for (let plane = 0; plane < 3; plane++)
+  for (let i = 0; i < 120; i++) {
+    const a = (i / 120) * Math.PI * 2,
+      p = new T.Vector3(Math.cos(a), Math.sin(a), 0);
+    if (plane === 1) p.set(p.x, 0, p.y);
+    if (plane === 2) p.set(0, p.x, p.y);
+    guidePoints.push(p.clone().multiplyScalar(radius));
+    if (i % 10 === 0)
+      tickPoints.push(
+        p.clone().multiplyScalar(radius * 0.97),
+        p.clone().multiplyScalar(radius * 1.03),
+      );
+  }
+const sphere = new T.Group();
+sphere.add(
+  new T.Points(
+    new T.BufferGeometry().setFromPoints(guidePoints),
+    new T.PointsMaterial({
+      color: "#e5bb77",
+      size: 2,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0.55,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  ),
+);
+sphere.add(
+  new T.LineSegments(
+    new T.BufferGeometry().setFromPoints(tickPoints),
+    new T.LineBasicMaterial({
+      color: "#e5bb77",
+      transparent: true,
+      opacity: 0.65,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  ),
 );
 sphere.renderOrder = 4;
 scene.add(sphere);
 const center = new T.Mesh(
-  new T.SphereGeometry(0.055, 10, 8),
-  new T.MeshBasicMaterial({ color: "#ffe3a3", depthTest: false }),
+  new T.PlaneGeometry(1, 1),
+  new T.MeshBasicMaterial({
+    color: "#ffe3a3",
+    depthTest: false,
+    depthWrite: false,
+    side: T.DoubleSide,
+  }),
 );
 center.renderOrder = 5;
 scene.add(center);
 const handle = new T.Mesh(
-  new T.SphereGeometry(0.095, 12, 8),
-  new T.MeshBasicMaterial({ color: "#ffc065", depthTest: false }),
+  new T.CircleGeometry(0.5, 24),
+  new T.MeshBasicMaterial({
+    color: "#ff9d35",
+    depthTest: false,
+    depthWrite: false,
+    side: T.DoubleSide,
+  }),
 );
 handle.renderOrder = 5;
 scene.add(handle);
+function syncAimMarkers() {
+  // Both markers have exactly the same screen diameter, even at different depths.
+  const forward = camera.getWorldDirection(new T.Vector3());
+  for (const marker of [center, handle]) {
+    marker.quaternion.copy(camera.quaternion);
+    const depth = Math.max(
+      0.01,
+      marker.position.clone().sub(camera.position).dot(forward),
+    );
+    marker.scale.setScalar(markerWorldDiameter(depth, camera.fov, innerHeight));
+  }
+}
 const rayLine = new T.Line(
   new T.BufferGeometry(),
-  new T.LineBasicMaterial({ color: "#ffd696", depthTest: false }),
+  new T.LineDashedMaterial({
+    color: "#ffd696",
+    depthTest: false,
+    dashSize: 0.045,
+    gapSize: 0.055,
+  }),
 );
 rayLine.renderOrder = 5;
 scene.add(rayLine);
@@ -237,6 +301,8 @@ function syncAim() {
     impact.clone().addScaledVector(from, 2),
     impact.clone().addScaledVector(from, -1),
   ]);
+  rayLine.computeLineDistances();
+  syncAimMarkers();
 }
 syncAim();
 const play = new PlayView(canvas);
@@ -250,6 +316,7 @@ function setMode() {
   mode = modeSelect.value as typeof mode;
   const active = mode === "play";
   controls.enabled = !active;
+  damageHud.setVisible(!active);
   play.setActive(active);
   heldKeys.clear();
   paused = false;
@@ -287,7 +354,7 @@ function pick(e: PointerEvent) {
   caster.setFromCamera(pointer, camera);
   return caster.intersectObject(voxels)[0];
 }
-let drag: { x: number; y: number; time: number; aim: boolean } | undefined;
+let drag: { time: number; sphere: SphereAimDrag } | undefined;
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
@@ -301,24 +368,28 @@ canvas.addEventListener("pointerdown", (e) => {
     if (hit.face) normal.copy(hit.face.normal);
     syncAim();
   }
-  drag = { x: e.clientX, y: e.clientY, time: performance.now(), aim: false };
+  drag = {
+    time: performance.now(),
+    sphere: new SphereAimDrag(camera.position, impact, radius, handle.position),
+  };
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener("pointermove", (e) => {
   if (!drag) return;
   if (performance.now() - drag.time < 100) return;
-  const dx = e.clientX - drag.x,
-    dy = e.clientY - drag.y;
-  if (Math.abs(dx) + Math.abs(dy) < 1) return;
-  drag.aim = true;
-  const up = new T.Vector3(0, 1, 0).applyQuaternion(camera.quaternion),
-    right = new T.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-  from
-    .applyAxisAngle(up, -dx * 0.012)
-    .applyAxisAngle(right, -dy * 0.012)
-    .normalize();
-  drag.x = e.clientX;
-  drag.y = e.clientY;
+  const rect = canvas.getBoundingClientRect();
+  pointer.set(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    (-(e.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  caster.setFromCamera(pointer, camera);
+  const point = drag.sphere.project(
+    caster.ray.origin,
+    caster.ray.direction,
+    impact,
+    radius,
+  );
+  from.copy(point).sub(impact).normalize();
   syncAim();
 });
 canvas.addEventListener("pointerup", () => {
@@ -493,7 +564,7 @@ let last = performance.now(),
   frames: number[] = [],
   running = true,
   dropped = 0;
-const palette = ["#797860", "#ffbf5e", "#7b201c", "#72766b"];
+const palette = ["#797860", "#ffbf5e", "#7b201c", "#72766b", "#765549"];
 function frame(now: number) {
   if (!running) return;
   const elapsed = Math.min(0.1, (now - last) / 1000);
@@ -536,6 +607,7 @@ function frame(now: number) {
     return;
   }
   controls.update();
+  syncAimMarkers();
   let solidCount = 0,
     smokeCount = 0;
   for (const p of sim.particles) {

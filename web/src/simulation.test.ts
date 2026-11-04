@@ -121,3 +121,20 @@ test("empty authored list has no catalogue fallback; legacy single shots still l
   assert.deepEqual(shotOptions([legacy]).choices, [legacy]);
   assert.equal(shotOptions([legacy]).authored, false);
 });
+
+test("spray droplets are 3.75 mm with higher bounded visual count, distinct from body fragments", () => {
+  const s = new Simulation();
+  const shot = s.fire(
+    new V(-1.7, 1.5, 0.2),
+    new V(1, 0, 0),
+    new V(-1, 0, 0),
+    rounds[12],
+    100,
+  );
+  const drops = s.particles.filter((p) => p.kind === 2);
+  assert.ok(shot.crew > 0);
+  assert.ok(drops.length > 240);
+  assert.ok(drops.every((p) => p.size === 0.00375));
+  assert.ok(s.particles.some((p) => p.kind === 4 && p.size === 0.09));
+  assert.ok(s.particles.length <= 1200);
+});

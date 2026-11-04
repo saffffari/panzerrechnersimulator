@@ -4,13 +4,13 @@
     "npm run build --prefix web",
     "npm test --prefix web"
   ],
-  "tests_passed": 15,
+  "tests_passed": 23,
   "tests_failed": 0,
   "full_battle": {
     "enemies": 10,
     "simulated_seconds": 120,
     "steps": 7200,
-    "cpu_ms": 83.3,
+    "cpu_ms": 87.1,
     "squad_decisions": 554,
     "peak_events": 9,
     "event_cap": 32
@@ -18,17 +18,27 @@
   "squad_only": {
     "enemies": 10,
     "simulated_seconds": 200,
-    "cpu_ms": 22.8,
+    "cpu_ms": 36.6,
     "decisions": 858
   },
   "road_json_bytes": 4686,
-  "build_js_bytes": 546470,
-  "build_js_gzip_bytes": 142290,
+  "build_js_bytes": 552730,
+  "build_js_gzip_bytes": 144390,
   "native_export_source_at_build": "baseline",
   "gpu_qa_state": "paused at parent request; own QA browsers closed; dev server only",
   "notes": "CPU figures from actual test output on HAL; accelerated simulation, not frame time or laptop benchmark.",
   "retained_dev_server": {
     "rss_kib": 116992,
     "cpu_percent_observed": 0.1
+  },
+  "latest_cpu_only_update": {
+    "sphere": "ray intersection, retained hemisphere, off-sphere perspective silhouette clamp",
+    "markers": "filled orange circle and impact square, equal 12 CSS pixels",
+    "blood_drop_m": 0.00375,
+    "spray_max_per_shot": 640,
+    "total_particle_cap": 1200,
+    "crew_count": 5,
+    "hud": "regional voxel loss, coarse KIA X, top-down module proxies",
+    "browser_validation": "deferred; native open"
   }
 }
