@@ -12623,7 +12623,9 @@ impl Game {
             scene.push(crate::lamp_mounts::plinth_mesh(lamp_plinth_half_size(i)));
             slot
         });
-        let indicator_pictograms = crate::indicator_pictograms::lamp_plates().into_iter().map(|plate| {
+        let indicator_pictograms = crate::indicator_pictograms::lamp_plates().into_iter()
+            .filter(|plate| !plate.name.starts_with("annunciator."))
+            .map(|plate| {
             let slot = scene.len();
             scene.push(plate.mesh);
             (slot, plate.frame, plate.model)
@@ -20807,17 +20809,18 @@ impl Game {
             shadowed_cabin_lights.push(ignition);
             emitting_meshes.push(Some(self.slots.ignition_lamp));
 
-            // Status colour, pulse and emitting area come from the same finite visible cube.
-            // Inverse-square transport has no authored distance cutoff; visibility owns its reach.
-            for (i, emissive) in self.annunciator_emissives().into_iter().enumerate() {
+            // Owner removed the four-colour annunciator stack. Keep registration indices
+            // stable, but neither the lenses/housings nor their transported light exist in view.
+            for i in 0..N_LAMP {
                 let (mount, along) = mounts::ANNUNCIATORS[i];
-                let lamp = Self::drive_finite_lamp(r, self.slots.annun[i],
+                let mut lamp = Self::drive_finite_lamp(r, self.slots.annun[i],
                     tm * mount.lamp(rig::ANNUNCIATOR_FIXTURES[i].half_size_m, along),
-                    rig::ANNUNCIATOR_FIXTURES[i].sample(emissive * practical_gain));
-                plinth(r, 1 + i, mount, along, true);
+                    rig::ANNUNCIATOR_FIXTURES[i].sample(0.0));
+                lamp.radiant_intensity = 0.0;
+                r.set_visible(self.slots.annun[i], false);
+                plinth(r, 1 + i, mount, along, false);
                 shadowed_cabin_lights.push(lamp);
-                emitting_meshes.push(Some(self.slots.annun[i]));
-                if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
+                emitting_meshes.push(None);
             }
 
             // One emitting lens on each side, with matching visible emission and shadowed
