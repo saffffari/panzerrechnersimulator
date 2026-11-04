@@ -868,6 +868,13 @@ impl Range {
             let eye = hull.transform_point3(Vec3::new(-7.5, 3.4, 6.5));
             range.look_at(eye, hull.transform_point3(Vec3::new(0.0, 1.4, 0.0)));
         }
+        // Explicit live launch: start the wall-clock simulation without firing before the owner is ready.
+        if !headless && std::env::var("KESSEL_FEA_RANGE_LIVE").as_deref() == Ok("1") {
+            range.free_fire = true;
+            range.playing = true;
+            range.time_speed = 1.0;
+            range.status = "LIVE SIDE-HIT TEST READY: F FIRES; SPACE PAUSES".into();
+        }
         Ok(range)
     }
 
@@ -3657,7 +3664,17 @@ impl App {
             KeyCode::KeyG => rg.adjust(Knob::SnapToShot, 1.0, false, false),
             KeyCode::Tab => rg.hide_ui = !rg.hide_ui,
             // F fires into the present state and plays on: it never loops back (owner, 2026-11-03).
-            KeyCode::KeyF => { rg.button("LIVE"); rg.fire_now(); rg.free_fire = true; }
+            KeyCode::KeyF => {
+                rg.button("LIVE");
+                rg.clear_caches();
+                rg.run = None;
+                rg.frame_at = None;
+                rg.play_clock = 0.0;
+                rg.fire();
+                rg.free_fire = true;
+                rg.playing = true;
+                rg.status = "LIVE: SHELL FIRED AT REAL-TIME SPEED".into();
+            }
             KeyCode::Period | KeyCode::NumpadDecimal | KeyCode::KeyZ => rg.frame_tiger(),
             KeyCode::KeyC => rg.section.on = !rg.section.on,
             KeyCode::KeyV => {
