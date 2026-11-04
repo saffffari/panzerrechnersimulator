@@ -1,4 +1,4 @@
-//! Bounded physical droplets and connected, source-supported contact film.
+//! Visual one-cast cube particles and merged square splats; legacy physical film for offline tools.
 //! Wound events own emission quantities. This module only transports those grains and spends each
 //! real contact's fixed film-area budget beside that contact; it never creates an injury event.
 use super::surface_fire::{Contact, FRAMES};
@@ -6,13 +6,12 @@ use glam::{Mat4, Vec3};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub const CELL_M: f32 = 0.010;
-pub const MAX_GRAINS: usize = 8_192;
+pub const MAX_GRAINS: usize = 32_768;
 pub const MAX_CELLS: usize = 65_536;
 const MAX_FRONTIER: usize = MAX_CELLS * 4;
-/// A droplet is a cube of the crew anatomy's own cell (2026-11-03, the owner: "blood voxels should
-/// be the same size as character voxels"; it replaces the 1.5-6 mm distribution of 2026-11-02), so
-/// each carries a cubic centimetre of blood.
-pub const DROPLET_M: f32 = 0.02;
+/// Visual droplets are one quarter of the live 30 mm tissue cell. Emission is artistic,
+/// independent of a conserved blood-volume budget.
+pub const DROPLET_M: f32 = 0.0075;
 /// A fresh coat's thickness (m): a droplet's volume covers its area at this (authored: a pooled wet
 /// coat about a millimetre deep). A droplet wets 40 film cells, a stain about 3 cm across.
 const FILM_THICKNESS_M: f32 = 0.001;
@@ -86,6 +85,9 @@ pub struct Emission {
 struct Grain {
     emission: Emission,
     age: f32,
+    #[serde(default)] planned: bool,
+    #[serde(default)] landing: Option<Contact>,
+    #[serde(default)] land_at_s: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -206,6 +208,7 @@ pub struct RenderRun {
     pub tangent: Vec3,
     pub bitangent: Vec3,
     pub width: f32,
+    pub height: f32,
     pub cells: usize,
 }
 impl RenderRun {
@@ -215,7 +218,7 @@ impl RenderRun {
             * Mat4::from_cols(
                 (self.tangent * self.width).extend(0.0),
                 (self.normal * 0.0002).extend(0.0),
-                (self.bitangent * CELL_M).extend(0.0),
+                (self.bitangent * self.height).extend(0.0),
                 (self.point + self.normal * SURFACE_OFFSET).extend(1.0),
             )
     }
@@ -237,6 +240,8 @@ pub struct Diagnostics {
 #[derive(Clone)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SurfaceBlood {
+    #[serde(default)] visual: bool,
+    #[serde(default)] visual_limit: usize,
     grains: Vec<Option<Grain>>,
     next_grain: usize,
     cells: Vec<Cell>,
@@ -263,6 +268,8 @@ impl Default for SurfaceBlood {
 impl SurfaceBlood {
     pub fn new() -> Self {
         Self {
+            visual: false,
+            visual_limit: 0,
             grains: vec![None; MAX_GRAINS],
             next_grain: 0,
             cells: Vec::new(),
@@ -292,8 +299,8 @@ impl SurfaceBlood {
         {
             return false;
         }
-        self.grains[self.next_grain] = Some(Grain { emission, age: 0.0 });
-        self.next_grain = (self.next_grain + 1) % MAX_GRAINS;
+        self.grains[self.next_grain] = Some(Grain { emission, age: 0.0, planned: false, landing: None, land_at_s: 0.0 });
+        self.next_grain = (self.next_grain + 1) % if self.visual { self.visual_limit.max(1) } else { MAX_GRAINS };
         self.diagnostics.emitted += 1;
         true
     }
@@ -351,6 +358,81 @@ impl SurfaceBlood {
     }
     /// Only an actual sweep result may call this. Credits are the droplet's own volume over a fresh
     /// stain's thickness (`film_cells`), an authored film model, not a new injury quantity.
+    fn configured_visual_limit() -> usize {
+        std::env::var("KESSEL_BLOOD_PARTICLES").ok().and_then(|s|s.parse().ok()).unwrap_or(16_384usize).clamp(512,MAX_GRAINS)
+    }
+    pub fn visual() -> Self { Self { visual: true, visual_limit: Self::configured_visual_limit(), ..Self::new() } }
+    pub fn set_visual(&mut self, visual: bool) {
+        self.visual = visual;
+        if visual && self.visual_limit == 0 { self.visual_limit = Self::configured_visual_limit(); }
+    }
+
+    // One square stamp per impact, unioned on a shared surface grid. No flow, growth or
+    // per-cell support probes. Overlap merges geometry instead of layering coplanar quads.
+    fn stamp_visual(&mut self, hit: Contact, owner: u8, actor_id: u32, seed: u32) {
+        let Some(base) = Key::at(hit) else { return };
+        if owner >= 8 { return; }
+        self.diagnostics.measured_contacts += 1;
+        if self.lookup.contains_key(&base) { return; }
+        if self.cells.len() >= self.cell_limit || self.pools.len() >= MAX_CELLS { return; }
+        let pool = self.pools.len();
+        self.pools.push(Pool { parent: pool, credits: 0, owners: 1 << owner,
+            sources: HashSet::from([(actor_id,seed)]), frontier: VecDeque::new(), scheduled: false, cells: 0 });
+        for v in -1..=0 { for u in -1..=0 {
+            let key = Key { u: base.u+u, v: base.v+v, ..base };
+            if let Some(&c) = self.lookup.get(&key) {
+                self.join(pool, self.cells[c].pool);
+                continue;
+            }
+            if self.cells.len() >= self.cell_limit { self.diagnostics.capacity_rejections += 1; continue; }
+            let mut root = self.root(pool);
+            for neighbor in key.neighbors() {
+                if let Some(&c) = self.lookup.get(&neighbor) { root = self.join(root,self.cells[c].pool); }
+            }
+            self.pools[root].cells += 1;
+            self.lookup.insert(key,self.cells.len());
+            self.cells.push(Cell { contact: Contact { point: key.center(), ..hit }, pool: root, key });
+            self.runs_dirty = true;
+        }}
+    }
+
+    fn update_visual(&mut self, dt: f32, models: &[Mat4; FRAMES], source: &impl SourceQuery) {
+        let dt = if dt.is_finite() { dt.clamp(0.0,0.1) } else { 0.0 };
+        let mut indices = Vec::new();
+        let mut paths = Vec::new();
+        // A fixed admission budget bounds new geometry queries, even on enormous bursts.
+        for (i,g) in self.grains.iter().enumerate().filter_map(|(i,g)| g.as_ref().map(|g|(i,g))) {
+            if !g.planned && indices.len() < 512 {
+                let start = models[g.emission.frame].transform_point3(g.emission.position);
+                let direction = models[g.emission.frame].transform_vector3(g.emission.velocity).normalize_or_zero();
+                indices.push(i); paths.push([start,start+direction*8.0]);
+            }
+        }
+        let hits = source.sweep_batch(&paths,models);
+        for ((i,path),hit) in indices.into_iter().zip(paths).zip(hits) {
+            let g = self.grains[i].as_mut().unwrap();
+            g.planned = true; g.landing = hit;
+            g.land_at_s = hit.map_or(1.0,|h| {
+                let end=models[h.frame].transform_point3(h.point);
+                (end.distance(path[0])/g.emission.velocity.length().max(1.0)).clamp(0.005,2.0)
+            });
+        }
+        let mut deposits = Vec::new();
+        for slot in &mut self.grains {
+            let Some(g) = slot else {continue};
+            if !g.planned { continue; }
+            g.age += dt;
+            g.emission.position += g.emission.velocity * dt;
+            g.emission.rotation += g.emission.spin * dt;
+            if g.age >= g.land_at_s {
+                if let Some(hit) = g.landing { deposits.push((hit,g.emission.owner,g.emission.actor_id,g.emission.seed)); }
+                *slot = None;
+            }
+        }
+        for (hit,owner,actor,seed) in deposits { self.stamp_visual(hit,owner,actor,seed); }
+        self.rebuild_runs();
+    }
+
     pub fn record_contact(&mut self, hit: Contact, owner: u8, actor_id: u32, seed: u32) -> bool {
         let Some(key) = Key::at(hit) else {
             return false;
@@ -405,6 +487,7 @@ impl SurfaceBlood {
         true
     }
     pub fn update(&mut self, dt: f32, models: &[Mat4; FRAMES], source: &impl SourceQuery) {
+        if self.visual { self.update_visual(dt,models,source); return; }
         let dt = if dt.is_finite() {
             dt.clamp(0.0, 0.1)
         } else {
@@ -613,6 +696,7 @@ impl SurfaceBlood {
             let k = self.cells[i].key;
             (k.plane, k.v, k.u)
         });
+        let mut rectangles: HashMap<(Plane,i32,usize),(i32,usize)> = HashMap::new();
         let mut at = 0;
         while at < order.len() {
             let first = &self.cells[order[at]];
@@ -627,6 +711,16 @@ impl SurfaceBlood {
             }
             let count = end - at;
             let (u, v, n) = first.key.plane.basis();
+            let signature = (first.key.plane,first.key.u,count);
+            if let Some(&(previous_row,index)) = rectangles.get(&signature) {
+                if previous_row + 1 == first.key.v {
+                    let r = &mut self.runs[index];
+                    r.height += CELL_M; r.point += v * (CELL_M*0.5); r.cells += count;
+                    rectangles.insert(signature,(first.key.v,index));
+                    at=end; continue;
+                }
+            }
+            rectangles.insert(signature,(first.key.v,self.runs.len()));
             self.runs.push(RenderRun {
                 frame: first.contact.frame,
                 point: first.contact.point + u * (CELL_M * (count - 1) as f32 * 0.5),
@@ -634,6 +728,7 @@ impl SurfaceBlood {
                 tangent: u,
                 bitangent: v,
                 width: count as f32 * CELL_M,
+                height: CELL_M,
                 cells: count,
             });
             at = end;
@@ -1099,5 +1194,40 @@ mod tests {
         assert_eq!(blood.diagnostics().airborne, MAX_GRAINS);
         assert_eq!(blood.diagnostics().measured_contacts, 0);
         assert!(blood.cells.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod visual_particle_tests {
+    use super::*;
+    struct Wall { rays: std::cell::Cell<usize> }
+    impl SourceQuery for Wall {
+        fn sweep_batch(&self, paths:&[[Vec3;2]], _: &[Mat4;FRAMES]) -> Vec<Option<Contact>> {
+            self.rays.set(self.rays.get()+paths.len());
+            paths.iter().map(|p| { let f=(0.5-p[0].z)/(p[1].z-p[0].z);
+                (f>=0.0 && f<=1.0).then(||Contact {frame:0,point:p[0].lerp(p[1],f),normal:Vec3::NEG_Z,fraction:f}) }).collect()
+        }
+        fn supports_batch(&self,_:usize,paths:&[[Vec3;2]]) -> Vec<bool> {vec![true;paths.len()]}
+        fn supports_cell(&self,_:usize,_:&[Vec3;4]) -> bool {true}
+    }
+    fn spray(seed:u32)->Emission { Emission {frame:0,owner:0,actor_id:1,position:Vec3::ZERO,
+        velocity:Vec3::Z*10.0,rotation:Vec3::ZERO,spin:Vec3::ZERO,seed} }
+    #[test] fn visual_drops_trace_once_and_overlap_merges_without_flow() {
+        let mut blood=SurfaceBlood::visual(); let wall=Wall {rays:std::cell::Cell::new(0)};
+        for i in 0..100 {assert!(blood.emit(spray(i)));}
+        for _ in 0..10 {blood.update(0.016,&[Mat4::IDENTITY;FRAMES],&wall);}
+        assert_eq!(wall.rays.get(),100);
+        assert_eq!(blood.cells.len(),4);
+        assert_eq!(blood.runs.len(),1);
+        for _ in 0..60 {blood.update(0.016,&[Mat4::IDENTITY;FRAMES],&wall);}
+        assert_eq!(blood.cells.len(),4); assert_eq!(wall.rays.get(),100);
+    }
+    #[test] fn visual_ray_admission_is_bounded_per_update() {
+        let mut blood=SurfaceBlood::visual(); let wall=Wall {rays:std::cell::Cell::new(0)};
+        for i in 0..1024 {blood.emit(spray(i));}
+        blood.update(0.016,&[Mat4::IDENTITY;FRAMES],&wall);
+        assert_eq!(wall.rays.get(),512);
+        blood.update(0.016,&[Mat4::IDENTITY;FRAMES],&wall);
+        assert_eq!(wall.rays.get(),1024);
     }
 }

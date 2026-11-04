@@ -128,6 +128,9 @@ impl Corpses {
     pub(super) fn finish_tissue_strike(&mut self,job:crew_corpse_tissue::StrikeJob,ragdoll:&CrewRagdoll)->Option<[f32;PARTS]> {
         self.tissue.as_mut().map(|tissue|tissue.finish_strike(job,ragdoll))
     }
+    pub(super) fn take_tissue_blood_seeds(&mut self) -> Vec<(u32,BloodFrame,Vec3,Vec3,usize)> {
+        self.tissue.as_mut().map(|t|t.take_blood_seeds()).unwrap_or_default()
+    }
     /// Move the pieces of solved bodies (`crew_tissue::integrate_chunks`).
     pub(super) fn integrate_tissue(&mut self,world:&FragmentWorld,player:&Tank,dt:f32) {
         if let Some(tissue)=self.tissue.as_mut() {tissue.integrate(world,player,dt);}

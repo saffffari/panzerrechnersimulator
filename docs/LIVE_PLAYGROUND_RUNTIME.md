@@ -12,8 +12,11 @@ Interactive resolution uses the existing damage models with less spatial detail:
 - projectiles have three cells across their calibre;
 - fragment showers aggregate to at most 48 representative trajectories, preserving steel
   volume and kinetic energy while approximating angular distribution;
-- blood uses fewer 20 mm droplets and a 10 mm film grid; film area capacity and growth
-  area per second remain unchanged;
+- blood is visual: up to 32,768 live 7.5 mm cube particles, including sprays from
+  separating tissue; at most 512 new wall sweeps are admitted per update, once per
+  droplet. Contact stamps square splats on a 10 mm grid and unions overlap into sheets.
+  It has no fluid growth or blood-volume conservation budget. Geometry/pool limits
+  bound memory and per-update work;
 - crew integration runs on a worker, serial within the job, with at most 512
   integration steps. Extreme review spring stiffness is reduced to maintain a
   stable step over the same physical interval; this is an explicit approximation;
@@ -34,3 +37,7 @@ side hit, including crew damage and active effects. The headless live probe
 checks live advancement without caches and pause/resume/reset. Its timing
 includes GPU readback, so it is a regression witness, not a VSync FPS measurement.
 No 60 FPS guarantee is established by a successful build or control test.
+
+Indicator lamps use at most 4x review gain; main cabin lamps retain the selected
+room-light gain. This prevents the room-light control amplifying red/green status
+lamps by thousands of times.

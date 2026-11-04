@@ -88,6 +88,7 @@ pub(super) struct TissueDraw {
     skin_labels: Vec<Vec<u8>>,
     actors: Vec<Actor>,
     pieces: Vec<ChunkBody>,
+    blood_seeds: Vec<(u32, BloodFrame, Vec3, Vec3, usize)>,
     cube_lists: [Vec<Mat4>; crew_tissue::LABELS],
     overflow_reported: bool,
 }
@@ -211,7 +212,7 @@ impl TissueDraw {
             count(crew_tissue::Tissue::Bone), count(crew_tissue::Tissue::Fluid),
             model.anatomy.as_deref().map_or("the figure and its fitted skeleton".to_string(), |a| format!("anatomy {a}")),
             cube_pages.iter().filter(|p| **p != usize::MAX).count());
-        Ok(Self { model, helmet: HelmetShape::new(helmet), cube_pages, skin_labels, actors: Vec::new(), pieces: Vec::new(),
+        Ok(Self { model, helmet: HelmetShape::new(helmet), cube_pages, skin_labels, actors: Vec::new(), pieces: Vec::new(), blood_seeds: Vec::new(),
             cube_lists: std::array::from_fn(|_| Vec::new()), overflow_reported: false })
     }
 
@@ -238,6 +239,7 @@ impl TissueDraw {
         self.actors = state.actors.iter().map(|(peer, tissue, helmet)|
             Actor { peer: *peer, tissue: (**tissue).clone(), cache: None, helmet: helmet.clone() }).collect();
         self.pieces = state.pieces.clone();
+        self.blood_seeds.clear();
     }
 
     /// Solve the strikes that killed the ragdoll's man and throw what came away: the share of
@@ -300,7 +302,9 @@ impl TissueDraw {
                 body.vel.length(), job.helmet_impulse.length(), shares[head.index()]);
             actor.helmet = Some(body);
         }
-        self.pieces.extend(crew_tissue::chunk_bodies(&model, ragdoll, solve.chunks));
+        let pieces = crew_tissue::chunk_bodies(&model, ragdoll, solve.chunks);
+        self.blood_seeds.extend(pieces.iter().map(|p| (p.actor,p.frame,p.pos,p.vel,p.cells.len())));
+        self.pieces.extend(pieces);
         self.bound_pieces();
         shares
     }
@@ -313,6 +317,10 @@ impl TissueDraw {
             cells -= self.pieces[oldest].cells.len();
             self.pieces.remove(oldest);
         }
+    }
+
+    pub(super) fn take_blood_seeds(&mut self) -> Vec<(u32,BloodFrame,Vec3,Vec3,usize)> {
+        std::mem::take(&mut self.blood_seeds)
     }
 
     pub(super) fn has_body(&self, peer: u32) -> bool {
@@ -685,7 +693,7 @@ mod tests {
                 crate::fea_damage::components::Articulation::rest(tank.parts.turret_pivot));
             let mut draw = TissueDraw { model: model.clone(), helmet: HelmetShape::new(&figure),
                 cube_pages: [usize::MAX; crew_tissue::LABELS], skin_labels: Vec::new(), actors: Vec::new(),
-                pieces: vec![piece.clone()], cube_lists: std::array::from_fn(|_| Vec::new()), overflow_reported: false };
+                pieces: vec![piece.clone()], blood_seeds: Vec::new(), cube_lists: std::array::from_fn(|_| Vec::new()), overflow_reported: false };
             for _ in 0..15 {
                 draw.integrate(&world, &tank, 1.0 / 60.0);
             }

@@ -14078,18 +14078,11 @@ impl Game {
                 )
                 .expect("blood instance pool allocation")
         });
-        // Connected retained film uses a single ordinary, non-emissive material across four pages.
-        // Coalescing supported rows avoids one extra RT instance per surface cell.
-        // Unlike flying-grain FX these durable stains remain in the exact ray scene/reflections.
+        // Visual wall splats are depth-tested, non-emissive raster instances. They need not
+        // become thousands of new ray blockers or shadow casters as a wall gets wet.
         slots.blood_stain_batch = std::array::from_fn(|_i| {
-            let prototype = renderer.register_instanced_prototype(
-                device,
-                queue,
-                &dried_blood_stain_mesh(dry_blood[0]),
-            );
-            renderer
-                .add_moving_instanced_pool(device, prototype, BLOOD_STAINS_PER_BATCH)
-                .expect("blood stain instance pool allocation")
+            renderer.add_dynamic_instanced_pool(device,queue,&dried_blood_stain_mesh(dry_blood[0]),
+                BLOOD_STAINS_PER_BATCH).expect("blood splat instance pool allocation")
         });
         // Hot steel migrates between four fixed colour/temperature pages as it cools. The first
         // page is amber rather than cream-white and is intentionally brief; saturated orange/red
@@ -14910,7 +14903,7 @@ impl Game {
             cupola_spindle_source,
             cupola_closed_hint_t: 0.0,
             foam_emit_t: 0.0,
-            surface_blood: surface_blood::SurfaceBlood::new(),
+            surface_blood: surface_blood::SurfaceBlood::visual(),
             hot_fragments: [HotFragment::default(); N_HOT_FRAGMENTS],
             next_hot_fragment: 0,
             hot_fragment_accumulator_s: 0.0,
@@ -20756,6 +20749,7 @@ impl Game {
             let power = if self.cabin_lights { 1.0 } else { 0.0 };
             // `game_fea_range::review_lamp_gain` is 1 outside the review range's LAMP POWER knob.
             let practical_gain = power * game_fea_range::review_lamp_gain();
+            let indicator_gain = power * game_fea_range::review_lamp_gain().min(4.0);
             let hm = self.player.hull_model();
             let tm = self.player.turret_model();
             let gm = self.player.visual_gun_model();
@@ -20806,7 +20800,7 @@ impl Game {
             // The driver's ignition lamp, in the list's ignition place.
             let ignition = Self::drive_finite_lamp(r, self.slots.ignition_lamp,
                 hm * mounts::IGNITION.lamp(rig::IGNITION_FIXTURE.half_size_m, 0.0),
-                rig::IGNITION_FIXTURE.sample(practical_gain));
+                rig::IGNITION_FIXTURE.sample(indicator_gain));
             plinth(r, LAMP_PLINTHS - 1, mounts::IGNITION, 0.0, true);
             if ignition.radiant_intensity > 0.0 { lights.push(ignition); }
             shadowed_cabin_lights.push(ignition);
@@ -20836,7 +20830,7 @@ impl Game {
                     if k==state {
                         let model = gm * mount.lamp(rig::BREECH_FIXTURES[k].half_size_m, 0.0);
                         let lamp=Self::drive_finite_lamp(r,slot,model,
-                            rig::BREECH_FIXTURES[k].sample(practical_gain));
+                            rig::BREECH_FIXTURES[k].sample(indicator_gain));
                         if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
                         shadowed_cabin_lights.push(lamp);
                         emitting_meshes.push(Some(slot));
@@ -20862,7 +20856,7 @@ impl Game {
                     // The dark lens of each lamp: working (red) and armour-piercing (white) glass.
                     let shown_dark = (k == 1 && load.is_none()) || (k == 2 && round.is_none());
                     if lit {
-                        let lamp = Self::drive_finite_lamp(r, slot, model, sight_lamp_fixture(k).sample(practical_gain));
+                        let lamp = Self::drive_finite_lamp(r, slot, model, sight_lamp_fixture(k).sample(indicator_gain));
                         sight_sources[usize::from(k >= 2)] = Some((lamp, slot));
                     } else if shown_dark && sight_lamps_enabled() {
                         r.set_visible(slot, true); r.set_emissive(slot, 0.0); r.set_model(slot, model);
@@ -20880,7 +20874,7 @@ impl Game {
                 states.iter().position(|seat| seat.actor_id == Some(actor)));
             let hovered = self.crew_status_panel_hover_index(r.camera.pos, r.camera.forward());
             for (light, emitter) in self.crew_status_panel.drive(r, tm, &states,
-                self.crew_solo.panel_clock_s(), practical_gain, selected, hovered) {
+                self.crew_solo.panel_clock_s(), indicator_gain, selected, hovered) {
                 if light.radiant_intensity > 0.0 { lights.push(light); }
                 shadowed_cabin_lights.push(light);
                 emitting_meshes.push(emitter);
@@ -20894,7 +20888,7 @@ impl Game {
                 fuel_liters: self.tank_fuel_liters(),
                 radio_transmitting: false,
             };
-            for (light, emitter) in self.cabin_panels.drive(r, hm, practical_gain, &panel_state) {
+            for (light, emitter) in self.cabin_panels.drive(r, hm, indicator_gain, &panel_state) {
                 if light.radiant_intensity > 0.0 { lights.push(light); }
                 shadowed_cabin_lights.push(light);
                 emitting_meshes.push(emitter);
@@ -31334,7 +31328,7 @@ impl Game {
         let ejection_strength = ejection_strength.clamp(0.55, 2.80);
         let blood_owner = owner.min(self.physical_crew_capacity() - 1) as u8;
         // The wound's count is of the former small droplets; the same blood leaves as 1 cm ones.
-        let count = surface_blood::droplets_for(count);
+        let count = count; // Visual count, deliberately independent of physical blood volume.
 
         for j in 0..count.min(N_BLOOD_CUBES) {
             let s = seed
@@ -33329,6 +33323,21 @@ impl Game {
     /// connected supported contact film. Every view draws the same moving-frame evidence.
     fn drive_cubic_blood(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("drive_cubic_blood");
+        self.surface_blood.set_visual(!crew_tissue::reference_solve());
+        // Detached anatomical chunks are emission events, not fluid reservoirs.
+        let sprays = self.crew_corpse_render.borrow_mut().as_mut()
+            .map(|c|c.take_tissue_blood_seeds()).unwrap_or_default();
+        for (batch,(actor,frame,at,velocity,cells)) in sprays.into_iter().enumerate() {
+            for j in 0..cells.saturating_mul(16).min(2048) {
+                let seed = actor.wrapping_add((batch as u32).wrapping_mul(7919)).wrapping_add(j as u32 * 31);
+                let random = Vec3::new(hash01(seed^0x33)*2.0-1.0,hash01(seed^0x97)*2.0-1.0,hash01(seed^0xAF)*2.0-1.0);
+                let axis = velocity.normalize_or_zero();
+                self.surface_blood.emit(surface_blood::Emission { frame: if frame==BloodFrame::Hull {0}else{1},
+                    owner:(actor%4) as u8, actor_id:actor, position:at+random*0.012,
+                    velocity:axis*12.0+random*8.0, rotation:random*3.0,spin:random*6.0,seed });
+            }
+        }
+
         let models = { let _p = crate::sim_phase::Probe::new("blood_fire_surface_models"); self.fire_surface_models() };
         let source = { let _p = crate::sim_phase::Probe::new("blood_source_contacts"); self.cabin_fire.source_contacts(&models) };
         { let _p = crate::sim_phase::Probe::new("surface_blood_update"); self.surface_blood.update(dt, &models, &source); }
@@ -33352,7 +33361,7 @@ impl Game {
             stain_mats[k % N_BLOOD_BATCHES].push(run.model(&models));
         }
         for (batch, mats) in self.slots.blood_stain_batch.into_iter().zip(stain_mats.iter()) {
-            assert!(r.set_moving_instanced_mats(batch, mats),
+            assert!(r.set_dynamic_instanced_mats(batch, mats),
                 "blood stain page exceeded its fixed capacity");
         }
     }
@@ -38770,8 +38779,8 @@ mod tests {
         assert_eq!(allocation.iter().sum::<usize>(), N_BLOOD_CUBES / 4);
         assert_eq!(visual_blood_request(usize::MAX), BLOOD_REQUEST_MAX);
         assert!(
-            (0..1000).all(|seed| surface_blood::droplet_m(seed) == crew_tissue_cell_m()),
-            "droplets are the anatomy's cells"
+            (0..1000).all(|seed| surface_blood::droplet_m(seed) == crew_tissue_cell_m() * 3.0 * 0.25),
+            "visual droplets are a quarter of the coarse live tissue cells"
         );
         // A horror burst's full count is about a litre of blood in 1 cm droplets, not 33.
         let litres = surface_blood::droplets_for(BLOOD_REQUEST_MAX) as f32 * surface_blood::DROPLET_M.powi(3) * 1000.0;

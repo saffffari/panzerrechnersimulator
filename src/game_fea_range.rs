@@ -4209,6 +4209,12 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("live") {
         rg.load_state();
         rg.time_speed = 1.0;
+        let hull = rg.g.player.hull_model();
+        rg.look_at(hull.transform_point3(Vec3::new(5.5,3.2,1.5)),
+            hull.transform_point3(Vec3::new(0.0,1.2,0.1)));
+        rg.section.on = true;
+        rg.section.set_normal_hull(Vec3::X);
+        rg.section.offset = 0.0;
         rg.shot.shell = 7;
         rg.shot.range_m = 100.0;
         rg.shot.from_az = -90.0;
@@ -4228,6 +4234,13 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
             anyhow::ensure!(!rg.cache.busy() && rg.cache.len() == 0, "live firing started a cache");
         }
         anyhow::ensure!(rg.shot_t > 1.9, "live simulation stalled: {}", rg.shot_t);
+        let blood = rg.g.debug_surface_blood();
+        println!("[live-probe] blood {blood}");
+        anyhow::ensure!(blood["emitted"].as_u64().unwrap_or(0)>0 && blood["retained_cells"].as_u64().unwrap_or(0)>0,
+            "penetrating side hit produced no visible deposited blood");
+        let path = crate::capture_target(&format!("visual_blood_live_{}.png",capture_stamp()));
+        rg.r.render_to_png(&rg.device,&rg.queue,&path,rg.r.iw,rg.r.ih)?;
+        println!("[live-probe] capture {path}");
         rg.button("PLAY");
         let at = rg.shot_t;
         rg.tick(1.0/60.0);
