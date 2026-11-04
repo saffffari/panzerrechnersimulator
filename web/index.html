@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Panzer · live range</title>
+  </head>
+  <body>
+    <canvas id="view" aria-label="Interactive tank damage playground"></canvas>
+    <main>
+      <div class="brand">PANZER <span>LIVE RANGE / WEB</span></div>
+      <div class="controls">
+        <label
+          >SHOT<select id="shot" aria-label="Shot selection"></select></label
+        ><button id="fire">FIRE <kbd>F</kbd></button
+        ><label
+          >TIME STEP<select id="step" aria-label="Time step size">
+            <option value="0.004166667">1/240 s</option>
+            <option value="0.008333333">1/120 s</option>
+            <option value="0.016666667" selected>1/60 s</option>
+            <option value="0.033333333">1/30 s</option>
+          </select></label
+        >
+      </div>
+      <p id="status" role="status">Loading fixed native preset…</p>
+    </main>
+    <div id="hint">
+      Click tank: impact · Hold + drag: aim sphere · Right drag: orbit · Wheel:
+      zoom
+    </div>
+    <div id="metrics"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

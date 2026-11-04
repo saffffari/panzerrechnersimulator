@@ -1,0 +1,22 @@
+{
+  "name": "panzer-web-playground",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5178 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.180.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "tsx": "^4.20.6",
+    "@types/node": "^24.0.0",
+    "playwright": "^1.56.0"
+  }
+}
