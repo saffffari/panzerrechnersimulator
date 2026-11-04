@@ -18,7 +18,7 @@ export const rounds = [
     name: "T-34 @ 343 m/s · experimental",
     kind: "Ap",
     caliber_mm: 3000,
-    mass_kg: 26500,
+    mass_kg: 28500,
     muzzle_velocity: 343,
     filler_g: 0,
     drag_k: 0,
@@ -46,7 +46,39 @@ export function parsePresets(raw: any): Preset[] {
         p.settings &&
         typeof p.settings === "object",
     )
-    .map((p: any) => ({ name: p.name.slice(0, 100), settings: p.settings }));
+    .map((p: any) => ({ name: p.name, settings: p.settings }));
+}
+// Authored lists replace all catalogue/preset fallback options, preserving each saved shot.
+export function shotOptions(presets: Preset[]) {
+  const authored = presets.some((p) => Array.isArray(p.settings.shots));
+  const choices: Preset[] = [];
+  let selected = 0;
+  for (const p of presets) {
+    if (!authored) {
+      choices.push(p);
+      continue;
+    }
+    const shots = p.settings.shots;
+    if (!Array.isArray(shots)) continue;
+    const current = Math.floor(
+      finite(p.settings.selected_shot, 0, 0, Math.max(0, shots.length - 1)),
+    );
+    for (const [i, entry] of shots.entries()) {
+      if (
+        !entry ||
+        typeof entry.name !== "string" ||
+        !entry.shot ||
+        typeof entry.shot !== "object"
+      )
+        continue;
+      if (i === current && p === presets[0]) selected = choices.length;
+      choices.push({
+        name: entry.name,
+        settings: { ...p.settings, shot: entry.shot },
+      });
+    }
+  }
+  return { authored, choices, selected };
 }
 export function slope(r: Round, angle: number, plate: number) {
   const norm =

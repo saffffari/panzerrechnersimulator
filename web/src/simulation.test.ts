@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Vector3 as V } from "three";
 import { Simulation } from "./simulation";
-import { rounds, parsePresets, penetration } from "./preset";
+import { rounds, parsePresets, shotOptions, penetration } from "./preset";
 test("native preset wrappers and catalogue indices", () => {
   assert.equal(rounds[12].id, "PZGR_39");
   assert.equal(rounds[4].mass_kg, 6.5);
@@ -65,4 +65,59 @@ test("blood has a single wall contact; pools remain bounded under repeated extre
   for (let i = 0; i < 600; i++) s.step(1 / 120);
   assert.ok(s.splats.length <= 400);
   assert.ok(s.particles.every((p) => Number.isFinite(p.p.y)));
+});
+
+test("authored shots are the sole choices, selected shot wins over settings.shot", () => {
+  const first = {
+    shell: 16,
+    range_m: 123,
+    from_az: 47,
+    from_el: -81,
+    seed: 987,
+    target: { point: [-1.234, 2.3, 0.9] },
+  };
+  const second = {
+    shell: 17,
+    range_m: 0,
+    from_az: -179,
+    from_el: 89,
+    seed: 5,
+    target: { man: "Loader" },
+  };
+  const raw = {
+    name: "Native",
+    settings: {
+      shot: { shell: 4 },
+      selected_shot: 1,
+      shots: [
+        { name: "Shot 1", shot: first },
+        { name: "Sonic shot / saved name", shot: second },
+      ],
+      lamp_gain: 2,
+    },
+  };
+  const result = shotOptions(parsePresets(raw));
+  assert.equal(result.authored, true);
+  assert.equal(result.selected, 1);
+  assert.deepEqual(
+    result.choices.map((p) => p.name),
+    ["Shot 1", "Sonic shot / saved name"],
+  );
+  assert.deepEqual(result.choices[0].settings.shot, first);
+  assert.deepEqual(result.choices[1].settings.shot, second);
+  assert.equal(result.choices[1].settings.lamp_gain, 2);
+  assert.equal(rounds[16].mass_kg, 7100);
+  assert.equal(rounds[17].mass_kg, 28500);
+  assert.equal(rounds[17].muzzle_velocity, 343);
+  assert.deepEqual(raw.settings.shot, { shell: 4 });
+});
+test("empty authored list has no catalogue fallback; legacy single shots still load", () => {
+  assert.deepEqual(shotOptions([{ name: "Empty", settings: { shots: [] } }]), {
+    authored: true,
+    choices: [],
+    selected: 0,
+  });
+  const legacy = { name: "Legacy", settings: { shot: { shell: 12 } } };
+  assert.deepEqual(shotOptions([legacy]).choices, [legacy]);
+  assert.equal(shotOptions([legacy]).authored, false);
 });

@@ -15,7 +15,7 @@ Open **http://127.0.0.1:5178/**. Server is loopback only; nothing is published.
 `npm run build` type-checks and creates `web/dist` (about 0.53 MB, about 0.14 MB compressed JS/CSS).
 
 Visible controls are deliberately limited to **SHOT**, **FIRE**, **TIME STEP**.
-Single left click on tank places the impact and never fires. Hold left for 180 ms, then drag to rotate the single amber handle on a radius-0.85 m sphere. Continuous horizontal/vertical dragging reaches all sides of the sphere. Incoming direction is handle → impact. Right drag orbits, middle drag pans, wheel zooms. F fires. Space pauses and Backspace restores the tank (keyboard conveniences only, no extra panels). Camera navigation is independent of aiming. No cache, rewind, recording, automatic screenshots, or localStorage preset authoring exists in the app.
+Single left click on tank places the impact and never fires. Hold left for 100 ms, then drag to rotate the single amber handle on a radius-0.85 m sphere. Continuous horizontal/vertical dragging reaches all sides of the sphere. Incoming direction is handle → impact. Right drag orbits, middle drag pans, wheel zooms. F fires. Space pauses and Backspace restores the tank (keyboard conveniences only, no extra panels). Camera navigation is independent of aiming. No cache, rewind, recording, automatic screenshots, or localStorage preset authoring exists in the app.
 
 ## Native saved preset handoff
 
@@ -23,10 +23,10 @@ The shipped `public/native-preset.json` is explicitly a placeholder baseline, **
 
 ```bash
 cd /home/alex/panzer/web-playground/web
-node tools/import-preset.mjs /home/alex/panzer/editor-stable/checkout/target/fea_range_presets.json 'shot1'
+node tools/import-preset.mjs /home/alex/panzer/editor-stable/checkout/target/playground_preset.json
 ```
 
-Replace `shot1` with the saved name, or omit the name to import all saved shots. The tool accepts `{name,settings}`, a list, or the native `{schema:"fea-range-presets/v1",presets:[...]}` envelope. It writes only `web/public/native-preset.json`. Reload the browser afterward; rebuild if serving `dist`.
+The new native Save Preset export is `playground_preset.json`; this is also the importer default when invoked without arguments. Legacy `fea_range_presets.json` remains supported, with an optional second argument selecting a preset name. The tool accepts `{name,settings}`, a list, or the native `{schema:"fea-range-presets/v1",presets:[...]}` envelope. It writes only `web/public/native-preset.json`. Reload the browser afterward; rebuild if serving `dist`.
 
 Native shape:
 
@@ -41,7 +41,7 @@ Native shell indices 0–15 match `src/game_fea_range.rs::shells()` at the base 
 - `src/catalogue.json`: extracted from this checkout's `src/ballistics.rs`, native base commit above. `python tools/catalogue.py` refreshes it. Mass, velocity, drag, calibre, filler, reference penetration and reference range are copied for all 16 native rounds. Velocity decay, DeMarre exponent 1.43, normalization and slope exponents follow native formulas.
 - All rendered assets are original procedural boxes, cylinders, planes and spheres created in `src/main.ts` and `src/simulation.ts`. No third-party models, textures, fonts, remote assets, paid generation, source asset symlinks, or large asset packages are shipped. The native catalogue is the only extracted game data.
 - Engine dependency: Three.js (MIT); package versions and integrity are locked in `package-lock.json`. [InstancedMesh documentation](https://threejs.org/docs/#api/en/objects/InstancedMesh).
-- Gustav and sonic T-34 are **experimental, illustrative coefficients**, not historically validated catalogue entries. Gustav: 800 mm / 7,100 kg / 720 m/s; T-34 payload: 26,500 kg / 343 m/s. Their 900/1600 mm penetration anchors are synthetic knobs fixed in code, and damage radii are deliberately capped. T-34 is a coarse energy payload, not a whole vehicle flying through a structural solver.
+- Gustav and sonic T-34 are **experimental, illustrative coefficients**, not historically validated catalogue entries. Gustav: 800 mm / 7,100 kg / 720 m/s; T-34 payload: 28,500 kg / 343 m/s. Their 900/1600 mm penetration anchors are synthetic knobs fixed in code, and damage radii are deliberately capped. T-34 is a coarse energy payload, not a whole vehicle flying through a structural solver.
 
 ## Model limits and budgets
 
@@ -63,8 +63,16 @@ HEADED=1 XAUTHORITY=/run/user/1000/xauth_IAxOII node tools/playtest.mjs
 
 The Xauthority path is session-specific; use the current desktop's authorized path. QA refuses to start when a native range editor process is detected and closes **its own browser only** if one appears during testing. It never kills user/editor processes. Do not run GPU QA after the parent signals native launch. The production app has no process monitor; close its tab before opening the native editor.
 
-4/4 simulation tests cover catalogue/preset compatibility, AP cell loss/deformation and crew breakup, grazing stops/reset, and blood first-contact/pool caps. Browser QA checks boot, click without firing, hold-drag aiming, FIRE/F, time-step selection, accumulated damage, extreme shots, reset and 390×844 layout; screenshots are mandatory and were inspected. Final evidence is `qa-results-headed.json` and `qa-results-headless.json`.
+6/6 simulation tests cover catalogue/preset compatibility, AP cell loss/deformation and crew breakup, grazing stops/reset, and blood first-contact/pool caps. Browser QA checks boot, click without firing, hold-drag aiming, FIRE/F, time-step selection, accumulated damage, extreme shots, reset and 390×844 layout; screenshots are mandatory and were inspected. Final evidence is `qa-results-headed.json` and `qa-results-headless.json`.
 
 2026-11-03 hardware pass: Chromium / ANGLE OpenGL / NVIDIA RTX 4090, 1366×768, baseline 2,015 cells and 8 draws; first AP hit removed 99 cells; stress remained ≤1,200 particles and ≤400 splats; zero page exceptions. Timing is measured `requestAnimationFrame` interval, **not GPU execution time**. Baseline averaged 16.98 ms (p95 16.7 ms); cumulative stress-window average 16.73 ms (p95 16.8 ms), no integration budget drops. These short HAL desktop samples do not establish laptop performance. Headless SwiftShader is functional QA only.
 
 Screenshots are in the required flat owner folder `/windows/shop/panzerrechnersystem/captures/screenshots/`, named `web-playground-headed-{baseline,ap-impact,gustav,mobile}.png` and headless equivalents. They are not committed or published.
+
+### Authored shot list handoff (compatibility update)
+
+`settings.shots:[{name,shot:{shell,range_m,from_az,from_el,seed,target}}]` replaces all catalogue fallback dropdown entries when present. `settings.selected_shot` chooses the initial option; `settings.shot` remains the legacy fallback only. Saved names, target positions, angles, seeds and round indices are retained without rewriting the source file. Empty authored lists disable firing. Point markers keep the saved point exactly; the coarse hull entry is calculated separately when firing. A saved `{man:role}` is retained but its shot is explicitly disabled because native named crew resolution is unsupported. Web click placement remains a transient aiming edit, not native preset authoring.
+
+Supported actual fixed settings: shot shell/range/angles/point/seed, `tissue.active_reach_m`, `tissue.spread`, `camera.eye` (bounded local view), `sky.exposure`. Unsupported actual native settings: `scene.racks_loaded`, `scene.cabin_lamps`, scene run timing/fresh behavior, tissue tear energy/critical stretch/forward/outward/landing breakup, all `section`, `look` and `effects` parameters, `lamp_gain`, sky weather/time/solar controls, camera yaw/pitch/focal length/speed, time_speed, looping, engine, accumulation, wear, snow, tiger world transform, battle/route/open state and native named crew targets. Unknown settings are preserved in imported JSON but ignored by this coarse model. No native lighting equivalence is claimed.
+
+Preset compatibility update validation used CPU tests and TypeScript/Vite build only, with no new GPU session. Original browser evidence above predates this loader update.

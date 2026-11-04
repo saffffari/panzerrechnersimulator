@@ -3,7 +3,13 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import "./style.css";
 import { Simulation } from "./simulation";
-import { rounds, parsePresets, finite, type Preset } from "./preset";
+import {
+  rounds,
+  parsePresets,
+  shotOptions,
+  finite,
+  type Preset,
+} from "./preset";
 const canvas = document.querySelector<HTMLCanvasElement>("#view")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 const shotSelect = document.querySelector<HTMLSelectElement>("#shot")!;
@@ -258,7 +264,7 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 canvas.addEventListener("pointermove", (e) => {
   if (!drag) return;
-  if (performance.now() - drag.time < 180) return;
+  if (performance.now() - drag.time < 100) return;
   const dx = e.clientX - drag.x,
     dy = e.clientY - drag.y;
   if (Math.abs(dx) + Math.abs(dy) < 1) return;
@@ -283,17 +289,21 @@ let presets: Preset[] = [],
   settings: Record<string, any> = {},
   roundIndex = 12;
 let paused = false;
+let shotSupported = true;
+const fireButton = document.querySelector<HTMLButtonElement>("#fire")!;
 function applyPreset(p: Preset) {
   settings = p.settings;
   const shot = settings.shot ?? {};
+  shotSupported = !shot.target?.man;
+  fireButton.disabled = !shotSupported;
   roundIndex = Math.floor(finite(shot.shell, 12, 0, rounds.length - 1));
   sim.seed = finite(shot.seed, 41, 0, 4294967295);
   const point = shot.target?.point;
   if (Array.isArray(point) && point.length === 3)
     impact.set(
-      finite(point[0], -1.6, -5, 5),
-      finite(point[1], 1.45, 0, 5),
-      finite(point[2], 0, -6, 6),
+      finite(point[0], -1.6),
+      finite(point[1], 1.45),
+      finite(point[2], 0),
     );
   const az = (finite(shot.from_az, -90) * Math.PI) / 180,
     el = (finite(shot.from_el, 0, -90, 90) * Math.PI) / 180;
@@ -306,7 +316,6 @@ function applyPreset(p: Preset) {
   caster.set(impact.clone().addScaledVector(from, 20), from.clone().negate());
   const entry = caster.intersectObject(voxels)[0];
   if (entry) {
-    impact.copy(entry.point);
     if (entry.face) normal.copy(entry.face.normal);
   } else normal.copy(from);
   syncAim();
@@ -322,7 +331,9 @@ function applyPreset(p: Preset) {
   const exposure = settings.sky?.exposure;
   if (typeof exposure === "number")
     renderer.toneMappingExposure = finite(exposure, 1.15, 0.2, 3);
-  status.textContent = `${p.name} · Coarse JS model · fixed native tuning`;
+  status.textContent = shotSupported
+    ? `${p.name} · Coarse JS model · fixed native tuning`
+    : `${p.name} · Named crew target (${shot.target.man}) unsupported; select a point-target shot`;
 }
 async function load() {
   try {
@@ -330,11 +341,22 @@ async function load() {
     if (!response.ok) throw Error("preset unavailable");
     presets = parsePresets(await response.json());
     if (!presets.length) throw Error("no valid presets");
+    const options = shotOptions(presets);
+    presets = options.choices;
     for (const [i, p] of presets.entries())
       shotSelect.add(new Option(p.name, `p:${i}`));
-    for (const [i, r] of rounds.entries())
-      shotSelect.add(new Option(r.name, `r:${i}`));
-    applyPreset(presets[0]);
+    if (!options.authored)
+      for (const [i, r] of rounds.entries())
+        shotSelect.add(new Option(r.name, `r:${i}`));
+    if (!presets.length) {
+      shotSupported = false;
+      fireButton.disabled = true;
+      status.textContent =
+        "Native authored shot list is empty; add a shot in the native editor and export again.";
+      return;
+    }
+    shotSelect.value = `p:${options.selected}`;
+    applyPreset(presets[options.selected]);
   } catch (e) {
     status.textContent = `Preset load failed: ${e}. Using baseline.`;
     for (const [i, r] of rounds.entries())
@@ -351,9 +373,15 @@ shotSelect.onchange = () => {
   }
 };
 function fire() {
+  if (!shotSupported) return;
+  // Keep the authored marker exact; resolve entry separately for this coarse hull.
+  if (geometryDirty) syncCells();
+  caster.set(impact.clone().addScaledVector(from, 20), from.clone().negate());
+  const entry = caster.intersectObject(voxels)[0];
+  if (entry?.face) normal.copy(entry.face.normal);
   const r = rounds[roundIndex];
   const result = sim.fire(
-    impact,
+    entry?.point ?? impact,
     from.clone().negate(),
     normal,
     r,

@@ -1,11 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-const input = process.argv[2],
+const input =
+    process.argv[2] ||
+    "/home/alex/panzer/editor-stable/checkout/target/playground_preset.json",
   name = process.argv[3];
-if (!input)
-  throw Error(
-    "Usage: node tools/import-preset.mjs /absolute/path/fea_range_presets.json [preset name]",
-  );
 const raw = JSON.parse(fs.readFileSync(path.resolve(input), "utf8"));
 const list = Array.isArray(raw)
   ? raw
