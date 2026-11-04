@@ -63,6 +63,7 @@ impl Range {
             self.status = "SIMULATION CACHE CANCELLED".into(); return;
         }
         self.clear_caches();
+        self.free_fire = false;
         // Capture CPU deformations from the fresh scene onward, never retain a GPU frame per tick.
         self.fresh();
         // Hold a clean setup image while physics bakes. Playback starts only when every frame exists.

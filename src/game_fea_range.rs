@@ -412,7 +412,7 @@ const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
 /// The bar's left margin.
 const LEFT_X: f32 = 0.007;
-const BUTTONS: [(&str, usize, usize); 7] = [("START", 0, 0), ("SIMULATE", 1, 0), ("PLAY", 2, 0), ("RENDER", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
+const BUTTONS: [(&str, usize, usize); 7] = [("LIVE", 0, 0), ("SIMULATE", 1, 0), ("PLAY", 2, 0), ("RENDER", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
     ("LOOP", 0, 2)];
 /// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
 /// the saved layouts (`BATTLE_LAYOUTS`).
@@ -3049,7 +3049,7 @@ impl Range {
             self.r.fill_rect(x, y, w, h, fill);
             if hover && !self.battle {
                 let hint = match label {
-                    "START" => "FIRST FRAME; KEEPS YOUR SHOT SETTINGS AND CACHE",
+                    "LIVE" => "INTERACTIVE VIEW: F FIRES A SHELL; SPACE PAUSES / RESUMES",
                     "SIMULATE" => "FRESH TANK -> SIMULATE ONCE -> CACHE; CLICK AGAIN TO CANCEL",
                     "PLAY" => "PLAY / PAUSE THE CACHE; MOVE THE CAMERA WHILE IT PLAYS",
                     "RENDER" => "CURRENT VIEW -> CACHED IMAGES + MP4; EVERY FRAME, NO REAL-TIME LIMIT",
@@ -3161,7 +3161,7 @@ impl Range {
                 "C: SECTION ON/OFF    V: AXIS NEAREST THE CAMERA    G: AXIS NEAREST THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 90",
                 "PANEL: ONE TAB OPEN AT A TIME; DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
-                "ENTER (OR F): SIMULATE AND CACHE A FRESH SHOT    Z (OR .): CENTRE ON THE TIGER",
+                "F: FIRE A SHELL IN LIVE VIEW    ENTER: CALCULATE A FRESH SHOT    Z (OR .): CENTRE ON THE TIGER",
                 "SPACE: PLAY / PAUSE THE CACHED SHOT    BACKSPACE: FIRST FRAME    RENDER: FRAMES + MP4",
                 "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
                 "CACHED PLAYBACK NEVER RE-RUNS PHYSICS; CAMERA, SECTION, LIGHTING AND LOOK STAY LIVE",
@@ -3336,8 +3336,16 @@ impl Range {
             return;
         }
         match label {
+            "LIVE" => {
+                if !self.free_fire { self.reset(); }
+                self.mode = Mode::Live;
+                self.free_fire = true;
+                self.playing = true;
+                self.status = "LIVE VIEW: F FIRES A SHELL NOW; SPACE PAUSES / RESUMES".into();
+            }
             "START" | "RESET" => self.start_cached_shot(),
             "SIMULATE" | "RUN" | "FIRE" => self.cache_simulation(),
+            "PLAY" if self.free_fire => self.playing = !self.playing,
             "PLAY" => self.play_cached_shot(),
             "RENDER" => self.render_cached_shot(),
             "LOOP" => self.looping = !self.looping,
@@ -3649,7 +3657,7 @@ impl App {
             KeyCode::KeyG => rg.adjust(Knob::SnapToShot, 1.0, false, false),
             KeyCode::Tab => rg.hide_ui = !rg.hide_ui,
             // F fires into the present state and plays on: it never loops back (owner, 2026-11-03).
-            KeyCode::KeyF => rg.button("SIMULATE"),
+            KeyCode::KeyF => { rg.button("LIVE"); rg.fire_now(); rg.free_fire = true; }
             KeyCode::Period | KeyCode::NumpadDecimal | KeyCode::KeyZ => rg.frame_tiger(),
             KeyCode::KeyC => rg.section.on = !rg.section.on,
             KeyCode::KeyV => {
