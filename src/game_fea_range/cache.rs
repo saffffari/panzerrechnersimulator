@@ -317,6 +317,8 @@ impl Range {
             if self.g.casualty_tissue_pending() { std::thread::sleep(std::time::Duration::from_millis(2)); }
         }
         anyhow::ensure!(self.cache.ready(),"simulation cache is empty: {}",self.status);
+        // Exercise 3D restoration rather than the first-pass image fast path.
+        self.cache.image_key = serde_json::Value::Null;
         let clock=self.g.armor_tick; let digest=self.digest();
         let indices=[0,self.cache.frames.len()-1,0,self.cache.frames.len()/2];
         for index in indices {
