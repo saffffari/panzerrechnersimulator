@@ -39,6 +39,12 @@ use super::*;
 mod rewind;
 #[path = "game_fea_range/cache.rs"]
 mod cache;
+#[path = "game_fea_range/menus.rs"]
+mod menus;
+#[path = "game_fea_range/aim.rs"]
+mod aim;
+#[path = "game_fea_range/payloads.rs"]
+mod payloads;
 use crate::{act_manifest, celestial_sky, ephemeris, graphics, world};
 use std::collections::HashSet;
 use glam::Vec4;
@@ -106,7 +112,7 @@ fn set_review_lamp_gain(gain: f32) {
 }
 
 /// The gun that fires each catalogue round and the vehicles that carried it (`shells()` order).
-const SHOOTERS: [&str; 16] = [
+const SHOOTERS: [&str; 18] = [
     "M-42 45 MM ANTI-TANK GUN (TOWED)",
     "20-K 45 MM: T-70, BT-7, T-26",
     "20-K 45 MM: T-70, BT-7, T-26",
@@ -123,12 +129,14 @@ const SHOOTERS: [&str; 16] = [
     "KWK 36 88 MM: TIGER I",
     "KWK 36 88 MM: TIGER I",
     "KWK 36 88 MM: TIGER I",
+    "800 MM GUSTAV RAILWAY GUN (EXPERIMENT)",
+    "28.5-TON T-34 VEHICLE PAYLOAD, 343 M/S (EXPERIMENT)",
 ];
 
-fn shells() -> [&'static crate::ballistics::ShellSpec; 16] {
+fn shells() -> [&'static crate::ballistics::ShellSpec; 18] {
     use crate::ballistics as b;
     [&b::BR_240_M42, &b::BR_240, &b::BR_240P, &b::BR_271_ZIS2, &b::BR_350B, &b::OF_350_F34, &b::BR_354P, &b::BR_365,
-        &b::BR_412, &b::BR_471, &b::OF_530, &b::BR_540, &b::PZGR_39, &b::PZGR_40, &b::SPRGR_88, &b::PZGR_39_43]
+        &b::BR_412, &b::BR_471, &b::OF_530, &b::BR_540, &b::PZGR_39, &b::PZGR_40, &b::SPRGR_88, &b::PZGR_39_43, &b::GUSTAV_800_PLAYGROUND, &b::T34_MACH1_PLAYGROUND]
 }
 
 /// Range (m) at which `shell` arrives at `v` m/s by its own decay law (0 at or above the muzzle).
@@ -277,7 +285,7 @@ enum Tape {
 /// Every adjustable row of the sidebar.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Knob {
-    Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot, CacheSim, RenderShot,
+    PlacedShot, Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot, CacheSim, RenderShot,
     Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, Loop,
     MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame, SmokeDensity, SmokeDelay, EffectsAuthored, Concussion, FlashAfterimage,
     Focal, SavedCam, AddCam, DeleteCam, ExportCams,
@@ -303,7 +311,7 @@ fn kind(knob: Knob) -> Kind {
     use Knob::*;
     match knob {
         Gun => Kind::Info,
-        Shell | TargetKind | Seed | SavedShot | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
+        PlacedShot | Shell | TargetKind | Seed | SavedShot | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
         Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance
         | Concussion | FlashAfterimage => Kind::Toggle,
         CacheSim | RenderShot | AddShot | AddCam | DeleteCam | ExportCams | EffectsAuthored | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
@@ -357,8 +365,8 @@ const GROUPS: [&str; 9] = ["SHOT", "SCENE", "CAMERA", "SECTION", "SKY", "LOOK", 
 fn group_rows(group: usize) -> Vec<Knob> {
     use Knob::*;
     match group {
-        0 => vec![Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot],
-        1 => vec![TimeSpeed, Loop, Racks, Lamps, LampPower, Engine, SlowSpan, RunLength],
+        0 => vec![PlacedShot, Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot],
+        1 => vec![TimeSpeed, Racks, Lamps, LampPower, Engine],
         2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
         4 => vec![Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure],
@@ -680,7 +688,14 @@ struct Range {
     status: String,
     cache: cache::Cache,
     shot_presets: Vec<serde_json::Value>,
+    payload_t34: [usize;3],
+    payload_gustav: usize,
     shot_preset_at: Option<usize>,
+    placed_shots: Vec<ShotSetup>,
+    selected_shot: Option<usize>,
+    popup: Option<menus::Popup>,
+    preset_name: Option<String>,
+    preset_name_selected: bool,
     help: bool,
     muted: bool,
     idle_s: f32,
@@ -749,6 +764,10 @@ impl Range {
         // The Canyon run's own course (`canyon::manifest_path`, as `canyon_game` selects it).
         act_manifest::select_runtime_manifest(Some(crate::canyon::manifest_path()))?;
         let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+        let payload_t34=g.slots.t34[0].map(|source|r.clone_actor_mesh(source));
+        let gustav=super::game_fea::penetrator_mesh(super::game_fea::penetrator_body(&crate::ballistics::GUSTAV_800_PLAYGROUND));
+        let prototype=r.register_instanced_prototype(&device,&queue,&gustav);
+        let payload_gustav=r.add_moving_instanced_pool(&device,prototype,1).ok_or_else(||anyhow::anyhow!("Gustav payload pool"))?;
         let frame_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("fea-range-frame"),
             size: wgpu::Extent3d { width: r.iw, height: r.ih, depth_or_array_layers: 1 },
@@ -810,7 +829,13 @@ impl Range {
             shot_presets: std::fs::read_to_string(PRESETS_PATH).ok()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                 .and_then(|v| v["presets"].as_array().cloned()).unwrap_or_default(),
+            payload_t34, payload_gustav,
             shot_preset_at: None,
+            placed_shots: Vec::new(),
+            selected_shot: None,
+            popup: None,
+            preset_name: None,
+            preset_name_selected: false,
             help: false,
             muted: false,
             idle_s: 0.0,
@@ -869,6 +894,7 @@ impl Range {
             range.look_at(eye, hull.transform_point3(Vec3::new(0.0, 1.4, 0.0)));
         }
         // Explicit live launch: start the wall-clock simulation without firing before the owner is ready.
+        if range.placed_shots.is_empty() {range.placed_shots.push(range.shot);range.selected_shot=Some(0);}
         if !headless {
             range.free_fire = true;
             range.playing = true;
@@ -1278,6 +1304,7 @@ impl Range {
     /// The camera, the section and the crew drawing for this frame.
     fn pose_view(&mut self) {
         if self.pose_cached_view() { return; }
+        self.draw_experimental_payloads();
         // Playing the Tiger: the game placed its own camera, sights and crew for the player's
         // station; the editor's camera follows it so a pause (Esc) orbits from there.
         if self.player_control && !self.play_paused {
@@ -1461,12 +1488,13 @@ impl Range {
         let a = crew_tissue::TissueTuning::AUTHORED;
         let mark = |changed: bool| if changed { " *" } else { "" };
         match knob {
+            Knob::PlacedShot => ("SHOT".into(),self.selected_shot.map_or("UNSAVED".into(),|i|format!("SHOT {}",i+1))),
             Knob::CacheSim => ("FIRE SHOT".into(), "WATCH AND CACHE / CANCEL".into()),
             Knob::RenderShot => ("RENDER SHOT".into(), "CACHE FRAMES + MP4".into()),
             Knob::SavedShot => ("SHOT PRESET".into(), self.shot_preset_at
                 .and_then(|i| self.shot_presets.get(i)).and_then(|v| v["name"].as_str())
-                .unwrap_or("SELECT < >").to_uppercase()),
-            Knob::AddShot => ("SAVE PRESET".into(), "SAVE AS NEXT SHOT".into()),
+                .unwrap_or("SELECT v").to_uppercase()),
+            Knob::AddShot => ("SAVE PRESET".into(), "SELECT v".into()),
             Knob::Shell => ("SHELL".into(), self.shot.spec().name.to_uppercase()),
             Knob::Gun => ("FIRED BY".into(), SHOOTERS[self.shot.shell % SHOOTERS.len()].into()),
             Knob::Range => ("RANGE".into(), format!("{:.0} M", self.shot.range_m)),
@@ -2060,35 +2088,7 @@ impl Range {
             self.dot(p, 0.008, INK);
             self.dot(p, 0.005, BLACK);
         }
-        // The shot's gizmo shows only while the SHOT tab is open (owner, 2026-11-03).
-        if self.open[0] {
-        let (aim, dir) = self.aim_line();
-        let entry = self.entry();
-        let start = entry.map_or(aim, |(p, _)| p);
-        self.line(start, aim, [0.6, 0.6, 0.6, 0.7]);
-        if let Some(p) = self.project(aim) {
-            self.dot(p, 0.010, INK);
-        }
-        // The curves themselves are the handles. Separate radii keep the elevation arc
-        // independently accessible even for a level shot (where the old dots coincided).
-        for which in 0..2 {
-            let points = self.shot_curve(which);
-            let colour = if which == 0 { GREEN } else { RED };
-            for pair in points.windows(2) {
-                if let (Some(a), Some(b)) = (self.project(pair[0]), self.project(pair[1])) {
-                    self.screen_segment(a, b, colour);
-                }
-            }
-        }
-        let ((_, el_point), _) = self.shot_frames(aim, dir);
-        self.line(el_point, aim, [0.75, 0.75, 0.75, 0.9]);
-        if let Some((e, n)) = entry {
-            if let Some(p) = self.project(e) {
-                self.dot(p, 0.009, [0.95, 0.15, 0.1, 1.0]);
-            }
-            self.line(e, e + n * 0.6, [0.6, 0.6, 0.6, 0.8]);
-        }
-        }
+        self.draw_aim_sphere();
         if let Some(plane) = self.section_plane() {
             let n = plane.truncate();
             let centre = self.g.player.hull_model().transform_point3(SECTION_PIVOT);
@@ -2543,6 +2543,8 @@ impl Range {
         let d = self.tuning_display();
         let t = &self.tuning;
         serde_json::json!({
+            "shots": self.placed_shots.iter().enumerate().map(|(i,s)|serde_json::json!({"name":format!("Shot {}",i+1),"shot":if self.selected_shot==Some(i){self.shot.json()}else{s.json()}})).collect::<Vec<_>>(),
+            "selected_shot": self.selected_shot,
             "shot": {"shell": self.shot.shell, "range_m": self.shot.range_m, "from_az": self.shot.from_az, "from_el": self.shot.from_el,
                 "seed": self.shot.seed, "target": match self.shot.target {
                     Target::Point(p) => serde_json::json!({"point": p.to_array()}),
@@ -2581,6 +2583,10 @@ impl Range {
     }
 
     fn apply_state(&mut self, v: &serde_json::Value) {
+        if let Some(items)=v["shots"].as_array() {
+            self.placed_shots=items.iter().take(256).map(|item|ShotSetup::read(&item["shot"],self.shot)).collect();
+            self.selected_shot=v["selected_shot"].as_u64().map(|i|i as usize).filter(|&i|i<self.placed_shots.len());
+        }
         let f = |v: &serde_json::Value| v.as_f64().map(|x| x as f32);
         let arr4 = |v: &serde_json::Value| -> Option<[f32; 4]> {
             let a: Vec<f32> = v.as_array()?.iter().filter_map(|x| x.as_f64().map(|x| x as f32)).collect();
@@ -2985,6 +2991,9 @@ impl Range {
         self.cursor = cursor;
         self.r.ui_reset();
         self.handle_at = None;
+        // HUD text is batched after rectangles; omit the underlying inspector while a
+        // popup is active so its text cannot bleed through the popup's background.
+        if self.popup.is_some() || self.preset_name.is_some() {return;}
         let scrubbing = matches!(self.mode, Mode::Scrub(_));
         // The viewport: a dragged timeline's stored frame, or the live frame captured this frame
         // for the timeline (or, headless, the live frame); otherwise `render` blits the live view.
@@ -3132,7 +3141,7 @@ impl Range {
                 Kind::Info => self.text(&value, value_x, y, TEXT * 0.72, DIM, crate::ui::Align::Left),
                 Kind::Stepper => {
                     self.text(&value, value_x, y, TEXT * 0.8, INK, crate::ui::Align::Left);
-                    for (x, sign) in [(minus, "<"), (plus, ">")] {
+                    for (x, sign) in if menus::is_menu(knob) {vec![(plus,"v")]}else{vec![(minus,"<"),(plus,">")]} {
                         self.r.fill_rect(x, y - ROW_H * 0.4, BTN_W, ROW_H * 0.8, BOX);
                         self.text_bold(sign, x + BTN_W * 0.5, y, TEXT * 0.85, INK, crate::ui::Align::Center);
                     }
@@ -3162,14 +3171,14 @@ impl Range {
             let lines = [
                 "RMB HOLD: LOOK    WASD/QE: FLY    SHIFT: FAST    CTRL: SLOW    WHEEL: FLY SPEED    [ ]: FOCAL LENGTH",
                 "ALT+LMB: ORBIT    ALT+MMB (OR MMB): PAN    ALT+RMB: DOLLY    DOUBLE-CLICK: THE ORBIT POINT    CLICK X/Y/Z: VIEW ALONG IT",
-                "LMB ON THE TANK: AIM (DIRECTION FROM THE CAMERA)    CTRL+LMB: AIM, KEEP DIRECTION",
-                "SHOT HANDLES: GREEN ON THE RING SETS THE BEARING, RED ON THE ARC THE ELEVATION (SHIFT+LMB DRAG: BOTH)",
+                "LMB ON TANK: ADD SHOT    HOLD + DRAG: AIM ON THE SPHERE    ALT+LMB: ORBIT",
+                "ONE SPHERE HANDLE SETS THE INCOMING DIRECTION IN ALL AXES; ROUND / SHOT / CAMERA USE POPUP LISTS",
                 "C: SECTION ON/OFF    V: AXIS NEAREST THE CAMERA    G: AXIS NEAREST THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 90",
                 "PANEL: ONE TAB OPEN AT A TIME; DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
                 "F / ENTER: FIRE A SHELL    BACKSPACE: RESET    Z (OR .): CENTRE ON THE TIGER",
                 "SPACE: PAUSE / RESUME LIVE SIMULATION    BACKSPACE: FRESH TANK, PAUSED",
-                "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
+                "SAVE PRESET: NAME A NEW PRESET OR OVERWRITE ONE; THE EXPORT SUPPLIES THE WEB PLAYGROUND",
                 "LIVE SIMULATION: NO AUTOMATIC SIMULATION OR IMAGE CACHING",
                 "TAB OR HIDE: THE PANEL    R: RECORD THE VIEWPORT    F12: FULL-FRAME STILL 5120X2880    SETTINGS AND CAMERAS KEPT",
                 "P: PRINT TISSUE KNOBS    M: MUTE    H: THIS HELP    ESC TWICE: QUIT",
@@ -3231,6 +3240,8 @@ impl Range {
 
     /// A press on the panel: what it did.
     fn click_ui(&mut self, cursor: [f32; 2], fine: bool, coarse: bool) -> Click {
+        if self.preset_name.is_some() {return Click::Used;}
+        if self.click_menu(cursor) {return Click::Used;}
         let [x, y, w, h] = hide_rect(self.hide_ui);
         if cursor[0] >= x && cursor[0] <= x + w && cursor[1] >= y && cursor[1] <= y + h {
             self.hide_ui = !self.hide_ui;
@@ -3258,6 +3269,7 @@ impl Range {
             return Click::Used;
         }
         if let Some((knob, cx)) = self.row_at(cursor) {
+            if menus::is_menu(knob) {self.open_menu(knob,cursor);return Click::Used;}
             let right = cx + COLS_W - 0.012;
             let minus = right - 2.0 * BTN_W - 0.003;
             match kind(knob) {
@@ -3278,7 +3290,10 @@ impl Range {
 
     /// The wheel on the panel: on a row it steps the row.
     fn wheel_ui(&mut self, cursor: [f32; 2], dy: f32, fine: bool, coarse: bool) {
-        let _ = &dy;
+        if let Some(p)=self.popup.as_mut() {
+            p.scroll=if dy>0.0{p.scroll.saturating_sub(1)}else{(p.scroll+1).min(p.items.len().saturating_sub(menus::MENU_ROWS))};return;
+        }
+        if let Some((knob,_))=self.row_at(cursor) {if menus::is_menu(knob){self.open_menu(knob,cursor);return;}}
         match self.row_at(cursor) {
             Some((knob, _)) if !matches!(kind(knob), Kind::Action | Kind::Info) => self.adjust(knob, dy.signum(), fine, coarse),
             Some(_) => {}
@@ -3513,6 +3528,7 @@ impl Range {
             self.r.render_to_surface_view(&self.device, &self.queue, view, format, &rect);
         }
         self.draw_ui(cursor);
+        self.draw_popup(cursor);
         self.r.render_hud_over_surface(&self.device, &self.queue, view, format, w, h);
     }
 }
@@ -3523,6 +3539,7 @@ impl Range {
 enum Drag {
     /// Shift+LMB: turning the shot's direction.
     Turn,
+    AimSphere(std::time::Instant),
     /// Alt+LMB: orbiting the camera about a point; Alt+MMB (or MMB): panning; Alt+RMB: dollying
     /// toward the point (the point under the cursor when the drag began).
     Orbit(Vec3),
@@ -3593,6 +3610,7 @@ impl App {
     fn key(&mut self, code: KeyCode, event_loop: &ActiveEventLoop) {
         let Some(st) = self.state.as_mut() else { return };
         let rg = &mut st.range;
+        if rg.menu_key(code) {return;}
         // Playing the Tiger: Esc pauses (the editor's camera then orbits from the game's view);
         // 1-5 take a station; the other keys drive the game (`frame`).
         if rg.player_control {
@@ -3917,6 +3935,7 @@ impl ApplicationHandler for App {
                     let (dx, dy) = (c[0] - last[0], c[1] - last[1]);
                     let rg = &mut st.range;
                     match drag {
+                        Drag::AimSphere(_) => rg.drag_aim_sphere(dx,dy),
                         Drag::Turn => {
                             rg.shot.from_az = ((rg.shot.from_az - dx * 180.0 + 180.0).rem_euclid(360.0)) - 180.0;
                             rg.shot.from_el = (rg.shot.from_el - dy * 90.0).clamp(-60.0, 80.0);
@@ -3979,7 +3998,7 @@ impl ApplicationHandler for App {
                 let rg = &mut st.range;
                 if rg.track_hit(c).is_some() {
                     rg.step_frame(dy < 0.0, if coarse { 10 } else { 1 });
-                } else if rg.in_panel(c) {
+                } else if rg.in_panel(c) || rg.popup.is_some() {
                     rg.wheel_ui(c, dy, fine, coarse);
                 } else {
                     rg.speed = (rg.speed * 1.2f32.powf(dy)).clamp(0.05, 200.0);
@@ -4061,22 +4080,20 @@ impl ApplicationHandler for App {
                         let (c, shift, ctrl, alt) = (self.input.cursor, self.input.shift, self.input.ctrl, self.input.alt);
                         let Some(st) = self.state.as_mut() else { return };
                         let rg = &mut st.range;
+                        if rg.popup.is_some() || rg.preset_name.is_some() {rg.click_ui(c,ctrl,shift);return;}
                         if let Some(i) = rg.track_hit(c) {
                             rg.mode = Mode::Scrub(i);
                             rg.playing = false;
                             self.input.drag = Some((Drag::Track, c));
-                        } else if let Some(which) = rg.shot_handle_hit(c).filter(|_| !rg.in_panel(c) && !rg.on_hide_button(c)) {
-                            let angle = rg.shot_cursor_angle(which,c).unwrap_or(
-                                if which == 0 { rg.shot.from_az } else { rg.shot.from_el });
-                            let value = if which == 0 { rg.shot.from_az } else { rg.shot.from_el };
-                            self.input.drag = Some((Drag::ShotHandle(which,value-angle), c));
+                        } else if rg.aim_handle_hit(c) && !rg.in_panel(c) && rg.popup.is_none() {
+                            self.input.drag=Some((Drag::AimSphere(std::time::Instant::now()-std::time::Duration::from_millis(100)),c));
                         } else if let Some(step) = rg.handle_hit(c).filter(|_| rg.mode == Mode::Live) {
                             if step == (0, 0) {
                                 self.input.drag = Some((Drag::Rotate([0.0, 0.0]), c));
                             } else {
                                 rg.rotate_section(step.0, step.1);
                             }
-                        } else if rg.in_panel(c) || rg.on_hide_button(c) {
+                        } else if rg.in_panel(c) || rg.on_hide_button(c) || rg.popup.is_some() || rg.preset_name.is_some() {
                             if let Click::Dial(knob) = rg.click_ui(c, ctrl, shift) {
                                 self.input.drag = Some((Drag::Dial(knob, rg.dial_t(knob), c[1]), c));
                             }
@@ -4084,21 +4101,11 @@ impl ApplicationHandler for App {
                             rg.snap_view(axis);
                         } else if alt {
                             self.input.drag = Some((Drag::Orbit(rg.orbit_point(c)), c));
-                        } else if shift {
-                            self.input.drag = Some((Drag::Turn, c));
                         } else {
-                            // A second click within 0.35 s on the same spot: the orbit point
-                            // there, and the first click's aim taken back.
-                            let double = self.last_click.as_ref().filter(|(t, at, _)| t.elapsed().as_secs_f32() < 0.35
-                                && ((at[0] - c[0]).hypot(at[1] - c[1])) < 0.01).map(|(_, _, shot)| *shot);
-                            if let Some(shot) = double {
-                                rg.shot = shot;
-                                rg.set_orbit_point(c);
-                                self.last_click = None;
-                            } else {
-                                self.last_click = Some((std::time::Instant::now(), c, rg.shot));
-                                rg.pick(c, ctrl);
-                            }
+                            rg.sync_placed_shot();
+                            rg.pick(c, false);
+                            if rg.status.starts_with("AIM: picked") {rg.add_placed_shot();}
+                            self.input.drag=Some((Drag::AimSphere(std::time::Instant::now()),c));
                         }
                     }
                     MouseButton::Left => {
@@ -4116,8 +4123,20 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 let PhysicalKey::Code(code) = event.physical_key else { return };
                 if event.state == ElementState::Pressed {
+                    if let Some(rg)=self.state.as_mut().map(|s|&mut s.range) {
+                        if let Some(name)=rg.preset_name.as_mut() {
+                            match code {
+                                KeyCode::KeyA if self.input.ctrl=>rg.preset_name_selected=true,
+                                KeyCode::Escape=>rg.preset_name=None,
+                                KeyCode::Enter|KeyCode::NumpadEnter=>{let name=name.clone();rg.save_named_preset(name,None);},
+                                KeyCode::Backspace=>{if rg.preset_name_selected{name.clear();rg.preset_name_selected=false;}else{name.pop();}},
+                                _=>{if let Some(text)=&event.text {for c in text.chars().filter(|c|!c.is_control()){if rg.preset_name_selected{name.clear();rg.preset_name_selected=false;}if name.chars().count()<60{name.push(c);}}}}
+                            }
+                            return;
+                        }
+                    }
                     let repeat = !self.input.keys.insert(code);
-                    if !repeat || matches!(code, KeyCode::ArrowLeft | KeyCode::ArrowRight) {
+                    if !repeat || matches!(code, KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::ArrowUp | KeyCode::ArrowDown) {
                         self.key(code, event_loop);
                     }
                 } else {
@@ -4206,6 +4225,47 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let mut rg = Range::new(device, queue, true)?;
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("payloads") {
+        let hull=rg.g.player.hull_model();
+        rg.look_at(hull.transform_point3(Vec3::new(12.0,8.0,15.0)),hull.transform_point3(Vec3::new(0.0,1.5,4.0)));
+        for index in [16,17] {
+            rg.button("RESET");rg.shot.shell=index;rg.shot.from_az=0.0;rg.shot.from_el=0.0;
+            rg.shot.target=Target::Point(Vec3::new(0.65,2.52,1.6));rg.button("FIRE");rg.pose_view();
+            let path=crate::capture_target(&format!("payload-{index}-{}.png",capture_stamp()));
+            rg.r.render_to_png(&rg.device,&rg.queue,&path,rg.r.iw,rg.r.ih)?;
+            for _ in 0..90 {rg.tick(1.0/60.0);rg.pose_view();let _=rg.r.render_to_rgba(&rg.device,&rg.queue,rg.r.iw,rg.r.ih)?;}
+            anyhow::ensure!(rg.shot_t>1.4 && !rg.g.fea.receipts.is_empty(),"experimental payload {index} did not resolve a live hit");
+            println!("[payload-probe] {} live hit resolved; capture {path}",rg.shot.spec().name);
+        }
+        return Ok(());
+    }
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("menus") {
+        rg.win=[1920.0,1080.0];
+        rg.open=[false;GROUPS.len()];rg.open[0]=true;
+        rg.shot.shell=17;
+        rg.open_menu(Knob::Shell,[0.12,0.75]);
+        anyhow::ensure!(rg.popup.as_ref().is_some_and(|p|p.items.len()==18 && p.items[16].contains("Gustav") && p.items[17].contains("T-34")),"experimental payloads absent from round menu");
+        rg.menu_key(KeyCode::Enter);
+        anyhow::ensure!(rg.shot.shell==17 && rg.popup.is_none(),"round menu did not select directly");
+        rg.sync_placed_shot();let old=rg.placed_shots[0].target;
+        rg.shot.target=Target::Point(Vec3::new(0.6,2.0,1.1));rg.add_placed_shot();
+        anyhow::ensure!(rg.placed_shots[0].target==old && rg.placed_shots.len()==2,"adding a shot replaced the previous shot");
+        let target=rg.shot.target;let projectiles=rg.g.projectiles.len();
+        for _ in 0..20 {rg.drag_aim_sphere(0.06,0.04);}
+        anyhow::ensure!(rg.shot.target==target && (rg.shot.dir_hull().length()-1.0).abs()<1e-5 && rg.g.projectiles.len()==projectiles,"sphere aiming moved the impact point or fired");
+        rg.save_named_preset("qa-popup-preset".into(),None);
+        let exported:serde_json::Value=serde_json::from_slice(&std::fs::read("target/playground_preset.json")?)?;
+        anyhow::ensure!(exported["settings"]["shots"].as_array().is_some_and(|v|v.len()==2),"preset export lost authored shots");
+        let n=rg.shot_presets.len();rg.save_named_preset("qa-popup-preset".into(),Some(n-1));
+        anyhow::ensure!(rg.shot_presets.len()==n,"overwrite created duplicate preset");
+        rg.open_menu(Knob::Shell,[0.12,0.75]);rg.pose_view();
+        crate::converge_headless_screenshot(&mut rg.r,&rg.device,&rg.queue,8)?;
+        rg.draw_ui([0.1,0.1]);rg.draw_popup([0.1,0.1]);
+        let path=crate::capture_target(&format!("popup-rounds-{}.png",capture_stamp()));
+        rg.r.render_to_png_hud(&rg.device,&rg.queue,&path,1920,1080)?;
+        println!("[menus-probe] direct round selection, two independent shots, full-sphere direction, named preset save/overwrite/export pass; capture {path}");
+        return Ok(());
+    }
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("live") {
         rg.load_state();
         rg.time_speed = 1.0;

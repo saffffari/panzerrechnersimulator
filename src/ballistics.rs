@@ -697,6 +697,19 @@ pub fn horiz_obliquity_deg(shot_dir: Vec3, face_normal: Vec3) -> f32 {
 // First-pass anchors from the standard references; the research pass refines. All pen anchors are
 // mm RHA at 30° from vertical at the stated reference range.
 
+/// Playground-only surrogates: mass and launch speed are explicit; penetration anchors are
+/// deliberately game approximations, not validated historical terminal-ballistics measurements.
+pub static GUSTAV_800_PLAYGROUND: ShellSpec = ShellSpec {
+    name: "800mm Gustav railway AP (experiment)", kind: ShellKind::Ap,
+    caliber_mm:800.0,mass_kg:7100.0,muzzle_velocity:720.0,filler_g:0.0,drag_k:0.0,
+    pen_ref_mm:3000.0,ref_range_m:0.0,
+};
+pub static T34_MACH1_PLAYGROUND: ShellSpec = ShellSpec {
+    name: "T-34 at Mach 1 (vehicle proxy experiment)",kind:ShellKind::Ap,
+    caliber_mm:3000.0,mass_kg:28500.0,muzzle_velocity:343.0,filler_g:0.0,drag_k:0.0,
+    pen_ref_mm:2000.0,ref_range_m:0.0,
+};
+
 pub static PZGR_39: ShellSpec = ShellSpec {
     name: "8.8cm PzGr.39",
     kind: ShellKind::Apcbc,
@@ -1376,7 +1389,7 @@ pub mod shell_spec_ref {
         let name=String::deserialize(d)?;
         [&b::PANZERFAUST_60,&b::PZGR_39,&b::PZGR_40,&b::SPRGR_88,&b::PZGR_39_43,
             &b::BR_240_M42,&b::BR_240,&b::BR_240P,&b::BR_271_ZIS2,&b::BR_350B,&b::OF_350_F34,
-            &b::BR_354P,&b::BR_365,&b::BR_412,&b::BR_471,&b::OF_530,&b::BR_540].into_iter()
+            &b::BR_354P,&b::BR_365,&b::BR_412,&b::BR_471,&b::OF_530,&b::BR_540,&b::GUSTAV_800_PLAYGROUND,&b::T34_MACH1_PLAYGROUND].into_iter()
             .find(|spec|spec.name==name).ok_or_else(||serde::de::Error::custom(format!("unknown shell specification {name}")))
     }
 }
