@@ -1144,6 +1144,8 @@ impl Game {
             if let Some(params) = p.sound {
                 self.last_player_damage_sound = Some((params, context));
             }
+            // Spread simultaneous hit commits over updates instead of draining the queue.
+            if !super::crew_tissue::reference_solve() { break; }
         }
     }
 

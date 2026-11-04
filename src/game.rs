@@ -33333,7 +33333,7 @@ impl Game {
             let own = mat.x_axis.truncate().length().max(1.0e-5);
             let distance = mat.transform_point3(Vec3::ZERO).distance(r.camera.pos);
             let pixel_m = 2.0 * distance * (r.camera.fov_y * 0.5).tan() / r.ih as f32;
-            let size = (pixel_m * 1.4).clamp(own, 0.018).max(own);
+            let size = (pixel_m * 1.4).clamp(own, 0.018f32.max(own));
             *mat *= Mat4::from_scale(Vec3::splat(size / own));
         }
         for (batch, mats) in self.slots.blood_cube_batch.into_iter().zip(grain_mats.iter()) {
