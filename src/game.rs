@@ -3967,14 +3967,14 @@ fn crew_pose_segments_in_frame(
 fn blood_body_count(severity: f32) -> usize {
     let t = ((severity - 0.20) / 1.45).clamp(0.0, 1.0);
     let smooth = t * t * (3.0 - 2.0 * t);
-    let raw = 96.0 + (N_BLOOD_CUBES as f32 - 96.0) * smooth;
-    (((raw / 16.0).round() as usize) * 16).clamp(96, N_BLOOD_CUBES)
+    let raw = 96.0 + (BLOOD_REQUEST_MAX as f32 - 96.0) * smooth;
+    (((raw / 16.0).round() as usize) * 16).clamp(96, BLOOD_REQUEST_MAX)
 }
 
 /// Increase visual granular resolution of an already-recorded wound. It changes neither the
 /// injury outcome nor its contact position; every allocated grain still gets its own physics body.
 fn visual_blood_request(recorded_count: usize) -> usize {
-    recorded_count.saturating_mul(BLOOD_VISUAL_DENSITY).min(N_BLOOD_CUBES)
+    recorded_count.saturating_mul(BLOOD_VISUAL_DENSITY).min(BLOOD_REQUEST_MAX)
 }
 
 /// Conservative floor projection still used by hot-fragment fallback placement and corpse gore
@@ -8900,7 +8900,10 @@ const FOAM_GRAIN_SIZE: f32 = surface_fire::GRAIN_M;
 // one visible cube instance. Four fixed 8192-instance colour batches keep split-screen rendering to
 // four draws per view; measured source contacts populate a bounded connected surface film.
 const N_BLOOD_CUBES: usize = surface_blood::MAX_GRAINS;
-const BLOOD_VISUAL_DENSITY: usize = 8;
+// Wound requests are calibrated in legacy droplet-volume units, not live pool slots.
+// Keep this budget independent of the coarse renderer/physics capacity.
+const BLOOD_REQUEST_MAX: usize = 32_768;
+const BLOOD_VISUAL_DENSITY: usize = 64;
 const N_BLOOD_BATCHES: usize = 4;
 const BLOOD_GRAINS_PER_BATCH: usize = N_BLOOD_CUBES / N_BLOOD_BATCHES;
 /// Every transient blood body is the same sand-grain voxel. Severity changes only how many grains
@@ -25805,7 +25808,7 @@ impl Game {
         let _ = self.record_physical_crew_casualties(&hits);
         let newly_recorded = self.couch_casualties.len().saturating_sub(casualty_start);
         if newly_recorded > 0 {
-            let casualty_budget = (N_BLOOD_CUBES / newly_recorded).max(16);
+            let casualty_budget = (BLOOD_REQUEST_MAX / newly_recorded).max(16);
             for (plan_index, plan) in plans.into_iter().take(newly_recorded).enumerate() {
                 let casualty_seed = blast.seed
                     ^ plan.casualty.peer_id.wrapping_mul(6151)
@@ -30364,7 +30367,7 @@ impl Game {
             let crew_wiped = self.record_physical_crew_casualties(&couch_hits);
             let new_hits: Vec<CouchCrewCasualty> = self.couch_casualties[casualty_start..].to_vec();
             if !new_hits.is_empty() {
-                let casualty_budget = (N_BLOOD_CUBES / new_hits.len()).max(16);
+                let casualty_budget = (BLOOD_REQUEST_MAX / new_hits.len()).max(16);
                 for (i, casualty) in new_hits.into_iter().enumerate() {
                     let casualty_seed = seed ^ casualty.peer_id.wrapping_mul(40503) ^ i as u32;
                     let damage_events = anatomy_plans
@@ -38756,7 +38759,7 @@ mod tests {
     #[test]
     fn cubic_blood_density_scales_to_horror_burst_without_unbounded_slots() {
         assert_eq!(blood_body_count(0.20), 96);
-        assert_eq!(blood_body_count(1.65), N_BLOOD_CUBES);
+        assert_eq!(blood_body_count(1.65), BLOOD_REQUEST_MAX);
         let samples = [0.20, 0.45, 0.80, 1.20, 1.65].map(blood_body_count);
         assert!(samples[2] > 12_000 && samples[3] > 25_000);
         assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
@@ -38765,13 +38768,13 @@ mod tests {
         assert_eq!(requests, [2048, 8192, 16384, 32768]);
         let allocation = allocate_blood_cube_budget(&requests, N_BLOOD_CUBES / 4);
         assert_eq!(allocation.iter().sum::<usize>(), N_BLOOD_CUBES / 4);
-        assert_eq!(visual_blood_request(usize::MAX), N_BLOOD_CUBES);
+        assert_eq!(visual_blood_request(usize::MAX), BLOOD_REQUEST_MAX);
         assert!(
             (0..1000).all(|seed| surface_blood::droplet_m(seed) == crew_tissue_cell_m()),
             "droplets are the anatomy's cells"
         );
         // A horror burst's full count is about a litre of blood in 1 cm droplets, not 33.
-        let litres = surface_blood::droplets_for(N_BLOOD_CUBES) as f32 * surface_blood::DROPLET_M.powi(3) * 1000.0;
+        let litres = surface_blood::droplets_for(BLOOD_REQUEST_MAX) as f32 * surface_blood::DROPLET_M.powi(3) * 1000.0;
         assert!((0.8..1.3).contains(&litres), "{litres} l");
         assert_eq!(
             N_BLOOD_STAINS,
