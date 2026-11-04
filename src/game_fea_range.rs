@@ -412,8 +412,9 @@ const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
 /// The bar's left margin.
 const LEFT_X: f32 = 0.007;
-const BUTTONS: [(&str, usize, usize); 7] = [("LIVE", 0, 0), ("SIMULATE", 1, 0), ("PLAY", 2, 0), ("RENDER", 0, 1), ("REC", 1, 1), ("STILL", 2, 1),
-    ("LOOP", 0, 2)];
+const BUTTONS: [(&str, usize, usize); 9] = [("RESET", 0, 0), ("FIRE", 1, 0), ("PLAY", 2, 0),
+    ("LIVE", 0, 1), ("SIMULATE", 1, 1), ("RENDER", 2, 1),
+    ("REC", 0, 2), ("STILL", 1, 2), ("LOOP", 2, 2)];
 /// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
 /// the saved layouts (`BATTLE_LAYOUTS`).
 const BATTLE_BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("WATCH", 1, 0), ("PLAY", 2, 0), ("SAVE", 0, 1), ("REC", 1, 1),
@@ -3056,6 +3057,8 @@ impl Range {
             self.r.fill_rect(x, y, w, h, fill);
             if hover && !self.battle {
                 let hint = match label {
+                    "RESET" => "RESTORE A FRESH TANK AND CREW, PAUSED; KEEP CAMERA AND SHOT SETTINGS",
+                    "FIRE" => "FIRE ONE SHELL NOW (F); LIVE SIMULATION CONTINUES",
                     "LIVE" => "INTERACTIVE VIEW: F FIRES A SHELL; SPACE PAUSES / RESUMES",
                     "SIMULATE" => "FRESH TANK -> SIMULATE ONCE -> CACHE; CLICK AGAIN TO CANCEL",
                     "PLAY" => "PLAY / PAUSE THE CACHE; MOVE THE CAMERA WHILE IT PLAYS",
@@ -3288,8 +3291,8 @@ impl Range {
             .then(|| ((((cursor[0] - x0) / (1.0 - x0)).clamp(0.0, 1.0) * n as f32) as usize).min(n - 1))
     }
 
-    fn buttons(&self) -> [(&'static str, usize, usize); 7] {
-        if self.battle { BATTLE_BUTTONS } else { BUTTONS }
+    fn buttons(&self) -> Vec<(&'static str, usize, usize)> {
+        if self.battle { BATTLE_BUTTONS.to_vec() } else { BUTTONS.to_vec() }
     }
 
     /// The mode tabs' rectangles (x, y, w, h), as `MODES`.
@@ -3350,8 +3353,19 @@ impl Range {
                 self.playing = true;
                 self.status = "LIVE VIEW: F FIRES A SHELL NOW; SPACE PAUSES / RESUMES".into();
             }
-            "START" | "RESET" => self.start_cached_shot(),
-            "SIMULATE" | "RUN" | "FIRE" => self.cache_simulation(),
+            "START" | "RESET" => { self.reset(); self.free_fire = true; },
+            "FIRE" => {
+                self.button("LIVE");
+                self.clear_caches();
+                self.run = None;
+                self.frame_at = None;
+                self.play_clock = 0.0;
+                self.fire();
+                self.free_fire = true;
+                self.playing = true;
+                self.status = "LIVE: SHELL FIRED AT REAL-TIME SPEED".into();
+            },
+            "SIMULATE" | "RUN" => self.cache_simulation(),
             "PLAY" if self.free_fire => self.playing = !self.playing,
             "PLAY" => self.play_cached_shot(),
             "RENDER" => self.render_cached_shot(),
@@ -3665,15 +3679,7 @@ impl App {
             KeyCode::Tab => rg.hide_ui = !rg.hide_ui,
             // F fires into the present state and plays on: it never loops back (owner, 2026-11-03).
             KeyCode::KeyF => {
-                rg.button("LIVE");
-                rg.clear_caches();
-                rg.run = None;
-                rg.frame_at = None;
-                rg.play_clock = 0.0;
-                rg.fire();
-                rg.free_fire = true;
-                rg.playing = true;
-                rg.status = "LIVE: SHELL FIRED AT REAL-TIME SPEED".into();
+                rg.button("FIRE");
             }
             KeyCode::Period | KeyCode::NumpadDecimal | KeyCode::KeyZ => rg.frame_tiger(),
             KeyCode::KeyC => rg.section.on = !rg.section.on,
