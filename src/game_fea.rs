@@ -132,7 +132,7 @@ impl ShotStrike {
         }
         let impact = crate::fea_damage::shot::impact_of(event, seed)?;
         let started = std::time::Instant::now();
-        let mut shot = crate::fea_damage::shot::Shot::with_cells(impact, SHOT_CELLS_ACROSS);
+        let mut shot = crate::fea_damage::shot::Shot::with_cells(impact, if super::crew_tissue::reference_solve() { SHOT_CELLS_ACROSS } else { 3.0 });
         let out = shot.solve_for(crate::fea_damage::shot::GAME_HORIZON);
         Some(Self { residual_kg: out.residual_kg, mass_kg: out.mass_kg, pieces: out.pieces.len(),
             shrapnel: out.shrapnel(impact.thickness_m), wall_ms: started.elapsed().as_secs_f32() * 1000.0 })
@@ -165,8 +165,10 @@ impl PlateJob {
 
     fn solve_with(self, threads: usize) -> LatticeOutcome {
         let started = std::time::Instant::now();
-        let mut solver = lattice::Lattice::new(self.impact);
-        solver.set_threads(threads);
+        let reference = super::crew_tissue::reference_solve();
+        let mut solver = lattice::Lattice::with_particle_budget(self.impact,
+            if reference { lattice::MAX_PARTICLES } else { 1500 });
+        solver.set_threads(if reference { threads } else { 1 });
         solver.solve();
         let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
         lattice_outcome(&mut solver, self.origin, self.axes, wall_ms)
@@ -356,7 +358,7 @@ impl RicochetShot {
         let impact = crate::fea_damage::shot::impact_of(event, seed)?;
         Some(std::thread::spawn(move || {
             let started = std::time::Instant::now();
-            let out = crate::fea_damage::shot::Shot::with_cells(impact, SHOT_CELLS_ACROSS)
+            let out = crate::fea_damage::shot::Shot::with_cells(impact, if super::crew_tissue::reference_solve() { SHOT_CELLS_ACROSS } else { 3.0 })
                 .solve_for(crate::fea_damage::shot::GAME_HORIZON);
             Some(Self { residual_fraction: (out.residual_kg / out.mass_kg.max(1e-6)).clamp(0.05, 1.0),
                 tumble_rad_s: out.tumble_rad_s, pieces: out.pieces.len(), peak_temp_k: out.peak_temp_k,
@@ -1121,7 +1123,9 @@ impl Game {
         let now = self.armor_clock_s;
         let mut index = 0;
         while index < self.fea.penetrations.len() {
-            if self.fea.penetrations[index].commit_at_s > now {
+            let ready = self.fea.penetrations[index].plate.as_ref().is_none_or(|h| h.is_finished())
+                && self.fea.penetrations[index].shot.as_ref().is_none_or(|h| h.is_finished());
+            if self.fea.penetrations[index].commit_at_s > now || (!super::crew_tissue::reference_solve() && !ready) {
                 index += 1;
                 continue;
             }
@@ -1213,7 +1217,8 @@ impl Game {
         let now = self.armor_clock_s;
         let mut index = 0;
         while index < self.fea.pending.len() {
-            if self.fea.pending[index].commit_at_s > now {
+            if self.fea.pending[index].commit_at_s > now
+                || (!super::crew_tissue::reference_solve() && !self.fea.pending[index].handle.is_finished()) {
                 index += 1;
                 continue;
             }

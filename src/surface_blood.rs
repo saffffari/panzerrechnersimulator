@@ -5,14 +5,14 @@ use super::surface_fire::{Contact, FRAMES};
 use glam::{Mat4, Vec3};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-pub const CELL_M: f32 = 0.005;
-pub const MAX_GRAINS: usize = 32_768;
-pub const MAX_CELLS: usize = 262_144;
+pub const CELL_M: f32 = 0.010;
+pub const MAX_GRAINS: usize = 8_192;
+pub const MAX_CELLS: usize = 65_536;
 const MAX_FRONTIER: usize = MAX_CELLS * 4;
 /// A droplet is a cube of the crew anatomy's own cell (2026-11-03, the owner: "blood voxels should
 /// be the same size as character voxels"; it replaces the 1.5-6 mm distribution of 2026-11-02), so
 /// each carries a cubic centimetre of blood.
-pub const DROPLET_M: f32 = 0.01;
+pub const DROPLET_M: f32 = 0.02;
 /// A fresh coat's thickness (m): a droplet's volume covers its area at this (authored: a pooled wet
 /// coat about a millimetre deep). A droplet wets 40 film cells, a stain about 3 cm across.
 const FILM_THICKNESS_M: f32 = 0.001;
@@ -41,8 +41,8 @@ pub fn droplet_m(_seed: u32) -> f32 {
 pub fn film_cells(seed: u32) -> u32 {
     (droplet_m(seed).powi(3) / (FILM_THICKNESS_M * CELL_M * CELL_M)).ceil().max(1.0) as u32
 }
-const MAX_CELLS_PER_STEP: usize = 1536;
-const FILM_CELLS_PER_SECOND: f32 = 48_000.0;
+const MAX_CELLS_PER_STEP: usize = 384;
+const FILM_CELLS_PER_SECOND: f32 = 12_000.0;
 const SURFACE_OFFSET: f32 = 0.00035;
 /// The film carries over an edge onto a neighbouring face turned by less than this (cos 25°): a
 /// curved wall is flat facets, and blood does not stop at their edges (2026-11-02, the owner: lines

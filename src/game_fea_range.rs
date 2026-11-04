@@ -412,8 +412,8 @@ const ROW_H: f32 = 0.0185;
 const TEXT: f32 = 0.0145;
 /// The bar's left margin.
 const LEFT_X: f32 = 0.007;
-const BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("FIRE", 1, 0), ("PLAY", 2, 0),
-    ("RENDER", 0, 1), ("REC", 1, 1), ("STILL", 2, 1), ("LOOP", 0, 2)];
+const BUTTONS: [(&str, usize, usize); 5] = [("RESET", 0, 0), ("FIRE", 1, 0), ("PLAY", 2, 0),
+    ("REC", 0, 1), ("STILL", 1, 1)];
 /// BATTLE mode's buttons: WATCH (both sides' AI) and PLAY (the player takes the Tiger), SAVE and
 /// the saved layouts (`BATTLE_LAYOUTS`).
 const BATTLE_BUTTONS: [(&str, usize, usize); 7] = [("RESET", 0, 0), ("WATCH", 1, 0), ("PLAY", 2, 0), ("SAVE", 0, 1), ("REC", 1, 1),
@@ -869,11 +869,11 @@ impl Range {
             range.look_at(eye, hull.transform_point3(Vec3::new(0.0, 1.4, 0.0)));
         }
         // Explicit live launch: start the wall-clock simulation without firing before the owner is ready.
-        if !headless && std::env::var("KESSEL_FEA_RANGE_LIVE").as_deref() == Ok("1") {
+        if !headless {
             range.free_fire = true;
             range.playing = true;
             range.time_speed = 1.0;
-            range.status = "LIVE SIDE-HIT TEST READY: F FIRES; SPACE PAUSES".into();
+            range.status = "LIVE PLAYGROUND: F FIRES; SPACE PAUSES; BACKSPACE RESETS; REC SAVES VIDEO".into();
         }
         Ok(range)
     }
@@ -1949,7 +1949,7 @@ impl Range {
     /// the run when LOOP is on, stopping at a clip's end without it, and real time past the run.
     fn tick(&mut self, dt: f32) {
         self.captured = false;
-        if self.tick_cache(dt) { return; }
+        if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("cache") && self.tick_cache(dt) { return; }
         if self.sky.running {
             self.sky.local_h += dt * self.sky.rate / 3600.0;
             while self.sky.local_h >= 24.0 {
@@ -1963,10 +1963,6 @@ impl Range {
         // this is the strike's own result, as the game's death screen takes them back); nothing
         // else would, and the range waited for ever once the player's own man was killed.
         self.g.settle_casualty_tissue(false);
-        if self.g.casualty_tissue_pending() {
-            self.status = "A BODY'S TISSUE IS SOLVING (THE SIMULATION WAITS FOR IT)".into();
-            return;
-        }
         if self.playing && self.mode == Mode::Live {
             if self.next_run_frame().is_some() {
                 self.play_clock += self.time_speed;
@@ -3056,10 +3052,10 @@ impl Range {
             if hover && !self.battle {
                 let hint = match label {
                     "RESET" => "RESTORE A FRESH TANK AND CREW, PAUSED; KEEP CAMERA AND SHOT SETTINGS",
-                    "FIRE" => "FIRE ONE SHOT (F); WATCH THE FIRST PASS WHILE IT CALCULATES AND CACHES",
+                    "FIRE" => "FIRE ONE SHELL NOW (F); KEEP ALL EXISTING DAMAGE",
                     "LIVE" => "INTERACTIVE VIEW: F FIRES A SHELL; SPACE PAUSES / RESUMES",
                     "SIMULATE" => "FRESH TANK -> SIMULATE ONCE -> CACHE; CLICK AGAIN TO CANCEL",
-                    "PLAY" => "PLAY / PAUSE THE CACHE; MOVE THE CAMERA WHILE IT PLAYS",
+                    "PLAY" => "SPACE PAUSES / RESUMES THE LIVE SIMULATION",
                     "RENDER" => "CURRENT VIEW -> CACHED IMAGES + MP4; EVERY FRAME, NO REAL-TIME LIMIT",
                     "REC" => "RECORD THE VIEWPORT AS YOU USE IT; CLICK AGAIN TO STOP",
                     "STILL" => "SAVE A CONVERGED STILL OF THE CURRENT VIEW",
@@ -3171,10 +3167,10 @@ impl Range {
                 "C: SECTION ON/OFF    V: AXIS NEAREST THE CAMERA    G: AXIS NEAREST THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 90",
                 "PANEL: ONE TAB OPEN AT A TIME; DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
-                "F / ENTER: FIRE AND CACHE    BACKSPACE: RESET    Z (OR .): CENTRE ON THE TIGER",
-                "SPACE: PLAY / PAUSE THE CACHED SHOT    BACKSPACE: FIRST FRAME    RENDER: FRAMES + MP4",
+                "F / ENTER: FIRE A SHELL    BACKSPACE: RESET    Z (OR .): CENTRE ON THE TIGER",
+                "SPACE: PAUSE / RESUME LIVE SIMULATION    BACKSPACE: FRESH TANK, PAUSED",
                 "LEFT/RIGHT: ONE FRAME BACK/ON (PAUSES; SHIFT TEN)    HOME/END: THE RUN'S START/END    DRAG THE TIMELINE",
-                "CACHED PLAYBACK NEVER RE-RUNS PHYSICS; CAMERA, SECTION, LIGHTING AND LOOK STAY LIVE",
+                "LIVE SIMULATION: NO AUTOMATIC SIMULATION OR IMAGE CACHING",
                 "TAB OR HIDE: THE PANEL    R: RECORD THE VIEWPORT    F12: FULL-FRAME STILL 5120X2880    SETTINGS AND CAMERAS KEPT",
                 "P: PRINT TISSUE KNOBS    M: MUTE    H: THIS HELP    ESC TWICE: QUIT",
             ];
@@ -3191,7 +3187,10 @@ impl Range {
         // simulation stands at; a clip in orange; on hover the playhead's tick and a readout.
         let base = self.timeline_y();
         if !self.battle {
-            self.text(&self.cache.label(), self.view_x() + 0.008, base - 0.034, TEXT * 0.75, AMBER, crate::ui::Align::Left);
+            let state = if self.playing { "LIVE" } else { "PAUSED" };
+            let recording = if self.recorder.is_some() { "RECORDING VIDEO" } else { "VIDEO NOT RECORDING" };
+            self.text(&format!("{state} | F: FIRE | SPACE: PAUSE / RESUME | BACKSPACE: RESET | {recording}"),
+                self.view_x() + 0.008, base - 0.034, TEXT * 0.75, AMBER, crate::ui::Align::Left);
         }
         let hovered = (cursor[1] - base).abs() < 0.018 || matches!(self.mode, Mode::Scrub(_));
         if let Some(run) = self.run {
@@ -3357,10 +3356,20 @@ impl Range {
                 self.status = "LIVE VIEW: F FIRES A SHELL NOW; SPACE PAUSES / RESUMES".into();
             }
             "START" | "RESET" => { self.reset(); self.free_fire = true; },
-            "FIRE" => self.cache_simulation(),
+            "FIRE" => {
+                self.run = None;
+                self.frame_at = None;
+                self.past_run = false;
+                self.play_clock = 0.0;
+                self.mode = Mode::Live;
+                self.apply_tuning();
+                self.fire();
+                self.free_fire = true;
+                self.playing = true;
+                self.status = "LIVE: SHELL FIRED; SPACE PAUSES / RESUMES; RESET RESTORES THE TANK".into();
+            },
             "SIMULATE" | "RUN" => self.cache_simulation(),
-            "PLAY" if self.free_fire && !self.cache.busy() => self.playing = !self.playing,
-            "PLAY" => self.play_cached_shot(),
+            "PLAY" => self.playing = !self.playing,
             "RENDER" => self.render_cached_shot(),
             "LOOP" => self.looping = !self.looping,
             "REC" => self.toggle_recording(),
@@ -4197,6 +4206,42 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let mut rg = Range::new(device, queue, true)?;
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("live") {
+        rg.load_state();
+        rg.time_speed = 1.0;
+        rg.shot.shell = 7;
+        rg.shot.range_m = 100.0;
+        rg.shot.from_az = -90.0;
+        rg.shot.from_el = 0.0;
+        rg.shot.target = Target::Point(Vec3::new(-1.18158, 2.52072, 0.05853));
+        for _ in 0..16 { rg.pose_view(); let _ = rg.r.render_to_rgba(&rg.device, &rg.queue, rg.r.iw, rg.r.ih)?; }
+        rg.button("FIRE");
+        anyhow::ensure!(rg.playing && rg.free_fire && rg.run.is_none(), "FIRE did not start live simulation");
+        let started = std::time::Instant::now();
+        let mut costs = Vec::new();
+        for _ in 0..120 {
+            let frame = std::time::Instant::now();
+            rg.tick(1.0/60.0);
+            rg.pose_view();
+            let _ = rg.r.render_to_rgba(&rg.device, &rg.queue, rg.r.iw, rg.r.ih)?;
+            costs.push(frame.elapsed().as_secs_f64()*1000.0);
+            anyhow::ensure!(!rg.cache.busy() && rg.cache.len() == 0, "live firing started a cache");
+        }
+        anyhow::ensure!(rg.shot_t > 1.9, "live simulation stalled: {}", rg.shot_t);
+        rg.button("PLAY");
+        let at = rg.shot_t;
+        rg.tick(1.0/60.0);
+        anyhow::ensure!(rg.shot_t == at, "PAUSE advanced simulation");
+        rg.button("PLAY");
+        rg.tick(1.0/30.0);
+        anyhow::ensure!(rg.shot_t > at, "RESUME did not advance simulation");
+        rg.button("RESET");
+        anyhow::ensure!(!rg.playing && rg.run.is_none(), "RESET did not leave a fresh paused scene");
+        costs.sort_by(f64::total_cmp);
+        println!("[live-probe] FIRE advances 2 s; no caches; PAUSE/RESUME/RESET pass; wall {:.2} s, frame ms median {:.1}, p95 {:.1}, worst {:.1}",
+            started.elapsed().as_secs_f64(), costs[60], costs[114], costs[119]);
+        return Ok(());
+    }
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("cache") {
         rg.load_state();
         return rg.cache_probe();

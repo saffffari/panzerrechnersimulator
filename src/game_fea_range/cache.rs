@@ -18,6 +18,7 @@ struct Render {
     recorder: Recorder,
 }
 impl Cache {
+    pub(super) fn len(&self) -> usize { self.frames.len() }
     pub(super) fn label(&self) -> String {
         let state = if self.baking { "CACHING" } else if self.frames.is_empty() { "CACHE EMPTY" } else { "CACHED" };
         format!("{state}: {} FRAMES / {:.0} MB | RESET CLEARS CACHE", self.frames.len(), self.bytes as f64 / 1e6)

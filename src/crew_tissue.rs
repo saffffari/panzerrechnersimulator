@@ -116,6 +116,37 @@ fn bond_law_scale(t: &TissueTuning) -> [(f32, f32); 4] {
     })
 }
 
+pub(crate) fn reference_solve() -> bool {
+    std::env::var("KESSEL_TISSUE_SOLVE").as_deref() == Ok("reference")
+}
+
+/// Bound interactive integration work independently of review slider stiffness. The
+/// offline reference path preserves its original timestep and constitutive law.
+fn interactive_schedule(stable_dt: f32, reference: bool) -> (f32, usize, f32) {
+    let requested = (SOLVE_S / stable_dt).ceil().max(1.0) as usize;
+    if reference || requested <= 512 { return (stable_dt, requested, 1.0); }
+    let dt = SOLVE_S / 512.0;
+    (dt, 512, (stable_dt / dt).powi(2))
+}
+
+#[cfg(test)]
+mod interactive_schedule_tests {
+    use super::*;
+    #[test]
+    fn extreme_tuning_has_bounded_steps_and_stable_stiffness() {
+        let stable = SOLVE_S / 111_536.0;
+        let (dt, steps, scale) = interactive_schedule(stable, false);
+        assert_eq!(steps, 512);
+        assert!((dt * steps as f32 - SOLVE_S).abs() < 1e-8);
+        assert!(dt <= stable / scale.sqrt() * 1.00001);
+        assert!(scale > 0.0 && scale < 1.0);
+        let (dt, steps, scale) = interactive_schedule(stable, true);
+        assert_eq!(dt, stable);
+        assert!(steps >= 111_535);
+        assert_eq!(scale, 1.0);
+    }
+}
+
 /// Labels for drawing: 1..=SKIN_LABELS are the figure's own colours (the corpse renderer's
 /// palette), then two shades of muscle and the bone.
 pub(super) const SKIN_LABELS: u8 = 12;
@@ -347,14 +378,15 @@ pub(super) fn triangle_box_overlap(centre: Vec3, half: Vec3, tri: [Vec3; 3]) -> 
 /// Fill the relaxed `figure` with cells and voxelise the fitted skeleton `bones` (in the figure's
 /// frame) onto the same grid, then bond every cell to its neighbours.
 pub(super) fn build_tissue(figure: &CpuMesh, bones: &[Option<CpuMesh>; PARTS]) -> TissueModel {
-    match crate::crew_anatomy::load() {
+    let model = match crate::crew_anatomy::load() {
         Ok(Some(volume)) => build_anatomical(figure, &volume),
         Ok(None) => build_procedural(figure, bones),
         Err(error) => {
             eprintln!("[crew] the anatomical volume could not be read ({error:#}); the figure and skeleton build the tissue");
             build_procedural(figure, bones)
         }
-    }
+    };
+    if reference_solve() { model } else { coarsen_tissue(model, 3) }
 }
 
 /// The figure's atlas coordinate at its surface point nearest `at`.
@@ -378,6 +410,34 @@ fn nearest_uv(figure: &CpuMesh, at: Vec3) -> Vec2 {
 /// The tissue from an anatomical volume (`crew_anatomy`): every voxel of a tissue that is not a
 /// gas is a cell of its label, its strength class's bonds and its table density's mass; the outer
 /// shell takes the figure's colours at its nearest surface point.
+/// Aggregate filled anatomical cells, preserving their mass and contents. This reduces both
+/// render cubes and spring bonds; it does not turn the body into a hollow surface shell.
+fn coarsen_tissue(model: TissueModel, factor: usize) -> TissueModel {
+    let dims = model.dims.map(|n| n.div_ceil(factor));
+    let h = model.cell * factor as f32;
+    let mut bins: std::collections::BTreeMap<[usize; 3], Vec<usize>> = std::collections::BTreeMap::new();
+    for (i,c) in model.cells.iter().enumerate() {
+        bins.entry(c.ijk.map(|v| v as usize / factor)).or_default().push(i);
+    }
+    let mut cells = Vec::with_capacity(bins.len());
+    let mut masses = Vec::with_capacity(bins.len());
+    let mut grid = vec![0u32; dims.iter().product()];
+    for (ijk, members) in bins {
+        let mass: f32 = members.iter().map(|&i| model.mass_kg[i]).sum();
+        let at = model.origin + (Vec3::from_array(ijk.map(|v| v as f32)) + 0.5) * h;
+        let source = *members.iter().min_by(|&&a,&&b| model.cells[a].at.distance_squared(at)
+            .total_cmp(&model.cells[b].at.distance_squared(at))).unwrap();
+        let mut c = model.cells[source];
+        c.at = at; c.ijk = ijk.map(|v| v as u16);
+        grid[(ijk[1] * dims[2] + ijk[2]) * dims[0] + ijk[0]] = cells.len() as u32 + 1;
+        cells.push(c); masses.push(mass);
+    }
+    println!("[crew] interactive tissue: {} -> {} filled cells, {:.0} mm; mass preserved", model.cells.len(), cells.len(), h*1000.0);
+    let mut coarse = finish_model(h, model.anatomy, model.origin, dims, grid, cells, masses);
+    coarse.tissue_colours = model.tissue_colours;
+    coarse
+}
+
 fn build_anatomical(figure: &CpuMesh, volume: &crate::crew_anatomy::Volume) -> TissueModel {
     use crate::crew_anatomy::Strength;
     let started = std::time::Instant::now();
@@ -749,7 +809,10 @@ impl CasualtyTissue {
 
     /// Solve one killing event's strikes on the lattice (see the module doc).
     pub(super) fn solve(&mut self, model: &TissueModel, strikes: &[Strike]) -> Solve {
-        let threads = std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, SOLVE_THREADS);
+        // Interactive hits must not create thousands of OS threads. Keep the unrestricted
+        // material solve available to the offline calculator explicitly.
+        let reference = std::env::var("KESSEL_TISSUE_SOLVE").as_deref() == Ok("reference");
+        let threads = if reference { std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, SOLVE_THREADS) } else { 1 };
         self.solve_with_threads(model, strikes, threads)
     }
 
@@ -829,8 +892,16 @@ impl CasualtyTissue {
         if !period.is_finite() {
             return out;
         }
-        let dt = 0.6 * period;
-        let steps = (SOLVE_S / dt).ceil() as usize;
+        let stable_dt = 0.6 * period;
+        let reference = std::env::var("KESSEL_TISSUE_SOLVE").as_deref() == Ok("reference");
+        let (dt, steps, stiffness_scale) = interactive_schedule(stable_dt, reference);
+        // Explicit real-time approximation: soften excessively stiff springs, rather than
+        // using an unstable enlarged timestep or stopping before the physical interval ends.
+        // Mass, initial momentum, fracture strain and the 8 ms interval remain unchanged.
+        let bond_law = |bond: &Bond| {
+            let (k, c) = law[bond.class as usize];
+            (bond.stiffness * k * stiffness_scale, bond.critical * c)
+        };
         // In parallel and the same for any thread count: each live bond's force from both ends'
         // displacements, then each moving cell gathers its bonds' forces in a fixed order.
         let threads = threads.max(1);
@@ -872,7 +943,7 @@ impl CasualtyTissue {
             let (slot, mdisp_ref) = (&slot, &mdisp);
             std::thread::scope(|scope| {
                 for ((bonds, alive), forces) in live.chunks(bond_chunk).zip(intact.chunks_mut(bond_chunk)).zip(bond_force.chunks_mut(bond_chunk)) {
-                    scope.spawn(move || {
+                    let mut work = move || {
                         for i in 0..bonds.len() {
                             if !alive[i] {
                                 forces[i] = Vec3::ZERO;
@@ -893,13 +964,14 @@ impl CasualtyTissue {
                             }
                             forces[i] = d / length.max(1.0e-9) * (bond_stiffness * (length - bond.rest_m));
                         }
-                    });
+                    };
+                    if threads == 1 { work(); } else { scope.spawn(work); }
                 }
             });
             let (gather, gather_start, bond_force, moving) = (&gather, &gather_start, &bond_force, &moving);
             std::thread::scope(|scope| {
                 for (k, (vels, disps)) in mvel.chunks_mut(cell_chunk).zip(mdisp.chunks_mut(cell_chunk)).enumerate() {
-                    scope.spawn(move || {
+                    let mut work = move || {
                         for j in 0..vels.len() {
                             let m = k * cell_chunk + j;
                             let mut f = Vec3::ZERO;
@@ -910,7 +982,8 @@ impl CasualtyTissue {
                             vels[j] = (vels[j] + f / mass[c] * dt) * (1.0 - DAMPING);
                             disps[j] += vels[j] * dt;
                         }
-                    });
+                    };
+                    if threads == 1 { work(); } else { scope.spawn(work); }
                 }
             });
         }

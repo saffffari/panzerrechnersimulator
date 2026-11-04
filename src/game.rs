@@ -7546,6 +7546,21 @@ fn module_fragment_resistance_j(kind: ModuleKind) -> f32 {
 /// Forward-simulate clones of the exact initial fragment bodies through the same fixed-step cabin
 /// integrator used live. Target volumes never resample a cone or direction: they can be damaged only
 /// when a recorded swept body segment intersects them with enough physical kinetic energy.
+/// Coarser packets retain steel volume and kinetic energy while reducing independent
+/// trajectories. Their directions are representative samples, an interactive approximation.
+fn coarsen_fragment_population(fragments: Vec<HotFragment>, limit: usize) -> Vec<HotFragment> {
+    if crew_tissue::reference_solve() || fragments.len() <= limit { return fragments; }
+    fragments.chunks(fragments.len().div_ceil(limit)).map(|group| {
+        let mut packet = *group.iter().max_by(|a,b| (a.size.powi(3)*a.vel.length_squared())
+            .total_cmp(&(b.size.powi(3)*b.vel.length_squared()))).unwrap();
+        let volume: f32 = group.iter().map(|f| f.size.powi(3)).sum();
+        let speed2: f32 = group.iter().map(|f| f.size.powi(3) * f.vel.length_squared()).sum::<f32>() / volume.max(1e-12);
+        packet.size = volume.cbrt();
+        packet.vel = packet.vel.normalize_or_zero() * speed2.sqrt();
+        packet
+    }).collect()
+}
+
 fn resolve_fragment_damage(
     fragments: &[HotFragment],
     solo_body: Option<Vec3>,
@@ -8885,7 +8900,7 @@ const FOAM_GRAIN_SIZE: f32 = surface_fire::GRAIN_M;
 // one visible cube instance. Four fixed 8192-instance colour batches keep split-screen rendering to
 // four draws per view; measured source contacts populate a bounded connected surface film.
 const N_BLOOD_CUBES: usize = surface_blood::MAX_GRAINS;
-const BLOOD_VISUAL_DENSITY: usize = 64;
+const BLOOD_VISUAL_DENSITY: usize = 8;
 const N_BLOOD_BATCHES: usize = 4;
 const BLOOD_GRAINS_PER_BATCH: usize = N_BLOOD_CUBES / N_BLOOD_BATCHES;
 /// Every transient blood body is the same sand-grain voxel. Severity changes only how many grains
@@ -17723,7 +17738,7 @@ impl Game {
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
         // A casualty's solve deferred behind a death is back before the world moves on.
-        self.settle_casualty_tissue(true);
+        self.settle_casualty_tissue(crew_tissue::reference_solve());
         self.enforce_engine_operability();
         self.sim_phase.count_update();
         self.sim_phase.seg_begin();
@@ -23636,7 +23651,7 @@ impl Game {
     /// Whether this strike's death hides a casualty's tissue solve: the tank's own loss or the
     /// player's own man (the death's fade and black then cover the solve, `settle_casualty_tissue`).
     fn death_hides_tissue(&self, casualty: CouchCrewCasualty) -> bool {
-        self.game_over().is_some()
+        !crew_tissue::reference_solve() || self.game_over().is_some()
             || self.singleplayer_embodied_role().is_some_and(|role| singleplayer_crew::body_post(role) == casualty.identity)
     }
 
@@ -30084,8 +30099,8 @@ impl Game {
         // otherwise the authored population.
         let fea_fragments = self.fea_penetration_fragments(penetration_id, frame, &ev, seed);
         let burst_fragment_kinetic_j = fea_fragments.as_deref().map(game_fea::burst_body_kinetic_j);
-        let fragments = fea_fragments
-            .unwrap_or_else(|| generate_penetration_fragments(penetration_id, frame, entry, axis, ev, seed));
+        let fragments = coarsen_fragment_population(fea_fragments
+            .unwrap_or_else(|| generate_penetration_fragments(penetration_id, frame, entry, axis, ev, seed)), 48);
         // God mode preserves the physically truthful shower but suppresses every target mutation.
         if self.god {
             self.stage_penetration_fragments(&fragments);

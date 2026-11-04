@@ -245,6 +245,12 @@ fn slot_offset(s: usize) -> [i32; 3] {
 
 impl Lattice {
     pub fn new(impact: PlateImpact) -> Self {
+        Self::with_particle_budget(impact, MAX_PARTICLES)
+    }
+
+    /// Same constitutive model with a bounded spatial resolution for interactive hits.
+    pub fn with_particle_budget(impact: PlateImpact, max_particles: usize) -> Self {
+        let max_particles = max_particles.max(256);
         let material = impact.material.get();
         let t = impact.thickness_m.max(0.002);
         let a = impact.projectile.radius_m.max(0.0005);
@@ -268,7 +274,7 @@ impl Lattice {
             (nx, ny, nx * ny * nz)
         };
         // Coarsen to the cap: first the lateral extent, then the cells.
-        while count(h, lateral, nz).2 > MAX_PARTICLES {
+        while count(h, lateral, nz).2 > max_particles {
             if lateral > MIN_LATERAL_CALIBRES * d + h {
                 lateral = (lateral * 0.93).max(MIN_LATERAL_CALIBRES * d);
             } else if nz > MIN_CELLS_THROUGH {
