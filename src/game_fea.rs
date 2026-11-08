@@ -9,6 +9,7 @@
 //! the same anatomical volumes and cartridge boxes as the fragments, with its real mass and speed;
 //! injury outcomes stay with the existing crew model.
 use super::*;
+use crate::fea_damage::shot;
 use crate::fea_damage::components::{self, Side, System};
 use crate::fea_damage::{chain, compartment, fragments, lattice, lodged};
 
@@ -151,6 +152,12 @@ pub(super) struct PlateJob {
     pub(super) axes: [Vec3; 3],
 }
 
+/// Offline-only recorder of the actual intermediate lattice states. No interpolation of a
+/// final scar, and no change to the terminal/damage solver or its input event.
+pub(super) struct PlateFilmFrame {pub t:f32,pub positions:Vec<Vec3>,pub temperatures:Vec<f32>,pub tip:Vec3}
+pub(super) struct PlateFilm {pub origin:Vec3,pub axes:[Vec3;3],pub h:f32,pub half:[f32;3],pub frames:Vec<PlateFilmFrame>,pub attached:Vec<bool>}
+pub(super) static RECORD_PLATE_FILM:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+pub(super) static PLATE_FILM:std::sync::Mutex<Option<PlateFilm>>=std::sync::Mutex::new(None);
 impl PlateJob {
     /// Solve on a worker thread. The solve is bit-exact whatever the thread count or slicing
     /// (`lattice` tests), so a job re-run after a load gives the same answer.
@@ -169,7 +176,18 @@ impl PlateJob {
         let mut solver = lattice::Lattice::with_particle_budget(self.impact,
             if reference { lattice::MAX_PARTICLES } else { 1500 });
         solver.set_threads(if reference { threads } else { 1 });
-        solver.solve();
+        if RECORD_PLATE_FILM.load(std::sync::atomic::Ordering::Relaxed) {
+            let mut film=PlateFilm{origin:self.origin,axes:self.axes,h:solver.h,
+                half:[solver.dims[0]as f32*solver.h*0.5,solver.dims[1]as f32*solver.h*0.5,self.impact.thickness_m],frames:Vec::new(),attached:Vec::new()};
+            loop {
+                film.frames.push(PlateFilmFrame{t:solver.t,positions:(0..solver.n).map(|i|solver.position(i)).collect(),temperatures:solver.temp.clone(),tip:solver.dir*solver.tip_s});
+                if solver.done{break;}
+                solver.advance((1.0/(60.0*4096.0*solver.dt)).ceil().max(1.0)as u64);
+            }
+            let (components,plate)=solver.connectivity();
+            film.attached=components.iter().map(|&c|c==plate).collect();
+            *PLATE_FILM.lock().unwrap()=Some(film);
+        }else{solver.solve();}
         let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
         lattice_outcome(&mut solver, self.origin, self.axes, wall_ms)
     }
@@ -205,6 +223,12 @@ pub(super) struct PendingPlateSaved {
 /// log, not simulation state, and are not kept.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct FeaSaved {
+    #[serde(default)] live_contexts: std::collections::BTreeMap<u64, LiveImpactContext>,
+    #[serde(default)] contact_states: std::collections::BTreeMap<u64, FragmentDamageState>,
+    #[serde(default)] live_births: std::collections::BTreeMap<u64,f32>,
+    #[serde(default)] fragment_shapes: std::collections::BTreeMap<u64,(f32,Vec<Vec3>)>,
+    #[serde(default)] temporal: Vec<temporal::TemporalSaved>,
+    #[serde(default)] bursts: Vec<temporal::LiveBurst>,
     lodged: Vec<LodgedRound>,
     pending: Vec<PendingPlateSaved>,
     carried_fragment: Option<usize>,
@@ -289,36 +313,34 @@ pub(super) const FEA_STOP_COMMIT_S: f32 = 0.25;
 /// owner's machine, so the update does not wait for them there (named latency).
 pub(super) const FEA_PENETRATION_COMMIT_S: f32 = 0.35;
 
-/// A perforation of the player's Tiger whose plate lattice and round solve run on workers. The
-/// strike is seen and heard at once; its solved consequences commit at a fixed game time after it
-/// (`FEA_PENETRATION_COMMIT_S`), deterministically: an update that reaches that time before the
-/// solves finish waits for them (logged). Points and directions are kept in the struck part's
-/// frame, so the consequences land where the steel is then.
-#[derive(Debug)]
-pub(super) struct PendingPenetration {
-    pub(super) commit_at_s: f32,
-    pub(super) projectile_id: u64,
-    pub(super) seed: u32,
-    pub(super) armor: VehicleArmorContact,
-    pub(super) event: crate::ballistics::ImpactEvent,
-    /// The strike point, the round's direction, its origin and the face's normal, part-local.
-    pub(super) impact_local: Vec3,
-    pub(super) dir_local: Vec3,
-    pub(super) origin_local: Vec3,
-    pub(super) normal_local: Vec3,
-    pub(super) arc: Arc,
-    pub(super) sound: Option<crate::acoustics::ImpactParams>,
-    /// The renderer clock at the strike (the scar's heat ages from it).
-    pub(super) struck_time_s: f32,
-    line: chain::ShotLine,
-    chain: chain::ChainResult,
-    plate: Option<std::thread::JoinHandle<LatticeOutcome>>,
-    shot: Option<std::thread::JoinHandle<Option<ShotStrike>>>,
-    started: std::time::Instant,
+/// Offline saved-camera films wait for the solve at the physical hit. The interactive grace
+/// period is a scheduling allowance, not travel time inside the armour.
+fn impact_commit_delay(interactive: f32) -> f32 {
+    if super::crew_tissue::reference_solve() && std::env::var_os("KESSEL_FEA_RANGE_FILM").is_some() { 0.0 }
+    else { interactive }
+}
+
+
+#[path = "game_fea_temporal.rs"]
+mod temporal;
+pub(super) use temporal::TemporalImpact as PendingPenetration;
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub(super) struct LiveImpactContext {
+    pub arc: Arc, pub shooter: Vec3, pub entry_w: Vec3, pub shell_dir_w: Vec3,
+    pub armor_part: ArmorPart, pub armor_local_point: Vec3,
+    pub penetration_id: u64, pub seed: u32, pub event: crate::ballistics::ImpactEvent,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct FeaRuntime {
+    pub bursts: Vec<temporal::LiveBurst>,
+    pub fragment_shapes: std::collections::BTreeMap<u64, (f32, Vec<Vec3>)>,
+    pub temporal_view: Option<temporal::TemporalView>,
+    pub live_contexts: std::collections::BTreeMap<u64, LiveImpactContext>,
+    pub contact_states: std::collections::BTreeMap<u64, FragmentDamageState>,
+    pub live_births: std::collections::BTreeMap<u64, f32>,
+
     pub(super) lodged: Vec<LodgedRound>,
     pub(super) receipts: Vec<FeaChainReceipt>,
     pub(super) current: Option<ImpactSolve>,
@@ -381,6 +403,8 @@ impl FeaRuntime {
 
     pub(super) fn export_world_state(&self) -> FeaSaved {
         FeaSaved {
+            live_contexts:self.live_contexts.clone(),contact_states:self.contact_states.clone(),live_births:self.live_births.clone(),
+            fragment_shapes:self.fragment_shapes.clone(),temporal:self.penetrations.iter().map(|p|p.checkpoint()).collect(),bursts:self.bursts.clone(),
             lodged: self.lodged.clone(),
             pending: self.pending.iter().map(|p| PendingPlateSaved { commit_at_s: p.commit_at_s,
                 struck_at_s: p.struck_at_s, facing: p.facing, local_mm: p.local_mm, lodged_id: p.lodged_id,
@@ -399,6 +423,10 @@ impl FeaRuntime {
             && r.dir_local.is_finite() && r.depth_m.is_finite()), "invalid lodged round");
         anyhow::ensure!(saved.pending.iter().all(|p| p.commit_at_s.is_finite() && p.job.origin.is_finite()
             && p.lodged_id.is_none_or(|id| saved.lodged.iter().any(|r| r.id == id))), "invalid deferred plate solve");
+        self.live_contexts=saved.live_contexts; self.contact_states=saved.contact_states;self.live_births=saved.live_births;
+        self.fragment_shapes=saved.fragment_shapes;self.bursts=saved.bursts;
+        self.penetrations=saved.temporal.into_iter().map(temporal::TemporalImpact::restore).collect::<anyhow::Result<_>>()?;
+        self.temporal_view=self.penetrations.last().map(|p|p.view());
         self.lodged = saved.lodged;
         self.pending = saved.pending.into_iter().map(|p| PendingPlate { commit_at_s: p.commit_at_s,
             struck_at_s: p.struck_at_s, facing: p.facing, local_mm: p.local_mm, lodged_id: p.lodged_id,
@@ -570,7 +598,7 @@ pub(super) fn lattice_fragments(line: &chain::ShotLine, burst: bool, lat: &Latti
             seed: s,
             temp_k,
             lodged: false,
-            embed_m: 0.0,
+            embed_m: 0.0, mass_kg: 0.0,cross_section_m2:0.0, tracer_share: 0.0, material_remaining_m:0.0,material_force_n:0.0,
         }
     };
     {
@@ -817,7 +845,7 @@ impl Game {
         // Queue this strike's deferred plate solve with the scar it will refine.
         if let Some((job, handle)) = self.fea.started.take() {
             self.fea.pending.push(PendingPlate {
-                commit_at_s: now_s + FEA_STOP_COMMIT_S,
+                commit_at_s: now_s + impact_commit_delay(FEA_STOP_COMMIT_S),
                 struck_at_s: now_s,
                 facing: armor.facing,
                 local_mm: crate::armor_damage::quantize_mm(armor.local_point),
@@ -1016,6 +1044,10 @@ impl Game {
             println!("[fea] the {} burst in the engine bay: no crew compartment pressure (named)", event.shell.name);
             return None;
         }
+        // The pressure solve alone does not draw gas. Emit the existing interior-only blast
+        // at the same event and position; its fragments still come solely from the solver.
+        let gas_radius = (0.45 * (event.shell.filler_g.max(1.0) / 90.0).cbrt()).clamp(0.18, 1.15);
+        self.weapon_vfx.interior_blast(self.player.hull_model().transform_point3(burst_hull), gas_radius);
         let openings = self.fea_crew_openings(hole_area_m2);
         // The authored shower (no lattice) is not a partition of the round's body: nothing is
         // taken from the filler for it (named).
@@ -1084,111 +1116,9 @@ impl Game {
         self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice, shot });
     }
 
-    /// Start a kinetic perforation's solves on workers (`PendingPenetration`); the chain runs now.
-    /// Returns whether the chain's round burst inside (for the strike's sound), or `None` when
-    /// the strike has no chain (HE, HEAT) and resolves at once as before.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn fea_begin_penetration(&mut self, projectile_id: u64, seed: u32, armor: &VehicleArmorContact,
-        event: &crate::ballistics::ImpactEvent, impact_world: Vec3, dir_world: Vec3, origin_world: Vec3,
-        arc: Arc, now_s: f32) -> Option<bool> {
-        let (line, chain_result) = self.fea_run_chain(impact_world, dir_world, event)?;
-        let shot_event = *event;
-        let shot_seed = seed ^ 0x5407_5407;
-        let shot = Some(std::thread::spawn(move || ShotStrike::solve(&shot_event, shot_seed)));
-        let hull_inv = self.player.hull_model().inverse();
-        let normal_hull = hull_inv.transform_vector3(armor.world_normal).normalize_or_zero();
-        let local_seed = crate::armor_damage::position_seed(armor.local_point) ^ seed.rotate_left(13);
-        let plate = lattice_problem(event, &line, &chain_result, normal_hull, local_seed)
-            .map(|(impact, axes)| PlateJob { impact, origin: line.entry, axes }.spawn());
-        let part = self.part_model(armor.part).inverse();
-        let burst = chain_result.burst;
-        self.fea.current = None;
-        self.fea.penetrations.push(PendingPenetration {
-            commit_at_s: now_s + FEA_PENETRATION_COMMIT_S, projectile_id, seed, armor: *armor, event: *event,
-            impact_local: part.transform_point3(impact_world), dir_local: part.transform_vector3(dir_world).normalize_or_zero(),
-            origin_local: part.transform_point3(origin_world),
-            normal_local: part.transform_vector3(armor.world_normal).normalize_or_zero(), arc, sound: None, struck_time_s: 0.0,
-            line, chain: chain_result, plate, shot, started: std::time::Instant::now() });
-        Some(burst)
-    }
-
-    /// Commit every perforation whose time has come (`PendingPenetration`): its measured scar, the
-    /// exterior strike, and the fragments, crew and modules behind the plate, as the strike would
-    /// have done at once. Called at the start of each update.
-    pub(super) fn commit_fea_penetrations(&mut self) {
-        if self.fea.penetrations.is_empty() {
-            return;
-        }
-        let _probe = crate::sim_phase::Probe::new("commit_fea_penetrations");
-        let now = self.armor_clock_s;
-        let mut index = 0;
-        while index < self.fea.penetrations.len() {
-            let ready = self.fea.penetrations[index].plate.as_ref().is_none_or(|h| h.is_finished())
-                && self.fea.penetrations[index].shot.as_ref().is_none_or(|h| h.is_finished());
-            if self.fea.penetrations[index].commit_at_s > now || (!super::crew_tissue::reference_solve() && !ready) {
-                index += 1;
-                continue;
-            }
-            let mut p = self.fea.penetrations.remove(index);
-            let (impact_world, dir_world, origin_world) = self.fea_finish_penetration(&mut p);
-            let mut armor = p.armor;
-            armor.world_normal = self.part_model(armor.part).transform_vector3(p.normal_local).normalize_or_zero();
-            if !self.god {
-                let scar = self.record_vehicle_scar(&armor, &p.event, dir_world, p.struck_time_s);
-                println!("[armor] {:?} {:?} at {:?} mm: radius {} mm, loss {} mm, depth {:.1} mm, aperture {} mm",
-                    scar.facing, scar.kind, scar.local_mm, scar.radius_mm, scar.loss_mm, scar.depth_m() * 1000.0, scar.aperture_mm);
-                self.apply_exterior_strike(armor, &p.event, true, p.seed, dir_world);
-            }
-            let context = self.resolve_player_penetration(p.arc, origin_world, impact_world, dir_world, armor.part,
-                armor.local_point, p.projectile_id, p.seed, p.event);
-            if let Some(params) = p.sound {
-                self.last_player_damage_sound = Some((params, context));
-            }
-            // Spread simultaneous hit commits over updates instead of draining the queue.
-            if !super::crew_tissue::reference_solve() { break; }
-        }
-    }
-
     /// The struck part's model (hull or turret) as it stands now.
     pub(super) fn part_model(&self, part: ArmorPart) -> Mat4 {
-        match part {
-            ArmorPart::Hull => self.player.hull_model(),
-            ArmorPart::Turret => self.player.turret_model(),
-        }
-    }
-
-    /// Join a due perforation's solves (waiting if they are not done: logged) and make them the
-    /// strike being resolved (`fea.current`), as `fea_solve_impact` would have. Returns the strike
-    /// point, direction and origin (world, where the part is now).
-    pub(super) fn fea_finish_penetration(&mut self, p: &mut PendingPenetration) -> (Vec3, Vec3, Vec3) {
-        let part = self.part_model(p.armor.part);
-        let impact_world = part.transform_point3(p.impact_local);
-        let dir_world = part.transform_vector3(p.dir_local).normalize_or_zero();
-        let origin_world = part.transform_point3(p.origin_local);
-        let waited = std::time::Instant::now();
-        let finished = p.plate.as_ref().is_none_or(|h| h.is_finished()) && p.shot.as_ref().is_none_or(|h| h.is_finished());
-        let lattice = p.plate.take().and_then(|h| h.join().ok());
-        let shot = p.shot.take().and_then(|h| h.join().ok().flatten());
-        if !finished {
-            println!("[fea] the update waited {:.0} ms for a perforation's solves (pending rule)",
-                waited.elapsed().as_secs_f32() * 1000.0);
-        }
-        if let Some(outcome) = &lattice {
-            let g = outcome.geometry;
-            println!("[fea] lattice {} particles, {:.1} mm cells, {} steps, {:.0} ms on a worker, committed {:.0} ms after the strike: aperture {:.0} mm, petals {}, plug {}, lip {:.0} mm, bulge {:.0} mm, rim {:.0} K, energy closure {:.2} %",
-                outcome.particles, outcome.cell_mm, outcome.steps, outcome.wall_ms, p.started.elapsed().as_secs_f32() * 1000.0,
-                g.aperture_mm, g.petals, g.plug, g.lip_mm, g.bulge_mm, g.rim_kelvin, outcome.ledger.closure() * 100.0);
-        }
-        let chain_result = match &shot {
-            Some(s) => {
-                println!("[fea] the round's own solve: {:.2} of {:.2} kg flies on, {} pieces, {} through the plate as shrapnel, {:.0} ms",
-                    s.residual_kg, s.mass_kg, s.pieces, s.shrapnel.len(), s.wall_ms);
-                self.fea_run_chain_with(impact_world, dir_world, &p.event, s.residual_fraction()).map_or(p.chain.clone(), |(_, r)| r)
-            }
-            None => p.chain.clone(),
-        };
-        self.fea.current = Some(ImpactSolve { projectile_id: p.projectile_id, line: p.line, chain: chain_result, lattice, shot });
-        (impact_world, dir_world, origin_world)
+        match part { ArmorPart::Hull => self.player.hull_model(), ArmorPart::Turret => self.player.turret_model() }
     }
 
     /// The measured terminal geometry and solved rim cooling for the strike being resolved, if
@@ -1362,28 +1292,59 @@ pub(super) struct PenetratorBody {
     pub(super) length_m: f32,
 }
 
+/// The same rest lattice used at contact, with the nose face at the flight point.
+/// APCR includes its full-calibre carrier. It is not a bare APFSDS-style dart.
+fn flight_lattice(shell:&crate::ballistics::ShellSpec)->Option<shot::Shot> {
+    if shell.kind==crate::ballistics::ShellKind::Heat {return None;}
+    let design=shot::design(shell)?;
+    Some(shot::Shot::with_cells(shot::ShotImpact{design,v_in:shell.muzzle_velocity,
+        obliquity_rad:0.,thickness_m:0.1,resistance_pa:1.0e9,seed:0},
+        if super::crew_tissue::reference_solve(){SHOT_CELLS_ACROSS}else{3.}))
+}
+
 pub(super) fn penetrator_body(shell: &crate::ballistics::ShellSpec) -> PenetratorBody {
-    let calibre = shell.caliber_mm * 0.001;
-    let apcr = shell.kind == crate::ballistics::ShellKind::Apcr;
-    let d = if apcr { APCR_CORE_FRACTION * calibre } else { calibre };
-    let radius = 0.5 * d;
-    let nose = lodged::nose_length_calibres(shell.kind) * d;
-    if apcr {
-        return PenetratorBody { radius_m: radius, nose_m: nose, length_m: (APCR_CORE_LENGTH_DIAMETERS * d).max(nose) };
+    static CACHE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String,PenetratorBody>>>=std::sync::OnceLock::new();
+    let mut cache=CACHE.get_or_init(Default::default).lock().unwrap();
+    if let Some(body)=cache.get(shell.name){return *body;}
+    let body=if let Some(shot)=flight_lattice(shell) {
+        PenetratorBody{radius_m:shot.impact.design.calibre_m*0.5,
+            nose_m:shot.impact.design.nose_calibres*shot.impact.design.calibre_m,
+            length_m:shot.length_m}
+    }else{
+        let radius=shell.caliber_mm*0.0005;
+        PenetratorBody{radius_m:radius,nose_m:radius*2.,length_m:shell.mass_kg/(7850.*std::f32::consts::PI*radius*radius)+radius}
+    };
+    cache.insert(shell.name.to_owned(),body);body
+}
+
+fn flight_body_mesh(shell:&crate::ballistics::ShellSpec)->CpuMesh {
+    let Some(shot)=flight_lattice(shell) else{return penetrator_mesh(penetrator_body(shell));};
+    let key=|p:Vec3|(p/shot.h).round().as_ivec3().to_array();
+    let occupied:std::collections::HashSet<_>=shot.pos.iter().map(|&p|key(p)).collect();
+    let axes=[Vec3::X,Vec3::NEG_X,Vec3::Y,Vec3::NEG_Y,Vec3::Z,Vec3::NEG_Z];
+    let mut vertices=Vec::new();let mut indices=Vec::new();
+    let mut lo=Vec3::splat(f32::INFINITY);let mut hi=Vec3::splat(f32::NEG_INFINITY);
+    for &p in &shot.pos {
+        let half=Vec3::splat(shot.h*0.5);lo=lo.min(p-half);hi=hi.max(p+half);
+        let cube=crate::prims::box_mesh(p-half,p+half,[102,106,110]);
+        for (face,axis) in axes.iter().enumerate() {
+            if occupied.contains(&key(p+*axis*shot.h)){continue;}
+            let base=vertices.len()as u32;vertices.extend_from_slice(&cube.vertices[face*4..face*4+4]);
+            indices.extend([base,base+1,base+2,base,base+2,base+3]);
+        }
     }
-    let area = std::f32::consts::PI * radius * radius;
-    let cylinder = (shell.mass_kg / crate::fea_damage::materials::RHA_DENSITY - 2.0 / 3.0 * area * nose) / area;
-    PenetratorBody { radius_m: radius, nose_m: nose, length_m: nose + cylinder.max(0.0) }
+    let mut mesh=CpuMesh::basic(vertices,indices,Some(crate::prims::solid_color([102,106,110])),lo,hi);
+    mesh.metallic_factor=0.85;mesh.roughness_factor=0.55;mesh
 }
 
 /// Kinetic rounds that can lodge in the Tiger (every kinetic specification the game fires), each
 /// drawn from its own exact prototype.
-pub(super) static LODGED_SPECS: [&crate::ballistics::ShellSpec; 13] = [
+pub(super) static LODGED_SPECS: [&crate::ballistics::ShellSpec; 16] = [
     &crate::ballistics::PZGR_39, &crate::ballistics::PZGR_40, &crate::ballistics::PZGR_39_43,
     &crate::ballistics::BR_240_M42, &crate::ballistics::BR_240, &crate::ballistics::BR_240P,
     &crate::ballistics::BR_271_ZIS2, &crate::ballistics::BR_350B, &crate::ballistics::BR_354P,
     &crate::ballistics::BR_365, &crate::ballistics::BR_412, &crate::ballistics::BR_471,
-    &crate::ballistics::BR_540,
+    &crate::ballistics::BR_540,&crate::ballistics::HEAT_REVIEW,&crate::ballistics::HESH_REVIEW,&crate::ballistics::M829A2_REVIEW,
 ];
 /// Lodged rounds of one specification drawn at once (named bound: further ones stay in the
 /// state and stay removable, but are not drawn; logged once).
@@ -1468,7 +1429,7 @@ pub(super) fn penetrator_mesh(body: PenetratorBody) -> CpuMesh {
 /// Register the lodged-round prototypes and their fixed physical pools (casting, in the TLAS).
 pub(super) fn allocate_lodged_round_pools(device: &wgpu::Device, queue: &wgpu::Queue, r: &mut Renderer) -> Vec<usize> {
     LODGED_SPECS.iter().map(|spec| {
-        let prototype = r.register_instanced_prototype(device, queue, &penetrator_mesh(penetrator_body(spec)));
+        let prototype = r.register_instanced_prototype(device, queue, &flight_body_mesh(spec));
         r.add_moving_instanced_pool(device, prototype, LODGED_DRAW_CAPACITY).expect("lodged round pool")
     }).collect()
 }
@@ -1668,6 +1629,7 @@ pub(super) fn burst_body_kinetic_j(fragments: &[HotFragment]) -> f32 {
 pub(super) fn next_fragment_slot(pool: &[HotFragment], cursor: usize, carried: Option<usize>) -> usize {
     let n = pool.len();
     let start = cursor % n;
+    if let Some(slot)=(0..n).map(|k|(start+k)%n).find(|&i|!pool[i].active && Some(i)!=carried){return slot;}
     for k in 0..n {
         let slot = (start + k) % n;
         let f = &pool[slot];
@@ -1859,19 +1821,16 @@ mod lodged_draw_tests {
     #[test]
     fn drawn_body_holds_the_rounds_mass_and_the_solved_diameter() {
         for spec in LODGED_SPECS.iter() {
-            let body = penetrator_body(spec);
-            let apcr = spec.kind == crate::ballistics::ShellKind::Apcr;
-            let area = std::f32::consts::PI * body.radius_m * body.radius_m;
-            let volume = area * (body.length_m - body.nose_m) + 2.0 / 3.0 * area * body.nose_m;
-            if apcr {
-                assert!((body.length_m / (2.0 * body.radius_m) - APCR_CORE_LENGTH_DIAMETERS).abs() < 1e-4);
-            } else {
-                let mass = volume * crate::fea_damage::materials::RHA_DENSITY;
-                assert!((mass / spec.mass_kg - 1.0).abs() < 1e-3, "{}: {:?}", spec.name, body);
-            }
-            let d = spec.caliber_mm * 0.001 * if apcr { APCR_CORE_FRACTION } else { 1.0 };
-            assert!((2.0 * body.radius_m - d).abs() < 1e-6, "{}", spec.name);
-            assert!(body.length_m > body.nose_m, "{}: the body is longer than its nose", spec.name);
+            let Some(shot)=flight_lattice(spec)else{continue;};
+            let body=penetrator_body(spec);let mesh=flight_body_mesh(spec);
+            let mass:f32=shot.mass.iter().sum();
+            assert!((mass/spec.mass_kg-1.).abs()<1e-4,"{}",spec.name);
+            assert!(mesh.max.z.abs()<1e-6,"nose face at contact, {}: {}",spec.name,mesh.max.z);
+            assert!((mesh.min.z+body.length_m).abs()<shot.h*0.01,"{}",spec.name);
+            let expected=if crate::ballistics::is_long_rod(spec){0.03}else{spec.caliber_mm*0.001};
+            assert!((body.radius_m*2.-expected).abs()<1e-6,"{}",spec.name);
+            // Regression: the old flying APCR mesh showed only its core, then grew at impact.
+            assert!(mesh.max.x-mesh.min.x>expected*0.65,"{}",spec.name);
         }
     }
 
@@ -1959,6 +1918,7 @@ mod save_tests {
             carried_fragment: Some(17),
             next_id: 4,
             interior: InteriorDamage { energy_j: vec![(InteriorDamage::spec("traverse_gearbox").unwrap(), 1_200.0)] },
+            ..FeaSaved::default()
         }
     }
 

@@ -70,6 +70,19 @@ fn contact_shadow(rel: vec3<f32>, dir: vec3<f32>, reach_m: f32, thickness_m: f32
 // ao: near-field contact; open: the hemisphere share the frame's surfaces leave open; covered:
 // the share they cover; irradiance: their previous-frame radiance over that share (x pi).
 struct Gather { ao: f32, open: f32, covered: f32, irradiance: vec3<f32> };
+// One invalid channel invalidates the whole sample. Keeping the other channels would turn
+// a poisoned green/blue history into a persistent red illuminant (impact-film regression).
+// Inspect the exponent bits: comparisons with NaN do not reliably reject a sample.
+fn shade_finite3(v: vec3<f32>) -> bool {
+    return all((bitcast<vec3<u32>>(v) & vec3(0x7fffffffu)) < vec3(0x7f800000u));
+}
+fn shade_finite4(v: vec4<f32>) -> bool {
+    return all((bitcast<vec4<u32>>(v) & vec4(0x7fffffffu)) < vec4(0x7f800000u));
+}
+fn shade_radiance(v: vec3<f32>) -> vec3<f32> {
+    if (!shade_finite3(v)) { return vec3(0.0); }
+    return max(v, vec3(0.0));
+}
 fn previous_radiance(world: vec3<f32>, motion: mat4x4<f32>) -> vec4<f32> {
     if (fr.prev_cam_pos.w < 0.5) { return vec4(0.0); }
     let rel = (motion * vec4(world, 1.0)).xyz - fr.prev_cam_pos.xyz;
@@ -79,7 +92,9 @@ fn previous_radiance(world: vec3<f32>, motion: mat4x4<f32>) -> vec4<f32> {
     let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     if (any(uv < vec2(0.0)) || any(uv > vec2(1.0))) { return vec4(0.0); }
     let p = vec2<i32>(uv * fr.res.xy);
-    return vec4(textureLoad(lit_prev, p, 0).rgb, 1.0);
+    let value = textureLoad(lit_prev, p, 0).rgb;
+    if (!shade_finite3(value)) { return vec4(0.0); }
+    return vec4(max(value, vec3(0.0)), 1.0);
 }
 // `motion`: the shaded surface's (rm_surface_motion), applied to the surfaces it gathers from.
 fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32, motion: mat4x4<f32>) -> Gather {
@@ -168,8 +183,10 @@ fn shade_history(world: vec3<f32>, motion: mat4x4<f32>) -> ShadeHistory {
     if (any(uv < vec2(0.0)) || any(uv >= vec2(1.0))) { return none; }
     let texel = vec2<i32>(uv * fr.res.xy);
     let shares = textureLoad(shares_prev, texel, 0);
+    let bounce = textureLoad(bounce_prev, texel, 0).rgb;
     let d = length(rel);
-    if (shares.w <= 0.0 || abs(shares.w - d) > 0.02 * d + 0.03) { return none; }
+    if (!shade_finite4(shares) || !shade_finite3(bounce)
+        || shares.w <= 0.0 || abs(shares.w - d) > 0.02 * d + 0.03) { return none; }
     // The history of the same surface round the texel (eye distances that agree).
     let last = vec2<i32>(fr.res.xy) - vec2(1);
     var local_shares = vec2(0.0);
@@ -179,14 +196,15 @@ fn shade_history(world: vec3<f32>, motion: mat4x4<f32>) -> ShadeHistory {
         for (var x = -1; x <= 1; x += 1) {
             let q = clamp(texel + vec2(x, y), vec2(0), last);
             let s = textureLoad(shares_prev, q, 0);
-            if (s.w > 0.0 && abs(s.w - d) <= 0.04 * d + 0.05) {
+            let b = textureLoad(bounce_prev, q, 0).rgb;
+            if (shade_finite4(s) && shade_finite3(b) && s.w > 0.0 && abs(s.w - d) <= 0.04 * d + 0.05) {
                 local_shares += s.xy;
-                local_bounce += textureLoad(bounce_prev, q, 0).rgb;
+                local_bounce += max(b, vec3(0.0));
                 count += 1.0;
             }
         }
     }
-    return ShadeHistory(shares, textureLoad(bounce_prev, texel, 0).rgb, true,
+    return ShadeHistory(shares, max(bounce, vec3(0.0)), true,
         local_shares / max(count, 1.0), local_bounce / max(count, 1.0));
 }
 fn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -587,6 +605,7 @@ fn fs(in: VsOut) -> ShadeOut {
             gather.irradiance = mix(history.local_bounce, irradiance, RM_GATHER_BLEND);
         }
         shares_out = vec4(1.0, gather.open, gather.ao, dist);
+        gather.irradiance = shade_radiance(gather.irradiance);
         bounce_out = vec4(gather.irradiance, dist);
         // The player's vehicle (pixels within 4.5 m of its compartment's centre that are not the
         // ground; fr.vehicle): paint worn through on its edges, grime gathered in its corners. Edges are the
@@ -883,5 +902,7 @@ fn fs(in: VsOut) -> ShadeOut {
         if (!leaf && !slab) { color += g2.rgb; }
     }
     let fog = fog_to(in.uv, ray, dist, true);
-    return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), shares_out, bounce_out);
+    // Never publish invalid radiance to the next frame's illumination source. This also
+    // prevents a transient degenerate surface sample from spreading across unrelated objects.
+    return ShadeOut(vec4(shade_radiance(color * fog.transmittance + fog.radiance), 1.0), shares_out, bounce_out);
 }

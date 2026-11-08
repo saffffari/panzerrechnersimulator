@@ -169,6 +169,10 @@ fn scar_height(s: Scar, u: f32, v: f32) -> f32 {
 // Inside the material a hole removed: the oblique bore and, behind it, the back-face scab cone.
 // `slack` widens the slab that is cut (meshes seldom model the plate's inner face exactly at T).
 fn scar_in_cut(s: Scar, p: PlatePoint) -> bool {
+    // The offline film replaces only this source plate patch with the solver's actual cells.
+    if ((scar_bits(s) & (1u << 30u)) != 0u) {
+        return abs(p.u) < s.d.x && abs(p.v) < s.d.z && p.w <= 0.025 && p.w >= -s.d.y - 0.06;
+    }
     if (!scar_open(s)) { return false; }
     let t = s.d.y;
     let slack = max(0.6 * t, 0.03);
@@ -188,6 +192,7 @@ fn scar_in_cut(s: Scar, p: PlatePoint) -> bool {
 // What the near patch replaces on the original mesh: its outer face disc, and for an open wound
 // the back face out to the scab or petal reach.
 fn scar_patch_covers(s: Scar, p: PlatePoint) -> bool {
+    if ((scar_bits(s) & (1u << 30u)) != 0u) { return false; }
     let t = s.d.y;
     let slack = max(0.6 * t, 0.03);
     let rho = scar_rho(s, p.u, p.v, clamp(p.w, -t, 0.0));

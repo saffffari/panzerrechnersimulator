@@ -30,6 +30,8 @@ const LOADED_AGE_S: f32 = 86_400.0;
 #[derive(Clone, Copy, Debug)]
 pub struct ScarDraw {
     pub scar: ArmorScar,
+    /// Offline review only: replace this rectangular source patch with solved lattice cells.
+    pub review_patch: Option<(Vec3,[Vec3;3],[f32;3])>,
     /// `Renderer::time` of the latest strike; `NEG_INFINITY` for a loaded record.
     pub struck_at: f32,
     /// Initial rim temperature of that strike (K).
@@ -49,7 +51,7 @@ pub struct ScarDraw {
 
 impl ScarDraw {
     pub fn cold(scar: ArmorScar) -> Self {
-        Self { scar, struck_at: f32::NEG_INFINITY, rim_kelvin: AMBIENT_K, rim_curve: None, plug_rest: None, interior: false, extent: [13; 16] }
+        Self { scar, review_patch:None, struck_at: f32::NEG_INFINITY, rim_kelvin: AMBIENT_K, rim_curve: None, plug_rest: None, interior: false, extent: [13; 16] }
     }
 }
 
@@ -146,6 +148,13 @@ pub fn pack(r: &Renderer, sky: &SkyBands) -> ScarFrame {
 #[allow(clippy::too_many_arguments)]
 fn pack_one(r: &Renderer, model: Mat4, draw: &ScarDraw, eye: Vec3, px_per_rad: f32, winter: bool,
     precipitation: f32, frame: &mut ScarFrame) -> GpuScar {
+    if let Some((origin,axes,size))=draw.review_patch {
+        let center=model.transform_point3(origin);let normal=-model.transform_vector3(axes[2]).normalize();
+        let tangent=model.transform_vector3(axes[0]).normalize();
+        return GpuScar{a:[center.x,center.y,center.z,size[0].max(size[1])],b:[normal.x,normal.y,normal.z,0.],
+            c:[tangent.x,tangent.y,tangent.z,1.],d:[size[0],size[2],size[1],0.],
+            e:[f32::from_bits(1|(1<<30)),0.,0.,0.],f:[0.,0.,0.,AMBIENT_K],g:[0.;4],h:[0.;4],i:[0.;4]};
+    }
     let scar = draw.scar;
     let centre = model.transform_point3(scar.local_position());
     let normal = model.transform_vector3(scar.local_normal()).normalize_or_zero();

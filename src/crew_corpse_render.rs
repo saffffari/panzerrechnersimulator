@@ -135,6 +135,7 @@ impl Corpses {
     pub(super) fn integrate_tissue(&mut self,world:&FragmentWorld,player:&Tank,dt:f32) {
         if let Some(tissue)=self.tissue.as_mut() {tissue.integrate(world,player,dt);}
     }
+    pub(super) fn tissue_joint_connections(&self,peer:u32)->Option<[bool;PARTS]>{self.tissue.as_ref()?.joint_connections(peer)}
     pub(super) fn reset_tissue(&mut self) {
         if let Some(tissue)=self.tissue.as_mut() {tissue.reset();}
     }
@@ -230,6 +231,20 @@ impl Corpses {
             "pages_per_actor":PARTS*2+2,"actor_pages":self.pages.iter().enumerate().filter_map(|(index,p)|
                 p.as_ref().map(|p|serde_json::json!({"actor_id":singleplayer_crew::SOLO_ACTOR_BASE+index as u32,
                     "appearance":p.appearance,"flesh_pools":p.flesh,"bone_pools":p.bones,"helmet_pool":p.helmet}))).collect::<Vec<_>>()})
+    }
+    pub(super) fn particle_surfaces(&self,player:&Tank,bodies:&[CrewRagdoll],scene:&mut particle_contacts::Scene){
+        for body in bodies {
+            if self.tissue.as_ref().is_some_and(|t|t.has_body(body.casualty.peer_id)){continue;}
+            let appearance=source_appearance(None,actor_slot(body.casualty.peer_id).and_then(|i|self.pages[i].as_ref().map(|p|p.appearance)),body.casualty.identity);
+            for part in crew_physics::CrewBodyPart::ALL {
+                if !body.segments[part.index()].present{continue;}
+                let model=crew_ragdoll_segment_model(player,body,part);
+                for (i,triangle) in self.source_triangles[appearance][part.index()].iter().enumerate(){
+                    scene.triangle(particle_contacts::key(body.casualty.peer_id,1,(part.index()*10000+i)as u32),triangle.map(|p|model.transform_point3(p)));
+                }
+            }
+        }
+        if let Some(tissue)=&self.tissue {tissue.particle_surfaces(player,bodies,scene);}
     }
     /// Same retained flesh triangles and part matrices used by drawing, for bounded drag sweeps.
     pub(super) fn world_vertices(&self,player:&Tank,body:&CrewRagdoll,registered:Option<crate::lan::LanRole>)->Vec<Vec3>{

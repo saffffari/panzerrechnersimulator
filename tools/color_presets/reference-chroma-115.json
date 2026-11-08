@@ -1,0 +1,14 @@
+{
+  "schema": "panzer.display-color-preset.v1",
+  "name": "reference-chroma-115",
+  "display_saturation": 1.15,
+  "notes": "Display reproduction only. Preserve exposure multiplier, warmth, gamma, physical sunlight, sky spectrum, atmosphere, lamps, materials, simulation and existing pixel treatment. Apply through tools/apply_color_preset.py to a copy of a saved FEA range state.",
+  "reference_settings": {
+    "look": 6,
+    "real_contrast": 1.35,
+    "real_saturation": 0.85,
+    "live_film_real_steps": "7,7,4",
+    "daylight_reference_real_steps": "15,15,7",
+    "exposure_policy": "Use the saved manual exposure if present; otherwise keep the live eye adaptation. Do not force a film-only exposure lock."
+  }
+}

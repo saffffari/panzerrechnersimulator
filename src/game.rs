@@ -207,6 +207,10 @@ mod cabin_panels;
 mod tank_editor_play;
 #[path = "surface_blood.rs"]
 mod surface_blood;
+#[path = "particle_contacts.rs"]
+mod particle_contacts;
+#[path = "cabin_sparks.rs"]
+mod cabin_sparks;
 #[path = "surface_fire.rs"]
 mod surface_fire;
 #[path = "tiger_driver_shutters.rs"]
@@ -217,6 +221,8 @@ mod tiger_driver_visor;
 pub(crate) mod tiger_front_optics;
 #[path = "tiger_gunner_sight.rs"]
 mod tiger_gunner_sight;
+#[path = "tiger_ring_seal.rs"]
+mod tiger_ring_seal;
 #[path = "tiger_hatches.rs"]
 mod tiger_hatches;
 /// The roof lids' openings in their frames (the shaft stills of `sky-review` aim at them).
@@ -331,6 +337,8 @@ mod crew_world_state;
 mod game_world_state;
 #[path = "crew_status_panel_review.rs"]
 pub(crate) mod crew_status_panel_review;
+#[path = "army_timelapse.rs"]
+pub(crate) mod army_timelapse;
 #[path = "combined_battle_review.rs"]
 pub(crate) mod combined_battle_review;
 #[path = "crew_personal_space.rs"]
@@ -1577,6 +1585,18 @@ struct HotFragment {
     lodged: bool,
     /// How far it went into that steel, m.
     embed_m: f32,
+    /// Conserved solved mass; legacy cubes derive mass from their edge.
+    #[serde(default)]
+    mass_kg: f32,
+    #[serde(default)]
+    cross_section_m2:f32,
+    /// Share of the original shell carried by this fragment (zero for plate steel).
+    #[serde(default)]
+    tracer_share: f32,
+    #[serde(default)]
+    material_remaining_m: f32,
+    #[serde(default)]
+    material_force_n: f32,
 }
 
 /// One real cube-to-cabin contact from the latest simulation frame. Audio consumes this bounded,
@@ -2816,7 +2836,7 @@ fn hot_fragment_render_pose(fragment: &HotFragment) -> (Vec3, Quat) {
 /// beam primitive: a stationary body has no trail, and a ricochet starts a new history segment at
 /// the physical contact rather than drawing through the wall.
 fn hot_fragment_tail_pose(fragment: &HotFragment) -> Option<(Vec3, Quat, Vec3)> {
-    if !fragment.active || fragment.settled {
+    if !fragment.active || fragment.settled || fragment.tracer_share>0.0 {
         return None;
     }
     let speed = fragment.vel.length();
@@ -3356,6 +3376,8 @@ fn facing_arc(facing: crate::ballistics::Facing) -> Arc {
 /// The Tiger's gun mantlet: its node in the gun's baked mesh (gun frame).
 pub(crate) const TIGER_MANTLET_GLB: &str = "assets/tanks/tiger/baked/tiger_gun.glb";
 pub(crate) const TIGER_MANTLET_NODE: &str = "Gun_0008";
+#[path = "tiger_gun_mount.rs"]
+mod tiger_gun_mount;
 
 /// One live shell. `pos`, `velocity`, `distance_m` and `seed` are the authoritative modeled state;
 /// no target or terminal result exists until a swept segment actually reaches physical geometry.
@@ -3786,6 +3808,7 @@ struct CrewRagdoll {
     exterior_floor_y: f32,
     segments: [crew_physics::CrewSegment; crew_physics::CREW_BODY_PART_COUNT],
     bone_follow: [Option<CrewBoneFollow>; crew_physics::CREW_BODY_PART_COUNT],
+    #[serde(default)] joint_anchors: Option<[[Vec3;2];10]>,
     impact_part: crew_physics::CrewBodyPart,
     fragment_impulse_ns: Vec3,
     blast_impulse_ns: Vec3,
@@ -4140,7 +4163,7 @@ fn generate_penetration_fragments(
             seed: s,
             temp_k: AUTHORED_FRAGMENT_KELVIN,
             lodged: false,
-            embed_m: 0.0,
+            embed_m: 0.0, mass_kg: 0.0,cross_section_m2:0.0, tracer_share: 0.0, material_remaining_m:0.0,material_force_n:0.0,
         });
     }
     fragments
@@ -4770,7 +4793,7 @@ impl<'a> FragmentWorld<'a> {
     /// exceeds the flow stress times its face area times that thickness: the embedding rule
     /// (`fea_damage::fragments::embed_depth`) carried through the wall. Returns the exit point
     /// and the work done on the part.
-    fn perforation(&self, frame: BloodFrame, at: Vec3, vel: Vec3, size: f32) -> Option<(Vec3, f32)> {
+    fn perforation(&self, frame: BloodFrame, at: Vec3, vel: Vec3, size: f32, mass: f32, area: f32) -> Option<(Vec3, f32)> {
         use crate::fea_damage::components::{Interior, COMPONENT_SPECS};
         let surfaces = self.surfaces.as_ref()?;
         let speed = vel.length();
@@ -4778,17 +4801,21 @@ impl<'a> FragmentWorld<'a> {
             return None;
         }
         let dir = vel / speed;
-        if self.components_entered(frame, at, at + dir * HOT_FRAGMENT_COMPONENT_REACH_M, 0.0).iter()
+        if area<=0.0 && self.components_entered(frame, at, at + dir * HOT_FRAGMENT_COMPONENT_REACH_M, 0.0).iter()
             .any(|&(_, spec)| !matches!(COMPONENT_SPECS[spec].interior, Interior::Empty)) {
             return None;
         }
         let i = blood_frame_index(frame);
         let start = at + dir * PART_FACE_SKIP_M;
-        let far = at + dir * PART_PERFORATION_MAX_M;
+        let reach=if area>0.0 {1.0}else{PART_PERFORATION_MAX_M};
+        let far = at + dir * reach;
         let contact = surfaces.sweep(self.parent[i].transform_point3(start), self.parent[i].transform_point3(far))?;
-        let thickness = PART_FACE_SKIP_M + contact.fraction * (PART_PERFORATION_MAX_M - PART_FACE_SKIP_M);
-        let energy = 0.5 * crate::fea_damage::fragments::cube_mass(size) * speed * speed;
-        let work = PART_FLOW_STRESS_PA * size * size * thickness;
+        let thickness = PART_FACE_SKIP_M + contact.fraction * (reach - PART_FACE_SKIP_M);
+        let energy = 0.5 * mass * speed * speed;
+        // Same finite work/time transit for surviving shell pieces and small chips.
+        // Larger bodies can cross thick parts; there is no unconditional component stop.
+        let stress=if thickness>0.02 {800.0e6}else{PART_FLOW_STRESS_PA};
+        let work = stress * if area>0.0 {area}else{size*size} * thickness;
         (energy > work).then_some((at + dir * thickness, work))
     }
 
@@ -4846,6 +4873,31 @@ fn integrate_hot_fragment(
 /// are also the terminal damage solver's path, so crew, module and cartridge tests meet the same
 /// body the visible cube shows. This replaced the cabin box, turret cylinder and breech block
 /// proxies and the free flight outside them (2026-11-02).
+fn fragment_mass(f:&HotFragment)->f32 {
+    if f.mass_kg>0.0 {f.mass_kg} else {crate::fea_damage::fragments::cube_mass(f.size)}
+}
+
+/// Constant local resistance over the distance actually travelled this step.
+/// Returns to free flight at the far face; zero velocity remains embedded.
+fn advance_fragment_in_material(f:&mut HotFragment,dt:f32)->f32 {
+    let speed=f.vel.length();
+    if speed<=1e-6 || dt<=0.0 {return 0.0;}
+    let dir=f.vel/speed;
+    let a=f.material_force_n/fragment_mass(f).max(1e-9);
+    let remaining=f.material_remaining_m;
+    let end_speed=(speed*speed-2.0*a*remaining).max(0.0).sqrt();
+    let exit_time=2.0*remaining/(speed+end_speed).max(1e-9);
+    let stop_time=if a>0.0 {speed/a}else{f32::INFINITY};
+    let used=dt.min(exit_time).min(stop_time);
+    let travel=(speed*used-0.5*a*used*used).max(0.0).min(remaining);
+    f.pos+=dir*travel;
+    f.material_remaining_m=(remaining-travel).max(0.0);
+    if used>=exit_time-1e-9 {f.material_remaining_m=0.0;}
+    f.vel=dir*(speed-a*used).max(0.0);
+    if f.vel.length()<0.01 {f.settled=true;f.lodged=true;}
+    used
+}
+
 fn integrate_hot_fragment_traced(
     fragment: &mut HotFragment,
     dt: f32,
@@ -4876,77 +4928,59 @@ fn integrate_hot_fragment_traced(
     }
 
     let radius = fragment.size * 0.52;
-    let steps = ((fragment.vel.length() * physics_dt / HOT_FRAGMENT_SWEEP_STEP_M).ceil() as usize)
-        .clamp(1, 64);
-    let step_dt = physics_dt / steps as f32;
+    let steps = ((fragment.vel.length() * physics_dt / HOT_FRAGMENT_SWEEP_STEP_M).ceil() as usize).clamp(1,64);
     for _ in 0..steps {
-        let from = fragment.pos;
-        let incoming_speed = fragment.vel.length();
-        // Quadratic air drag on the tumbling cube, then gravity (`fea_damage::fragments`).
-        fragment.vel = crate::fea_damage::fragments::drag_step(fragment.vel, fragment.size, CABIN_AIR_DENSITY,
-            Vec3::new(0.0, -PROJECTILE_GRAVITY_MPS2, 0.0), step_dt);
-        fragment.ang += fragment.spin * step_dt;
-        let to = from + fragment.vel * step_dt;
-        let (end, surface) = match world.first_surface(fragment.frame, from, to) {
-            Some((fraction, _)) if world.perforation(fragment.frame, from.lerp(to, fraction), fragment.vel, fragment.size).is_some() => {
-                // Through the part it struck, slowed by the work it did on it.
-                let at = from.lerp(to, fraction);
-                let (exit, work) = world.perforation(fragment.frame, at, fragment.vel, fragment.size).unwrap();
-                let speed = fragment.vel.length();
-                let energy = 0.5 * crate::fea_damage::fragments::cube_mass(fragment.size) * speed * speed;
-                let dir = fragment.vel / speed;
-                fragment.vel *= ((energy - work) / energy).max(0.0).sqrt();
-                fragment.pos = exit + dir * (radius + HOT_FRAGMENT_CONTACT_GAP_M);
-                // The renderer draws only history since the far face, never a beam through the part.
-                fragment.prev_pos = fragment.pos;
-                fragment.spin *= 0.8;
-                fragment.bounces = fragment.bounces.saturating_add(1);
-                *collision_count = collision_count.saturating_add(1);
-                if collisions.len() < MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME {
-                    let normal = -dir;
-                    collisions.push(HotFragmentCollision { turret_local: fragment.frame == BloodFrame::Turret,
-                        local_pos: at, local_normal: normal, speed, seed: fragment.seed, bounce_count: fragment.bounces });
+        let mut remaining=physics_dt/steps as f32;
+        let mut contacts=0;
+        while remaining>1e-9 && !fragment.settled && contacts<64 {
+            let from=fragment.pos;
+            let incoming_speed=fragment.vel.length();
+            if fragment.material_remaining_m>0.0 {
+                let used=advance_fragment_in_material(fragment,remaining);
+                if let Some(segments)=trace.as_deref_mut(){segments.push(FragmentMotionSegment{from,to:fragment.pos,speed_mps:incoming_speed,surface:false});}
+                if used<=1e-12 {break;}
+                remaining=(remaining-used).max(0.0);
+                if fragment.material_remaining_m==0.0 {fragment.pos+=fragment.vel.normalize_or_zero()*PART_FACE_SKIP_M*2.0;}
+                continue;
+            }
+            let velocity=crate::fea_damage::fragments::drag_step(fragment.vel,fragment.size,CABIN_AIR_DENSITY,
+                Vec3::new(0.0,-PROJECTILE_GRAVITY_MPS2,0.0),remaining);
+            let to=from+velocity*remaining;
+            let hit=world.first_surface(fragment.frame,from,to);
+            let fraction=hit.map_or(1.0,|(f,_)|f);
+            let used=remaining*fraction;
+            fragment.vel=fragment.vel.lerp(velocity,fraction);
+            fragment.ang+=fragment.spin*used;
+            fragment.pos=from.lerp(to,fraction);
+            if let Some(segments)=trace.as_deref_mut(){segments.push(FragmentMotionSegment{from,to:fragment.pos,speed_mps:incoming_speed,surface:hit.is_some()});}
+            remaining=(remaining-used).max(0.0);
+            if let Some((_,normal))=hit {
+                contacts+=1;
+                let at=fragment.pos;
+                if let Some((exit,work))=world.perforation(fragment.frame,at,fragment.vel,fragment.size,fragment_mass(fragment),fragment.cross_section_m2) {
+                    fragment.material_remaining_m=at.distance(exit);
+                    fragment.material_force_n=work/fragment.material_remaining_m.max(1e-6);
+                    fragment.bounces=fragment.bounces.saturating_add(1);
+                    *collision_count=collision_count.saturating_add(1);
+                    if collisions.len()<MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME {
+                        collisions.push(HotFragmentCollision{turret_local:fragment.frame==BloodFrame::Turret,local_pos:at,
+                            local_normal:normal,speed:incoming_speed,seed:fragment.seed,bounce_count:fragment.bounces});
+                    }
+                }else{
+                    fragment.pos=at+normal*(radius+HOT_FRAGMENT_CONTACT_GAP_M);
+                    let budget=hot_fragment_bounce_budget(fragment.seed);
+                    let floor=normal.y>0.5;
+                    if (floor&&(fragment.bounces>=budget||fragment.vel.length()<0.42))||fragment.bounces>=budget.saturating_add(HOT_FRAGMENT_STUCK_AFTER) {
+                        fragment.vel=Vec3::ZERO;fragment.spin=Vec3::ZERO;fragment.settled=true;
+                    }else{
+                        let (restitution,keep)=if floor{(0.74,0.94)}else if normal.y< -0.5{(0.80,0.95)}else{(0.82,0.96)};
+                        hot_fragment_bounce(fragment,normal,restitution,keep,collisions,collision_count);
+                    }
                 }
-                (at, true)
-            }
-            Some((fraction, normal)) => {
-                let at = from.lerp(to, fraction);
-                fragment.pos = at + normal * (radius + HOT_FRAGMENT_CONTACT_GAP_M);
-                let budget = hot_fragment_bounce_budget(fragment.seed);
-                let floor = normal.y > 0.5;
-                let rests = (floor && (fragment.bounces >= budget || fragment.vel.length() < 0.42))
-                    || fragment.bounces >= budget.saturating_add(HOT_FRAGMENT_STUCK_AFTER);
-                if rests {
-                    fragment.vel = Vec3::ZERO;
-                    fragment.spin = Vec3::ZERO;
-                    fragment.settled = true;
-                } else {
-                    let (restitution, keep) = if floor {
-                        (0.74, 0.94)
-                    } else if normal.y < -0.5 {
-                        (0.80, 0.95)
-                    } else {
-                        (0.82, 0.96)
-                    };
-                    hot_fragment_bounce(fragment, normal, restitution, keep, collisions, collision_count);
-                }
-                (at, true)
-            }
-            None => {
-                fragment.pos = to;
-                (to, false)
-            }
-        };
-        if let Some(segments) = trace.as_deref_mut() {
-            segments.push(FragmentMotionSegment { from, to: end, speed_mps: incoming_speed, surface });
+            }else{remaining=0.0;}
+            if fragment.pos.length()>HOT_FRAGMENT_LEFT_VEHICLE_M {fragment.active=false;return;}
         }
-        if fragment.settled {
-            break;
-        }
-        if fragment.pos.length() > HOT_FRAGMENT_LEFT_VEHICLE_M {
-            fragment.active = false;
-            break;
-        }
+        if fragment.settled{break;}
     }
 }
 
@@ -5494,6 +5528,7 @@ fn new_crew_ragdoll_from_segments(
         exterior_floor_y: 0.0,
         segments,
         bone_follow: [None; crew_physics::CREW_BODY_PART_COUNT],
+        joint_anchors: Some(crew_physics::posed_joint_anchors(&segments,scale)),
         impact_part: distribution.hit_part,
         fragment_impulse_ns: distribution.fragment_impulse_ns,
         blast_impulse_ns: distribution.blast_impulse_ns,
@@ -5865,12 +5900,12 @@ fn integrate_crew_ragdoll_in(ragdoll: &mut CrewRagdoll, dt: f32, world: Option<&
     for _ in 0..steps {
         let prev: Vec<(Vec3, Quat)> = ragdoll.segments.iter().map(|s| (s.pos, s.rot)).collect();
         crew_physics::integrate_free_motion(&mut ragdoll.segments, step_dt);
-        crew_physics::solve_joint_constraints(&mut ragdoll.segments, ragdoll.scale, step_dt, 8);
+        crew_physics::solve_joint_constraints_posed(&mut ragdoll.segments, ragdoll.scale, step_dt, 8, ragdoll.joint_anchors.as_ref(), true);
         let found = collide_crew_segments(ragdoll, &prev, world);
         ragdoll.bounces = ragdoll.bounces.saturating_add(found);
         // Contact projection can separate a joint. A short zero-velocity projection restores the
         // anchor, then a final collision pass keeps that repair on the correct side of steel.
-        crew_physics::solve_joint_constraints(&mut ragdoll.segments, ragdoll.scale, 0.0, 3);
+        crew_physics::solve_joint_constraints_posed(&mut ragdoll.segments, ragdoll.scale, step_dt, 3, ragdoll.joint_anchors.as_ref(), false);
         let found = collide_crew_segments(ragdoll, &prev, world);
         ragdoll.bounces = ragdoll.bounces.saturating_add(found);
         for segment in &mut ragdoll.segments {
@@ -5883,7 +5918,7 @@ fn integrate_crew_ragdoll_in(ragdoll: &mut CrewRagdoll, dt: f32, world: Option<&
         }
 
         let speed = crew_physics::maximum_surface_speed(&ragdoll.segments, ragdoll.scale);
-        let joint_error = crew_physics::max_joint_error(&ragdoll.segments, ragdoll.scale);
+        let joint_error = crew_physics::max_joint_error_posed(&ragdoll.segments, ragdoll.scale, ragdoll.joint_anchors.as_ref());
         let stable_support = crew_physics::has_stable_floor_support(&ragdoll.segments);
         if stable_support && speed < 0.24 && joint_error < 0.024 {
             ragdoll.quiet_t += step_dt;
@@ -7561,61 +7596,32 @@ fn coarsen_fragment_population(fragments: Vec<HotFragment>, limit: usize) -> Vec
     }).collect()
 }
 
-fn resolve_fragment_damage(
-    fragments: &[HotFragment],
-    solo_body: Option<Vec3>,
-    couch_bodies: &[CouchCrewBody],
-    world: &FragmentWorld,
-    live_ammunition: &[LiveAmmoRound],
-    modules: &mut [Module],
-) -> (
-    SpallResult,
-    Vec<CouchCrewCasualty>,
-    Vec<FragmentDamageContact>,
+/// Contacts already delivered by one physical body. Persists between simulation steps.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct FragmentDamageState {
+    crew_parts: std::collections::BTreeMap<u32, u16>,
+    tried_components: u64,
+    struck_parts: u64,
+    hit_solo: bool,
+}
+
+/// Apply only segments the integrator has actually traversed during this step.
+fn resolve_fragment_segments(
+    initial: &HotFragment, segments: &[FragmentMotionSegment], state: &mut FragmentDamageState,
+    solo_body: Option<Vec3>, couch_bodies: &[CouchCrewBody], world: &FragmentWorld,
+    live_ammunition: &[LiveAmmoRound], modules: &mut [Module],
+    result: &mut SpallResult, contacts: &mut Vec<FragmentDamageContact>,
 ) {
     const CREW_RADIUS_M: f32 = 0.35;
     const CREW_LETHAL_ENERGY_J: f32 = 0.24;
-    let mut result = SpallResult::default();
-    let couch_hits = Vec::new();
-    let mut contacts = Vec::new();
-    let mut collision_scratch = Vec::with_capacity(MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME);
-    let mut collision_count = 0usize;
-    let mut segments = Vec::with_capacity(64);
-
-    for initial in fragments {
-        let mut fragment = *initial;
-        // The trajectory does not deflect in soft tissue. One eleven-bit mask per crewman prevents
-        // a grain remaining inside the same OBB for several fixed steps from being charged several
-        // times; that grain may still strike a later different part. Resetting per fragment keeps
-        // this O(fragments × bodies) rather than searching an ever-growing contact ledger.
-        let mut contacted_parts_by_body = vec![0u16; couch_bodies.len()];
-        // One ignition trial per component per fragment.
-        let mut tried_components = 0u64;
-        let mut struck_parts = 0u64;
-        while fragment.active
-            && !fragment.settled
-            && fragment.age < fragment.life.min(HOT_FRAGMENT_DAMAGE_MAX_S)
-        {
-            segments.clear();
-            integrate_hot_fragment_traced(
-                &mut fragment,
-                HOT_FRAGMENT_FIXED_DT,
-                &mut collision_scratch,
-                &mut collision_count,
-                Some(&mut segments),
-                world,
-            );
-            for segment in &segments {
-                let energy = fragment_energy_j(initial.size, segment.speed_mps);
+    for segment in segments {
+                let energy = 0.5 * if initial.mass_kg>0.0 {initial.mass_kg} else {crate::fea_damage::fragments::cube_mass(initial.size)} * segment.speed_mps.powi(2);
                 if energy < 0.01 {
                     continue;
                 }
                 // The fragment's temperature on this segment (K; 0 when the lattice did not solve it).
-                let body_k = if initial.temp_k > 0.0 {
-                    crate::fea_damage::fragments::cool(initial.temp_k, initial.size, segment.speed_mps,
-                        crate::fea_damage::materials::AMBIENT_K, fragment.age)
-                } else { 0.0 };
-                if !result.hit_body {
+                let body_k = initial.temp_k;
+                if !state.hit_solo {
                     if let Some(center) = solo_body {
                         if energy >= CREW_LETHAL_ENERGY_J {
                             if let Some(fraction) = swept_segment_sphere_fraction(
@@ -7625,6 +7631,7 @@ fn resolve_fragment_damage(
                                 CREW_RADIUS_M + initial.size * 0.5,
                             ) {
                                 result.hit_body = true;
+                                state.hit_solo = true;
                                 result.struck_clothing(None, body_k);
                                 contacts.push(FragmentDamageContact {
                                     fragment_id: initial.id,
@@ -7642,7 +7649,7 @@ fn resolve_fragment_damage(
                     }
                 }
 
-                for (body_index, body) in couch_bodies.iter().enumerate() {
+                for body in couch_bodies {
                     // Cheap conservative broad phase only. The result never causes damage; it
                     // merely avoids eleven rotated slab tests for fragments nowhere near this man.
                     if swept_segment_sphere_fraction(
@@ -7658,7 +7665,7 @@ fn resolve_fragment_damage(
                     let mut intersections = Vec::with_capacity(crew_physics::CREW_BODY_PART_COUNT);
                     for &volume in &body.hit_volumes {
                         let part_bit = 1u16 << volume.part.index();
-                        if contacted_parts_by_body[body_index] & part_bit != 0 {
+                        if *state.crew_parts.entry(body.casualty.peer_id).or_default() & part_bit != 0 {
                             continue;
                         }
                         let Some(fraction) = crew_damage::swept_sphere_obb_fraction(
@@ -7686,7 +7693,7 @@ fn resolve_fragment_damage(
                     result.struck_clothing(Some(body.casualty.peer_id), body_k);
                     for (fraction, body_part) in intersections {
                         let part_bit = 1u16 << body_part.index();
-                        contacted_parts_by_body[body_index] |= part_bit;
+                        *state.crew_parts.entry(body.casualty.peer_id).or_default() |= part_bit;
                         // Crossing a limb records a wound, not automatic KIA. Immediate
                         // death is decided from the accumulated anatomical injury plans.
                         contacts.push(FragmentDamageContact {
@@ -7705,25 +7712,25 @@ fn resolve_fragment_damage(
 
                 // Modules are met where the fragment's own path (ended at the first real surface)
                 // enters their CAD-measured component; the rack, where it crosses a live cartridge.
-                let components_entered = world.components_entered(fragment.frame, segment.from, segment.to,
+                let components_entered = world.components_entered(initial.frame, segment.from, segment.to,
                     if segment.surface { HOT_FRAGMENT_COMPONENT_REACH_M } else { 0.0 });
                 let entered = FragmentWorld::modules_of(&components_entered);
                 // What burns in a component it enters (`fea_damage::ignition`): the entry, with the
                 // fragment's temperature there; the strike's trials follow (`SpallResult::ignite`).
                 for &(_, spec) in &components_entered {
                     let bit = 1u64 << spec;
-                    if game_fea::InteriorDamage::tracks(spec) && struck_parts & bit == 0 {
-                        struck_parts |= bit;
+                    if game_fea::InteriorDamage::tracks(spec) && state.struck_parts & bit == 0 {
+                        state.struck_parts |= bit;
                         result.part_strikes.push((spec, energy));
                     }
                 }
                 for &(fraction, spec) in &components_entered {
                     let bit = 1u64 << spec;
-                    if tried_components & bit != 0 || energy < ignition_casing_j(spec) {
+                    if state.tried_components & bit != 0 || energy < ignition_casing_j(spec) {
                         continue;
                     }
                     let Some(what) = crate::fea_damage::ignition::flammable(&crate::fea_damage::components::COMPONENT_SPECS[spec]) else { continue };
-                    tried_components |= bit;
+                    state.tried_components |= bit;
                     result.enter_flammable(StrikeIgnition { local_point: segment.from.lerp(segment.to, fraction),
                         local_velocity: (segment.to - segment.from).normalize_or_zero() * segment.speed_mps,
                         component: spec, what, by_round: false, body_k });
@@ -7782,7 +7789,49 @@ fn resolve_fragment_damage(
                         });
                     }
                 }
-            }
+    }
+}
+
+// Diagnostic trajectory query only; the live integrator calls resolve_fragment_segments.
+fn resolve_fragment_damage(
+    fragments: &[HotFragment],
+    solo_body: Option<Vec3>,
+    couch_bodies: &[CouchCrewBody],
+    world: &FragmentWorld,
+    live_ammunition: &[LiveAmmoRound],
+    modules: &mut [Module],
+) -> (
+    SpallResult,
+    Vec<CouchCrewCasualty>,
+    Vec<FragmentDamageContact>,
+) {
+    const CREW_RADIUS_M: f32 = 0.35;
+    const CREW_LETHAL_ENERGY_J: f32 = 0.24;
+    let mut result = SpallResult::default();
+    let couch_hits = Vec::new();
+    let mut contacts = Vec::new();
+    let mut collision_scratch = Vec::with_capacity(MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME);
+    let mut collision_count = 0usize;
+    let mut segments = Vec::with_capacity(64);
+
+    for initial in fragments {
+        let mut fragment = *initial;
+        let mut state = FragmentDamageState::default();
+        while fragment.active
+            && !fragment.settled
+            && fragment.age < fragment.life.min(HOT_FRAGMENT_DAMAGE_MAX_S)
+        {
+            segments.clear();
+            integrate_hot_fragment_traced(
+                &mut fragment,
+                HOT_FRAGMENT_FIXED_DT,
+                &mut collision_scratch,
+                &mut collision_count,
+                Some(&mut segments),
+                world,
+            );
+            resolve_fragment_segments(&fragment, &segments, &mut state, solo_body, couch_bodies,
+                world, live_ammunition, modules, &mut result, &mut contacts);
         }
     }
     if let Some(first) = fragments.first() {
@@ -8908,7 +8957,7 @@ const N_BLOOD_BATCHES: usize = 4;
 const BLOOD_GRAINS_PER_BATCH: usize = N_BLOOD_CUBES / N_BLOOD_BATCHES;
 /// Every transient blood body is the same sand-grain voxel. Severity changes only how many grains
 /// launch and how fast they travel; it never hides the effect inside a few oversized chunks.
-const N_BLOOD_STAINS: usize = surface_blood::MAX_CELLS;
+const N_BLOOD_STAINS: usize = surface_blood::MAX_CELLS + surface_blood::MAX_CREW_STAINS;
 const BLOOD_STAINS_PER_BATCH: usize = N_BLOOD_STAINS.div_ceil(N_BLOOD_BATCHES);
 const TURRET_BLOOD_WALL_R: f32 = 1.04;
 const TURRET_BLOOD_CEILING: f32 = 2.52;
@@ -8920,7 +8969,7 @@ const HULL_BLOOD_MAX: Vec3 = Vec3::new(1.24, HULL_BLOOD_CEILING, 2.30);
 // macro shower plus 768 visual-only sparks is replaced by one bounded 768-body authority pool.
 pub(crate) const N_HOT_FRAGMENTS: usize = 768;
 const N_HOT_FRAGMENT_BATCHES: usize = 5;
-const HOT_FRAGMENT_STAGE_CAPACITY: usize = N_HOT_FRAGMENTS;
+const HOT_FRAGMENT_STAGE_CAPACITY: usize = 4096;
 const HOT_FRAGMENT_FIXED_DT: f32 = 1.0 / 480.0;
 const HOT_FRAGMENT_DAMAGE_MAX_S: f32 = 3.6;
 const HOT_FRAGMENT_TAIL_MIN_SPEED: f32 = 1.2;
@@ -8950,7 +8999,7 @@ const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 
 // These pre-allocated scene slots are retained only to avoid re-indexing the large fixed scene while
 // the renderer agent admits dynamic physical grains into the TLAS. They are submitted empty forever.
 const N_MICRO_SPARK_BATCHES: usize = 3;
-const RETIRED_MICRO_SLOT_CAPACITY: usize = 1;
+const RETIRED_MICRO_SLOT_CAPACITY: usize = cabin_sparks::CAPACITY;
 /// Audio never needs hundreds of simultaneous one-shots. Retain a deterministic representative
 /// subset plus the uncapped aggregate count, avoiding allocations and voice storms on a full hit.
 pub const MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME: usize = 96;
@@ -8958,13 +9007,13 @@ pub const MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME: usize = 96;
 /// bounce visibly, but mixing dozens of simultaneous broadband contacts reads as clapping.
 const MAX_HOT_FRAGMENT_AUDIO_CONTACTS: usize = 2;
 const HOT_FRAGMENT_AUDIO_MIN_SPEED: f32 = 1.8;
-const HOT_FRAGMENT_AUDIO_DING_BUDGET: u8 = 2;
-const HOT_FRAGMENT_AUDIO_WHIZZ_BUDGET: u8 = 1;
+const HOT_FRAGMENT_AUDIO_DING_BUDGET: u8 = 6;
+const HOT_FRAGMENT_AUDIO_WHIZZ_BUDGET: u8 = 3;
 const HOT_FRAGMENT_WHIZZ_MIN_SPEED: f32 = 2.4;
 const HOT_FRAGMENT_WHIZZ_RADIUS: f32 = 0.62;
 /// Space the two little metal contacts apart so they remain individual dings after cabin reverb.
-const HOT_FRAGMENT_AUDIO_CADENCE: f32 = 0.22;
-const HOT_FRAGMENT_WHIZZ_CADENCE: f32 = 0.12;
+const HOT_FRAGMENT_AUDIO_CADENCE: f32 = 0.035;
+const HOT_FRAGMENT_WHIZZ_CADENCE: f32 = 0.025;
 const CARRY_WALK_SLOW: f32 = 0.72; // walk-speed factor while lugging a round
 const N_CASING: usize = N_LOOSE; // one persistent case for every initially represented cartridge
 /// Settled brass aboard wakes when the turret tilts this far from the attitude it settled at
@@ -9417,7 +9466,9 @@ fn apply_vehicle_avoidance(
 
 struct Slots {
     hand_torch: [usize;2], // compact body and finite luminous lens
-    tiger: [usize; 3],               // hull, turret, gun
+    tiger: [usize; 3],               // hull, turret, recoiling gun
+    mantlet: usize, // elevates on the trunnions; never translates with barrel recoil
+    gun_cradle: usize, // coaxial and mounting hardware, same fixed elevation frame
     roof_hatches: [usize; 4],        // authored driver + loader roof lids, removed from static parts
     driver_controls: [usize; 2],   // authored steering yoke and ignition button
     driver_arms: [usize; 5],       // arm-only source indices, never the local head/body
@@ -10075,6 +10126,8 @@ pub struct Game {
     armour_flashes: Vec<ArmourFlash>,
     /// The last simulation step's dt: a flash's light is its mean over that exposure.
     last_frame_dt: f32,
+    /// Range-only temporal refinement; campaign fixed-step clocks remain unchanged.
+    editor_step_limit: Option<f32>,
     sparks: Vec<Spark>, // pooled debris FX (len == N_DEBRIS)
     snow_puffs: Vec<SnowPuff>, // pooled near-miss snow/dust puffs (len == N_SNOW)
     // ── Coax + hull MG34 state ──
@@ -10342,7 +10395,7 @@ pub struct Game {
     foam_emit_t: f32,
     ext_want_spray: bool, // trigger squeezed this frame (foam FX answers it, fire or not)
     surface_blood: surface_blood::SurfaceBlood,
-    hot_fragments: [HotFragment; N_HOT_FRAGMENTS],
+    hot_fragments: Vec<HotFragment>,
     next_hot_fragment: usize,
     hot_fragment_accumulator_s: f32,
     hot_fragment_collisions: Vec<HotFragmentCollision>,
@@ -10485,6 +10538,8 @@ pub struct Game {
     driver_controls: driver_controls::Controls,
     crew_arm_animation: CrewArmAnimation,
     crew_personal_space: crew_personal_space::CrewPersonalSpace,
+    /// One posed contact scene shared by sparks and blood within the current FX update.
+    crew_particle_cache: Option<std::sync::Arc<particle_contacts::Scene>>,
     singleplayer_crew_active: bool,
     /// The living solo crew: wounds, first aid, the AI stations' decisions (`crew_solo`).
     crew_solo: crew_solo::CrewSolo,
@@ -11926,10 +11981,16 @@ impl Game {
         }
 
         let tiger0 = scene.len();
-        let (player_tiger, mut roof_lids, visor_holder, periscope_parts, sight, shutters, cupola_grip_source, controls_source) = tiger_hatches::load_player_tiger()?;
+        let (mut player_tiger, mut roof_lids, visor_holder, periscope_parts, sight, shutters, cupola_grip_source, controls_source) = tiger_hatches::load_player_tiger()?;
+        let [recoiling_source,mantlet_source,cradle_source]=tiger_gun_mount::load()?;
+        player_tiger[2]=recoiling_source;
         let radio_roof_pane = tiger_front_optics::split_radio_roof_pane(&mut roof_lids[2])?;
         let player_turret_source = game_cookoff::player_turret_source(&player_tiger, tank::TIGER_FRAME_SCALE);
         scene.extend(player_tiger);
+        let mantlet=scene.len();
+        scene.push(mantlet_source.clone());
+        let gun_cradle=scene.len();
+        scene.push(cradle_source);
         let cupola_grip_source = tiger_cupola::into_hatch_frame(cupola_grip_source);
         let cupola_grip = scene.len();
         scene.push(cupola_grip_source.clone());
@@ -13096,6 +13157,8 @@ impl Game {
         let mut slots = Slots {
             hand_torch,
             tiger: [tiger0, tiger0 + 1, tiger0 + 2],
+            mantlet,
+            gun_cradle,
             roof_hatches,
             driver_controls,
             driver_arms,
@@ -13263,7 +13326,7 @@ impl Game {
             wreck_surface_fire::Surface::from_mesh(&scene[slots.tiger[part]]));
         let mut fire_surfaces = vec![
             (0, &scene[slots.tiger[0]]), (1, &scene[slots.tiger[1]]),
-            (2, &scene[slots.tiger[2]]), (3, &scene[slots.roof_hatches[0]]),
+            (2, &scene[slots.tiger[2]]), (79, &scene[slots.mantlet]), (79, &scene[slots.gun_cradle]), (3, &scene[slots.roof_hatches[0]]),
             (4, &scene[slots.roof_hatches[1]]), (5, &scene[slots.driver_visor_holder]),
             (6, &scene[slots.hatch]), (7, &scene[slots.turret_disc]),
             (6, &scene[slots.cupola_grip]), (6, &cupola_spindle_source),
@@ -13294,18 +13357,13 @@ impl Game {
         // The gun's mantlet is armour on the gun's own frame (2026-11-03, the owner: the mantlet
         // was not met at all; shells passed through it to the turret face behind). Only its node
         // is armour, not the barrel or the breech.
-        let mantlet_source = crate::gltf_load::load_glb_partitioned_subtrees(TIGER_MANTLET_GLB, &[TIGER_MANTLET_NODE])
-            .map_err(|e| eprintln!("[armor] the mantlet's source is unavailable: {e:#}")).ok()
-            .and_then(|mut pages| (pages.len() == 2).then(|| pages.remove(1)));
         // Armor-only source cache excludes cabin equipment, crew, ammunition and glass.
         let mut armor_surfaces=vec![(0,&scene[slots.tiger[0]]),(1,&scene[slots.tiger[1]]),
             (3,&scene[slots.roof_hatches[0]]),(4,&scene[slots.roof_hatches[1]]),
             (6,&scene[slots.hatch]),
             (14,&scene[slots.roof_hatches[2]]),(15,&scene[slots.roof_hatches[3]])];
         for (frame,slot) in tiger_driver_shutters::FRAMES.into_iter().zip(slots.driver_visor_moving) {armor_surfaces.push((frame,&scene[slot]));}
-        if let Some(mantlet) = &mantlet_source {
-            armor_surfaces.push((2, mantlet));
-        }
+        armor_surfaces.push((79, &scene[slots.mantlet]));
         armor_surfaces.extend(workshop.armor_surfaces(&scene));
         armor_surfaces.extend(tiger_refuel.armor_surfaces(&scene));
         let mut projectile_player_armor=surface_fire::CabinFire::new(&armor_surfaces);
@@ -14137,7 +14195,7 @@ impl Game {
         slots.fea_liquid = game_fea_effects::allocate_liquid_pools(device, queue, &mut renderer);
         // Retired fixed-scene slots. Scene indices stay stable during the renderer transaction, but
         // `drive_penetration_fx` submits empty arrays and these meshes never become visible.
-        let retired_micro = [[1, 1, 1], [1, 1, 1], [1, 1, 1]];
+        let retired_micro = [[255, 216, 128], [255, 83, 12], [96, 36, 12]];
         slots.micro_spark_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
@@ -14148,7 +14206,8 @@ impl Game {
                 )
                 .expect("retired micro head slot allocation");
             renderer.set_batch_flags(batch, 2.0);
-            assert!(renderer.set_dynamic_instanced_emissive(batch, 0.0));
+            assert!(renderer.set_dynamic_instanced_emissive(batch, 0.35));
+            renderer.set_batch_point_square(batch, true);
             batch
         });
         slots.micro_spark_tail_batch = std::array::from_fn(|i| {
@@ -14704,6 +14763,7 @@ impl Game {
             blasts: vec![Blast::default(); N_BLAST],
             armour_flashes: Vec::new(),
             last_frame_dt: 1.0 / 60.0,
+            editor_step_limit: None,
             sparks: vec![Spark::default(); N_DEBRIS],
             snow_puffs: vec![SnowPuff::default(); N_SNOW],
             mg_tracers: vec![MgTracer::default(); N_MG_TRACER],
@@ -14904,7 +14964,7 @@ impl Game {
             cupola_closed_hint_t: 0.0,
             foam_emit_t: 0.0,
             surface_blood: surface_blood::SurfaceBlood::visual(),
-            hot_fragments: [HotFragment::default(); N_HOT_FRAGMENTS],
+            hot_fragments: vec![HotFragment::default();if crew_tissue::reference_solve(){HOT_FRAGMENT_STAGE_CAPACITY}else{N_HOT_FRAGMENTS}],
             next_hot_fragment: 0,
             hot_fragment_accumulator_s: 0.0,
             hot_fragment_collisions: Vec::with_capacity(MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME),
@@ -14980,6 +15040,7 @@ impl Game {
             driver_controls: driver_controls::Controls::default(),
             crew_arm_animation: CrewArmAnimation::new(),
             crew_personal_space: crew_personal_space::CrewPersonalSpace::new(),
+            crew_particle_cache: None,
             singleplayer_crew_active: false,
             crew_solo: crew_solo::CrewSolo::default(),
             lan_ai_frame: None,
@@ -17724,14 +17785,18 @@ impl Game {
         if deferred && advanced && !previous_presentation {
             // A fatal substep can stop the loop before its planned final iteration. Publish the
             // last completed state here rather than running or discarding another physics step.
-            if let Some(grass)=self.grass.as_mut() {grass.present(r);}
-            // Smoke supports were composed in their existing priority order on the last step;
-            // only particle matrices, identities and their matching source lights rebuild here.
-            self.drive_fire_presentation(r,true,false);
-            self.cigarette_fx.submit(r,&self.cigarette_fx_slots);
-            self.drive_lights(r);
+            self.publish_catchup_presentation(r);
             if !previous_rtt && !self.couch_crew_active {self.refresh_rtt_periscopes(r);}
         }
+    }
+
+    /// Publish the last completed state once. This never advances physics or skips contacts.
+    fn publish_catchup_presentation(&mut self,r:&mut Renderer) {
+        if let Some(grass)=self.grass.as_mut() {grass.present(r);}
+        self.drive_fire_presentation(r,true,false);
+        self.present_cubic_blood(r);
+        self.cigarette_fx.submit(r,&self.cigarette_fx_slots);
+        self.drive_lights(r);
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
@@ -17746,6 +17811,7 @@ impl Game {
         // Deferred plate solves of rounds the Tiger's armour stopped commit at a fixed game time.
         self.fea_commit_pending();
         self.commit_fea_penetrations();
+        self.advance_live_bursts(dt);
         // The gun's muzzle for the renderer's effect backends, every update (the FX pass that
         // also sets it does not run on every path).
         r.muzzle_hint = Some(self.player.muzzle());
@@ -19082,6 +19148,8 @@ impl Game {
         r.set_model(self.slots.tiger[0], self.player.hull_model());
         r.set_model(self.slots.tiger[1], self.player.turret_model());
         r.set_model(self.slots.tiger[2], self.player.visual_gun_model());
+        r.set_model(self.slots.mantlet, self.player.gun_model());
+        r.set_model(self.slots.gun_cradle, self.player.gun_model());
         self.sim_phase.seg("rtt_refresh");
         let roof_before = self.roof_hatches.phase;
         self.roof_hatches.advance(dt);
@@ -20545,6 +20613,7 @@ impl Game {
             } else { scar };
             lists[part].push(crate::renderer::ScarDraw {
                 scar,
+                review_patch:None,
                 struck_at: field.struck_at(index),
                 rim_kelvin: field.rim_kelvin(index),
                 rim_curve: field.rim_curve(index),
@@ -21054,7 +21123,7 @@ impl Game {
         models[..16].copy_from_slice(&original);
         let parts=self.workshop.frame_models(hull,turret,gun,hull*self.player.hull_model().inverse());
         models[16..16+workshop_runtime::state::PART_CAPACITY].copy_from_slice(&parts);
-        self.workshop.append_rotor_models(&mut models);self.tiger_refuel.append_models(&mut models);models
+        self.workshop.append_rotor_models(&mut models);self.tiger_refuel.append_models(&mut models);models[79]=gun;models
     }
 
     /// The same collision surfaces posed in the vehicle's own frame, from the joint values alone
@@ -23672,7 +23741,7 @@ impl Game {
                 continue;
             };
             let kept = crew_tissue::finish_casualty_carve(&self.crew_corpse_render, carve.solo, carve.job,
-                &self.couch_ragdolls[index]);
+                &mut self.couch_ragdolls[index]);
             let ragdoll = &mut self.couch_ragdolls[index];
             let pulverized: [bool; crew_physics::CREW_BODY_PART_COUNT] =
                 std::array::from_fn(|i| !kept[i] && carve.hide[i]);
@@ -25155,7 +25224,7 @@ impl Game {
     pub fn debug_surface_blood(&self) -> serde_json::Value {
         let d = self.surface_blood.diagnostics();
         serde_json::json!({
-            "emitted": d.emitted, "measured_contacts": d.measured_contacts,
+            "emitted": d.emitted, "measured_contacts": d.measured_contacts, "crew_contacts": d.crew_contacts,
             "airborne": d.airborne, "retained_cells": d.retained_cells,
             "wall_cells": d.wall_cells, "render_runs": d.render_runs,
             "rejected_cells": d.rejected_cells, "capacity_rejections": d.capacity_rejections,
@@ -26994,11 +27063,12 @@ impl Game {
             self.projectile_cover=projectile_cover::Index::build(&self.story_cover,&self.destructibles);
         }
         let frame_audio_clock=self.enemy_report_audit.clock_s;
+        let fixed_dt=self.editor_step_limit.map_or(PROJECTILE_FIXED_DT,|limit|PROJECTILE_FIXED_DT.min(limit.max(1e-6)));
         self.projectile_accumulator_s += dt;
-        while self.projectile_accumulator_s + 1.0e-8 >= PROJECTILE_FIXED_DT {
-            self.projectile_accumulator_s -= PROJECTILE_FIXED_DT;
+        while self.projectile_accumulator_s + 1.0e-8 >= fixed_dt {
+            self.projectile_accumulator_s -= fixed_dt;
             let flight_start = self.projectile_flight_audio.segments.len();
-            let flight_at = r.time - self.projectile_accumulator_s - PROJECTILE_FIXED_DT;
+            let flight_at = r.time - self.projectile_accumulator_s - fixed_dt;
             let mut active = std::mem::take(&mut self.projectile_scratch);
             active.clear();
             let mut flying = std::mem::take(&mut self.projectiles);
@@ -27007,7 +27077,7 @@ impl Game {
             let mut initial=flying.drain(..);
             while let Some((mut projectile,flight_at,available_dt))=pending.pop().or_else(||initial.next().map(|p| {
                 let at=p.small_arm.map_or(flight_at,|bullet|flight_at.max(bullet.emitted_at_s));
-                (p,at,(tick_end-at).clamp(0.0,PROJECTILE_FIXED_DT))
+                (p,at,(tick_end-at).clamp(0.0,fixed_dt))
             })) {
                 if available_dt<=0.0 {active.push(projectile);continue;}
                 self.enemy_report_audit.clock_s=flight_at;
@@ -27854,7 +27924,7 @@ impl Game {
                 // A kinetic perforation's plate and round solves run on workers; its solved
                 // consequences commit `FEA_PENETRATION_COMMIT_S` later (`commit_fea_penetrations`).
                 // The strike itself is seen and heard now.
-                let deferred_burst = if penetrated {
+                let deferred_burst = if crate::ballistics::is_hesh(event.shell) || event.shell.kind==crate::ballistics::ShellKind::Heat || matches!(event.terminal, crate::ballistics::Terminal::Penetration | crate::ballistics::Terminal::Bounce | crate::ballistics::Terminal::Shatter) {
                     self.fea_begin_penetration(projectile.id, projectile.seed, &armor, &event, impact_pos,
                         travel_world, projectile.origin, facing_arc(armor.facing), self.armor_clock_s)
                 } else { None };
@@ -27885,7 +27955,7 @@ impl Game {
                     station_distance,
                 );
                 let models = self.fire_surface_models();
-                let inner_source = penetrated.then(|| {
+                let inner_source = (penetrated && deferred_burst.is_none()).then(|| {
                         self.cabin_fire.sweep(impact_pos + incoming * 0.40,
                     impact_pos - incoming * 0.10, &models)
                     }).flatten().and_then(|contact| {
@@ -30107,55 +30177,10 @@ impl Game {
             return crate::acoustics::DamageSoundContext::default();
         }
 
-        let couch_bodies = self.physical_crew_bodies(frame);
-        let body = (!self.couch_crew_active && !self.singleplayer_crew_active
-            && matches!(self.mode, Mode::Tank))
-            .then(|| parent_inv.transform_point3(self.station_eye(self.station) - Vec3::Y * 0.35));
-        // The fragments meet the vehicle's own surfaces, and its modules where their CAD-measured
-        // components stand, at the turret's and gun's present pose.
-        let live_ammunition = self.live_ammunition_in_frame(frame);
-        let surface_models = self.fire_surface_models();
-        let articulation = self.fea_articulation();
-        let fragment_world = FragmentWorld::new(&self.cabin_fire, &surface_models, &self.player, articulation);
-        let fragment_pass = std::time::Instant::now();
-        let (mut result, couch_hits, mut contacts) = resolve_fragment_damage(
-            &fragments,
-            body,
-            &couch_bodies,
-            &fragment_world,
-            &live_ammunition,
-            &mut self.modules,
-        );
-        println!("[fea] {} fragments followed through the vehicle's own surfaces in {:.0} ms: modules {:?}, ammunition {}, fire {}",
-            fragments.len(), fragment_pass.elapsed().as_secs_f32() * 1000.0,
-            result.hit_modules.iter().map(|k| k.name()).collect::<Vec<_>>(), result.ammo, result.fire);
-        // The layered chain: what the residual round itself breaches behind the plate, and its own
-        // path through crew and live rounds (`game_fea`).
-        self.fea_penetration_consequences(entry_w, shell_dir_w, &ev, armor_part, penetration_id, frame,
-            body, &couch_bodies, &live_ammunition, burst_fragment_kinetic_j, &mut result, &mut contacts);
-        self.fea_apply_part_strikes(&result.part_strikes);
-        result.ignite(penetration_id);
-        // The player's own clothing, struck by a hot fragment (`fea_damage::ignition::CLOTHING`).
-        let player_peer = if self.singleplayer_crew_active {
-            self.singleplayer_crew.as_ref().map(|state| self.singleplayer_casualty_identity(state.identity).peer_id)
-        } else if self.couch_crew_active { self.couch_local_peer } else { None };
-        if result.clothing_caught(player_peer, penetration_id) && !self.player_burn.burning() {
-            self.player_burn.ignite(player_burn::CATCH_HEAT);
-            println!("[fire] a hot fragment set the player's clothing alight");
-            let at = self.ear_pos - Vec3::Y * 0.6;
-            self.foley(crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::BurnCatch), 1.0, 0.0, at);
-        }
-        let solution = PenetrationSolution {
-            penetration_id,
-            frame,
-            entry,
-            axis,
-            fragments,
-            contacts,
-            result,
-            couch_hits,
-        };
-        self.stage_penetration_fragments(&solution.fragments);
+        self.fea.live_contexts.insert(penetration_id, game_fea::LiveImpactContext {
+            arc, shooter, entry_w, shell_dir_w, armor_part, armor_local_point, penetration_id, seed, event: ev,
+        });
+        self.stage_penetration_fragments(&fragments);
         // The behind-armour flash: the fine steel the perforation turns to dust burns in the
         // compartment's air just inside the hole (the owner, 2 November 2026: a flash as the round
         // bursts through, seen from inside).
@@ -30172,33 +30197,20 @@ impl Game {
             let back_face = entry_w + dir * path;
             self.weapon_vfx.interior_spall_sparks(back_face, dir, deposited * 0.006,
                 weapon_vfx::Weapon::Cannon(ev.shell.caliber_mm as u16));
-            // An armour-piercing round that comes through whole (no filler to burst it) carries its
-            // base tracer across the compartment: the tracer strip over exactly the time the round
-            // takes to reach the first surface on its line (a few milliseconds, so one frame shows
-            // its whole path, as a camera would record it).
-            let whole = matches!(ev.shell.kind, crate::ballistics::ShellKind::Ap | crate::ballistics::ShellKind::Apcr
-                | crate::ballistics::ShellKind::Apcbc) && ev.shell.filler_g <= 0.0 && ev.residual_v > 60.0;
-            if whole {
-                let start = back_face + dir * 0.02;
-                let models = self.fire_surface_models();
-                let far = start + dir * 4.0;
-                let end = self.cabin_fire.sweep(start, far, &models)
-                    .map(|c| models[c.frame].transform_point3(c.point)).unwrap_or(far);
-                let length = start.distance(end);
-                let now = self.weapon_vfx.now();
-                self.weapon_vfx.record_bullet_segment(penetration_id | (1u64 << 62), true, start, end,
-                    now, now + length / ev.residual_v, 0.0, length);
-                println!("[armor] the round's tracer crosses {length:.2} m of the compartment at {:.0} m/s", ev.residual_v);
-            }
         }
+        crate::acoustics::DamageSoundContext::default()
+    }
+
+    /// Deliver a contact from the current step. No trajectory sampling or future target queries.
+    fn apply_live_penetration_contacts(&mut self, context: &game_fea::LiveImpactContext,
+        solution: PenetrationSolution, explosive_energy_j: f32, only_peer: Option<u32>) -> crate::acoustics::DamageSoundContext {
+        let game_fea::LiveImpactContext { arc, shooter, entry_w, shell_dir_w, seed, event: ev, .. } = *context;
+        let spall_power = ev.behind_armor;
+        let parent = blood_parent_model(&self.player, solution.frame);
+        let mut couch_bodies = self.physical_crew_bodies(solution.frame);
+        if let Some(peer)=only_peer {couch_bodies.retain(|b|b.casualty.peer_id==peer);}
+        self.fea_apply_part_strikes(&solution.result.part_strikes);
         let res = solution.result.clone();
-        // A shaped charge bursts outside the armor; its full filler must not teleport inside.
-        let explosive_energy_j = if ev.shell.filler_g > 10.0
-            && ev.shell.kind != crate::ballistics::ShellKind::Heat {
-            ev.shell.filler_g / 1000.0 * 4.184e6
-        } else {
-            0.0
-        };
         // Resolve pressure work against every living anatomical body, not only crew already
         // touched by a fragment. This lets a severe close filler burst destroy a head/core and
         // become authoritative KIA while a peripheral blast-only limb loss remains survivable.
@@ -31087,23 +31099,99 @@ impl Game {
     /// Stage the already-generated authoritative fragment states for live physics/render/audio.
     /// Damage resolution receives these exact states before this call; no direction or position is
     /// sampled here, and existing fragments keep their own clocks when another penetration arrives.
+    fn deliver_material_front(&mut self, context: game_fea::LiveImpactContext,
+        body: HotFragment, from: Vec3, to: Vec3) {
+        if self.god || from.distance_squared(to)<1e-12 {return;}
+        let crew=self.physical_crew_bodies(body.frame);
+        let ammunition=self.live_ammunition_in_frame(body.frame);
+        let mut result=SpallResult::default(); let mut contacts=Vec::new();
+        {
+            let models=self.fire_surface_models();
+            let world=FragmentWorld::new(&self.cabin_fire,&models,&self.player,self.fea_articulation());
+            let state=self.fea.contact_states.entry(body.id).or_default();
+            let segments=[FragmentMotionSegment{from,to,speed_mps:body.vel.length(),surface:false}];
+            resolve_fragment_segments(&body,&segments,state,None,&crew,&world,&ammunition,&mut self.modules,&mut result,&mut contacts);
+        }
+        if contacts.is_empty() && result.part_strikes.is_empty(){return;}
+        println!("[temporal] material front contact t={:.9} id={} at={:?} contacts={}",self.armor_clock_s,body.id,to,contacts.len());
+        self.apply_live_penetration_contacts(&context,PenetrationSolution{penetration_id:context.penetration_id,
+            frame:body.frame,entry:context.armor_local_point,axis:context.shell_dir_w,fragments:vec![body],
+            contacts,result,couch_hits:Vec::new()},0.0,None);
+    }
+
+    /// Integrate and resolve the same swept segments. No cloned future trajectory.
+    fn advance_live_fragments(&mut self, dt: f32, end_s: f32) {
+        let mut delivered = Vec::new();
+        {
+            let models = self.fire_surface_models();
+            let world = FragmentWorld::new(&self.cabin_fire, &models, &self.player, self.fea_articulation());
+            let frames = [BloodFrame::Hull, BloodFrame::Turret];
+            let bodies = frames.map(|frame| self.physical_crew_bodies(frame));
+            let rounds = frames.map(|frame| self.live_ammunition_in_frame(frame));
+            let solo = frames.map(|frame| (!self.couch_crew_active && !self.singleplayer_crew_active && matches!(self.mode, Mode::Tank))
+                .then(|| blood_parent_model(&self.player, frame).inverse().transform_point3(self.station_eye(self.station)-Vec3::Y*0.35)));
+            let mut segments = Vec::with_capacity(64);
+            for fragment in &mut self.hot_fragments {
+                if !fragment.active { continue; }
+                let born = self.fea.live_births.get(&fragment.id).copied().unwrap_or(f32::NEG_INFINITY);
+                let step = dt.min((end_s-born).max(0.0));
+                if step <= 0.0 { continue; }
+                segments.clear();
+                integrate_hot_fragment_traced(fragment, step, &mut self.hot_fragment_collisions,
+                    &mut self.hot_fragment_collision_count, Some(&mut segments), &world);
+                if fragment.tracer_share>0.0 {
+                    let parent=blood_parent_model(&self.player,fragment.frame);
+                    for segment in &segments {
+                        let duration=segment.from.distance(segment.to)/segment.speed_mps.max(1.0);
+                        self.weapon_vfx.record_fragment_tracer(fragment.id,fragment.tracer_share,
+                            parent.transform_point3(segment.from),parent.transform_point3(segment.to),end_s-duration,end_s);
+                    }
+                }
+                if self.god { continue; }
+                let Some(context) = self.fea.live_contexts.get(&fragment.penetration_id).copied() else { continue; };
+                let i = blood_frame_index(fragment.frame);
+                let state = self.fea.contact_states.entry(fragment.id).or_default();
+                let mut result = SpallResult::default();
+                let mut contacts = Vec::new();
+                resolve_fragment_segments(fragment, &segments, state, solo[i], &bodies[i], &world,
+                    &rounds[i], &mut self.modules, &mut result, &mut contacts);
+                result.ignite(fragment.penetration_id);
+                if !contacts.is_empty() || !result.part_strikes.is_empty() || result.fire {
+                    println!("[temporal] contact t={end_s:.9} body={} impact={} at={:?} contacts={}",
+                        fragment.id, fragment.penetration_id, fragment.pos, contacts.len());
+                    delivered.push((context, PenetrationSolution {
+                        penetration_id:fragment.penetration_id, frame:fragment.frame, entry:context.armor_local_point,
+                        axis:blood_parent_model(&self.player,fragment.frame).inverse().transform_vector3(context.shell_dir_w).normalize_or_zero(),
+                        fragments:vec![*fragment], contacts, result, couch_hits:Vec::new(),
+                    }));
+                }
+            }
+        }
+        for (context,solution) in delivered { self.apply_live_penetration_contacts(&context,solution,0.0,None); }
+    }
+
     fn stage_penetration_fragments(&mut self, fragments: &[HotFragment]) {
         if fragments.is_empty() {
             return;
         }
-        for fragment in &mut self.hot_fragments {
-            fragment.audio_whizzed = true;
+        // A temporal impact releases many batches. Only a new impact resets the sound
+        // budget; later batches must not erase queued interior pings or mute earlier chips.
+        let id=fragments[0].penetration_id;
+        if !self.hot_fragments.iter().any(|f|f.active && f.penetration_id==id) {
+            self.hot_fragment_audio_contacts.clear();
+            self.hot_fragment_audio_cooldown=0.;
+            self.hot_fragment_audio_dings_remaining=HOT_FRAGMENT_AUDIO_DING_BUDGET;
+            self.hot_fragment_whizz_cooldown=0.;
+            self.hot_fragment_audio_whizzes_remaining=HOT_FRAGMENT_AUDIO_WHIZZ_BUDGET;
         }
-        self.hot_fragment_audio_contacts.clear();
-        self.hot_fragment_audio_cooldown = 0.0;
-        self.hot_fragment_audio_dings_remaining = HOT_FRAGMENT_AUDIO_DING_BUDGET;
-        self.hot_fragment_whizz_cooldown = 0.0;
-        self.hot_fragment_audio_whizzes_remaining = HOT_FRAGMENT_AUDIO_WHIZZ_BUDGET;
-        for initial in fragments.iter().take(N_HOT_FRAGMENTS) {
+        for initial in fragments.iter().take(self.hot_fragments.len()) {
             let slot = game_fea::next_fragment_slot(&self.hot_fragments, self.next_hot_fragment,
                 self.fea.carried_fragment);
-            self.next_hot_fragment = (slot + 1) % N_HOT_FRAGMENTS;
+            self.next_hot_fragment = (slot + 1) % self.hot_fragments.len();
+            if self.hot_fragments[slot].id != initial.id { self.fea.contact_states.remove(&self.hot_fragments[slot].id); }
+            self.fea.live_births.remove(&self.hot_fragments[slot].id);
             self.hot_fragments[slot] = *initial;
+            self.fea.live_births.insert(initial.id, self.armor_clock_s);
         }
     }
 
@@ -32824,6 +32912,7 @@ impl Game {
         self.drive_mg_cases(dt, r);
         self.drive_ext_fx(dt, r); // emit first so fresh high-rate grains render this same frame
         self.drive_foam(dt, r);
+        self.crew_particle_cache=None;
         self.drive_penetration_fx(dt, r);
         self.drive_hot_fragment_audio(dt, r);
         self.drive_cubic_blood(dt, r);
@@ -32950,27 +33039,17 @@ impl Game {
         }
         self.hot_fragment_collisions.clear();
         self.hot_fragment_collision_count = 0;
-        for fragment in &mut self.hot_fragments {
-            if fragment.active && dt > 0.0 {
-                fragment.prev_pos = fragment.pos;
-            }
-        }
+        // Keep a bounded measured path between contacts instead of replacing it on every
+        // 65 us film substep. Ricochets/perforations reset prev_pos at the actual surface.
         if dt.is_finite() { self.hot_fragment_accumulator_s += dt.max(0.0); }
-        let surface_models = self.fire_surface_models();
-        let articulation = self.fea_articulation();
-        let fragment_world = FragmentWorld::new(&self.cabin_fire, &surface_models, &self.player, articulation);
-        while self.hot_fragment_accumulator_s + 1.0e-8 >= HOT_FRAGMENT_FIXED_DT {
-            self.hot_fragment_accumulator_s -= HOT_FRAGMENT_FIXED_DT;
-            for fragment in &mut self.hot_fragments {
-                integrate_hot_fragment(
-                    fragment,
-                    HOT_FRAGMENT_FIXED_DT,
-                    &mut self.hot_fragment_collisions,
-                    &mut self.hot_fragment_collision_count,
-                    &fragment_world,
-                );
-            }
+        let fixed_dt=self.editor_step_limit.map_or(HOT_FRAGMENT_FIXED_DT,|limit|HOT_FRAGMENT_FIXED_DT.min(limit.max(1e-6)));
+        while self.hot_fragment_accumulator_s + 1.0e-8 >= fixed_dt {
+            self.hot_fragment_accumulator_s -= fixed_dt;
+            let end_s = self.armor_clock_s - self.hot_fragment_accumulator_s;
+            self.advance_live_fragments(fixed_dt, end_s);
         }
+        let surface_models = self.fire_surface_models();
+        let fragment_world = FragmentWorld::new(&self.cabin_fire, &surface_models, &self.player, self.fea_articulation());
         // The pieces torn from the dead (`crew_tissue`) fly and lie on the same surfaces.
         crew_tissue::integrate_chunks(&self.crew_corpse_render, &fragment_world, &self.player, dt);
         self.mark_fragment_strikes();
@@ -32983,8 +33062,9 @@ impl Game {
             let parent = blood_parent_model(&self.player, fragment.frame);
             let (scale, rot) = hot_fragment_render_pose(fragment);
             let stage = hot_fragment_heat_stage(fragment);
-            stage_mats[stage]
-                .push(parent * Mat4::from_scale_rotation_translation(scale, rot, fragment.pos));
+            if !(game_fea::RECORD_PLATE_FILM.load(std::sync::atomic::Ordering::Relaxed) && self.fea.fragment_shapes.contains_key(&fragment.id)) {
+                stage_mats[stage].push(parent * Mat4::from_scale_rotation_translation(scale, rot, fragment.pos));
+            }
             if let Some((tail_scale, tail_rot, tail_pos)) = hot_fragment_tail_pose(fragment) {
                 tail_stage_mats[stage].push(
                     parent * Mat4::from_scale_rotation_translation(tail_scale, tail_rot, tail_pos),
@@ -33014,15 +33094,17 @@ impl Game {
             );
         }
 
-        let empty: [Mat4; 0] = [];
-        for batch in self
-            .slots
-            .micro_spark_batch
-            .into_iter()
-            .chain(self.slots.micro_spark_tail_batch)
-        {
-            assert!(r.set_dynamic_instanced_mats(batch, &empty));
+        if self.weapon_vfx.cabin_sparks.active(){
+            let crew=self.crew_particle_scene();
+            let tank=self.cabin_fire.source_contacts(&surface_models);
+            self.weapon_vfx.cabin_sparks.advance(dt,r.render_sequence(),&tank,&crew);
         }
+        let spark_mats=self.weapon_vfx.cabin_sparks.models(r);
+        for (batch,mats) in self.slots.micro_spark_batch.into_iter().zip(spark_mats.iter()){
+            assert!(r.set_dynamic_instanced_mats(batch,mats));
+        }
+        for batch in self.slots.micro_spark_tail_batch{assert!(r.set_dynamic_instanced_mats(batch,&[]));}
+
     }
 
     /// Disabled migration reference for the split physical/visual pool and authored pulse meshes.
@@ -33266,7 +33348,7 @@ impl Game {
                     let laf = crate::acoustics::fragment_whizz_ear_laf(
                         candidate.closest_distance_m, self.listener_headset());
                     audio.play_stereo_at_ear(crate::acoustics::synth_fragment_whizz(candidate),
-                        laf, crate::audio::EarBus::World);
+                        laf-if self.editor_step_limit.is_some_and(|dt|dt<1./480.){10.}else{3.}, crate::audio::EarBus::World);
                 }
                 self.hot_fragment_audio_whizzes_remaining -= 1;
                 self.hot_fragment_whizz_cooldown = HOT_FRAGMENT_WHIZZ_CADENCE;
@@ -33339,8 +33421,18 @@ impl Game {
         }
 
         let models = { let _p = crate::sim_phase::Probe::new("blood_fire_surface_models"); self.fire_surface_models() };
-        let source = { let _p = crate::sim_phase::Probe::new("blood_source_contacts"); self.cabin_fire.source_contacts(&models) };
+        let crew=if self.surface_blood.needs_crew_geometry(){self.crew_particle_scene()}else{std::sync::Arc::new(particle_contacts::Scene::default())};
+        let source=particle_contacts::Query {tank:self.cabin_fire.source_contacts(&models),crew:&crew};
         { let _p = crate::sim_phase::Probe::new("surface_blood_update"); self.surface_blood.update(dt, &models, &source); }
+        if !self.defer_presentation_rebuild {self.present_cubic_blood(r);}
+    }
+
+    fn present_cubic_blood(&mut self,r:&mut Renderer) {
+        let _probe=crate::sim_phase::Probe::new("present_cubic_blood");
+        let models=self.fire_surface_models();
+        let crew=if self.surface_blood.needs_crew_geometry(){self.crew_particle_scene()}else{std::sync::Arc::new(particle_contacts::Scene::default())};
+        let source=particle_contacts::Query {tank:self.cabin_fire.source_contacts(&models),crew:&crew};
+        let crew_stains=self.surface_blood.crew_stain_models(&source);
         let mut grain_mats = { let _p = crate::sim_phase::Probe::new("surface_blood_wet_models"); self.surface_blood.wet_models(&models) };
         // Preserve tiny physical droplets but give their raster silhouette a readable minimum.
         // This changes only instance scale, never contact radii, particle count or simulation work.
@@ -33360,6 +33452,7 @@ impl Game {
         for (k, run) in self.surface_blood.render_runs().iter().enumerate() {
             stain_mats[k % N_BLOOD_BATCHES].push(run.model(&models));
         }
+        for (k,m) in crew_stains.into_iter().enumerate(){stain_mats[k%N_BLOOD_BATCHES].push(m);}
         for (batch, mats) in self.slots.blood_stain_batch.into_iter().zip(stain_mats.iter()) {
             assert!(r.set_dynamic_instanced_mats(batch, mats),
                 "blood stain page exceeded its fixed capacity");
@@ -37672,6 +37765,7 @@ mod tests {
             world_space: false,
             exterior_floor_y: 0.0,
             bone_follow: [None; crew_physics::CREW_BODY_PART_COUNT],
+        joint_anchors: None,
             impact_part: LeftForearm,
             fragment_impulse_ns: Vec3::ZERO,
             blast_impulse_ns: Vec3::ZERO,
@@ -39321,7 +39415,7 @@ mod tests {
     }
 
     #[test]
-    fn hot_fragment_audio_batch_is_deterministic_strongest_two() {
+    fn hot_fragment_audio_batch_is_deterministic_and_bounded() {
         use crate::acoustics::{FragmentCollisionParams, FragmentMaterial};
 
         let make_contacts = || {
@@ -39353,8 +39447,8 @@ mod tests {
         assert_eq!(a.first().unwrap().speed_mps, 39.0);
         assert_eq!(a.last().unwrap().speed_mps, 38.0);
         assert_eq!(MAX_HOT_FRAGMENT_AUDIO_CONTACTS, 2);
-        assert_eq!(HOT_FRAGMENT_AUDIO_DING_BUDGET, 2);
-        assert_eq!(HOT_FRAGMENT_AUDIO_WHIZZ_BUDGET, 1);
+        assert_eq!(HOT_FRAGMENT_AUDIO_DING_BUDGET, 6);
+        assert_eq!(HOT_FRAGMENT_AUDIO_WHIZZ_BUDGET, 3);
         let signature = |contacts: &[FragmentCollisionParams]| {
             contacts
                 .iter()
@@ -39489,7 +39583,7 @@ mod tests {
         assert_eq!(film.max, Vec3::splat(0.5));
         assert_eq!(film.indices.len(), 36);
         assert_eq!((film.metallic_factor, film.roughness_factor), (BLOOD_METALLIC, BLOOD_ROUGHNESS), "the coat matches the droplets");
-        assert_eq!(N_BLOOD_STAINS, surface_blood::MAX_CELLS);
+        assert_eq!(N_BLOOD_STAINS, surface_blood::MAX_CELLS + surface_blood::MAX_CREW_STAINS);
         assert_eq!(N_BLOOD_CUBES, surface_blood::MAX_GRAINS);
     }
 
@@ -41352,5 +41446,59 @@ mod acoustic_wave_arrival_tests {
         let mut queue=vec![report()];
         assert!(take_arrived_sounds_at(&mut queue,0.0,Some((Vec3::ZERO,4.0))).is_empty());
         assert_eq!(queue[0].delay,1.0);
+    }
+}
+
+#[cfg(test)]
+mod temporal_contact_tests {
+    use super::*;
+    #[test]
+    fn temporal_damage_waits_for_current_sweep_and_is_delivered_once() {
+        let center=Vec3::new(0.,1.6,0.);
+        let casualty=CouchCrewCasualty{peer_id:91,identity:crate::lan::LanRole::Gunner,role:crate::lan::LanRole::Gunner};
+        let body=CouchCrewBody{casualty,pos:center,hit_volumes:std::array::from_fn(|i|{
+            let part=crew_physics::CrewBodyPart::ALL[i];
+            crew_damage::CrewHitVolume::new(part,if part==crew_physics::CrewBodyPart::Head {center}else{Vec3::splat(100.)},Quat::IDENTITY,Vec3::splat(0.05))
+        })};
+        let chip=HotFragment{id:47,penetration_id:47,active:true,frame:BloodFrame::Hull,size:0.01,mass_kg:0.01,
+            vel:Vec3::X*100.,life:1.,..Default::default()};
+        let mut state=FragmentDamageState::default();let mut modules=default_modules();
+        let mut result=SpallResult::default();let mut contacts=Vec::new();
+        let segment=|a,b|FragmentMotionSegment{from:center+Vec3::X*a,to:center+Vec3::X*b,speed_mps:100.,surface:false};
+        resolve_fragment_segments(&chip,&[segment(-0.3,-0.1)],&mut state,None,&[body],&FragmentWorld::bare(),&[],&mut modules,&mut result,&mut contacts);
+        assert!(contacts.is_empty(),"a future intersection must not injure anyone now");
+        resolve_fragment_segments(&chip,&[segment(-0.1,0.)],&mut state,None,&[body],&FragmentWorld::bare(),&[],&mut modules,&mut result,&mut contacts);
+        assert_eq!(contacts.len(),1);
+        assert!(contacts[0].local_point.x<0.0);
+        resolve_fragment_segments(&chip,&[segment(0.,0.02)],&mut state,None,&[body],&FragmentWorld::bare(),&[],&mut modules,&mut result,&mut contacts);
+        assert_eq!(contacts.len(),1,"remaining inside a contacted body must not repeatedly wound it");
+    }
+    #[test]
+    fn temporal_material_transit_takes_time_and_conserves_work() {
+        let mut body=HotFragment{active:true,mass_kg:1.,vel:Vec3::Z*100.,material_remaining_m:0.1,
+            material_force_n:1000.,..Default::default()};
+        let used=advance_fragment_in_material(&mut body,0.0001);
+        assert_eq!(used,0.0001);
+        assert!(body.pos.z>0.009 && body.pos.z<0.011 && body.material_remaining_m>0.08);
+        let kinetic=0.5*body.vel.length_squared();
+        assert!((5000.-kinetic-body.pos.z*1000.).abs()<0.002);
+        let used=advance_fragment_in_material(&mut body,0.002);
+        assert!(used<0.002 && body.material_remaining_m==0.);
+        assert!((body.pos.z-0.1).abs()<1e-6);
+        assert!((0.5*body.vel.length_squared()-4900.).abs()<0.002);
+    }
+    #[test]
+    fn mantlet_partition_retains_geometry_and_does_not_follow_recoil() {
+        let full=crate::tank::load_painted_tiger(TIGER_MANTLET_GLB).unwrap();
+        let parts=tiger_gun_mount::load().unwrap();
+        assert_eq!(full.indices.len(),parts.iter().map(|m|m.indices.len()).sum::<usize>());
+        assert!(parts.iter().all(|p|!p.indices.is_empty()));
+        assert!(parts[1].max.z>1.59 && parts[1].min.z<0.08,"both collar and rear flange belong to the fixed shield");
+        assert!(parts[2].max.z<0.4,"stationary cradle is behind the shield");
+        let hf=crate::terrain::Heightfield{res:2,spacing:1000.,heights:vec![0.;4],min_h:0.,max_h:0.,openings:Default::default(),detail:None};
+        let mut tank=Tank::new(0.,0.,0.,&hf,tank::TIGER_PARTS);
+        let fixed=tank.gun_model();tank.gun_held_in_recoil=true;
+        assert_eq!(fixed,tank.gun_model());assert_ne!(fixed,tank.visual_gun_model());
+        assert_eq!(tiger_damage::source_zone(Vec3::ZERO,Vec3::ZERO,79),tiger_damage::Zone::Mantlet);
     }
 }

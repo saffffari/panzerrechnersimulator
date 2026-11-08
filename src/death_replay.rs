@@ -8,7 +8,7 @@ const STEP: f32 = 1.0 / 120.0;
 pub(super) struct Aftermath {
     ragdolls: Vec<CrewRagdoll>,
     blood: surface_blood::SurfaceBlood,
-    fragments: [HotFragment; N_HOT_FRAGMENTS],
+    fragments: Vec<HotFragment>,
     blasts: Vec<Blast>,
     elapsed: f32,
     scene_time: f32,
@@ -127,14 +127,14 @@ impl Game {
     fn replay_aftermath(&mut self, target: f32, r: &mut Renderer) -> (Vec<PointLight>, f32) {
         let mut replay = self.death_replay.take().unwrap_or_else(|| Aftermath {
             ragdolls: self.couch_ragdolls.clone(), blood: self.surface_blood.clone(),
-            fragments: self.hot_fragments, blasts: self.blasts.clone(), elapsed: 0.0, scene_time: self.stealth.t,
+            fragments: self.hot_fragments.clone(), blasts: self.blasts.clone(), elapsed: 0.0, scene_time: self.stealth.t,
         });
         // Seeking backwards in a capture restores the same death event, including emitted grain
         // identities. The live timeline is monotonic; there is never a second casualty event.
         if target < replay.elapsed {
             self.couch_ragdolls.clone_from(&replay.ragdolls);
             self.surface_blood.clone_from(&replay.blood);
-            self.hot_fragments = replay.fragments;
+            self.hot_fragments.clone_from(&replay.fragments);
             self.hot_fragment_accumulator_s = 0.0;
             replay.elapsed = 0.0;
         }

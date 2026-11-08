@@ -91,6 +91,32 @@ impl CrewPersonalSpace {
         }
         Self{sources,radius,height,..Self::default()}
     }
+    fn particle_scene(&mut self, game:&Game)->particle_contacts::Scene {
+        let mut scene=particle_contacts::Scene::default();
+        for body in game.physical_crew_bodies(BloodFrame::Turret) {
+            if game.crew_actor_has_retained_body(body.casualty.peer_id) {continue;}
+            let id=crew_identity_index(body.casualty.identity);
+            let standing=game.crew_standing_post(body.casualty.role);
+            let Some(source)=self.sources.get(id+if standing{5}else{0}).and_then(Option::as_ref) else {continue;};
+            let pose=game.crew_arm_animation.contact_pose(id);
+            let missing=game.living_wounds.missing(body.casualty.peer_id);
+            let indices=if missing.iter().any(|v|*v)&&body.casualty.role!=crate::lan::LanRole::Commander {
+                crew_arm_animation::wounded_pose_indices(id,missing,standing).unwrap_or_else(|_|source.indices.clone())
+            }else{source.indices.clone()};
+            let positions=pose.map(|(_,v)|v.iter().map(|p|Vec3::from_array(p.pos)).collect::<Vec<_>>());
+            let positions=positions.as_deref().unwrap_or(&source.positions);
+            let role=crew_solo::role_of_post(body.casualty.identity);
+            let model=game.singleplayer_rig_model(body.casualty)*game.crew_solo.slump_pose(role);
+            for (i,ids) in indices.chunks_exact(3).enumerate() {
+                if ids.iter().all(|&v|(v as usize)<positions.len()) {
+                    scene.triangle(particle_contacts::key(body.casualty.peer_id,0,i as u32),
+                        [0,1,2].map(|j|model.transform_point3(positions[ids[j]as usize])));
+                }
+            }
+        }
+        if let Some(corpses)=game.crew_corpse_render.borrow().as_ref(){corpses.particle_surfaces(&game.player,&game.couch_ragdolls,&mut scene);}
+        scene.finish();scene
+    }
     fn clamp(&mut self, game:&Game, from:Vec3, to:Vec3)->Vec3 {
         self.candidates=0;self.bodies=0;
         if !from.is_finite() || !to.is_finite() {return from;}
@@ -130,7 +156,7 @@ impl CrewPersonalSpace {
                 self.cache[id]=Some(Cached{key,soup:Soup::new(triangles)});
             }
             let role=crew_solo::role_of_post(body.casualty.identity);
-            let slump=crew_solo::slump_pose(game.crew_solo.man(role));
+            let slump=game.crew_solo.slump_pose(role);
             let model=turret_inverse*game.singleplayer_rig_model(body.casualty)*slump;
             let inv=model.inverse();let scale=inv.x_axis.truncate().length().max(inv.y_axis.truncate().length()).max(inv.z_axis.truncate().length());
             let mut bounds=Bounds::empty();
@@ -232,6 +258,12 @@ fn slide_capsule(axis:[Vec3;2],radius:f32,delta:Vec3,triangles:&[[Vec3;3]])->Vec
 }
 
 impl Game {
+    pub(super) fn crew_particle_scene(&mut self)->std::sync::Arc<particle_contacts::Scene> {
+        if let Some(scene)=&self.crew_particle_cache {return scene.clone();}
+        let mut contacts=std::mem::take(&mut self.crew_personal_space);
+        let scene=std::sync::Arc::new(contacts.particle_scene(self));self.crew_personal_space=contacts;
+        self.crew_particle_cache=Some(scene.clone());scene
+    }
     pub(super) fn clamp_walk_against_crew(&mut self,from:Vec3,to:Vec3)->Vec3 {
         if !self.singleplayer_crew_active || self.mode!=Mode::Tank || self.station!=Station::Loader {return to;}
         let mut contacts=std::mem::take(&mut self.crew_personal_space);

@@ -495,6 +495,9 @@ fn vs_slab(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsOu
 fn fs_slab(in: VsOut) -> GOut {
     // Bare ground (roads, soil, water) and the foot of the band carry no canopy: the terrain shows.
     if (in.lai_above < 0.1) { discard; }
+    // Contacted blades lie below 10 cm. The distant top-of-canopy shell must not cover the
+    // tracks or prone bodies which pressed them down; nearby flat blade geometry remains.
+    if (md_track((in.relative + mv.origin.xyz).xz) != 255u) { discard; }
     var out: GOut;
     out.g0 = vec4(in.albedo, 6.0);
     out.g1 = vec4(normalize(in.normal), 1.0);

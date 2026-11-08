@@ -24,23 +24,67 @@ impl Range {
         }
     }
     pub(super) fn draw_damage_hud(&mut self,at:[f32;2],height:f32) {
-        use crate::first_aid::Region;
-        let aspect=self.win[0]/self.win[1].max(1.0);let px=height/30.0;
-        for (i,role) in [CrewRole::Driver,CrewRole::Radioman,CrewRole::Gunner,CrewRole::Commander,CrewRole::Loader].into_iter().enumerate(){
-            let man=self.g.crew_solo.man(role);let dead=man.dead;
-            let damage=[Region::Head,Region::Torso,Region::Arm,Region::Leg].map(|region|man.wounds.iter().any(|w|w.region==region));
-            let x=at[0]+i as f32*7.0*px/aspect;
-            for (u,v,w,h,region) in [(2.,0.,2.,2.,0),(1.,3.,4.,4.,1),(0.,3.,1.,5.,2),(5.,3.,1.,5.,2),(1.,7.,1.5,5.,3),(3.5,7.,1.5,5.,3)] {
-                self.r.fill_rect(x+u*px/aspect,at[1]+v*px,w*px/aspect,h*px,if damage[region]||dead{RED}else{INK});
-            }
-            if dead {for k in 0..12 {let t=k as f32;for sign in [false,true]{self.r.fill_rect(x+(if sign{5.0-t*0.4}else{t*0.4})*px/aspect,at[1]+t*px,px/aspect,px,BLACK);}}}
-        }
-        let x=at[0]+10.0*px/aspect;let y=at[1]+14.0*px;
-        self.r.fill_rect(x+2.0*px/aspect,y,10.0*px/aspect,15.0*px,[0.22,0.22,0.22,1.0]);
+        let Some(hud)=self.damage_hud.as_ref() else{return;};
+        let aspect=self.win[0]/self.win[1].max(1.0);
+        let tw=height*135.0/240.0/aspect;
+        let crew=[CrewRole::Driver,CrewRole::Radioman,CrewRole::Gunner,CrewRole::Commander,CrewRole::Loader];
+        let levels=crew.map(|role|{let m=self.g.crew_solo.man(role);if m.dead {2usize}else if !m.wounds.is_empty(){1}else{0}});
+        let rect=[at[0],at[1],tw,height];
+        self.r.draw_image(hud.tank,rect[0],rect[1],rect[2],rect[3],INK);
         use super::super::ModuleKind::*;
-        for (kind,u,v,w,h) in [(LeftTrack,0.,1.,2.,13.),(RightTrack,12.,1.,2.,13.),(Engine,3.,11.,8.,3.),(Transmission,3.,1.,8.,2.),(TurretTraverse,4.,5.,6.,5.),(MainGun,6.,-2.,2.,8.),(AmmoRack,2.,5.,2.,6.),(Fuel,10.,10.,2.,3.),(Radio,9.,3.,2.,2.),(GunnerSight,5.,4.,1.,2.),(CoaxMg,8.,4.,1.,2.),(HullMg,9.,1.,1.,2.)] {
-            let damaged=self.g.modules.iter().any(|m|m.kind==kind&&(!m.functional || m.fault!=super::super::tiger_damage::Fault::None));
-            self.r.fill_rect(x+u*px/aspect,y+v*px,w*px/aspect,h*px,if damaged{RED}else{INK});
+        for (name,handles) in &hud.layers {
+            let role=match *name {"Driver"=>Some(0),"Radio"=>Some(1),"Gunner"=>Some(2),"Commander"=>Some(3),"Loader"=>Some(4),_=>None};
+            let level=if let Some(i)=role{levels[i]}else{
+                let kind=match *name{"LeftTrack"=>Some(LeftTrack),"RightTrack"=>Some(RightTrack),"Engine"=>Some(Engine),"Transmission"=>Some(Transmission),"TurretTraverse"=>Some(TurretTraverse),"MainGun"=>Some(MainGun),"AmmoRack"=>Some(AmmoRack),_=>None};
+                kind.map_or(0,|kind|self.g.modules.iter().filter(|m|m.kind==kind).map(|m|if !m.functional {2}else if m.fault!=super::super::tiger_damage::Fault::None {1}else{0}).max().unwrap_or(0))
+            };
+            if level>0 {self.r.draw_image(handles[level-1],rect[0],rect[1],rect[2],rect[3],INK);}
+        }
+        // Authored figures beside the plan, lit and coloured; no symbolic stick bodies.
+        let ch=height*0.48;let cw=ch*28.0/60.0/aspect;
+        for i in 0..5 {
+            self.r.draw_image(hud.crew[i][levels[i]],at[0]+tw+0.004+i as f32*cw,at[1]+height*0.25,cw,ch,INK);
+        }
+    }
+}
+
+// Generated from the authored Tiger and crew, orthographic cutaway with cabin lamps.
+// Rebuild with web-playground/web/tools/export-native-hud.mjs, then mask changed pixels.
+pub(super) struct DamageHud {
+    pub tank: u32,
+    pub layers: Vec<(&'static str, [u32;2])>,
+    pub crew: [[u32;3];5],
+}
+impl DamageHud {
+    pub fn load(r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let mut upload=|bytes:&[u8]| {
+            let im=image::load_from_memory(bytes).expect("embedded HUD PNG").into_rgba8();
+            r.upload_image_nearest(device,queue,&im,im.width(),im.height())
+        };
+        Self {
+            tank:upload(include_bytes!("hud_assets/tank.png")),
+            layers:vec![
+                ("AmmoRack",[upload(include_bytes!("hud_assets/tank-AmmoRack-1.png")),upload(include_bytes!("hud_assets/tank-AmmoRack-2.png"))]),
+                ("Commander",[upload(include_bytes!("hud_assets/tank-Commander-1.png")),upload(include_bytes!("hud_assets/tank-Commander-2.png"))]),
+                ("Driver",[upload(include_bytes!("hud_assets/tank-Driver-1.png")),upload(include_bytes!("hud_assets/tank-Driver-2.png"))]),
+                ("Engine",[upload(include_bytes!("hud_assets/tank-Engine-1.png")),upload(include_bytes!("hud_assets/tank-Engine-2.png"))]),
+                ("Gunner",[upload(include_bytes!("hud_assets/tank-Gunner-1.png")),upload(include_bytes!("hud_assets/tank-Gunner-2.png"))]),
+                ("Hull",[upload(include_bytes!("hud_assets/tank-Hull-1.png")),upload(include_bytes!("hud_assets/tank-Hull-2.png"))]),
+                ("LeftTrack",[upload(include_bytes!("hud_assets/tank-LeftTrack-1.png")),upload(include_bytes!("hud_assets/tank-LeftTrack-2.png"))]),
+                ("Loader",[upload(include_bytes!("hud_assets/tank-Loader-1.png")),upload(include_bytes!("hud_assets/tank-Loader-2.png"))]),
+                ("MainGun",[upload(include_bytes!("hud_assets/tank-MainGun-1.png")),upload(include_bytes!("hud_assets/tank-MainGun-2.png"))]),
+                ("Radio",[upload(include_bytes!("hud_assets/tank-Radio-1.png")),upload(include_bytes!("hud_assets/tank-Radio-2.png"))]),
+                ("RightTrack",[upload(include_bytes!("hud_assets/tank-RightTrack-1.png")),upload(include_bytes!("hud_assets/tank-RightTrack-2.png"))]),
+                ("Transmission",[upload(include_bytes!("hud_assets/tank-Transmission-1.png")),upload(include_bytes!("hud_assets/tank-Transmission-2.png"))]),
+                ("TurretTraverse",[upload(include_bytes!("hud_assets/tank-TurretTraverse-1.png")),upload(include_bytes!("hud_assets/tank-TurretTraverse-2.png"))]),
+            ],
+            crew:[
+                [upload(include_bytes!("hud_assets/crew-Driver-0.png")),upload(include_bytes!("hud_assets/crew-Driver-1.png")),upload(include_bytes!("hud_assets/crew-Driver-2.png"))],
+                [upload(include_bytes!("hud_assets/crew-Radio-0.png")),upload(include_bytes!("hud_assets/crew-Radio-1.png")),upload(include_bytes!("hud_assets/crew-Radio-2.png"))],
+                [upload(include_bytes!("hud_assets/crew-Gunner-0.png")),upload(include_bytes!("hud_assets/crew-Gunner-1.png")),upload(include_bytes!("hud_assets/crew-Gunner-2.png"))],
+                [upload(include_bytes!("hud_assets/crew-Commander-0.png")),upload(include_bytes!("hud_assets/crew-Commander-1.png")),upload(include_bytes!("hud_assets/crew-Commander-2.png"))],
+                [upload(include_bytes!("hud_assets/crew-Loader-0.png")),upload(include_bytes!("hud_assets/crew-Loader-1.png")),upload(include_bytes!("hud_assets/crew-Loader-2.png"))],
+            ],
         }
     }
 }

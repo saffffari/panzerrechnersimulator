@@ -9,7 +9,7 @@ pub const GRAIN_M: f32 = 0.012;
 pub const EMISSION_RATE: f32 = 4800.0;
 pub const MAX_AIRBORNE: usize = 8192;
 pub const MAX_DEPOSITS: usize = 65536;
-pub const FRAMES: usize = 80; // 0..15 cabin joints;16..64 workshop banks;65..72 fan rotors;73..76 engine cover.
+pub const FRAMES: usize = 80; // 0..15 cabin joints;16..64 workshop banks;65..72 fan rotors;73..76 engine cover;77..78 fuel service;79 fixed mantlet.
 /// Maximum retained contact patches, shared with the renderer's global cell budget.
 pub const MAX_PATCHES: usize = 32;
 const SOURCE_STEP_S:f64=1.0/120.0;
@@ -833,20 +833,43 @@ impl CabinFire {
         endpoints: &[Vec3],
         models: &[Mat4; FRAMES],
     ) -> Vec<bool> {
-        let inverse = models.map(|model| model.inverse());
-        endpoints
-            .iter()
-            .map(|&point| {
-                origin.is_finite()
-                    && point.is_finite()
-                    && !(0..FRAMES).any(|frame| {
-                        if !self.frame_enabled[frame] { return false; }
-                        let from = inverse[frame].transform_point3(origin);
-                        let to = inverse[frame].transform_point3(point);
-                        self.grids[frame].occluded(from,to)
-                    })
-            })
-            .collect()
+        if !origin.is_finite() { return vec![false;endpoints.len()]; }
+        let (lo,hi)=endpoints.iter().copied().filter(|p|p.is_finite())
+            .fold((origin,origin),|(lo,hi),p|(lo.min(p),hi.max(p)));
+        let centre=(lo+hi)*0.5;
+        let extent=(hi-lo)*0.5+Vec3::splat(1e-5);
+        // A whole soot batch has one source. Do not invert/transform that source and visit
+        // empty articulated frames for every grain. The exact triangle predicate is unchanged.
+        let frames:Vec<_>=self.grids.iter().enumerate().filter_map(|(i,grid)| {
+            if !self.frame_enabled[i] || grid.bounds.is_none() {return None;}
+            let inverse=models[i].inverse();
+            // Every ray in the batch lies inside this conservative transformed box. Most
+            // articulated parts cannot touch a small plume; reject them once for all grains.
+            let local_centre=inverse.transform_point3(centre);
+            let local_extent=inverse.x_axis.truncate().abs()*extent.x
+                +inverse.y_axis.truncate().abs()*extent.y+inverse.z_axis.truncate().abs()*extent.z;
+            let (grid_lo,grid_hi)=grid.bounds.unwrap();
+            if (local_centre-local_extent).cmpgt(grid_hi).any()
+                ||(local_centre+local_extent).cmplt(grid_lo).any(){return None;}
+            Some((grid,inverse,inverse.transform_point3(origin)))
+        }).collect();
+        let trace=|point:Vec3| point.is_finite() && !frames.iter().any(|(grid,inverse,from)|
+            grid.occluded(*from,inverse.transform_point3(point)));
+        let mut clear=vec![false;endpoints.len()];
+        if endpoints.len()<1024 {
+            for (out,&point) in clear.iter_mut().zip(endpoints) {*out=trace(point);}
+        } else {
+            // Independent read-only queries; bounded parallelism preserves every grain and
+            // every first-surface result. No skipped contacts or shortened visual lifetime.
+            let chunk=endpoints.len().div_ceil(4);
+            std::thread::scope(|scope| {
+                for (out,points) in clear.chunks_mut(chunk).zip(endpoints.chunks(chunk)) {
+                    let trace=&trace;
+                    scope.spawn(move || {for (out,&point) in out.iter_mut().zip(points) {*out=trace(point);}});
+                }
+            });
+        }
+        clear
     }
 
     pub fn emit(&mut self, position: Vec3, velocity: Vec3) {

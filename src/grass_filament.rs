@@ -61,10 +61,19 @@ impl TrackMemory {
     /// Local forward is +Z, consistent with tank heading. A repeated pass preserves the first
     /// compression and updates direction only when a different heading genuinely crosses it.
     pub fn stamp(&mut self, position: Vec3, heading: f32) {
+        self.stamp_footprint(position, heading, false);
+    }
+
+    /// A prone body keeps a small patch laid flat, using the same persistent contact memory.
+    pub fn stamp_body(&mut self, center: Vec3, heading: f32) {
+        self.stamp_footprint(center, heading, true);
+    }
+
+    fn stamp_footprint(&mut self, position: Vec3, heading: f32, body: bool) {
         let forward = Vec2::new(heading.sin(), heading.cos());
         let right = Vec2::new(heading.cos(), -heading.sin());
         let center = Vec2::new(position.x, position.z);
-        let reach = 3.5;
+        let reach = if body { 1.3 } else { 3.5 };
         let encoded_heading = ((heading.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU
             * 64.0)
             .round() as u32
@@ -79,7 +88,8 @@ impl TrackMemory {
                 let p = (Vec2::new(x as f32, z as f32) + Vec2::splat(0.5)) * TRACK_CELL - center;
                 let across = p.dot(right).abs();
                 let along = p.dot(forward).abs();
-                if (across - 1.45).abs() > 0.40 || along > 1.85 {
+                if if body {across > 0.40 || along > 0.95}
+                    else {(across - 1.45).abs() > 0.40 || along > 1.85} {
                     continue;
                 }
                 let (key, index) = Self::address(x, z);
@@ -446,6 +456,19 @@ pub fn tuft_mesh(layer: usize, winter: bool) -> CpuMesh {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prone_contact_stays_local_and_survives_save_restore() {
+        let mut memory=super::TrackMemory::default();
+        memory.stamp_body(glam::Vec3::new(-10.,0.,5.),std::f32::consts::FRAC_PI_2);
+        assert_eq!(memory.sample(-9.3,5.).compression,1.);
+        assert_eq!(memory.sample(-8.5,5.).compression,0.);
+        assert_eq!(memory.sample(-10.,5.7).compression,0.);
+        let fields=memory.export_world_state().unwrap();
+        let mut restored=super::TrackMemory::default();
+        restored.import_world_state(fields).unwrap();
+        assert_eq!(restored.sample(-9.3,5.).compression,1.);
+        assert_eq!(memory.cell_count(),restored.cell_count());
+    }
     use super::*;
     #[test]
     fn winter_straw_is_closed_opaque_and_stays_within_its_population_footprint() {

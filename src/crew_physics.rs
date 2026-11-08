@@ -741,22 +741,38 @@ pub fn solve_joint_constraints(
     dt: f32,
     iterations: usize,
 ) {
+    solve_joint_constraints_posed(segments,scale,dt,iterations,None,true);
+}
+
+/// Capture attachment coordinates from the actual skinned pose, with no first-step snap back
+/// to the generic mannequin. Anchors are local to each segment and survive whole-body motion.
+pub fn posed_joint_anchors(segments:&[CrewSegment;CREW_BODY_PART_COUNT],scale:f32)->[[Vec3;2];10]{
+    JOINTS.map(|joint|{
+        let a=segments[joint.parent.index()];let b=segments[joint.child.index()];
+        let at=(a.pos+a.rot*(joint.parent_anchor*scale)+b.pos+b.rot*(joint.child_anchor*scale))*0.5;
+        [a.rot.conjugate()*(at-a.pos)/scale,b.rot.conjugate()*(at-b.pos)/scale]
+    })
+}
+pub fn solve_joint_constraints_posed(segments:&mut [CrewSegment;CREW_BODY_PART_COUNT],scale:f32,dt:f32,iterations:usize,
+    anchors:Option<&[[Vec3;2];10]>,update_velocity:bool){
     let before_pos: [Vec3; CREW_BODY_PART_COUNT] = std::array::from_fn(|i| segments[i].pos);
     let scale = scale.max(1.0e-4);
     for _ in 0..iterations.max(1) {
-        for joint in JOINTS {
+        for (index,joint) in JOINTS.into_iter().enumerate() {
             let ai = joint.parent.index();
             let bi = joint.child.index();
             if !segments[ai].present || !segments[bi].present || segments[bi].detached {
                 continue;
             }
-            let ra = segments[ai].rot * (joint.parent_anchor * scale);
-            let rb = segments[bi].rot * (joint.child_anchor * scale);
+            let ra = segments[ai].rot * (anchors.map_or(joint.parent_anchor,|a|a[index][0]) * scale);
+            let rb = segments[bi].rot * (anchors.map_or(joint.child_anchor,|a|a[index][1]) * scale);
             let error = (segments[bi].pos + rb) - (segments[ai].pos + ra);
             let wa = segments[ai].inv_mass();
             let wb = segments[bi].inv_mass();
             let weight = (wa + wb).max(1.0e-6);
-            let correction = error * 0.72;
+            // Preserve the old 480 Hz relaxation rate at any smaller film substep.
+            let stiffness=if dt>0.0{1.0-0.28f32.powf((dt*480.0).min(1.0))}else{0.72};
+            let correction = error * stiffness;
             let move_a = correction * (wa / weight);
             let move_b = -correction * (wb / weight);
             segments[ai].pos += move_a;
@@ -778,7 +794,7 @@ pub fn solve_joint_constraints(
         }
     }
 
-    if dt > 1.0e-5 {
+    if update_velocity && dt > 1.0e-7 {
         for (index, segment) in segments.iter_mut().enumerate() {
             if segment.present {
                 let constraint_velocity = (segment.pos - before_pos[index]) / dt;
@@ -791,15 +807,18 @@ pub fn solve_joint_constraints(
 }
 
 pub fn max_joint_error(segments: &[CrewSegment; CREW_BODY_PART_COUNT], scale: f32) -> f32 {
+    max_joint_error_posed(segments,scale,None)
+}
+pub fn max_joint_error_posed(segments:&[CrewSegment;CREW_BODY_PART_COUNT],scale:f32,anchors:Option<&[[Vec3;2];10]>)->f32{
     let mut max_error: f32 = 0.0;
-    for joint in JOINTS {
+    for (index,joint) in JOINTS.into_iter().enumerate() {
         let a = segments[joint.parent.index()];
         let b = segments[joint.child.index()];
         if !a.present || !b.present || b.detached {
             continue;
         }
-        let pa = a.pos + a.rot * (joint.parent_anchor * scale);
-        let pb = b.pos + b.rot * (joint.child_anchor * scale);
+        let pa = a.pos + a.rot * (anchors.map_or(joint.parent_anchor,|a|a[index][0]) * scale);
+        let pb = b.pos + b.rot * (anchors.map_or(joint.child_anchor,|a|a[index][1]) * scale);
         max_error = max_error.max(pa.distance(pb));
     }
     max_error
@@ -935,4 +954,18 @@ pub fn topple_acceleration(body_axis: Vec3, fallback_axis: Vec3, body_length: f3
     };
     let alpha = (1.5 * 9.8 / body_length.max(0.5)) * lean.max(0.035);
     axis * alpha
+}
+
+#[cfg(test)] mod pose_handoff_tests {
+    use super::*;
+    #[test]fn first_tiny_step_preserves_the_actual_pose(){
+        let mut segments=seated_segments(Vec3::ZERO,Quat::IDENTITY,1.0);
+        // A skinned head/arm need not sit at the generic mannequin's attachment coordinates.
+        segments[CrewBodyPart::Head.index()].pos+=Vec3::new(0.09,0.03,0.02);
+        let before=segments;let anchors=posed_joint_anchors(&segments,1.0);
+        let dt=1.0/15360.0;integrate_free_motion(&mut segments,dt);
+        solve_joint_constraints_posed(&mut segments,1.0,dt,8,Some(&anchors),true);
+        for (a,b) in segments.iter().zip(before){assert!(a.pos.distance(b.pos)<1e-5);}
+        assert!(max_joint_error_posed(&segments,1.0,Some(&anchors))<1e-5);
+    }
 }

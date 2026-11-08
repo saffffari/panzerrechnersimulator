@@ -1,0 +1,31 @@
+{
+  "name": "Baseline — awaiting native export",
+  "settings": {
+    "shot": {
+      "shell": 12,
+      "range_m": 400,
+      "from_az": -90,
+      "from_el": 0,
+      "target": {
+        "point": [
+          -1.6,
+          1.45,
+          0
+        ]
+      },
+      "seed": 41
+    },
+    "scene": {
+      "racks_loaded": true,
+      "cabin_lamps": true
+    },
+    "tissue": {
+      "active_reach_m": 0.55,
+      "spread": 1,
+      "landing_breakup": true
+    },
+    "camera": {},
+    "look": {},
+    "lamp_gain": 1
+  }
+}

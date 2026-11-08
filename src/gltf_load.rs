@@ -230,6 +230,32 @@ pub(crate) fn load_glb_with_material_override(path: &str, finish: MaterialOverri
     Ok(load_glb_partitioned_roots_with_material_override(path, &[], Some(finish))?.remove(0))
 }
 
+/// Partition flat baked assemblies into material-preserving named groups. Page zero is the
+/// remainder. Each selected root must exist exactly once and may belong to only one group.
+pub(crate) fn load_glb_grouped_roots(path: &str, groups: &[&[&str]], finish: MaterialOverrideFn) -> anyhow::Result<Vec<CpuMesh>> {
+    let bytes = crate::resource::read(path)?;
+    let (doc, buffers, images) = gltf::import_slice(&bytes)?;
+    let mut pages: Vec<_> = (0..=groups.len()).map(|_| MeshAccum::new()).collect();
+    for page in &mut pages { page.mats.material_override = Some(finish); }
+    let mut found = std::collections::HashSet::new();
+    let scene = doc.default_scene().or_else(||doc.scenes().next()).context("missing assembly scene")?;
+    for node in scene.nodes() {
+        let name = node.name().unwrap_or("");
+        let selected: Vec<_> = groups.iter().enumerate().filter(|(_,g)|g.contains(&name)).collect();
+        anyhow::ensure!(selected.len()<=1,"root {name} belongs to multiple groups");
+        let page_index = if let Some((i,_))=selected.first() {
+            anyhow::ensure!(found.insert(name.to_owned()),"duplicate grouped root {name}"); i+1
+        } else { 0 };
+        let page=&mut pages[page_index];
+        walk(&node,Mat4::IDENTITY,&buffers,&images,&mut page.vertices,&mut page.indices,
+            &mut page.mats,&mut page.min,&mut page.max,true);
+    }
+    for name in groups.iter().flat_map(|g|g.iter()) {
+        anyhow::ensure!(found.contains(*name),"missing grouped root {name} in {path}");
+    }
+    pages.into_iter().map(|p|p.finish(path)).collect()
+}
+
 /// Split complete named scene-root assemblies from a GLB while retaining their authored world
 /// transforms. Page zero contains the remainder; subsequent pages follow `moving_roots` order.
 /// This partitions existing triangles without cutting, duplicating or reauthoring geometry. Only
@@ -372,10 +398,15 @@ pub fn glb_root_bounds(path: &str) -> anyhow::Result<Vec<(String, Vec3, Vec3)>> 
 /// fail instead of silently losing/duplicating geometry. The stricter animated-root API above is
 /// unchanged: this separate path is for source assets whose foliage is parented to their trunk.
 pub fn load_glb_partitioned_subtrees(path: &str, subtrees: &[&str]) -> anyhow::Result<Vec<CpuMesh>> {
+    load_glb_partitioned_subtrees_with_finish(path, subtrees, None)
+}
+
+pub(crate) fn load_glb_partitioned_subtrees_with_finish(path: &str, subtrees: &[&str], finish: Option<MaterialOverrideFn>) -> anyhow::Result<Vec<CpuMesh>> {
     let bytes = crate::resource::read(path)?;
     let (doc, buffers, images) = gltf::import_slice(&bytes)
         .with_context(|| format!("import subtree-partitioned glTF resource {path:?}"))?;
     let mut pages: Vec<_> = (0..=subtrees.len()).map(|_| MeshAccum::new()).collect();
+    for page in &mut pages { page.mats.material_override = finish; }
     let mut found = vec![false; subtrees.len()];
 
     #[allow(clippy::too_many_arguments)]

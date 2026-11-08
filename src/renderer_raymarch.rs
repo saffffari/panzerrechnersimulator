@@ -553,7 +553,9 @@ impl Temporal {
             history: target(device, "rm-history", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST),
             refl: [target(device, "rm-refl-a", iw, ih, radiance_format(), gusage), target(device, "rm-refl-b", iw, ih, radiance_format(), gusage)],
             ao: [target(device, "rm-ao-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-ao-b", iw, ih, AO_FORMAT, gusage)],
-            bounce: [target(device, "rm-bounce-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-bounce-b", iw, ih, AO_FORMAT, gusage)],
+            // Irradiance is HDR, unlike the normalized AO shares. Match the scene/history
+            // format so a bright bounce cannot overflow a narrower intermediate texture.
+            bounce: [target(device, "rm-bounce-a", iw, ih, radiance_format(), gusage), target(device, "rm-bounce-b", iw, ih, radiance_format(), gusage)],
             scatter: [volume_target(device, "rm-scatter-a", vol, radiance_format()), volume_target(device, "rm-scatter-b", vol, radiance_format())],
             flip: 0,
             prev_camera: None,
@@ -1511,7 +1513,7 @@ impl Backend {
             vertex: wgpu::VertexState { module: &shade_shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
             primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
             fragment: Some(wgpu::FragmentState { module: &shade_shader, entry_point: Some("fs"),
-                targets: &[Some(color_target(hdr_format())), Some(color_target(AO_FORMAT)), Some(color_target(AO_FORMAT))], compilation_options: Default::default() }),
+                targets: &[Some(color_target(hdr_format())), Some(color_target(AO_FORMAT)), Some(color_target(radiance_format()))], compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -3416,9 +3418,9 @@ impl Backend {
                 extra: [if b.moving_rt_pool || b.raster_only_dynamic || aboard(b.world_min, b.world_max) { 0.0 }
                     else { self.snow_load(r.world_snow_load) },
                     if b.point_square && !shadow { 1.0 } else { 0.0 }, 0.0, 0.0],
-                // The film section (camera only) cuts a moving pool's bodies with the vehicle they
-                // fly in; cut, a cell or fragment shows its own material (bit 25: no steel cut face).
-                scars: [0, 0, 0, if b.moving_rt_pool { section_bit(r.film_section(), true, shadow) * (1 << SECTION_BIT_SHIFT | 1 << (SECTION_BIT_SHIFT + 1)) } else { 0 }],
+                // Moving actor/tissue/helmet pools are not vehicle panels. A global section
+                // must not bisect them. Plate review cells are clipped explicitly by their owner.
+                scars: [0; 4],
                 vehicle: [0.0; 4],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));

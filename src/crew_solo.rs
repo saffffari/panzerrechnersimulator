@@ -345,6 +345,8 @@ pub(super) enum DumpPermission {
 
 #[derive(Clone, Debug, serde::Serialize,serde::Deserialize)]
 pub(super) struct CrewSolo {
+    #[serde(default)] posture: [Vec2;5],
+    #[serde(default)] posture_velocity: [Vec2;5],
     /// Full-crew solo is on (set by `enable_singleplayer_crew`).
     pub enabled: bool,
     /// One physiological record per `CrewRole::ALL` entry. The commander's is the player's own.
@@ -421,6 +423,7 @@ pub(super) struct CrewSolo {
 impl Default for CrewSolo {
     fn default() -> Self {
         Self {
+            posture:[Vec2::ZERO;5],posture_velocity:[Vec2::ZERO;5],
             enabled: false,
             men: CrewRole::ALL.iter().map(|_| Casualty::default()).collect(),
             retired_men: Vec::new(),
@@ -475,6 +478,21 @@ impl Default for CrewSolo {
 }
 
 impl CrewSolo {
+    pub(super) fn slump_pose(&self,role:CrewRole)->Mat4{
+        if self.man(role).dead{return Mat4::IDENTITY;}
+        posture_matrix(self.posture[role_index(role)])
+    }
+    fn advance_postures(&mut self,dt:f32){
+        let dt=dt.max(0.);let omega=8.0;let decay=(-omega*dt).exp();
+        for role in CrewRole::ALL {
+            let i=role_index(role);let target=posture_target(self.man(role));let error=self.posture[i]-target;
+            // Exact critically damped spring under a constant target: independent of film FPS.
+            let c=self.posture_velocity[i]+error*omega;
+            self.posture[i]=target+(error+c*dt)*decay;
+            self.posture_velocity[i]=(self.posture_velocity[i]-c*(omega*dt))*decay;
+        }
+    }
+
     pub(super) fn panel_clock_s(&self)->f32 {self.time_s}
     pub(super) fn pause_assignment_duties(&mut self) {
         self.gunner_target=None;self.gunner_fire_pulse=false;self.fire_command=false;
@@ -557,9 +575,9 @@ impl CrewSolo {
 /// Posture offset for a hurt or unconscious man, applied about his seat so the figure slumps
 /// forward and sideways instead of sitting at attention. A static pose with timing: the crew
 /// GLBs carry no animation clips.
-pub(super) fn slump_pose(man: &Casualty) -> Mat4 {
+fn posture_target(man: &Casualty) -> Vec2 {
     if man.dead {
-        return Mat4::IDENTITY;
+        return Vec2::ZERO;
     }
     let perf = man.performance();
     let (forward, side) = if !man.is_conscious() {
@@ -569,15 +587,13 @@ pub(super) fn slump_pose(man: &Casualty) -> Mat4 {
     } else {
         (0.0, 0.0)
     };
-    if forward <= 0.0 && side <= 0.0 {
-        return Mat4::IDENTITY;
-    }
-    let hip = Vec3::new(0.0, 0.55, 0.0);
-    Mat4::from_translation(hip)
-        * Mat4::from_rotation_x(forward)
-        * Mat4::from_rotation_z(side)
-        * Mat4::from_translation(-hip)
+    Vec2::new(forward,side)
 }
+fn posture_matrix(angles:Vec2)->Mat4{
+    let hip=Vec3::new(0.0,0.55,0.0);
+    Mat4::from_translation(hip)*Mat4::from_rotation_x(angles.x)*Mat4::from_rotation_z(angles.y)*Mat4::from_translation(-hip)
+}
+#[cfg(test)]fn slump_pose(man:&Casualty)->Mat4{posture_matrix(posture_target(man))}
 
 impl Game {
     fn solo_identity(&self) -> Option<CrewRole> {
@@ -824,6 +840,7 @@ impl Game {
     }
 
     fn crew_solo_time_course(&mut self, dt: f32) {
+        self.crew_solo.advance_postures(dt);
         let me = self.solo_identity();
         for role in CrewRole::ALL {
             if !singleplayer_crew::role_alive(&self.crew, role)||self.expedition_camp_owns_casualty(role) {
@@ -3083,6 +3100,21 @@ mod tests {
             assert_eq!(first.y, 0.0);
             assert!((first.length() - 1.0).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn wounded_posture_eases_on_simulation_time_without_a_first_frame_snap(){
+        let mut coarse=CrewSolo::default();let role=CrewRole::Gunner;
+        coarse.man_mut(role).add_wound(Wound::new(WoundKind::Fracture,Region::Arm,0.8));
+        let mut fine=coarse.clone();let head=Vec3::new(0.,1.3,0.);
+        fine.advance_postures(1./15360.);
+        assert!(fine.slump_pose(role).transform_point3(head).distance(head)<1e-6);
+        fine=coarse.clone();
+        for _ in 0..60{coarse.advance_postures(1./60.);}
+        for _ in 0..7680{fine.advance_postures(1./7680.);}
+        let a=coarse.slump_pose(role).transform_point3(head);let b=fine.slump_pose(role).transform_point3(head);
+        assert!(a.distance(b)<0.0001,"posture must not depend on slow motion frame rate: {a} vs {b}");
+        assert!(a.distance(head)>0.05);
     }
 
     #[test]

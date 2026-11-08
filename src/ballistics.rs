@@ -474,6 +474,18 @@ pub const PANZERFAUST_60: ShellSpec = ShellSpec {
     drag_k: 0.0, pen_ref_mm: 200.0, ref_range_m: 60.0,
 };
 
+/// Experimental review profiles. Only the M829A2 muzzle speed is a sourced nominal
+/// value (MCWP 3-12, appendix D). Mass, drag, dimensions and penetration anchors below
+/// are declared game inputs, not validated ammunition performance.
+pub const HEAT_REVIEW:ShellSpec=ShellSpec{name:"120mm HEAT (experimental)",kind:ShellKind::Heat,
+    caliber_mm:120.,mass_kg:12.,muzzle_velocity:1000.,filler_g:2000.,drag_k:0.00015,pen_ref_mm:300.,ref_range_m:100.};
+pub const HESH_REVIEW:ShellSpec=ShellSpec{name:"120mm HESH (experimental)",kind:ShellKind::He,
+    caliber_mm:120.,mass_kg:17.,muzzle_velocity:670.,filler_g:4000.,drag_k:0.0002,pen_ref_mm:0.,ref_range_m:100.};
+pub const M829A2_REVIEW:ShellSpec=ShellSpec{name:"120mm M829A2-inspired APFSDS (surrogate)",kind:ShellKind::Ap,
+    caliber_mm:120.,mass_kg:5.,muzzle_velocity:1680.,filler_g:0.,drag_k:0.00008,pen_ref_mm:500.,ref_range_m:100.};
+pub fn is_hesh(s:&ShellSpec)->bool{s.name==HESH_REVIEW.name}
+pub fn is_long_rod(s:&ShellSpec)->bool{s.name==M829A2_REVIEW.name}
+
 /// Deterministic [0,1) hash (project counter-hash pattern).
 fn hash01(n: u32) -> f32 {
     let mut x = n.wrapping_mul(2_654_435_761);
@@ -1387,7 +1399,7 @@ pub mod shell_spec_ref {
     pub fn serialize<S:Serializer>(spec:&&'static b::ShellSpec,s:S)->Result<S::Ok,S::Error> {s.serialize_str(spec.name)}
     pub fn deserialize<'de,D:Deserializer<'de>>(d:D)->Result<&'static b::ShellSpec,D::Error> {
         let name=String::deserialize(d)?;
-        [&b::PANZERFAUST_60,&b::PZGR_39,&b::PZGR_40,&b::SPRGR_88,&b::PZGR_39_43,
+        [&b::HEAT_REVIEW,&b::HESH_REVIEW,&b::M829A2_REVIEW,&b::PANZERFAUST_60,&b::PZGR_39,&b::PZGR_40,&b::SPRGR_88,&b::PZGR_39_43,
             &b::BR_240_M42,&b::BR_240,&b::BR_240P,&b::BR_271_ZIS2,&b::BR_350B,&b::OF_350_F34,
             &b::BR_354P,&b::BR_365,&b::BR_412,&b::BR_471,&b::OF_530,&b::BR_540,&b::GUSTAV_800_PLAYGROUND,&b::T34_MACH1_PLAYGROUND].into_iter()
             .find(|spec|spec.name==name).ok_or_else(||serde::de::Error::custom(format!("unknown shell specification {name}")))

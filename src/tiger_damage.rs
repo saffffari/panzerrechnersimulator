@@ -268,7 +268,7 @@ pub fn source_zone(hull_local:Vec3,turret_local:Vec3,source_frame:usize)->Zone {
     match source_frame {
         8=>Zone::GunnerSight,
         5|9|10|11=>Zone::DriverVisor,
-        2|12|13=>Zone::Mantlet,
+        2|12|13|79=>Zone::Mantlet,
         _=>zone(hull_local,turret_local,!matches!(source_frame,0|3|5|9|10|11|14)),
     }
 }

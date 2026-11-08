@@ -877,6 +877,33 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     report["backend"] = serde_json::json!(if r.shader_backend { "shader" } else { "physical" });
     report["preset"] = serde_json::json!(r.graphics_preset.key());
     println!("[light] photometry {report}");
+    // Reuse this exact converged HDR frame and GPU eye for display-only comparisons.
+    // This optional diagnostic neither relights the world nor changes saved preferences.
+    if let Ok(prefix) = std::env::var("KESSEL_SHOT_LOOK_REVIEW") {
+        let receipt = r.debug_capture_frozen_display_looks(&device, &queue, &prefix)?;
+        let receipt_path = format!("{prefix}_receipt.json");
+        if let Some(parent) = std::path::Path::new(&receipt_path).parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+        println!("[look-review] {receipt_path}");
+    }
+    if let Ok(prefix) = std::env::var("KESSEL_SHOT_DITHER_REVIEW") {
+        let pair = r.debug_capture_frozen_dither_pair(&device, &queue)?;
+        // A second pass over the same HDR/eye must be byte-identical: the noise is spatial,
+        // never a new random sample per capture or a temporal shimmer.
+        let repeat = r.debug_capture_frozen_dither_pair(&device, &queue)?;
+        anyhow::ensure!(pair == repeat, "frozen display dither is not deterministic");
+        for (key, pixels) in ["ordered", "blue_noise64"].into_iter().zip(pair) {
+            let path = format!("{prefix}_{key}.png");
+            anyhow::ensure!(!std::path::Path::new(&path).exists(), "dither review output exists; choose a new prefix");
+            if let Some(parent) = std::path::Path::new(&path).parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+            image::save_buffer(path, &pixels, r.iw, r.ih, image::ColorType::Rgba8)?;
+        }
+        println!("[dither-review] deterministic frozen pair {prefix}; look={} real={:?}; photometry={report}", r.look, r.real);
+    }
     Ok(())
 }
 
@@ -17569,6 +17596,11 @@ fn main() -> anyhow::Result<()> {
     if early_args.get(1).is_some_and(|arg| arg == "crew-status-panel-review") {
         let prefix = capture_arg(&early_args, 2, "crew_status_panel_review");
         return game::crew_status_panel_review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "army-timelapse") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!("army-timelapse PREFIX [SECONDS] [scan]"))?;
+        let seconds = early_args.get(3).map(|s|s.parse::<f32>()).transpose()?.unwrap_or(90.0);
+        return game::army_timelapse::run(prefix, seconds, early_args.get(4).is_some_and(|s|s=="scan"));
     }
     if early_args.get(1).is_some_and(|arg| matches!(arg.as_str(), "combined-battle-review" | "first-person-battle-review")) {
         let prefix = capture_arg(&early_args, 2, "combined_battle_review");

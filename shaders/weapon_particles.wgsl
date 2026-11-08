@@ -234,14 +234,14 @@ const GROUND_QUADRATURE:u32=1000u;
         let clip=(a+b)*0.5;let pixel=floor(vec2(clip.x/clip.w*0.5+0.5,0.5-clip.y/clip.w*0.5)*weapon_cam.extent.xy);
         var corners=array<vec2<f32>,6>(vec2(0.0,0.0),vec2(1.0,0.0),vec2(0.0,1.0),vec2(0.0,1.0),vec2(1.0,0.0),vec2(1.0,1.0));
         let edge=(pixel+corners[vertex])/weapon_cam.extent.xy;
-        return WeaponOut(vec4(vec2(edge.x*2.0-1.0,1.0-edge.y*2.0)*clip.w,clip.z,clip.w),(wa+wb)*0.5,vec3(1.0,0.705,0.348)*4.725,0.0);
+        return WeaponOut(vec4(vec2(edge.x*2.0-1.0,1.0-edge.y*2.0)*clip.w,clip.z,clip.w),(wa+wb)*0.5,vec3(1.0,0.705,0.348)*4.725*unused_parameters.x,0.0);
     }
     let normal=normalize(vec2(-delta.y,delta.x));
     var endpoints=array<u32,6>(0u,1u,0u,0u,1u,1u);var sides=array<f32,6>(-0.5,-0.5,0.5,0.5,-0.5,0.5);
     let endpoint=endpoints[vertex];var clip=select(a,b,endpoint==1u);
     clip.x+=normal.x*sides[vertex]*2.0/weapon_cam.extent.x*clip.w;
     clip.y+=normal.y*sides[vertex]*2.0/weapon_cam.extent.y*clip.w;
-    return WeaponOut(clip,select(wa,wb,endpoint==1u),vec3(1.0,0.705,0.348)*4.725,0.0);
+    return WeaponOut(clip,select(wa,wb,endpoint==1u),vec3(1.0,0.705,0.348)*4.725*unused_parameters.x,0.0);
 }
 @fragment fn fs_weapon(in:WeaponOut)->@location(0) vec4<f32> {
     let dims=vec2<i32>(textureDimensions(depth_tex));let pixel=vec2<i32>(in.position.xy);

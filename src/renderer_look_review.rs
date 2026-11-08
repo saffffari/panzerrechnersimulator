@@ -10,7 +10,7 @@ struct Look {
     label: &'static str,
     crush: CrushUniform,
 }
-fn looks(base: CrushUniform) -> [Look; 6] {
+fn looks(base: CrushUniform) -> [Look; 8] {
     let mut clean = base;
     clean.retro = 0.0;
     clean.ldr_dither = 0.0;
@@ -33,6 +33,10 @@ fn looks(base: CrushUniform) -> [Look; 6] {
     balanced.display_grade[0] *= 1.08;
     balanced.display_grade[1] *= 1.06;
     balanced.display_grade[2] += 0.025;
+    let mut saturation115 = base;
+    saturation115.display_grade[1] *= 1.15;
+    let mut saturation125 = base;
+    saturation125.display_grade[1] *= 1.25;
     [
         Look {
             key: "current",
@@ -64,6 +68,16 @@ fn looks(base: CrushUniform) -> [Look; 6] {
             label: "Current treatment; reproduction exposure×1.08 saturation×1.06 warmth+0.025",
             crush: balanced,
         },
+        Look {
+            key: "saturation115",
+            label: "Current treatment; display saturation×1.15 only",
+            crush: saturation115,
+        },
+        Look {
+            key: "saturation125",
+            label: "Current treatment; display saturation×1.25 only",
+            crush: saturation125,
+        },
     ]
 }
 fn read_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> anyhow::Result<Vec<u8>> {
@@ -80,7 +94,7 @@ fn read_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> anyhow::Result<V
 }
 impl Renderer {
     /// Re-run only the actual display stage against the most recently rendered native frame.
-    /// The original GPU eye response (including rods) remains bit-identical for all six looks.
+    /// The original GPU eye response (including rods) remains bit-identical for all looks.
     /// Both the CPU settings and the GPU crush uniform are preserved after this diagnostic.
     pub(crate) fn debug_capture_frozen_display_looks(
         &mut self,
@@ -165,7 +179,10 @@ impl Renderer {
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let mut matrix = image::RgbaImage::new(self.iw * 3, self.ih * 2);
+            let mut matrix = image::RgbaImage::new(
+                self.iw * 3,
+                self.ih * (treatments.len() as u32).div_ceil(3),
+            );
             let mut receipts = Vec::new();
             for (index, look) in treatments.iter().enumerate() {
                 queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&look.crush));
@@ -272,7 +289,7 @@ impl Renderer {
                 json!({"schema":"panzer.frozen-display-looks.v1","native_resolution":[self.iw,self.ih],"matrix":matrix_path,"looks":receipts,
                 "frozen_frame":unchanged_frame,"scene_time_s":unchanged_time,"camera":self.camera.pos.to_array(),
                 "eye":{"cone_exposure":base.exposure,"rod_exposure":base.rod_exposure,"rod_inverse_saturation":base.rod_inverse_saturation},
-                "scope":"One existing HDR/depth frame and original GPU eye mapping. Only crush and the existing frozen particle display overlay rerun. No scene, light, bloom, transport, exposure metering, simulation or audio advancement. Clean/mild/15/7/current/balanced are review options; saved defaults unchanged.",
+                "scope":"One existing HDR/depth frame and original GPU eye mapping. Only crush and the existing frozen particle display overlay rerun. No scene, light, bloom, transport, exposure metering, simulation or audio advancement. All display treatments are review options; saved defaults unchanged.",
                 "limit":"Native display-stage stills omit output-resolution UI. This preserves the already-rendered sensor noise and convergence state; it does not establish transport convergence."}),
             )
         })();
@@ -517,5 +534,14 @@ mod tests {
         assert_eq!(variants[0].crush.display_grade, base.display_grade);
         assert_eq!(variants[1].crush.retro, 0.0);
         assert_eq!(variants[1].crush.ldr_dither, 0.0);
+        for (variant, multiplier) in [(&variants[6], 1.15), (&variants[7], 1.25)] {
+            let mut expected = base;
+            expected.display_grade[1] *= multiplier;
+            assert_eq!(
+                bytemuck::bytes_of(&variant.crush),
+                bytemuck::bytes_of(&expected),
+                "saturation comparison must preserve every other display and physical lane"
+            );
+        }
     }
 }

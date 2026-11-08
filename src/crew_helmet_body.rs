@@ -420,3 +420,9 @@ mod tests {
         assert!((lowest - floor).abs() < 0.01, "rests on the floor: lowest support at {lowest}");
     }
 }
+
+impl HelmetShape {
+    pub(super) fn particle_surfaces(&self,actor:u32,model:Mat4,scene:&mut particle_contacts::Scene){
+        for (i,t) in self.triangles.iter().enumerate(){scene.triangle(particle_contacts::key(actor,3,i as u32),t.map(|p|model.transform_point3(p)));}
+    }
+}

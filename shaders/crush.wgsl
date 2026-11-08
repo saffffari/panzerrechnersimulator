@@ -387,9 +387,15 @@ fn dp_tinted(lin: vec3<f32>, th: f32) -> vec3<f32> {
     return dp_dithered_colour(max(dp_oklab_to_linear(pulled), vec3(0.0)), th);
 }
 
-// The ordered threshold on the internal texel, 0..1, centred in its bucket so a mid-way colour
-// dithers to a true 50/50 checker. The same rank set as bayer8_rank's display threshold.
+// Threshold on the internal texel, 0..1, centred in its bucket. The deltaP modes previously
+// ignored the selected blue-noise pattern and always drew Bayer8; smooth RGB gradients then
+// produced coherent coloured interference even when the user selected blue noise. Honour that
+// explicit choice with the same fixed native-pixel rank texture as the ordinary display path.
+// Preserve the established Bayer8 deltaP treatment for every other pattern selection.
 fn dp_threshold(px: vec2<i32>) -> f32 {
+    if (cr.dither_pattern > 0.5 && cr.dither_pattern < 1.5) {
+        return display_threshold(px) + 0.5;
+    }
     return (f32(bayer8_rank(px)) + 0.5) / 64.0;
 }
 

@@ -674,59 +674,34 @@ impl Game {
             return;
         }
         let model =
-            blood_parent_model(&self.player, frame).inverse() * self.singleplayer_rig_model(actor);
+            blood_parent_model(&self.player, frame).inverse() * self.singleplayer_rig_model(actor)*self.crew_solo.slump_pose(crew_solo::role_of_post(actor.identity));
         let Some(rig)=(if pose.standing {self.crew_arm_animation.standing_rig.as_ref()}else{self.crew_arm_animation.rig.as_ref()}) else{return;};
-        let inv=model.inverse();
-        for (part,name) in [(crew_physics::CrewBodyPart::Pelvis,"ROOT_N1"),
-            (crew_physics::CrewBodyPart::Torso,"Chest_N1"),(crew_physics::CrewBodyPart::Head,"Head_N1")] {
-            if let Some(joint)=rig.bones.iter().position(|b|b.name==name) {
-                let delta=model*pose.deltas[joint]*inv;
-                let segment=&mut segments[part.index()];
-                segment.pos=delta.transform_point3(segment.pos);
-                segment.rot=(delta.to_scale_rotation_translation().1*segment.rot).normalize();
-            }
-        }
-        // The authoring source names L at +X. The existing casualty mesh partitions +X as Right;
-        // preserve that established anatomical page convention so visible limbs never swap sides.
-        for (side, parts) in [
-            [
-                crew_physics::CrewBodyPart::RightUpperArm,
-                crew_physics::CrewBodyPart::RightForearm,
-            ],
-            [
-                crew_physics::CrewBodyPart::LeftUpperArm,
-                crew_physics::CrewBodyPart::LeftForearm,
-            ],
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let points = pose.arms[side].map(|p| model.transform_point3(p));
-            for (link, part) in parts.into_iter().enumerate() {
-                let segment = &mut segments[part.index()];
-                segment.pos = (points[link] + points[link + 1]) * 0.5;
-                segment.rot = Quat::from_rotation_arc(
-                    -Vec3::Y,
-                    (points[link + 1] - points[link]).normalize(),
-                );
-            }
-        }
-        if pose.standing {
-            for (side,parts) in [[crew_physics::CrewBodyPart::RightThigh,crew_physics::CrewBodyPart::RightShin],
-                [crew_physics::CrewBodyPart::LeftThigh,crew_physics::CrewBodyPart::LeftShin]].into_iter().enumerate() {
-                let points=pose.legs[side].map(|p|model.transform_point3(p));
-                for (link,part) in parts.into_iter().enumerate() {
-                    let segment=&mut segments[part.index()];segment.pos=(points[link]+points[link+1])*0.5;
-                    segment.rot=Quat::from_rotation_arc(-Vec3::Y,(points[link+1]-points[link]).normalize_or_zero());
-                }
-            }
-        }
+        let names=rig.bones.iter().map(|b|b.name.as_str()).collect::<Vec<_>>();
+        // Retained tissue is authored in the relaxed standing frame. A seated bind inverse
+        // cancels the seating offset and puts its head/torso back at standing height on impact.
+        let reference=self.crew_arm_animation.standing_rig.as_ref().unwrap_or(rig);
+        let bases=rig.bones.iter().map(|b|reference.bones.iter().find(|r|r.name==b.name).map_or(b.base,|r|r.base)).collect::<Vec<_>>();
+        let matrices=pose.deltas.iter().zip(&rig.bones).map(|(delta,bone)|*delta*bone.base).collect::<Vec<_>>();
+        *segments=singleplayer_crew::field_people::source_segments(model,&names,&bases,&matrices,rig.arms,rig.legs);
+
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn seated_retained_head_stays_at_the_source_head_bone(){
+        let seated=Rig::load().unwrap();let standing=Rig::load_standing().unwrap();
+        let pose=seated.pose([None,None]);
+        let names=seated.bones.iter().map(|b|b.name.as_str()).collect::<Vec<_>>();
+        let bases=seated.bones.iter().map(|b|standing.bones.iter().find(|r|r.name==b.name).unwrap().base).collect::<Vec<_>>();
+        let matrices=pose.deltas.iter().zip(&seated.bones).map(|(d,b)|*d*b.base).collect::<Vec<_>>();
+        let segments=singleplayer_crew::field_people::source_segments(Mat4::IDENTITY,&names,&bases,&matrices,seated.arms,seated.legs);
+        let source_head=matrices[seated.head].w_axis.truncate();
+        assert!(segments[crew_physics::CrewBodyPart::Head.index()].pos.distance(source_head)<0.04,
+            "seated head must not jump to the relaxed standing height");
+    }
     #[test]
     fn changed_mechanical_contact_bypasses_idle_pose_cadence() {
         let previous=[Some(Vec3::new(0.1,0.8,0.3)),None];

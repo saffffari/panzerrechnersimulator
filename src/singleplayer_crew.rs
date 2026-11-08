@@ -465,7 +465,7 @@ impl Game {
             }
             return (body.scale,segments);
         }
-        let local=blood_parent_model(&self.player,frame).inverse()*self.singleplayer_rig_model(actor);
+        let local=blood_parent_model(&self.player,frame).inverse()*self.singleplayer_rig_model(actor)*self.crew_solo.slump_pose(crew_solo::role_of_post(actor.identity));
         let (dimensions,rotation,origin)=local.to_scale_rotation_translation();
         let scale=dimensions.x;
         let mut segments=if self.crew_standing_post(actor.role) {
@@ -615,7 +615,7 @@ impl Game {
             let slump = if role == aboard || !self.crew_solo_active() {
                 Mat4::IDENTITY
             } else {
-                super::crew_solo::slump_pose(self.crew_solo.man(role))
+                self.crew_solo.slump_pose(role)
             };
             let model = self.singleplayer_rig_model(body.casualty) * slump;
             if post != crate::lan::LanRole::Commander {

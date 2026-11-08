@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Panzerrechnersystem · Web editor</title>
+  </head>
+  <body>
+    <canvas id="view" aria-label="Tiger range editor"></canvas>
+    <div id="loading" role="status">Loading the native Tiger…</div>
+
+    <div id="readout">
+      <span id="status">READY</span><span id="metrics"></span>
+    </div>
+    <footer id="toolbar">
+      <div class="brand">
+        PANZER<br />RECHNER<br />SYSTEM <small>WEB EDITOR</small>
+      </div>
+      <aside id="damage">
+        <div id="crew"></div>
+        <img id="plan" alt="Orthographic Tiger cutaway damage status" />
+        <div class="legend">
+          <i class="orange"></i>DAMAGED <i class="red"></i>DESTROYED
+        </div>
+      </aside>
+      <div class="transport">
+        <button id="range-mode" class="active">RANGE</button
+        ><button id="battle-mode">BATTLE</button
+        ><button id="reset" title="Reset · Backspace">↻</button
+        ><button id="fire" class="fire">▶ FIRE</button
+        ><button id="pause">Ⅱ PAUSE</button><button id="record">● REC</button>
+      </div>
+      <div class="fields">
+        <label>SHOT<select id="shot"></select></label
+        ><label>SHELL<select id="shell"></select></label
+        ><label
+          >TIME STEP<select id="step">
+            <option value="0.016666667">16.67 ms</option>
+            <option value="0.008333333">8.33 ms</option>
+            <option value="0.004166667">4.17 ms</option>
+          </select></label
+        >
+      </div>
+      <div class="fields">
+        <label
+          >CAMERA<select id="camera">
+            <option value="free">FREE</option>
+            <option value="top">TOP / ORTHOGRAPHIC</option>
+            <option value="driver">DRIVER</option>
+            <option value="gunner">GUNNER</option>
+            <option value="commander">COMMANDER</option>
+          </select></label
+        ><label
+          >PIXEL RES<select id="resolution">
+            <option value="960">960 × 540</option>
+            <option value="720">720 × 405</option>
+            <option value="640" selected>640 × 360</option>
+            <option value="480">480 × 270</option>
+            <option value="320">320 × 180</option>
+          </select></label
+        ><label
+          >PRESET<button id="save">SAVE / EXPORT</button
+          ><button id="load">LOAD</button
+          ><input type="file" id="file" accept=".json" hidden
+        /></label>
+      </div>
+      <div class="panels">
+        <button data-panel="shot">› SHOT</button
+        ><button data-panel="section">› SECTION</button
+        ><button data-panel="materials">› MATERIALS</button
+        ><button data-panel="scene">› SCENE</button
+        ><button data-panel="sky">› SKY</button
+        ><button data-panel="effects">› EFFECTS</button
+        ><button data-panel="camera">› CAMERA</button
+        ><button data-panel="look">› LOOK</button
+        ><button data-panel="tissue">› TISSUE</button>
+      </div>
+    </footer>
+    <section id="inspector" hidden></section>
+    <dialog id="resolution-dialog">
+      <button id="close-gallery">CLOSE</button>
+      <h2>Cutaway resolution study</h2>
+      <p>
+        540 × 960 down to 1 × 2. Each PNG is rendered at its own resolution,
+        with transparent background.
+      </p>
+      <div id="gallery"></div>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

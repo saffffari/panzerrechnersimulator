@@ -505,7 +505,12 @@ impl Lattice {
         let tip0 = self.tip_s;
         let need_initial = self.step == 0;
         let mut out = (self.step, self.t, self.tip_s, self.v, 0.0f64, [0.0f64; 4], self.done);
-        std::thread::scope(|scope| {
+        if threads==1 {
+            // Live CFL slices must not create and join an OS thread on every advance. The
+            // same worker executes inline; its barrier and reduction order remain identical.
+            out=unsafe {worker(&view,&consts,&barrier,&broken,&partial,0,1,0,self.n,
+                start_step,t0,tip0,max_steps,need_initial)};
+        } else { std::thread::scope(|scope| {
             let mut handles = Vec::new();
             for w in 0..threads {
                 let lo = (w * chunk).min(self.n);
@@ -527,7 +532,7 @@ impl Lattice {
                     out = r;
                 }
             }
-        });
+        }); }
         let (step, t, tip_s, v, fracture, sums, done) = out;
         self.step = step;
         self.t = t;
@@ -547,6 +552,21 @@ impl Lattice {
 
     pub fn solve(&mut self) {
         self.advance(u64::MAX);
+    }
+
+    /// Bounded exterior impulse for the experimental squash-head review. Only the
+    /// front layer receives initial momentum. Elastic/plastic waves and back-face
+    /// separation must propagate through the ordinary CFL solver. No interior hits.
+    pub fn apply_surface_impulse(&mut self,energy_j:f32,radius_m:f32) {
+        assert_eq!(self.step,0);
+        self.k_contact=0.0; // there is no prescribed penetrating nose for this load
+        let ids:Vec<_>=(0..self.n).filter(|&i|{
+            let p=self.position(i);!self.fixed[i] && p.z<self.h*1.1 && p.truncate().length()<radius_m
+        }).collect();
+        let m=self.mass*ids.len()as f32;
+        let speed=(2.*energy_j.max(0.)/m.max(1.0e-9)).sqrt();
+        for i in ids {self.vz[i]=speed;}
+        self.t_end=self.t_end.max(0.0005);
     }
 
     /// Evaluate forces at the present state without moving anything (tests and diagnostics).

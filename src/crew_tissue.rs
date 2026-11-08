@@ -790,6 +790,16 @@ impl CasualtyTissue {
         Self { present: vec![true; model.cells.len()], broken: vec![false; model.bonds.len()], revision: 0 }
     }
 
+    pub(super) fn joint_connections(&self,model:&TissueModel)->[bool;PARTS]{
+        let mut total=[0usize;PARTS];let mut intact=[0usize;PARTS];
+        for (i,bond) in model.bonds.iter().enumerate(){
+            let a=model.cells[bond.a as usize].part;let b=model.cells[bond.b as usize].part;
+            let child=if crew_anatomical_parent(a)==Some(b){Some(a)}else if crew_anatomical_parent(b)==Some(a){Some(b)}else{None};
+            if let Some(child)=child {let j=child.index();total[j]+=1;
+                if !self.broken[i]&&self.present[bond.a as usize]&&self.present[bond.b as usize]{intact[j]+=1;}}
+        }
+        std::array::from_fn(|i|total[i]==0||intact[i]>0)
+    }
     /// Whether any cell of `part` has come away.
     #[cfg(test)]
     pub(super) fn struck(&self, model: &TissueModel, part: crew_physics::CrewBodyPart) -> bool {
@@ -1116,11 +1126,17 @@ impl CasualtyTissue {
         while s < 1.2 && speed > STOPPED_MPS {
             let p = strike.at + dir * s;
             s += step;
-            let Some(here) = model.cell_at(p) else { continue };
-            let cell = &model.cells[here];
-            if cell.part != strike.part || !self.present[here] {
-                continue;
-            }
+            let g=((p-model.origin)/cell_m).floor().as_ivec3();
+            let r=(crush/cell_m).ceil()as i32;
+            let mut here=None;let mut nearest=f32::INFINITY;
+            for z in -r..=r {for y in -r..=r {for x in -r..=r {
+                let Some(c)=model.lookup([g.x+x,g.y+y,g.z+z])else{continue;};
+                let cell=&model.cells[c];if cell.part!=strike.part||!self.present[c]{continue;}
+                let offset=cell.at-p;let along=offset.dot(dir);let radial=(offset-dir*along).length_squared();
+                let gap=(offset.abs()-Vec3::splat(cell_m*0.5)).max(Vec3::ZERO);
+                if along.abs()<=cell_m*0.5&&gap.length_squared()<=0.25*side*side&&radial<nearest{nearest=radial;here=Some(c);}
+            }}}
+            let Some(here)=here else{continue;};let cell=&model.cells[here];
             // Poncelet's form: the tissue's own resistance (its tearing energy per volume, authored)
             // and Newtonian drag.
             let tearing = tuning.tear_j_m3[cell.tissue.index()] * area * step;
@@ -1323,9 +1339,16 @@ pub(super) fn chunk_bodies(model: &TissueModel, ragdoll: &CrewRagdoll, chunks: V
 /// simulation: in solo play (where the voxel body is drawn) a pulverizing outcome only removes a
 /// part that kept less than `KEEP_SOFT_SHARE` of its soft cells.
 pub(super) fn carve_casualty_tissue(corpses: &std::cell::RefCell<Option<crew_corpse_render::Corpses>>, solo: bool,
-    ragdoll: &CrewRagdoll, strikes: &[Strike]) -> [bool; PARTS] {
+    ragdoll: &mut CrewRagdoll, strikes: &[Strike]) -> [bool; PARTS] {
     let shares = corpses.borrow_mut().as_mut().and_then(|corpses| corpses.strike_tissue(ragdoll, strikes));
+    sync_voxel_joints(corpses,ragdoll);
     std::array::from_fn(|i| solo && shares.is_some_and(|shares| shares[i] >= KEEP_SOFT_SHARE))
+}
+
+fn sync_voxel_joints(corpses:&std::cell::RefCell<Option<crew_corpse_render::Corpses>>,ragdoll:&mut CrewRagdoll){
+    if let Some(joined)=corpses.borrow().as_ref().and_then(|c|c.tissue_joint_connections(ragdoll.casualty.peer_id)){
+        for (segment,joined) in ragdoll.segments.iter_mut().zip(joined){segment.detached=!joined;}
+    }
 }
 
 /// A casualty's solve deferred behind the death's fade and black (`Game::settle_casualty_tissue`):
@@ -1348,8 +1371,9 @@ pub(super) fn begin_casualty_carve(corpses: &std::cell::RefCell<Option<crew_corp
 /// Take a casualty's solve back: the parts whose soft cells keep them in the articulated
 /// simulation (as `carve_casualty_tissue`).
 pub(super) fn finish_casualty_carve(corpses: &std::cell::RefCell<Option<crew_corpse_render::Corpses>>, solo: bool,
-    job: crew_corpse_tissue::StrikeJob, ragdoll: &CrewRagdoll) -> [bool; PARTS] {
+    job: crew_corpse_tissue::StrikeJob, ragdoll: &mut CrewRagdoll) -> [bool; PARTS] {
     let shares = corpses.borrow_mut().as_mut().and_then(|corpses| corpses.finish_tissue_strike(job, ragdoll));
+    sync_voxel_joints(corpses,ragdoll);
     std::array::from_fn(|i| solo && shares.is_some_and(|shares| shares[i] >= KEEP_SOFT_SHARE))
 }
 
@@ -1524,6 +1548,18 @@ mod tests {
         // A cloth bond lets go at the textile's stretch at most.
         assert!(model.bonds.iter().filter(|b| model.cells[b.a as usize].cloth() || model.cells[b.b as usize].cloth())
             .all(|b| b.critical <= CLOTH_BREAKING_STRAIN + 1e-6));
+    }
+
+    #[test]
+    fn an_intact_neck_cannot_detach_from_an_energy_label(){
+        let mut model=toy();
+        for cell in &mut model.cells {cell.part=if cell.at.y>1.1{crew_physics::CrewBodyPart::Head}else{crew_physics::CrewBodyPart::Torso};}
+        let mut tissue=CasualtyTissue::new(&model);let head=crew_physics::CrewBodyPart::Head.index();
+        assert!(tissue.joint_connections(&model)[head]);
+        for (i,b) in model.bonds.iter().enumerate(){
+            if model.cells[b.a as usize].part!=model.cells[b.b as usize].part{tissue.broken[i]=true;}
+        }
+        assert!(!tissue.joint_connections(&model)[head]);
     }
 
     #[test]

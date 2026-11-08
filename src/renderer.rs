@@ -6282,7 +6282,7 @@ impl Renderer {
             tonemap: configured_tonemap(),
             palette_smooth: if configured_look() > 4.5 { configured_palette_pull() } else { configured_palette_smooth() },
             display_tuning: None,
-            display_grade: [1.0, 1.0, 0.0, 1.0],
+            display_grade: [1.0, 1.15, 0.0, 1.0],
             display_dither_pattern: configured_display_dither(),
             sky_time_scale: 1.0,
             day_night_cycle: day_night_cycle_enabled(),
@@ -8060,6 +8060,15 @@ impl Renderer {
         self.rt_batches_dirty |= count_changed;
         self.rt_moving_batches_dirty = true;
         true
+    }
+
+    pub fn debug_instance_visibility(&self, batches: &[usize]) -> serde_json::Value {
+        let visible=self.inst_spatial_index.query(self.camera.view_proj());
+        serde_json::json!(batches.iter().map(|&i| {
+            let b=&self.inst_batches[i];
+            serde_json::json!({"batch":i,"count":b.inst_count,"visible":visible.batches.contains(&i),
+                "min":b.world_min.to_array(),"max":b.world_max.to_array()})
+        }).collect::<Vec<_>>())
     }
 
     /// Set the emissive intensity of a raster-only dynamic pool. Invalid/static batch handles and
@@ -10952,6 +10961,8 @@ impl Renderer {
         }
     }
 
+    pub(crate) fn render_sequence(&self)->u32 {self.frame}
+
     pub fn begin_gpu_profile_frame(&self) {
         if let Some(profile) = &self.gpu_profile {
             profile.begin_frame();
@@ -12945,7 +12956,7 @@ mod atmosphere_tests {
         let enabled=block("if(cr.retro>0.001||cr.ldr_dither>0.0)");
         let threshold=block("fndisplay_threshold(");
         let palette=block("if(retro>0.001)");let ldr=block("if(cr.ldr_dither>0.0)");
-        assert_eq!(code.matches("display_threshold(").count(),2,"one definition and one gated call");
+        assert_eq!(code.matches("display_threshold(").count(),3,"definition, legacy gated call, and explicit deltaP blue-noise call");
         assert!(code.contains("varnative_threshold=0.0;"));
         assert!(enabled.contains("native_threshold=display_threshold(vec2<i32>(in.pos.xy));"));
         assert!(palette.contains("letordered=native_threshold;"));
@@ -12953,7 +12964,10 @@ mod atmosphere_tests {
         assert!(threshold.contains("(px.y&3)*4+(px.x&3)"));
         assert!(threshold.contains("return(BAYER["));
         assert!(threshold.contains("textureLoad(blue_noise,vec2(px.x&63,px.y&63),0)"));
-        for branch in [enabled,threshold,palette,ldr,block("fnsphere_threshold(")] {assert!(!branch.contains("cr.frame"));}
+        let deltap = block("fndp_threshold(");
+        assert!(deltap.contains("if(cr.dither_pattern>0.5&&cr.dither_pattern<1.5){returndisplay_threshold(px)+0.5;}"));
+        assert!(deltap.contains("return(f32(bayer8_rank(px))+0.5)/64.0;"));
+        for branch in [enabled,threshold,palette,ldr,deltap,block("fnsphere_threshold(")] {assert!(!branch.contains("cr.frame"));}
         // Read the production Bayer table: each of its16 fixed pixel phases must occur once,
         // with centred thresholds and neither an omitted rank nor a persistent brightness bias.
         let table=code.split("var<private>BAYER:").nth(1).unwrap().split("(").nth(1).unwrap()

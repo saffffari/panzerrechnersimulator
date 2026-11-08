@@ -37,7 +37,7 @@ pub struct Record {
 impl Record {
     pub fn tracer(start:Vec3,end:Vec3)->Self {
         Self {origin_age:start.extend(0.0).to_array(),direction_life:end.extend(0.0).to_array(),
-            normal_offset:[0.0;4],parameters:[0.0;4],meta:[0,1,1,TRACER]}
+            normal_offset:[0.0;4],parameters:[1.0,0.0,0.0,0.0],meta:[0,1,1,TRACER]}
     }
     pub fn origin(self)->Vec3 {Vec3::from_array(self.origin_age[..3].try_into().unwrap())}
     pub fn active(self)->bool {

@@ -1170,8 +1170,7 @@ fn scene_block_with_asset_check(
 
     let raw_items = v["items"]
         .as_array()
-        .filter(|items| !items.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("scene block {path:?} has no items"))?;
+        .ok_or_else(|| anyhow::anyhow!("scene block {path:?} items must be an array"))?;
     let mut items = Vec::with_capacity(raw_items.len());
     for (index, it) in raw_items.iter().enumerate() {
         let context = format!("items[{index}]");
@@ -1633,6 +1632,16 @@ mod tests {
         })
     }
 
+    #[test]
+    fn terrain_only_scene_block_survives_json_roundtrip() {
+        let mut value=valid_scene("assets/test/unused.glb");value["items"]=serde_json::json!([]);
+        let encoded=serde_json::to_string(&value).unwrap();
+        let loaded:serde_json::Value=serde_json::from_str(&encoded).unwrap();
+        let stamp=scene_block_with_asset_check(&loaded,Path::new("terrain.scene-block.v1.json"),|_|false).unwrap();
+        assert!(stamp.items.is_empty());
+        let mut bad=loaded;bad["terrain"]["heights_m"]=serde_json::json!([]);
+        assert!(scene_block_with_asset_check(&bad,Path::new("bad.json"),|_|false).is_err());
+    }
     #[test]
     fn rigid_prefab_preserves_floor_furniture_and_lamps_above_sloping_ground() {
         let light = crate::environment_authoring::AuthoredLight::point_preset("desk".into(), "bulb", Vec3::new(2.0, 2.4, 0.0));

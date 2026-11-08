@@ -33,15 +33,24 @@ impl Game {
     /// travelling along `dir`, with the speed, flown distance and age of a shot from `range_m`.
     pub fn debug_launch_round(&mut self, shell: &'static crate::ballistics::ShellSpec, from_player: bool,
         target: Vec3, dir: Vec3, range_m: f32, seed: u32) -> u64 {
+        self.debug_launch_round_with_lead(shell,from_player,target,dir,range_m,seed,LEAD_M)
+    }
+
+    pub fn debug_launch_round_with_lead(&mut self,shell:&'static crate::ballistics::ShellSpec,from_player:bool,
+        target:Vec3,dir:Vec3,range_m:f32,seed:u32,lead_m:f32)->u64 {
         let dir = dir.normalize_or_zero();
-        let flown = (range_m - LEAD_M).max(0.0);
+        let flown = (range_m - lead_m).max(0.0);
         let id = self.next_projectile_id;
         self.next_projectile_id = id.wrapping_add(1).max(1);
         let shooter = if from_player { ProjectileShooter::Player } else { ProjectileShooter::Enemy(usize::MAX) };
-        let mut projectile = AuthoritativeProjectile::new(id, shooter, shell, target - dir * LEAD_M, dir, seed);
+        // Backtrack the same analytic gravity law used by swept_step. The selected
+        // point is the contact point after the remaining flight, not a flat launch height.
+        let t0=shell.time_of_flight(flown);let t1=shell.time_of_flight(flown+lead_m);
+        let lift=0.5*PROJECTILE_GRAVITY_MPS2*(t1*t1-t0*t0);
+        let mut projectile = AuthoritativeProjectile::new(id, shooter, shell, target-dir*lead_m+Vec3::Y*lift, dir, seed);
         projectile.distance_m = flown;
         projectile.age_s = shell.time_of_flight(flown);
-        projectile.velocity = dir * shell.velocity_at(flown);
+        projectile.velocity = dir*shell.velocity_at(flown)-Vec3::Y*(PROJECTILE_GRAVITY_MPS2*projectile.age_s);
         self.projectiles.push(projectile);
         id
     }
@@ -442,3 +451,21 @@ static MG_MARKER: crate::ballistics::ShellSpec = crate::ballistics::ShellSpec {
     pen_ref_mm: 0.0,
     ref_range_m: 0.0,
 };
+
+#[cfg(test)]
+mod launch_continuity_tests {
+    use super::*;
+    #[test]
+    fn cinematic_approach_arrives_at_selected_point_under_the_real_flight_law(){
+        for shell in [&crate::ballistics::PZGR_40,&crate::ballistics::M829A2_REVIEW] {
+            let range=200.;let lead=80.;let flown=range-lead;
+            let t0=shell.time_of_flight(flown);let t1=shell.time_of_flight(range);
+            let target=Vec3::new(0.8,2.1,1.6);let dir=Vec3::NEG_Z;
+            let origin=target-dir*lead+Vec3::Y*(0.5*PROJECTILE_GRAVITY_MPS2*(t1*t1-t0*t0));
+            let mut p=AuthoritativeProjectile::new(1,ProjectileShooter::Player,shell,origin,dir,1);
+            p.age_s=t0;p.distance_m=flown;
+            p.commit_step(p.swept_step(t1-t0));
+            assert!(p.pos.distance(target)<0.001,"{:?}",p.pos);
+        }
+    }
+}

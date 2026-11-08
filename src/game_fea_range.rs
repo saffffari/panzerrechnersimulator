@@ -37,6 +37,8 @@
 use super::*;
 #[path = "game_fea_range/rewind.rs"]
 mod rewind;
+#[path = "game_fea_range/offline.rs"]
+mod offline;
 #[path = "game_fea_range/cache.rs"]
 mod cache;
 #[path = "game_fea_range/menus.rs"]
@@ -45,6 +47,8 @@ mod menus;
 mod aim;
 #[path = "game_fea_range/payloads.rs"]
 mod payloads;
+#[path = "game_fea_range/maps.rs"]
+mod maps;
 use crate::{act_manifest, celestial_sky, ephemeris, graphics, world};
 use std::collections::HashSet;
 use glam::Vec4;
@@ -133,10 +137,10 @@ const SHOOTERS: [&str; 18] = [
     "28.5-TON T-34 VEHICLE PAYLOAD, 343 M/S (EXPERIMENT)",
 ];
 
-fn shells() -> [&'static crate::ballistics::ShellSpec; 18] {
+fn shells() -> [&'static crate::ballistics::ShellSpec; 21] {
     use crate::ballistics as b;
     [&b::BR_240_M42, &b::BR_240, &b::BR_240P, &b::BR_271_ZIS2, &b::BR_350B, &b::OF_350_F34, &b::BR_354P, &b::BR_365,
-        &b::BR_412, &b::BR_471, &b::OF_530, &b::BR_540, &b::PZGR_39, &b::PZGR_40, &b::SPRGR_88, &b::PZGR_39_43, &b::GUSTAV_800_PLAYGROUND, &b::T34_MACH1_PLAYGROUND]
+        &b::BR_412, &b::BR_471, &b::OF_530, &b::BR_540, &b::PZGR_39, &b::PZGR_40, &b::SPRGR_88, &b::PZGR_39_43, &b::GUSTAV_800_PLAYGROUND, &b::T34_MACH1_PLAYGROUND, &b::HEAT_REVIEW, &b::HESH_REVIEW, &b::M829A2_REVIEW]
 }
 
 /// Range (m) at which `shell` arrives at `v` m/s by its own decay law (0 at or above the muzzle).
@@ -286,7 +290,7 @@ enum Tape {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Knob {
     PlacedShot, Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot, CacheSim, RenderShot,
-    Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, TimeStep, Loop,
+    Map, Racks, Lamps, LampPower, Engine, Fresh, SlowSpan, RunLength, TimeSpeed, TimeStep, Loop,
     MovingCamera, Wear(usize), SnowTank, SnowWorld, MaterialsGame, SmokeDensity, SmokeDelay, EffectsAuthored, Concussion, FlashAfterimage,
     Focal, SavedCam, AddCam, DeleteCam, ExportCams,
     SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset,
@@ -311,7 +315,7 @@ fn kind(knob: Knob) -> Kind {
     use Knob::*;
     match knob {
         Gun => Kind::Info,
-        PlacedShot | Shell | TargetKind | Seed | SavedShot | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
+        Map | PlacedShot | Shell | TargetKind | Seed | SavedShot | SavedCam | SectionPreset | Day | Look | DitherPattern => Kind::Stepper,
         Racks | Lamps | Engine | Fresh | Loop | MovingCamera | SectionOn | SkyRunning | AutoExposure | WhiteBalance
         | Concussion | FlashAfterimage => Kind::Toggle,
         CacheSim | RenderShot | AddShot | AddCam | DeleteCam | ExportCams | EffectsAuthored | SnapToShot | LookDefaults | MaterialsGame | TissueAuthored => Kind::Action,
@@ -367,7 +371,7 @@ fn group_rows(group: usize) -> Vec<Knob> {
     use Knob::*;
     match group {
         0 => vec![PlacedShot, Shell, Gun, Range, Velocity, FromAz, FromEl, TargetKind, Seed, SavedShot, AddShot],
-        1 => vec![TimeSpeed, TimeStep, Racks, Lamps, LampPower, Engine],
+        1 => vec![Map, TimeSpeed, TimeStep, Racks, Lamps, LampPower, Engine],
         2 => vec![Focal, SavedCam, AddCam, DeleteCam, ExportCams],
         3 => vec![SectionOn, SectionPreset, SnapToShot, SectionYaw, SectionPitch, SectionOffset],
         4 => vec![Day, Time, SkyRunning, SkyRate, Weather, AutoExposure, Exposure],
@@ -400,7 +404,7 @@ const BAR_TOP: f32 = 1.0 - 0.008 - BAR_H;
 const BAR_ROW_Y: f32 = BAR_TOP + 0.028;
 const BAR_ROW_H: f32 = 0.024;
 /// The buttons' left edge, their width and the last (wide) one's.
-const BUTTONS_X: f32 = 0.265;
+const BUTTONS_X: f32 = 0.315;
 const BUTTON_W: f32 = 0.040;
 const BUTTON_WIDE: f32 = 0.066;
 /// The group headers' left edge.
@@ -444,8 +448,6 @@ const HANDLE_BOX: f32 = 0.016;
 const HANDLE_REACH: f32 = 0.022;
 /// The handles show their arrows (and the shot handle its caption) only with the cursor this near.
 const HANDLE_NEAR: f32 = 0.06;
-/// Screen distance of a centre-pad drag per 45° step.
-const HANDLE_DRAG_STEP: f32 = 0.04;
 
 /// A group's name on its header: its first word ("TISSUE (REVIEW)" is TISSUE).
 fn header_name(name: &str) -> &str {
@@ -630,6 +632,9 @@ struct Range {
     queue: wgpu::Queue,
     r: Renderer,
     g: Game,
+    manifest: String,
+    pending_map: Option<String>,
+    open_world: bool,
     shot: ShotSetup,
     scene: SceneSetup,
     section: Section,
@@ -667,6 +672,8 @@ struct Range {
     /// seconds of game time per second past the run), the clock's owed fraction carried.
     playing: bool,
     time_speed: f32,
+    aim_rings: bool,
+    aim_drag: Option<usize>,
     time_step: f32,
     play_clock: f32,
     /// The clip marked on the timeline (run frames, inclusive) and whether play loops over it
@@ -750,6 +757,7 @@ struct Range {
     fog: Option<f32>,
     /// A dial's face (a ring, drawn small).
     dial_image: u32,
+    damage_hud: Option<hud::DamageHud>,
     /// The display look as the renderer started (LOOK DEFAULTS restores it).
     look_start: (f32, [f32; 4], f32, Option<crate::renderer::display_tuning::DisplayTuning>, f32),
 }
@@ -761,8 +769,11 @@ fn fmt_kj(v: f32) -> String {
 impl Range {
     fn new(device: wgpu::Device, queue: wgpu::Queue, headless: bool) -> anyhow::Result<Self> {
         // The Canyon run's own course (`canyon::manifest_path`, as `canyon_game` selects it).
-        act_manifest::select_runtime_manifest(Some(crate::canyon::manifest_path()))?;
-        let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+        let selected=maps::selected();
+        let act=act_manifest::select_runtime_manifest(Some(selected))?.unwrap_or(1);
+        let manifest=act_manifest::selected_runtime_manifest().unwrap().1.to_string_lossy().into_owned();
+        let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(act))?;
+        r.apply_authored_lighting(g.scene_environment.lighting,g.act.season==crate::world::Season::Winter);
         let payload_t34=g.slots.t34[0].map(|source|r.clone_actor_mesh(source));
         let gustav=super::game_fea::penetrator_mesh(super::game_fea::penetrator_body(&crate::ballistics::GUSTAV_800_PLAYGROUND));
         let prototype=r.register_instanced_prototype(&device,&queue,&gustav);
@@ -784,10 +795,16 @@ impl Range {
         g.debug_hold_enemy_fire();
         g.targets_only = true;
         g.god = false;
-        g.debug_place_tiger(TIGER_AT, TIGER_HEADING);
-        let sky = Sky { day: 0, local_h: 13.5, weather: 0.0, exposure: None, running: true, rate: 60.0 };
+        let tiger_at=if manifest.contains("bridge-"){Vec2::new(-300.,-600.)}else{TIGER_AT};
+        g.debug_place_tiger(tiger_at, TIGER_HEADING);
+        let mut sky = Sky { day: 0, local_h: 13.5, weather: 0.0, exposure: None, running: true, rate: 60.0 };
+        if let Some(utc)=g.scene_environment.lighting.utc {
+            let days=(utc.plus_seconds(LOCAL_UTC_OFFSET_H*3600.).jd-ephemeris::UtcInstant::from_calendar(1942,12,21,0,0,0.).jd).max(0.);
+            sky.day=days.floor() as i32;sky.local_h=((days-days.floor())*24.) as f32;sky.running=false;
+            sky.weather=r.overcast;
+        }
         let mut range = Self {
-            device, queue, r, g,
+            device, queue, r, g, manifest, pending_map:None, open_world:false,
             shot: ShotSetup { shell: 3, range_m: 400.0, target: Target::Man(CrewRole::Loader), from_az: -90.0, from_el: 0.0,
                 seed: 0x5EC7_A000 },
             scene: SceneSetup { racks_loaded: true, cabin_lamps: true, fresh_each_run: true, slow_s: 0.25, run_s: 4.0 },
@@ -812,6 +829,8 @@ impl Range {
             shot_t: 0.0,
             playing: false,
             time_speed: 1.0,
+            aim_rings: false,
+            aim_drag: None,
             time_step: TICK,
             play_clock: 0.0,
             clip: None,
@@ -864,7 +883,7 @@ impl Range {
             win: [1920.0, 1080.0],
             frame_size: (0, 0),
             live_image: false,
-            tiger_at: TIGER_AT,
+            tiger_at,
             tiger_heading: TIGER_HEADING,
             open: [true, false, false, false, false, false, false, false, false],
             cameras: std::fs::read_to_string(CAMERAS_PATH).ok().and_then(|t| serde_json::from_str(&t).ok())
@@ -874,9 +893,11 @@ impl Range {
                 .unwrap_or_default(),
             camera_at: None,
             dial_image: 0,
+            damage_hud: None,
             fog: None,
             look_start: (0.0, [1.0, 1.0, 0.0, 1.0], 0.0, None, 0.0),
         };
+        range.damage_hud = Some(hud::DamageHud::load(&mut range.r,&range.device,&range.queue));
         range.dial_image = range.r.upload_image(&range.device, &range.queue, &dial_face(), DIAL_FACE, DIAL_FACE);
         range.look_start = (range.r.look, range.r.display_grade, range.r.display_dither_pattern, range.r.display_tuning,
             range.r.fog_density);
@@ -960,7 +981,9 @@ impl Range {
         // head's sway, a hit's camera kick): every step starts from the editor's camera, so a run
         // repeats whether or not its frames were drawn.
         self.place_camera();
+        self.g.editor_step_limit = Some(dt);
         self.g.update(&input, dt, &mut self.r);
+        self.g.editor_step_limit = None;
         self.tape.push(Tape::Step(dt));
     }
 
@@ -1118,6 +1141,17 @@ impl Range {
         self.g.commander_outside = false;
         self.g.debug_set_driver_visor(false, true);
         self.g.drive_roof_hatches(&mut self.r);
+        // A paused reset never ticks Game::update. Upload the cupola's closed pose now,
+        // including the separately exported spindle and grip that followed the blown lid.
+        let turret = self.g.player.turret_model();
+        for (slot, model) in [
+            (self.g.slots.hatch, super::cupola_hatch_model(turret, 0.0)),
+            (self.g.slots.hatchlever, super::cupola_hatch_lever_model(turret, 0.0)),
+            (self.g.slots.cupola_grip, super::cupola_hatch_model(turret, 0.0)),
+        ] {
+            self.r.set_model(slot, model);
+            self.r.set_visible(slot, true);
+        }
         self.run = None;
         self.frame_at = None;
         self.past_run = false;
@@ -1373,9 +1407,8 @@ impl Range {
             Some(plane) => {
                 let meshes = self.section_meshes();
                 self.r.set_film_section(Some(plane), &meshes);
-                // A body solved on its cells is cut solid: its inside cells at the plane drawn too
-                // (redrawn here, so a held simulation shows the plane where it is now).
-                super::crew_corpse_tissue::set_review_section(Some(plane));
+                // The tank is sectioned; people retain their complete live/casualty geometry.
+                super::crew_corpse_tissue::set_review_section(None);
                 self.g.drive_physical_crew_casualties(&mut self.r);
             }
             None => {
@@ -1421,9 +1454,14 @@ impl Range {
             lo = lo.min(p);
             hi = hi.max(p);
         }
-        // Everything of the vehicle, not only its solid parts: the glass, the periscope screens,
-        // the lamp lenses, the crew and the effects inside it are cut with it (the camera's only).
-        self.r.meshes_centred_within(lo, hi, 20.0)
+        // Keep all live crew and their worn equipment whole. Actor-owned corpse/tissue
+        // instance pools also remain whole in the renderer, including after a casualty.
+        let s=&self.g.slots;
+        let crew:std::collections::BTreeSet<_>=s.lan_crew.iter().chain(&s.commander_crew)
+            .chain(&s.crew_helmet).chain(s.couch_dead.iter().flatten())
+            .chain(s.couch_bones.iter().flatten()).chain(&s.couch_gore)
+            .chain(&s.driver_arms).copied().collect();
+        self.r.meshes_centred_within(lo, hi, 20.0).into_iter().filter(|i|!crew.contains(i)).collect()
     }
 
     /// The camera ray through the window point `cursor` (0..1; the viewport's centre for a point
@@ -1517,6 +1555,7 @@ impl Range {
                 Target::Man(role) => format!("{:?}", role).to_uppercase(),
             }),
             Knob::Seed => ("SEED".into(), format!("{:08X}", self.shot.seed)),
+            Knob::Map => ("MAP".into(),self.map_label().into()),
             Knob::Racks => ("RACKS".into(), if self.scene.racks_loaded { "LOADED" } else { "EMPTY" }.into()),
             Knob::Lamps => ("CABIN LAMPS".into(), if self.scene.cabin_lamps { "ON" } else { "OFF" }.into()),
             Knob::LampPower => ("LAMP POWER".into(), format!("X{:.0}{}", review_lamp_gain(),
@@ -1657,6 +1696,7 @@ impl Range {
                 };
             }
             Knob::Seed => self.shot.seed = self.shot.seed.wrapping_add_signed(s as i32),
+            Knob::Map => self.request_map(if self.map_label()=="BRIDGE FIELD" {0}else{1}),
             Knob::Racks => self.scene.racks_loaded = !self.scene.racks_loaded,
             Knob::Lamps => {
                 self.scene.cabin_lamps = !self.scene.cabin_lamps;
@@ -2024,14 +2064,30 @@ impl Range {
                 // so the file plays at true speed.
                 let dt = if self.recorder.is_some() { TICK * REAL_TICKS_PER_FRAME as f32 } else { dt };
                 self.play_clock += dt * self.time_speed;
+                // Keep the update cadence when slowing time: smaller physical steps create
+                // new poses each display frame instead of holding a 60 Hz state for ten frames.
+                let step_dt = playback_step(self.time_step, self.time_speed);
+                // An interactive frame may need several sequential physics steps. Only its
+                // final state is displayed; retain presentation pages until that state exists.
+                // Offline frame-directed captures keep their explicit, unbatched step path.
+                let defer = self.recorder.is_none()
+                    && self.play_clock + step_dt * 1e-5 >= step_dt * 2.0;
+                let previous_presentation=self.g.defer_presentation_rebuild;
+                let previous_rtt=self.g.defer_rtt_to_render;
+                if defer {self.g.defer_presentation_rebuild=true;self.g.defer_rtt_to_render=true;}
                 let mut steps = 0;
-                while self.play_clock >= self.time_step && steps < if self.recorder.is_some() { 64 } else { 32 } {
-                    self.play_clock -= self.time_step;
-                    self.step(self.time_step);
-                    self.shot_t += self.time_step;
+                while self.play_clock + step_dt * 1e-5 >= step_dt && steps < if self.recorder.is_some() { 64 } else { 32 } {
+                    self.play_clock = (self.play_clock - step_dt).max(0.0);
+                    self.step(step_dt);
+                    self.shot_t += step_dt;
                     steps += 1;
                 }
-                self.play_clock = self.play_clock.min(self.time_step);
+                self.g.defer_presentation_rebuild=previous_presentation;
+                self.g.defer_rtt_to_render=previous_rtt;
+                if defer && steps>0 && !previous_presentation {
+                    self.g.publish_catchup_presentation(&mut self.r);
+                }
+                self.play_clock = self.play_clock.min(step_dt);
                 self.past_run = self.run.is_some();
             }
             self.idle_s = 0.0;
@@ -2142,8 +2198,8 @@ impl Range {
                 let a = t * std::f32::consts::TAU;
                 aim + (x * a.sin() + z * a.cos()) * SHOT_HANDLE_M
             } else {
-                let a = (-60.0 + 140.0 * t).to_radians();
-                aim + (h * a.cos() + up * a.sin()) * (SHOT_HANDLE_M * 1.22)
+                let a = t * std::f32::consts::TAU;
+                aim + (h * a.cos() + up * a.sin()) * SHOT_HANDLE_M
             }
         }).collect()
     }
@@ -2203,6 +2259,7 @@ impl Range {
         let Some(angle) = self.shot_cursor_angle(which,c) else { return };
         if which == 0 { self.shot.from_az = (angle + offset + 180.0).rem_euclid(360.0)-180.0; }
         else { self.shot.from_el = (angle + offset).clamp(-60.0,80.0); }
+        self.sync_placed_shot();
         self.status = format!("SHOT FROM BEARING {:+.0}, ELEVATION {:+.0}", self.shot.from_az, self.shot.from_el);
     }
 
@@ -2554,7 +2611,8 @@ impl Range {
     fn state_json(&self) -> serde_json::Value {
         let d = self.tuning_display();
         let t = &self.tuning;
-        serde_json::json!({
+        let mut state = serde_json::json!({
+            "manifest": self.manifest,
             "shots": self.placed_shots.iter().enumerate().map(|(i,s)|serde_json::json!({"name":format!("Shot {}",i+1),"shot":if self.selected_shot==Some(i){self.shot.json()}else{s.json()}})).collect::<Vec<_>>(),
             "selected_shot": self.selected_shot,
             "shot": {"shell": self.shot.shell, "range_m": self.shot.range_m, "from_az": self.shot.from_az, "from_el": self.shot.from_el,
@@ -2581,18 +2639,13 @@ impl Range {
             "battle": {"on": self.battle, "t34s": self.t34s.iter().map(|(p, h)| [p.x, p.y, *h]).collect::<Vec<_>>(),
                 "route": self.route.iter().map(|p| p.to_array()).collect::<Vec<_>>()},
             "open": self.open,
-        })
+        });
+        crate::editor::EditorSessionLook::capture(&self.r).write(&mut state);
+        state
     }
 
-    fn save_state(&self) {
-        let _ = std::fs::write(STATE_PATH, serde_json::to_string_pretty(&self.state_json()).unwrap_or_default());
-    }
-
-    /// Settings from the last launch (whatever is missing or unreadable keeps its default).
-    fn load_state(&mut self) {
-        let Some(v) = std::fs::read_to_string(STATE_PATH).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { return };
-        self.apply_state(&v);
-    }
+    fn save_state(&self) {self.save_map_state();}
+    fn load_state(&mut self) {self.load_map_state();}
 
     fn apply_state(&mut self, v: &serde_json::Value) {
         if let Some(items)=v["shots"].as_array() {
@@ -2663,21 +2716,12 @@ impl Range {
         if let Some(x) = f(&t["spread"]) { self.tuning.spread = x; }
         self.apply_tuning();
         let l = &v["look"];
-        if let Some(x) = f(&l["look"]) { self.r.look = x; }
-        if let Some(x) = arr4(&l["grade"]) { self.r.display_grade = x; }
         let fx = &l["eye_fx"];
         if let Some(x) = fx["concussion"].as_bool() { self.eye_fx.concussion = x; }
         if let Some(x) = fx["flash"].as_bool() { self.eye_fx.flash = x; }
-        if let Some(x) = f(&l["dither"]) { self.r.display_dither_pattern = x; }
-        if l["tuned"].as_bool() == Some(true) {
-            let mut d = self.tuning_display();
-            if let Some(x) = f(&l["palette_levels"]) { d.palette_levels = x; }
-            if let Some(x) = f(&l["ordered_dither"]) { d.ordered_dither = x; }
-            if let Some(x) = f(&l["ldr_dither"]) { d.ldr_dither = x; }
-            if let Some(x) = f(&l["retro"]) { d.retro_strength = x; }
-            if let Some(x) = l["white_balance"].as_bool() { d.ambient_white_balance = x; }
-            if let Some(x) = f(&l["white_balance_strength"]) { d.ambient_white_balance_strength = x; }
-            self.r.display_tuning = Some(d);
+        let display = crate::editor::EditorSessionLook::read(v, crate::editor::EditorSessionLook::capture(&self.r));
+        if let Err(error) = display.and_then(|display| display.apply(&mut self.r, &self.device, &self.queue)) {
+            eprintln!("[range-look] retained previous display: {error:#}");
         }
         self.fog = f(&l["fog"]);
         if let Some(x) = f(&v["lamp_gain"]) { set_review_lamp_gain(x.max(1.0)); }
@@ -2937,12 +2981,12 @@ impl Range {
             }
         }
         if !self.battle { for (i,k) in [Knob::PlacedShot,Knob::Shell,Knob::TimeStep].into_iter().enumerate() {
-            rows.push((k,0.365,BAR_ROW_Y+0.012+i as f32*0.027));
+            rows.push((k,0.415,BAR_ROW_Y+0.012+i as f32*0.027));
         }}
         if !self.battle {for (i,k) in [Knob::SavedCam,Knob::SavedShot,Knob::AddShot].into_iter().enumerate(){
             rows.push((k,0.585,BAR_ROW_Y+0.012+i as f32*0.027));
         }}
-        if !self.battle {rows.push((Knob::TimeSpeed,0.195,BAR_ROW_Y+0.012+2.0*0.027));}
+        if !self.battle {rows.push((Knob::TimeSpeed,0.245,BAR_ROW_Y+0.012+2.0*0.027));}
         (rows, Vec::new())
     }
 
@@ -3027,7 +3071,7 @@ impl Range {
         };
         let chosen = if self.battle { 1 } else { 0 };
         for (m, [x, y, w, h]) in self.mode_tab_rects().into_iter().enumerate() {
-            let (fill, ink) = if m == chosen { (INK, BLACK) } else if m == 2 { (BOX, [0.28, 0.28, 0.28, 1.0]) } else { (BOX, INK) };
+            let (fill, ink) = if m == chosen { (INK, BLACK) } else { (BOX, INK) };
             self.r.fill_rect(x, y, w, h, fill);
             self.text_bold(MODES[m], x + w * 0.5, y + h * 0.5, TEXT * 0.72, ink, crate::ui::Align::Center);
         }
@@ -3039,7 +3083,7 @@ impl Range {
         let [hx, _, _, _] = hide_rect(false);
         self.text(&format!("{mode}  T {:.2} S   {:.0} FPS  SIM {:.0} MS  DRAW {:.0} MS   H: HELP", t, 1.0 / self.perf[0].max(1.0e-4),
             self.perf[1], self.perf[2]), hx - 0.008, BAR_TOP - 0.010, TEXT * 0.66, DIM, crate::ui::Align::Right);
-        self.draw_crew_plan([LEFT_X, BAR_TOP - 0.230], 0.215);
+        self.draw_crew_plan([0.125, BAR_TOP + 0.008], 0.100);
         for (label, col, row) in self.buttons() {
             let [x, y, w, h] = button_rect(col, row);
             let lit = if self.battle {
@@ -3063,7 +3107,7 @@ impl Range {
                     "STILL" => "SAVE A CONVERGED STILL OF THE CURRENT VIEW",
                     _ => "REPEAT THE SHOT OR SELECTED CLIP",
                 };
-                self.text(hint, 0.205, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
+                self.text(hint, 0.255, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
             }
             let rec_label = self.recorder.as_ref().map(|r| format!("REC {:.0} S", r.frames as f32 / 30.0));
             let loop_label = match (self.looping, self.clip) {
@@ -3102,7 +3146,7 @@ impl Range {
         let line: Vec<String> = notes.iter().map(|(t, _)| t.clone()).collect();
         let chars = ((hx - 0.36 - LEFT_X) * self.win[0] / (0.45 * TEXT * 0.66 * self.win[1])).max(10.0) as usize;
         let status: String = line.join("   ").chars().take(chars).collect();
-        self.text(&status, 0.205, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
+        self.text(&status, 0.255, BAR_TOP + 0.013, TEXT * 0.66, INK, crate::ui::Align::Left);
         // The groups' headers: a disclosure each (closed >, open v), lit while open.
         for (g, [x, y, w, h]) in self.header_rects().into_iter().enumerate() {
             let open = self.open[g];
@@ -3166,8 +3210,8 @@ impl Range {
             let lines = [
                 "RMB HOLD: LOOK    WASD/QE: FLY    SHIFT: FAST    CTRL: SLOW    WHEEL: FLY SPEED    [ ]: FOCAL LENGTH",
                 "ALT+LMB: ORBIT    ALT+MMB (OR MMB): PAN    ALT+RMB: DOLLY    DOUBLE-CLICK: THE ORBIT POINT    CLICK X/Y/Z: VIEW ALONG IT",
-                "LMB ON TANK: ADD SHOT    HOLD + DRAG: AIM ON THE SPHERE    ALT+LMB: ORBIT",
-                "ONE SPHERE HANDLE SETS THE INCOMING DIRECTION IN ALL AXES; ROUND / SHOT / CAMERA USE POPUP LISTS",
+                "LMB ON TANK: ADD SHOT    CLICK RED PLUS: ROTATION RINGS    ALT+LMB: ORBIT",
+                "RED DISC: AZIMUTH    WHITE DISC: ELEVATION    DRAG SECTION CENTRE ALONG ITS NORMAL",
                 "C: SECTION ON/OFF    V: AXIS NEAREST THE CAMERA    G: AXIS NEAREST THE SHOT'S PLANE    HANDLE OR ALT+ARROWS: TURN 90",
                 "PANEL: ONE TAB OPEN AT A TIME; DRAG A DIAL UP/DOWN (SHIFT FINE), WHEEL STEPS, RMB RESETS",
                 "K: ADD CAMERA    1-9: VIEW THROUGH CAMERA    T: MOVE THE TIGER TO THE SNOW UNDER THE CURSOR",
@@ -3190,12 +3234,6 @@ impl Range {
         // The timeline: a 5 px white line along the bottom edge from the left to the frame the
         // simulation stands at; a clip in orange; on hover the playhead's tick and a readout.
         let base = self.timeline_y();
-        if !self.battle {
-            let state = if self.playing { "LIVE" } else { "PAUSED" };
-            let recording = if self.recorder.is_some() { "RECORDING VIDEO" } else { "VIDEO NOT RECORDING" };
-            self.text(&format!("{state} | F: FIRE | SPACE: PAUSE / RESUME | BACKSPACE: RESET | {recording}"),
-                if self.hide_ui {0.008}else{0.205}, if self.hide_ui {base-0.034}else{BAR_TOP-0.027}, TEXT * 0.75, AMBER, crate::ui::Align::Left);
-        }
         let hovered = (cursor[1] - base).abs() < 0.018 || matches!(self.mode, Mode::Scrub(_));
         if let Some(run) = self.run {
             let n = run.total.max(1) as f32;
@@ -3309,7 +3347,7 @@ impl Range {
 
     /// The mode tabs' rectangles (x, y, w, h), as `MODES`.
     fn mode_tab_rects(&self) -> Vec<[f32; 4]> {
-        MODES.iter().take(2).enumerate().map(|(i,_)| [0.205,BAR_ROW_Y+i as f32*0.027,0.054,BAR_ROW_H]).collect()
+        MODES.iter().enumerate().map(|(i,_)| [0.255,BAR_ROW_Y+i as f32*0.027,0.054,BAR_ROW_H]).collect()
     }
 
     /// A mode tab clicked: RANGE, BATTLE, or WORLD (not built yet).
@@ -3317,7 +3355,7 @@ impl Range {
         match m {
             0 if self.battle => self.set_battle(false),
             1 if !self.battle => self.set_battle(true),
-            2 => self.status = "WORLD EDITOR: NOT BUILT YET (TAB WILL SWITCH BATTLE AND WORLD)".into(),
+            2 => self.open_world=true,
             _ => {}
         }
     }
@@ -3527,7 +3565,6 @@ impl Range {
 enum Drag {
     /// Shift+LMB: turning the shot's direction.
     Turn,
-    AimSphere(std::time::Instant),
     /// Alt+LMB: orbiting the camera about a point; Alt+MMB (or MMB): panning; Alt+RMB: dollying
     /// toward the point (the point under the cursor when the drag began).
     Orbit(Vec3),
@@ -3541,9 +3578,8 @@ enum Drag {
     ShotHandle(usize, f32),
     /// LMB on a dial: the dial, its position when taken and the cursor's height then.
     Dial(Knob, f32, f32),
-    /// LMB on the section handle's pad: 90° steps per `HANDLE_DRAG_STEP` of motion (the motion
-    /// not yet spent).
-    Rotate([f32; 2]),
+    /// LMB on the section centre: translation along its normal; arrows own rotation.
+    SlideSection,
     /// LMB on a placed T-34 in BATTLE edit: moving it over the snow.
     T34(usize),
 }
@@ -3569,6 +3605,10 @@ struct Input {
 
 struct App {
     state: Option<WindowState>,
+    world_editor: Option<crate::editor::EditorApp>,
+    reuse_window: Option<Arc<Window>>,
+    return_battle: bool,
+    integration_stage: u8,
     input: Input,
     last: Option<std::time::Instant>,
     active: Option<std::time::Instant>,
@@ -3836,16 +3876,19 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
+        if self.state.is_some() || self.world_editor.is_some() {
             return;
         }
         let attrs = Window::default_attributes().with_title("Panzerrechnersystem — FEA range");
-        let attrs = if std::env::var("KESSEL_FEA_RANGE_WINDOWED").as_deref() == Ok("1") {
+        let attrs = if std::env::var_os("KESSEL_FEA_RANGE_WORLD_PROBE").is_some() {
+            attrs.with_visible(false).with_inner_size(winit::dpi::PhysicalSize::new(1280,720))
+        } else if std::env::var("KESSEL_FEA_RANGE_WINDOWED").as_deref() == Ok("1") {
             attrs.with_inner_size(winit::dpi::PhysicalSize::new(1920, 1080))
         } else {
             attrs.with_maximized(true).with_fullscreen(Some(Fullscreen::Borderless(None)))
         };
-        let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
+        let window = self.reuse_window.take().unwrap_or_else(|| Arc::new(event_loop.create_window(attrs).expect("create window")));
+        window.set_title("Panzerrechnersystem — RANGE / BATTLE / WORLD");
         let built = (|| -> anyhow::Result<WindowState> {
             let size = window.inner_size();
             let instance = crate::create_instance();
@@ -3862,16 +3905,32 @@ impl ApplicationHandler for App {
                 view_formats: vec![], desired_maximum_frame_latency: 2,
             };
             surface.configure(&device, &config);
-            let range = Range::new(device, queue, false)?;
+            let mut range = Range::new(device, queue, false)?;
+            if self.return_battle {range.choose_mode(1);}
             Ok(WindowState { window: window.clone(), surface, config, range })
         })();
         match built {
             Ok(st) => {
+                maps::confirm_selected(&st.range.manifest);
                 st.window.request_redraw();
                 self.state = Some(st);
+                if std::env::var_os("KESSEL_FEA_RANGE_WORLD_PROBE").is_some() {
+                    if self.integration_stage==0 {
+                        self.integration_stage=1;
+                        self.state.as_mut().unwrap().range.open_world=true;
+                    } else {
+                        println!("[world-integration] RANGE -> WORLD -> RANGE on the same window; state rebuilt successfully");
+                        event_loop.exit();
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("[fea-range] start failed: {e:#}");
+                if maps::recover_selection() {
+                    self.reuse_window=Some(window);
+                    self.resumed(event_loop);
+                    return;
+                }
                 self.error = Some(format!("{e:#}"));
                 event_loop.exit();
             }
@@ -3879,6 +3938,7 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let Some(world)=&mut self.world_editor {world.window_event(event_loop,_id,event);return;}
         if self.state.is_none() {
             return;
         }
@@ -3911,6 +3971,7 @@ impl ApplicationHandler for App {
                 self.input.alt = m.state().alt_key();
             }
             WindowEvent::Focused(false) => {
+                if let Some(st)=self.state.as_mut(){st.range.aim_drag=None;}
                 self.input.keys.clear();
                 self.input.look = false;
                 self.input.drag = None;
@@ -3923,7 +3984,6 @@ impl ApplicationHandler for App {
                     let (dx, dy) = (c[0] - last[0], c[1] - last[1]);
                     let rg = &mut st.range;
                     match drag {
-                        Drag::AimSphere(_) => {rg.cursor=c;rg.drag_aim_sphere(dx,dy);},
                         Drag::Turn => {
                             rg.shot.from_az = ((rg.shot.from_az - dx * 180.0 + 180.0).rem_euclid(360.0)) - 180.0;
                             rg.shot.from_el = (rg.shot.from_el - dy * 90.0).clamp(-60.0, 80.0);
@@ -3931,19 +3991,16 @@ impl ApplicationHandler for App {
                         Drag::Orbit(pivot) => rg.orbit(pivot, dx, dy),
                         Drag::Pan(pivot) => rg.pan(pivot, dx, dy),
                         Drag::Dolly(pivot) => rg.dolly(pivot, dx, dy),
-                        Drag::Rotate(mut owed) => {
-                            owed[0] += dx;
-                            owed[1] += dy;
-                            let h = (owed[0] / HANDLE_DRAG_STEP).trunc() as i32;
-                            let v = (-owed[1] / HANDLE_DRAG_STEP).trunc() as i32;
-                            if h != 0 || v != 0 {
-                                rg.rotate_section(h, v);
-                                owed[0] -= h as f32 * HANDLE_DRAG_STEP;
-                                owed[1] += v as f32 * HANDLE_DRAG_STEP;
-                            }
-                            self.input.drag = Some((Drag::Rotate(owed), c));
-                            self.input.cursor = c;
-                            return;
+                        Drag::SlideSection => {
+                            let hull = rg.g.player.hull_model();
+                            let normal = rg.section.normal_hull();
+                            let centre = hull.transform_point3(SECTION_PIVOT + normal * rg.section.offset);
+                            let axis = match (rg.project(centre), rg.project(centre + hull.transform_vector3(normal))) {
+                                (Some(a), Some(b)) => Vec2::new(b[0]-a[0], b[1]-a[1]),
+                                _ => Vec2::ZERO,
+                            };
+                            rg.section.offset = (rg.section.offset + section_slide_delta(Vec2::new(dx,dy), axis)).clamp(-6.0,6.0);
+                            rg.section.on = true;
                         }
                         Drag::Dial(knob, t0, y0) => {
                             let k = if self.input.shift { 0.1 } else { 1.0 };
@@ -4074,10 +4131,16 @@ impl ApplicationHandler for App {
                             rg.playing = false;
                             self.input.drag = Some((Drag::Track, c));
                         } else if rg.aim_handle_hit(c) && !rg.in_panel(c) && rg.popup.is_none() {
-                            self.input.drag=Some((Drag::AimSphere(std::time::Instant::now()-std::time::Duration::from_millis(100)),c));
+                            rg.aim_rings=true;
+                        } else if let Some(which)=rg.aim_disc_hit(c).filter(|_|!rg.in_panel(c) && !alt) {
+                            if let Some(angle)=rg.shot_cursor_angle(which,c) {
+                                let value=if which==0 {rg.shot.from_az}else{rg.shot.from_el};
+                                rg.aim_drag=Some(which);
+                                self.input.drag=Some((Drag::ShotHandle(which,value-angle),c));
+                            }
                         } else if let Some(step) = rg.handle_hit(c).filter(|_| rg.mode == Mode::Live) {
                             if step == (0, 0) {
-                                self.input.drag = Some((Drag::Rotate([0.0, 0.0]), c));
+                                self.input.drag = Some((Drag::SlideSection, c));
                             } else {
                                 rg.rotate_section(step.0, step.1);
                             }
@@ -4093,10 +4156,12 @@ impl ApplicationHandler for App {
                             rg.sync_placed_shot();
                             rg.pick(c, false);
                             if rg.status.starts_with("AIM: picked") {rg.add_placed_shot();}
-                            self.input.drag=Some((Drag::AimSphere(std::time::Instant::now()),c));
+                            rg.aim_rings=false;
+                            rg.aim_drag=None;
                         }
                     }
                     MouseButton::Left => {
+                        if let Some(st)=self.state.as_mut(){st.range.aim_drag=None;}
                         // Letting go of the timeline makes the dragged frame live.
                         if let (Some((Drag::Track, _)), Some(st)) = (self.input.drag, self.state.as_mut()) {
                             if let Mode::Scrub(i) = st.range.mode {
@@ -4148,7 +4213,45 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(world)=&mut self.world_editor {
+            if let Some((window,battle,state))=world.take_range_return() {
+                if let Err(e)=maps::write_state(&state){eprintln!("[world-look] {e:#}");}
+                self.world_editor=None;
+                self.reuse_window=Some(window);self.return_battle=battle;
+                self.last=None;self.active=None;
+                self.resumed(event_loop);
+            } else {world.about_to_wait(event_loop);}
+            return;
+        }
+        if self.state.as_ref().is_some_and(|s|s.range.open_world || s.range.pending_map.is_some()) {
+            let mut old=self.state.take().unwrap();
+            old.range.save_state();old.range.finish_cached_render();
+            if old.range.recorder.is_some(){old.range.toggle_recording();}
+            let window=old.window.clone();
+            let world=old.range.open_world;
+            let manifest=old.range.pending_map.take().unwrap_or_else(||old.range.manifest.clone());
+            self.return_battle=old.range.battle;
+            let look=old.range.state_json();
+            let _=window.set_cursor_grab(winit::window::CursorGrabMode::None);
+            window.set_cursor_visible(true);
+            // Release the previous GPU world before constructing the next one.
+            drop(old);
+            self.input=Input::default();self.grabbed=false;self.last=None;self.active=None;
+            std::env::set_var("KESSEL_FEA_RANGE_MANIFEST",&manifest);
+            if world {
+                match crate::editor::EditorApp::attach(window.clone(),manifest.into(),&look) {
+                    Ok(mut editor)=>{
+                        if let Ok(prefix)=std::env::var("KESSEL_FEA_RANGE_WORLD_PROBE") {
+                            if let Err(e)=editor.run_integrated_probe(&prefix){self.error=Some(format!("world integration: {e:#}"));event_loop.exit();return;}
+                        }
+                        self.world_editor=Some(editor)
+                    },
+                    Err(e)=>{eprintln!("[world] {e:#}");self.reuse_window=Some(window);self.resumed(event_loop);}
+                }
+            } else {self.reuse_window=Some(window);self.resumed(event_loop);}
+            return;
+        }
         if let Some(st) = &self.state {
             if self.busy() || self.last.is_none_or(|t| t.elapsed().as_millis() >= 100) {
                 st.window.request_redraw();
@@ -4157,6 +4260,7 @@ impl ApplicationHandler for App {
     }
 
     fn device_event(&mut self, _l: &ActiveEventLoop, _id: winit::event::DeviceId, event: winit::event::DeviceEvent) {
+        if let Some(world)=&mut self.world_editor {world.device_event(_l,_id,event);return;}
         if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             if self.grabbed && !self.input.look {
                 self.play_mouse += Vec2::new(dx as f32, dy as f32);
@@ -4185,6 +4289,9 @@ fn prepare_environment() {
 
 /// `fea-range` (window) or `fea-range --shots PREFIX` (headless stills and the agreement check).
 pub fn run(shots: Option<&str>) -> anyhow::Result<()> {
+    // Reference material resolution is for explicit frame-directed/headless work. A desktop
+    // editor must not inherit that setting from an earlier film-render shell.
+    if shots.is_none() {std::env::set_var("KESSEL_TISSUE_SOLVE","interactive");}
     // KESSEL_FEA_RANGE_SMOKE=0: the range draws no smoke supports (owner, 2026-11-03).
     if std::env::var("KESSEL_FEA_RANGE_SMOKE").as_deref() == Ok("0") {
         crate::renderer::SMOKE_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -4196,7 +4303,7 @@ pub fn run(shots: Option<&str>) -> anyhow::Result<()> {
     }
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App { state: None, input: Input::default(), last: None, active: None, escape: None, error: None, saved: None, last_click: None,
+    let mut app = App { state: None, world_editor:None, reuse_window:None, return_battle:false, integration_stage:0, input: Input::default(), last: None, active: None, escape: None, error: None, saved: None, last_click: None,
         play_buttons: [false; 3], play_mouse: Vec2::ZERO, grabbed: false };
     event_loop.run_app(&mut app)?;
     if let Some(e) = app.error {
@@ -4213,6 +4320,88 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let mut rg = Range::new(device, queue, true)?;
+    if let Ok(plan)=std::env::var("KESSEL_FEA_RANGE_FILM") {return rg.offline_films(&plan);}
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref()==Ok("mantlet-recoil") {
+        rg.section.on=false;rg.playing=false;
+        let hull=rg.g.player.hull_model();
+        rg.look_at(hull.transform_point3(Vec3::new(4.,3.5,6.)),hull.transform_point3(Vec3::new(0.,2.3,1.5)));
+        let mut rows=Vec::new();
+        for (n,(yaw,pitch,age)) in [(0.,0.,2.),(0.,0.,0.06),(0.,0.,0.5),(0.4,0.15,0.06)].into_iter().enumerate() {
+            rg.g.player.turret_yaw=yaw;rg.g.player.gun_pitch=pitch;rg.g.player.shot_age=age;
+            rg.step(0.000001);
+            let fixed=rg.g.player.gun_model();let moving=rg.g.player.visual_gun_model();
+            for slot in [rg.g.slots.mantlet,rg.g.slots.gun_cradle] {
+                let (visible,actual)=rg.r.debug_mesh_state(slot).unwrap();
+                anyhow::ensure!(visible && actual.abs_diff_eq(fixed,1e-5),"fixed gun mount follows recoil at age {age}");
+            }
+            anyhow::ensure!(rg.r.debug_mesh_state(rg.g.slots.tiger[2]).unwrap().1.abs_diff_eq(moving,1e-5),"barrel did not follow recoil");
+            let models=rg.g.fire_surface_models();let source=rg.g.cabin_fire.source_contacts(&models);
+            anyhow::ensure!(source.model(79).abs_diff_eq(fixed,1e-5),"mantlet collision detached from visible armor");
+            rg.pose_view();
+            let path=format!("{prefix}-{n}.png");
+            crate::converge_headless_screenshot(&mut rg.r,&rg.device,&rg.queue,16)?;
+            rg.r.render_to_png(&rg.device,&rg.queue,&path,rg.r.iw,rg.r.ih)?;
+            rows.push(serde_json::json!({"yaw":yaw,"pitch":pitch,"shot_age":age,"fixed":fixed.to_cols_array(),"barrel":moving.to_cols_array(),"capture":path}));
+        }
+        std::fs::write(format!("{prefix}.json"),serde_json::to_vec_pretty(&rows)?)?;
+        println!("[mantlet-recoil] fixed armor/cradle, moving barrel, articulated contact frame: 4 poses pass");return Ok(());
+    }
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("cupola-reset") {
+        rg.g.hatch_open = true;
+        rg.g.hatch_t = 1.0;
+        let turret = rg.g.player.turret_model();
+        for (slot, model) in [
+            (rg.g.slots.hatch, super::cupola_hatch_model(turret, 1.0)),
+            (rg.g.slots.hatchlever, super::cupola_hatch_lever_model(turret, 1.0)),
+            (rg.g.slots.cupola_grip, super::cupola_hatch_model(turret, 1.0)),
+        ] { rg.r.set_model(slot, model); }
+        rg.reset();
+        let turret = rg.g.player.turret_model();
+        for (slot, expected) in [
+            (rg.g.slots.hatch, super::cupola_hatch_model(turret, 0.0)),
+            (rg.g.slots.hatchlever, super::cupola_hatch_lever_model(turret, 0.0)),
+            (rg.g.slots.cupola_grip, super::cupola_hatch_model(turret, 0.0)),
+        ] {
+            let (visible, actual) = rg.r.debug_mesh_state(slot).unwrap();
+            anyhow::ensure!(visible && actual.abs_diff_eq(expected, 1.0e-6), "paused reset left cupola mesh {slot} open");
+        }
+        println!("[cupola-reset] lid, spindle and grip visibly closed without a simulation tick");
+        return Ok(());
+    }
+
+    if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("editor-controls") {
+        rg.win=[1920.0,1080.0];rg.open=[false;GROUPS.len()];
+        rg.time_speed=0.1;rg.time_step=TICK;rg.run=None;rg.play_clock=0.0;rg.shot_t=0.0;rg.playing=true;
+        let target=rg.g.player.pos+Vec3::Y*100.0;
+        let id=rg.g.debug_launch_round(rg.shot.spec(),false,target,Vec3::Y,100.0,47);
+        let mut previous=rg.g.projectiles.iter().find(|p|p.id==id).unwrap().pos;
+        let mut changed=0;
+        for _ in 0..60 {
+            rg.tick(TICK);
+            let p=rg.g.projectiles.iter().find(|p|p.id==id).ok_or_else(||anyhow::anyhow!("probe projectile vanished"))?.pos;
+            if p.distance(previous)>1e-6 {changed+=1;}
+            previous=p;
+        }
+        anyhow::ensure!(changed==60 && (rg.shot_t-0.1).abs()<1e-5,"slow motion repeated states: {changed}/60, t={}",rg.shot_t);
+        rg.reset();
+        let hull=rg.g.player.hull_model();
+        rg.look_at(hull.transform_point3(Vec3::new(6.0,5.0,8.0)),hull.transform_point3(Vec3::new(0.0,1.5,0.5)));
+        rg.shot.target=Target::Point(Vec3::new(0.0,2.5,0.0));rg.shot.from_az=90.0;rg.shot.from_el=0.0;
+        rg.aim_rings=true;
+        let (aim,dir)=rg.aim_line();let (_, (h,up,x,z))=rg.shot_frames(aim,dir);
+        for (which,p) in [(0,aim+x*0.30+z*0.25),(1,aim+h*0.2+up*0.4)] {
+            let c=rg.project(p).ok_or_else(||anyhow::anyhow!("ring test outside view"))?;
+            anyhow::ensure!(rg.aim_disc_hit(c)==Some(which),"ring {which} full disc not clickable");
+        }
+        rg.aim_drag=Some(0);rg.section.on=true;rg.section.set_normal_hull(Vec3::X);rg.section.offset=0.5;
+        rg.pose_view();crate::converge_headless_screenshot(&mut rg.r,&rg.device,&rg.queue,12)?;
+        rg.draw_ui([0.1,0.1]);
+        let path=crate::capture_target("native-editor-controls-20261104.png");
+        rg.r.render_to_png_hud(&rg.device,&rg.queue,&path,1920,1080)?;
+        println!("[editor-controls] slow motion 60/60 moving projectile states at 0.1x, elapsed 0.1 s; both full discs clickable; capture {path}");
+        return Ok(());
+    }
+
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("payloads") {
         let hull=rg.g.player.hull_model();
         rg.look_at(hull.transform_point3(Vec3::new(12.0,8.0,15.0)),hull.transform_point3(Vec3::new(0.0,1.5,4.0)));
@@ -4239,8 +4428,9 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         rg.shot.target=Target::Point(Vec3::new(0.6,2.0,1.1));rg.add_placed_shot();
         anyhow::ensure!(rg.placed_shots[0].target==old && rg.placed_shots.len()==2,"adding a shot replaced the previous shot");
         let target=rg.shot.target;let projectiles=rg.g.projectiles.len();
-        for _ in 0..20 {rg.drag_aim_sphere(0.06,0.04);}
-        anyhow::ensure!(rg.shot.target==target && (rg.shot.dir_hull().length()-1.0).abs()<1e-5 && rg.g.projectiles.len()==projectiles,"sphere aiming moved the impact point or fired");
+        let (aim,dir)=rg.aim_line();let (_, (h,up,_,_))=rg.shot_frames(aim,dir);
+        if let Some(c)=rg.project(aim+(h+up)*0.25) {rg.drag_shot_handle(1,0.0,c);}
+        anyhow::ensure!(rg.shot.target==target && (rg.shot.dir_hull().length()-1.0).abs()<1e-5 && rg.g.projectiles.len()==projectiles,"ring aiming moved the impact point or fired");
         rg.save_named_preset("qa-popup-preset".into(),None);
         let exported:serde_json::Value=serde_json::from_slice(&std::fs::read("target/playground_preset.json")?)?;
         anyhow::ensure!(exported["settings"]["shots"].as_array().is_some_and(|v|v.len()==2),"preset export lost authored shots");
@@ -4257,7 +4447,7 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         rg.draw_ui([0.1,0.1]);rg.draw_popup([0.1,0.1]);
         let path=crate::capture_target(&format!("popup-rounds-{}.png",capture_stamp()));
         rg.r.render_to_png_hud(&rg.device,&rg.queue,&path,1920,1080)?;
-        println!("[menus-probe] direct round selection, two independent shots, full-sphere direction, named preset save/overwrite/export pass; capture {path}");
+        println!("[menus-probe] direct round selection, two independent shots, independent ring direction, named preset save/overwrite/export pass; capture {path}");
         return Ok(());
     }
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("live") {
@@ -4283,15 +4473,23 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         anyhow::ensure!(rg.playing && rg.free_fire && rg.run.is_none(), "FIRE did not start live simulation");
         let started = std::time::Instant::now();
         let mut costs = Vec::new();
-        for _ in 0..120 {
+        let mut profile=Vec::new();
+        let catchup=std::env::var("KESSEL_FEA_RANGE_PROBE_CATCHUP").ok().and_then(|s|s.parse::<u32>().ok()).unwrap_or(1).clamp(1,6);
+        let frames=120/catchup;
+        rg.g.sim_phase.take();
+        for frame_index in 0..frames {
             let frame = std::time::Instant::now();
-            rg.tick(1.0/60.0);
+            rg.tick(catchup as f32/60.0);
+            let sim_ms=frame.elapsed().as_secs_f64()*1000.0;
             rg.pose_view();
             let _ = rg.r.render_to_rgba(&rg.device, &rg.queue, rg.r.iw, rg.r.ih)?;
-            costs.push(frame.elapsed().as_secs_f64()*1000.0);
+            let total_ms=frame.elapsed().as_secs_f64()*1000.0;
+            costs.push(total_ms);
+            profile.push(serde_json::json!({"frame":frame_index,"sim_ms":sim_ms,"frame_ms":total_ms,"phases":rg.g.sim_phase.take()}));
             anyhow::ensure!(!rg.cache.busy() && rg.cache.len() == 0, "live firing started a cache");
         }
         anyhow::ensure!(rg.shot_t > 1.9, "live simulation stalled: {}", rg.shot_t);
+        std::fs::write(format!("{prefix}-profile.json"),serde_json::to_vec_pretty(&profile)?)?;
         let blood = rg.g.debug_surface_blood();
         println!("[live-probe] blood {blood}");
         anyhow::ensure!(blood["emitted"].as_u64().unwrap_or(0)>0 && blood["retained_cells"].as_u64().unwrap_or(0)>0,
@@ -4310,7 +4508,7 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
         anyhow::ensure!(!rg.playing && rg.run.is_none(), "RESET did not leave a fresh paused scene");
         costs.sort_by(f64::total_cmp);
         println!("[live-probe] FIRE advances 2 s; no caches; PAUSE/RESUME/RESET pass; wall {:.2} s, frame ms median {:.1}, p95 {:.1}, worst {:.1}",
-            started.elapsed().as_secs_f64(), costs[60], costs[114], costs[119]);
+            started.elapsed().as_secs_f64(), costs[costs.len()/2], costs[(costs.len()-1)*95/100], costs[costs.len()-1]);
         return Ok(());
     }
     if std::env::var("KESSEL_FEA_RANGE_PROBE").as_deref() == Ok("cache") {
@@ -4635,8 +4833,50 @@ fn headless_shots(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Keep the number of temporal samples per wall second independent of slow motion.
+fn playback_step(step: f32, speed: f32) -> f32 {
+    step.max(1e-6) * speed.clamp(0.001, 1.0)
+}
+
+/// Translate along the projected normal. End-on axes use a stable vertical drag fallback.
+fn section_slide_delta(cursor: Vec2, axis: Vec2) -> f32 {
+    if axis.length_squared() > 0.0001 { cursor.dot(axis) / axis.length_squared() }
+    else { -cursor.y * 6.0 }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn slow_motion_adds_states_without_losing_display_cadence() {
+        for speed in [1.0, 0.5, 0.1, 0.01] {
+            let dt = super::playback_step(1.0/60.0, speed);
+            let mut clock = 0.0f32;
+            let mut t = 0.0f32;
+            let mut moving_frames = 0;
+            for _ in 0..120 {
+                clock += speed / 60.0;
+                let mut moved = false;
+                while clock + dt * 1e-5 >= dt {
+                    clock = (clock-dt).max(0.0);
+                    t += dt;
+                    moved = true;
+                }
+                moving_frames += usize::from(moved);
+            }
+            assert_eq!(moving_frames, 120, "speed {speed} skipped displayed states");
+            assert!((t - 2.0*speed).abs()<1e-5, "speed {speed} changed elapsed game time");
+        }
+    }
+    #[test]
+    fn section_center_drag_translates_only_along_normal() {
+        use glam::Vec2;
+        use super::section_slide_delta;
+        assert!((section_slide_delta(Vec2::new(0.05,0.0), Vec2::new(0.1,0.0))-0.5).abs()<1e-6);
+        assert!((section_slide_delta(Vec2::new(0.05,0.0), Vec2::new(-0.1,0.0))+0.5).abs()<1e-6);
+        assert_eq!(section_slide_delta(Vec2::new(0.0,0.05),Vec2::new(0.1,0.0)),0.0);
+        assert!((section_slide_delta(Vec2::new(0.0,-0.1),Vec2::ZERO)-0.6).abs()<1e-6);
+    }
+
     /// The cabin lamps' review power factor is 1 unless the range's LAMP POWER dial sets it: no
     /// other source calls the setter, and the game multiplies the lamp switch by it.
     #[test]
@@ -4664,7 +4904,8 @@ mod tests {
         assert_eq!(smoke_setters, vec!["game_fea_range.rs".to_string()]);
         let game = std::fs::read_to_string("src/game.rs").unwrap();
         assert!(game.contains("let practical_gain = power * game_fea_range::review_lamp_gain();"));
-        // The tissue's section (inside cells drawn at a camera cut) is set by the range alone.
+        // Camera cutaways remove armour, never the crew. No gameplay source may enable
+        // a tissue section; RANGE explicitly clears the old review-only section state.
         let needle = ["set_review", "_section(Some"].concat();
         let mut section_setters = Vec::new();
         for entry in std::fs::read_dir("src").unwrap() {
@@ -4673,7 +4914,7 @@ mod tests {
                 section_setters.push(path.file_name().unwrap().to_string_lossy().into_owned());
             }
         }
-        assert_eq!(section_setters, vec!["game_fea_range.rs".to_string()]);
+        assert!(section_setters.is_empty(), "cutaway unexpectedly sections crew: {section_setters:?}");
     }
 
     /// Sections are orthogonal: any yaw and pitch (a dial, a saved oblique plane) draw on the
@@ -4700,7 +4941,7 @@ mod tests {
         let source = std::fs::read_to_string("src/game_fea_range.rs").unwrap();
         let body = source.split("    fn pose_view(&mut self) {").nth(1).unwrap().split("\n    /// The EFFECTS toggles").next().unwrap();
         assert_eq!(body.matches("self.apply_eye_fx();").count(), 2);
-        let play = body.split("return;").next().unwrap();
+        let play = body.split("if self.player_control && !self.play_paused {").nth(1).unwrap().split("return;").next().unwrap();
         assert!(play.find("drive_lights").unwrap() < play.find("self.apply_eye_fx();").unwrap());
         assert!(body.trim_end().trim_end_matches('}').trim_end().ends_with("self.apply_eye_fx();"));
         let apply = source.split("    fn apply_eye_fx(&mut self) {").nth(1).unwrap().split("\n    }\n").next().unwrap();

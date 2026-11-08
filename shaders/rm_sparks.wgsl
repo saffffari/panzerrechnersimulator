@@ -38,10 +38,10 @@ fn weapon_hidden() -> WeaponOut { return WeaponOut(vec4(2.0, 2.0, 2.0, 1.0), vec
 fn weapon_palette(page: u32) -> vec3<f32> {
     if (page == 3u) { return vec3(1.0, 0.82, 0.50) * 6.5; }
     if (page == 4u) { return vec3(1.0, 0.5906, 0.0482) * 4.38; }
-    return vec3(1.0, 0.2874, 0.0116) * 5.30;
+    return vec3(1.0, 0.2874, 0.0116) * 1.10;
 }
 // An incandescent spark's colour: the three Planck-band ratios at its temperature (red = 1), on
-// the palette's authored display scale (dull orange 5.3 at 1500 K to 9.9 at 2800 K and above).
+// the palette's authored display scale (dull orange 1.1 at 1500 K to 2.4 at 2800 K and above).
 // `glow` is (initial kelvin, fraction of life); a spark cools from its own initial temperature
 // to a dull 1100 K by the end of its burn. Not calibrated steel emissivity (2026-11-02).
 fn spark_glow(glow: vec2<f32>) -> vec3<f32> {
@@ -49,7 +49,7 @@ fn spark_glow(glow: vec2<f32>) -> vec3<f32> {
     let wavelengths = vec3(650.0, 550.0, 450.0);
     let reference = exp(14387769.0 / (650.0 * kelvin)) - 1.0;
     let chroma = pow(vec3(650.0) / wavelengths, vec3(5.0)) * reference / (exp(vec3(14387769.0) / (wavelengths * kelvin)) - vec3(1.0));
-    return chroma * mix(5.3, 9.9, clamp((kelvin - 1500.0) / 1300.0, 0.0, 1.0));
+    return chroma * mix(1.1, 2.4, clamp((kelvin - 1500.0) / 1300.0, 0.0, 1.0));
 }
 // `tau` is the rim's cooling time constant (the record's w lane; weapon_particle_math `rim_tau_s`).
 fn rim_color(initial_kelvin: f32, age: f32, tau: f32) -> vec3<f32> {

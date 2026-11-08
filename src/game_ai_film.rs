@@ -50,6 +50,10 @@ fn sample_count(tick: u64) -> usize {
         - (tick * u64::from(acoustics::SAMPLE_RATE) / u64::from(SIM_HZ))) as usize
 }
 
+fn saved_interior_parent(hull: Mat4, turret: Mat4, pivot: Vec3, attached_to_hull: bool) -> Mat4 {
+    if attached_to_hull { hull } else { turret * Mat4::from_translation(-pivot) }
+}
+
 fn parse_seed(raw: &str) -> anyhow::Result<u32> {
     Ok(match raw.strip_prefix("0x") {
         Some(hex) => u32::from_str_radix(hex, 16)?,
@@ -334,7 +338,8 @@ fn interior_lens(g: &Game, r: &mut Renderer, hull: bool, aim: Option<Vec3>, slot
     let (parent, eye, target, fov) = if hull {
         (g.player.hull_model(), Vec3::new(0.0, 1.75, 0.45), Vec3::new(0.0, 1.02, 1.78), 88.0_f32)
     } else {
-        (g.player.turret_model(), Vec3::new(-0.45, 2.34, -0.84), Vec3::new(0.0, 1.45, 0.18), 80.0_f32)
+        (saved_interior_parent(g.player.hull_model(),g.player.turret_model(),g.player.parts.turret_pivot,false),
+            Vec3::new(-0.45, 2.34, -0.84), Vec3::new(0.0, 1.45, 0.18), 80.0_f32)
     };
     r.camera.pos = parent.transform_point3(eye);
     let default_target = parent.transform_point3(target);
@@ -575,6 +580,7 @@ impl Frame<'_> {
             r.render_offscreen(self.device, self.queue);
         }
         r.ui_reset();
+        if std::env::var("KESSEL_AI_FILM_INTERIORS").is_ok(){return r.render_to_rgba(self.device,self.queue,self.w,self.h);}
         r.fill_rect(0.015, 0.026, 0.0105 * self.banner.len() as f32 + 0.03, 0.048, [0.0, 0.0, 0.0, 0.62]);
         r.draw_text(&self.banner, 0.026, 0.050, 0.020, [0.88, 0.86, 0.80, 1.0], crate::ui::Align::Left);
         if !caption.is_empty() {
@@ -645,6 +651,11 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
     let mut encoder = if scan { None } else { Some(Encoder::start(&format!("{prefix}_picture.mp4"), r.iw, r.ih)?) };
     let mut pilot = crate::showreel::TigerPilot::new(&tiger);
     let mut director = Director::new();
+    let interior_cameras:Option<Vec<serde_json::Value>>=std::env::var("KESSEL_AI_FILM_INTERIORS").ok()
+        .map(|path|->anyhow::Result<_>{Ok(serde_json::from_slice(&std::fs::read(path)?)?)}).transpose()?;
+    let mut last_interior=usize::MAX;
+    let mut distance_driven=0.0f32;let mut last_position=g.player.center();
+    let mut fired_rounds=0u64;let mut last_projectile_id=g.next_projectile_id;
     let mut events: Vec<Value> = Vec::new();
     let mut shots: Vec<Value> = Vec::new();
     let mut tick: u64 = 0;
@@ -669,6 +680,8 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
             sound.extend(g.render_audio_capture_frames(sample_count(tick))?);
             tick += 1;
             battle_s = tick as f32 * STEP;
+            distance_driven+=g.player.center().distance(last_position);last_position=g.player.center();
+            fired_rounds+=g.next_projectile_id.wrapping_sub(last_projectile_id);last_projectile_id=g.next_projectile_id;
             let fresh: Vec<crate::armor_damage::ArmorScar> = g.armor_scars.scars().get(scars..).map(|s| s.to_vec()).unwrap_or_default();
             let newest = |want_hole: bool| {
                 use crate::armor_damage::ScarKind;
@@ -746,6 +759,22 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
         if let Some(enc) = encoder.as_mut() {
             let saved = SavedView::save(&r);
             aim_shot(&mut director, &g, &mut r, &active);
+            if let Some(cameras)=&interior_cameras {
+                let index=(battle_s/7.0)as usize%cameras.len();let c=&cameras[index];
+                let vec=|name:&str|->Vec3{Vec3::from_array(serde_json::from_value(c[name].clone()).unwrap())};
+                let hull=c["attachment"].as_str()==Some("hull");
+                interior_lens(&g,&mut r,hull,None,4);
+                // Saved range cameras use the hull frame even when attached to the turret.
+                // Rotate about its pivot without adding that pivot's height a second time.
+                let parent=saved_interior_parent(g.player.hull_model(),g.player.turret_model(),
+                    g.player.parts.turret_pivot,hull);
+                r.camera.pos=parent.transform_point3(vec("hull_eye"));
+                r.camera.set_forward(parent.transform_vector3(vec("hull_forward")));
+                r.camera.fov_y=2.0*(12.0/c["focal_mm"].as_f64().unwrap()as f32).atan();
+                g.apply_cinematic_camera_impulses(&mut r);
+                if last_interior!=index {director.cut=true;last_interior=index;
+                    shots.push(json!({"film_s":enc.frames as f32/FPS as f32,"battle_s":battle_s,"camera":c["name"]}));}
+            }
             let settle = if director.cut {
                 r.reset_history();
                 director.cut = false;
@@ -871,7 +900,7 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
 
     let outcome = json!({"tiger_alive": g.player.alive, "death_cause": format!("{:?}", g.death_cause),
         "cookoff_death": g.cookoff_death(), "t34_survivors": active.iter().filter(|&&i| g.enemies[i].alive).count(),
-        "hits_on_tiger": g.stat_hits_on_player, "pens_on_tiger": g.stat_pens_on_player,
+        "tiger_main_gun_shots":g.gun_shots,"distance_driven_m":distance_driven,"projectiles_launched_total":fired_rounds,"hits_on_tiger": g.stat_hits_on_player, "pens_on_tiger": g.stat_pens_on_player,
         "crew_living": g.singleplayer_living_crew(), "battle_s": battle_s, "cookoff": g.cookoff_receipt(),
         "catastrophic_kills": active.iter().filter(|&&i| g.capture_catastrophic(Some(i))).count()});
     println!("[ai-film] outcome {outcome}");
@@ -884,7 +913,7 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
         "act": {"id": g.act.id, "name": g.act.name}, "count": count, "seed": seed, "ring_m": ring, "max_secs": max_secs,
         "weights": {"t34": t34_weights, "tiger": tiger_weights}, "staged": staged,
         "staging": "the crew-battle witness's opening: T-34s on the showreel's seeded ring round the Tiger (stage_showreel_t34_gauntlet_at), every T-34 told where the Tiger is each tick (debug_engage_all); the Tiger driven by the neural pilot with its embodied auto-crew (showreel::TigerPilot), the singleplayer crew aboard; nothing after the opening is scripted",
-        "film": {"grid": [frame.w, frame.h], "scale": 5, "fps": FPS, "simulation_hz": SIM_HZ,
+        "film": {"grid": [frame.w, frame.h], "scale": env_f32("KESSEL_AI_FILM_SCALE",5.0) as u32, "fps": FPS, "simulation_hz": SIM_HZ,
             "audio": "ordinary gameplay audio recorded offline on the simulation clock; the listener is the Tiger's crewman under every shot; the death's shots after the black are silent as in the app",
             "cuts": format!("history reset and {CUT_SETTLE} discarded renders at each cut; death replay frames {REPLAY_SETTLE} discarded renders each")},
         "events": events, "shots": shots, "death_shots": death_shots, "outcome": outcome,
@@ -895,4 +924,21 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
     }
     println!("[ai-film] done in {:.0} s: {}", started.elapsed().as_secs_f32(), seconds.map_or("scan only".into(), |s| format!("{video_path} ({s:.1} s)")));
     Ok(())
+}
+
+#[cfg(test)]
+mod saved_interior_camera_tests {
+    use super::*;
+    #[test]
+    fn saved_hull_coordinates_do_not_gain_turret_pivot_height() {
+        let pivot=tank::TIGER_PARTS.turret_pivot;
+        let hull=Mat4::from_rotation_translation(Quat::from_rotation_y(0.7),Vec3::new(12.,-4.,9.));
+        let eye=Vec3::new(-0.94,2.5,-0.67);
+        let neutral=saved_interior_parent(hull,hull*Mat4::from_translation(pivot),pivot,false);
+        assert!(neutral.transform_point3(eye).distance(hull.transform_point3(eye))<1e-5);
+        let yaw=0.6;
+        let attached=saved_interior_parent(hull,hull*Mat4::from_translation(pivot)*Mat4::from_rotation_y(yaw),pivot,false);
+        let expected=hull.transform_point3(pivot+Quat::from_rotation_y(yaw)*(eye-pivot));
+        assert!(attached.transform_point3(eye).distance(expected)<1e-5);
+    }
 }

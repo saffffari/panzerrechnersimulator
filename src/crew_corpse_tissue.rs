@@ -323,6 +323,9 @@ impl TissueDraw {
         std::mem::take(&mut self.blood_seeds)
     }
 
+    pub(super) fn joint_connections(&self,peer:u32)->Option<[bool;PARTS]>{
+        self.actors.iter().find(|a|a.peer==peer).map(|a|a.tissue.joint_connections(&self.model))
+    }
     pub(super) fn has_body(&self, peer: u32) -> bool {
         self.actors.iter().any(|a| a.peer == peer)
     }
@@ -505,6 +508,36 @@ impl TissueDraw {
         self.bound_pieces();
     }
 
+    pub(super) fn particle_surfaces(&self,player:&Tank,bodies:&[CrewRagdoll],scene:&mut particle_contacts::Scene){
+        for body in bodies {
+            let Some(actor)=self.actors.iter().find(|a|a.peer==body.casualty.peer_id)else{continue;};
+            let models=crew_physics::CrewBodyPart::ALL.map(|part|crew_ragdoll_bone_segment_model(player,body,part));
+            let poses=models.map(|m|m.to_scale_rotation_translation());
+            for (i,cells) in self.model.part_cells.iter().enumerate(){
+                for &c in cells {let c=c as usize;
+                    if !actor.tissue.present[c]||!self.model.exposed(&actor.tissue.present,c){continue;}
+                    let cell=&self.model.cells[c];let mut p=models[i].transform_point3(cell.at);let mut r=poses[i].1;
+                    if let Some((other,w))=self.model.blend[c]{
+                        let child=if crew_anatomical_parent(cell.part)==Some(other){cell.part}else{other};
+                        let joint=body.segments[child.index()];
+                        if joint.present&&!joint.detached&&crew_anatomical_parent(child).is_none_or(|p|body.segments[p.index()].present){
+                            p=p.lerp(models[other.index()].transform_point3(cell.at),w);r=r.slerp(poses[other.index()].1,w);
+                        }
+                    }
+                    scene.cube(particle_contacts::key(actor.peer,2,c as u32),Mat4::from_scale_rotation_translation(Vec3::splat(self.model.cell*poses[i].0.x),r,p));
+                }
+            }
+        }
+        for piece in &self.pieces {
+            let m=blood_parent_model(player,piece.frame)*piece.local_model();
+            for &c in &piece.cells {scene.cube(particle_contacts::key(piece.actor,2,c),m*Mat4::from_scale_rotation_translation(Vec3::splat(self.model.cell),Quat::IDENTITY,self.model.cells[c as usize].at));}
+        }
+        for body in bodies {
+            if let Some(model)=self.loose_helmet_model(body.casualty.peer_id,player).or_else(||crew_ragdoll_helmet_model(player,body)){
+                self.helmet.particle_surfaces(body.casualty.peer_id,model,scene);
+            }
+        }
+    }
     pub(super) fn begin_frame(&mut self) {
         for list in &mut self.cube_lists {
             list.clear();

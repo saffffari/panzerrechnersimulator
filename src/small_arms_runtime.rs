@@ -96,8 +96,13 @@ impl Game {
     }
     pub(super) fn record_small_arm_visual_segment(&mut self, projectile:&AuthoritativeProjectile,
         step:ProjectileStep, end:Vec3, dt:f32, at:f32) {
-        let Some(payload)=projectile.small_arm else {return;};
         let length=step.start.distance(step.end);
+        if projectile.small_arm.is_none(){
+            let fraction=if length>1e-8{step.start.distance(end)/length}else{0.};
+            self.weapon_vfx.record_fragment_tracer(projectile.id,projectile.mass_fraction,step.start,end,at,at+dt*fraction);
+            return;
+        }
+        let payload=projectile.small_arm.unwrap();
         let fraction=if length>1e-8 {step.start.distance(end)/length} else {0.0};
         self.weapon_vfx.record_bullet_segment(projectile.id, payload.tracer, step.start,end,
             at,at+dt*fraction,projectile.distance_m,projectile.distance_m+step.forward_m*fraction);

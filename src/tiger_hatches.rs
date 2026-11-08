@@ -42,7 +42,7 @@ pub fn load_player_tiger() -> anyhow::Result<([CpuMesh; 3], [CpuMesh; 4], CpuMes
     let gun = crate::tank::load_painted_tiger("assets/tanks/tiger/baked/tiger_gun.glb")?;
     Ok((
         [
-            super::tiger_front_optics::repair_mg_bore(hull.pop().expect("hull remainder"))?,
+            super::tiger_ring_seal::close_bearing_joint(super::tiger_front_optics::repair_mg_bore(hull.pop().expect("hull remainder"))?),
             turret,
             gun,
         ],

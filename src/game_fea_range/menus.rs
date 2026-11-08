@@ -10,12 +10,13 @@ pub(super) struct Popup {
 const MENU_ROW:f32=0.029;
 pub(super) const MENU_ROWS:usize=18;
 pub(super) fn is_menu(k:Knob)->bool {
-    matches!(k,Knob::PlacedShot|Knob::Shell|Knob::SavedShot|Knob::SavedCam|Knob::AddShot|Knob::TargetKind|Knob::SectionPreset|Knob::Look|Knob::DitherPattern)
+    matches!(k,Knob::Map|Knob::PlacedShot|Knob::Shell|Knob::SavedShot|Knob::SavedCam|Knob::AddShot|Knob::TargetKind|Knob::SectionPreset|Knob::Look|Knob::DitherPattern)
 }
 impl Range {
     pub(super) fn open_menu(&mut self,k:Knob,cursor:[f32;2]) {
         self.sync_placed_shot();
         let (items,selected):(Vec<String>,usize)=match k {
+            Knob::Map=>(maps::MAPS.iter().map(|(s,_)|s.to_string()).collect(),if self.map_label()=="BRIDGE FIELD"{1}else{0}),
             Knob::PlacedShot=>(self.placed_shots.iter().enumerate().map(|(i,s)|format!("Shot {} - {}",i+1,s.spec().name)).collect(),self.selected_shot.unwrap_or(0)),
             Knob::Shell=>(shells().iter().map(|s|s.name.into()).collect(),self.shot.shell),
             Knob::SavedShot=>(self.shot_presets.iter().map(|p|p["name"].as_str().unwrap_or("Unnamed").into()).collect(),self.shot_preset_at.unwrap_or(0)),
@@ -59,6 +60,7 @@ impl Range {
         let Some(menu)=self.popup.take() else{return};
         if index>=menu.items.len(){return;}
         match menu.knob {
+            Knob::Map=>self.request_map(index),
             Knob::PlacedShot=>{self.shot=self.placed_shots[index];self.selected_shot=Some(index);},
             Knob::Shell=>{self.shot.shell=index;self.sync_placed_shot();},
             Knob::SavedCam=>self.view_camera(index),

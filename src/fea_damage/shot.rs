@@ -70,6 +70,7 @@ pub const HORIZON: f32 = 2.5;
 /// What a cell of the round is made of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum Zone {
+    Rod, Jet, SoftCase,
     /// The hardened nose and shoulder.
     Nose,
     /// The body behind it, tempered softer.
@@ -91,6 +92,7 @@ pub enum Zone {
 impl Zone {
     pub fn material(self) -> &'static Material {
         match self {
+            Zone::Rod => &REVIEW_ROD, Zone::Jet=>&REVIEW_JET, Zone::SoftCase=>&CARRIER,
             Zone::Nose => &SHOT_NOSE,
             Zone::Body | Zone::Base => &SHOT_BODY,
             Zone::Cap => &PIERCING_CAP,
@@ -101,6 +103,16 @@ impl Zone {
         }
     }
 }
+
+// Authored material surrogates for comparative game review; not ammunition data.
+pub static REVIEW_ROD:Material=Material{name:"dense ductile rod surrogate",density:19000.,
+    youngs:200.0e9,yield_stress:1.5e9,hardening:1.0e9,rate_c:0.015,ref_rate:1.,melt_k:1600.,
+    failure_strain:0.18,specific_heat:150.,conductivity:30.,emissivity:0.8,ke_resistance:1.,fluid:false,
+    provenance:"authored dense long-rod surrogate; not a measured M829A2 material law"};
+pub static REVIEW_JET:Material=Material{name:"jet material surrogate",density:8960.,
+    youngs:110.0e9,yield_stress:0.15e9,hardening:0.2e9,rate_c:0.01,ref_rate:1.,melt_k:1358.,
+    failure_strain:0.5,specific_heat:385.,conductivity:400.,emissivity:0.7,ke_resistance:1.,fluid:false,
+    provenance:"authored deformable jet surrogate; no shaped-charge formation or hydrodynamics"};
 
 const STEEL_C: f32 = 470.0;
 
@@ -233,6 +245,7 @@ pub static CARRIER: Material = Material {
 /// A round's build: its proportions and the parts it is made of.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct Design {
+    pub homogeneous:Option<Zone>,
     pub calibre_m: f32,
     pub mass_kg: f32,
     /// Ellipsoidal nose length, calibres.
@@ -258,6 +271,7 @@ pub struct Design {
 pub fn design(shell: &ShellSpec) -> Option<Design> {
     let d = shell.caliber_mm * 0.001;
     let mut out = Design {
+        homogeneous:None,
         calibre_m: d,
         mass_kg: shell.mass_kg,
         nose_calibres: super::lodged::nose_length_calibres(shell.kind),
@@ -275,6 +289,18 @@ pub fn design(shell: &ShellSpec) -> Option<Design> {
         base_rc: 22.0,
         notches: 1,
     };
+    if crate::ballistics::is_long_rod(shell) {
+        out.calibre_m=0.030;out.nose_calibres=1.;out.notches=0;
+        out.twist_calibres=1.0e9;out.homogeneous=Some(Zone::Rod);return Some(out);
+    }
+    if shell.kind==ShellKind::Heat {
+        out.calibre_m=0.012;out.mass_kg=0.12;out.filler_kg=0.;out.nose_calibres=0.3;
+        out.notches=0;out.twist_calibres=1.0e9;out.homogeneous=Some(Zone::Jet);return Some(out);
+    }
+    if crate::ballistics::is_hesh(shell) {
+        out.homogeneous=Some(Zone::SoftCase);out.nose_calibres=0.6;out.notches=0;
+        out.filler_kg=0.;return Some(out);
+    }
     match shell.kind {
         ShellKind::Ap => {}
         ShellKind::Apcbc => {
@@ -590,7 +616,7 @@ fn voxelise(d: &Design, body_m: f32, h: f32) -> Vec<(Vec3, Zone)> {
                     }
                     _ => continue,
                 };
-                cells.push((p, zone));
+                cells.push((p, d.homogeneous.unwrap_or(zone)));
             }
         }
     }
@@ -611,11 +637,12 @@ impl Shot {
         let fill = |z: Zone| if z == Zone::Windshield { (WINDSHIELD_SHEET_M / h).min(1.0) } else { 1.0 };
         let mass_of = |cells: &[(Vec3, Zone)]| cells.iter().map(|(_, z)| z.material().density * fill(*z) * h * h * h).sum::<f32>();
         let area = std::f32::consts::PI * (0.5 * d.calibre_m).powi(2);
-        let mut body = (d.mass_kg / (7850.0 * area) - 0.5 * nose_end(&d)).max(0.5 * d.calibre_m);
+        let density=d.homogeneous.map_or(7850.,|z|z.material().density);
+        let mut body = (d.mass_kg / (density * area) - 0.5 * nose_end(&d)).max(0.5 * d.calibre_m);
         let mut cells = voxelise(&d, body, h);
         for _ in 0..4 {
             let m = mass_of(&cells);
-            let density = if d.core.is_some() { 0.5 * (7850.0 + TUNGSTEN_CARBIDE.density) } else { 7850.0 };
+            let density = if d.core.is_some() { 0.5 * (7850.0 + TUNGSTEN_CARBIDE.density) } else { density };
             body = (body + (d.mass_kg - m) / (density * area)).max(0.3 * d.calibre_m);
             cells = voxelise(&d, body, h);
         }
@@ -677,7 +704,7 @@ impl Shot {
         let axis = Vec3::new(impact.obliquity_rad.sin(), 0.0, impact.obliquity_rad.cos());
         let turn = glam::Quat::from_rotation_arc(Vec3::Z, axis);
         let tip = turn * Vec3::new(0.0, 0.0, length_m);
-        let offset = Vec3::new(0.0, 0.0, -0.5 * h) - tip;
+        let offset = -tip; // the forward voxel face is exactly at the authoritative contact point
         let spin = std::f32::consts::TAU * impact.v_in / (d.twist_calibres * d.calibre_m);
         let pos: Vec<Vec3> = rest.iter().map(|&p| turn * p + offset).collect();
         let vel: Vec<Vec3> = rest.iter().map(|&p| {
@@ -931,6 +958,19 @@ impl Shot {
         self.frames.push(Frame { t_s: self.t_s, pos: self.pos.clone(), temp: self.temp.clone(), damage, gone });
     }
 
+    /// Advance only completed CFL steps up to the requested physical time. The remainder
+    /// stays as time debt; neither a final shape nor a future fracture is sampled here.
+    pub fn advance_steps(&mut self, count:u64) {for _ in 0..count {self.step();}}
+
+    pub fn advance_until(&mut self, until_s: f32) -> u64 {
+        let mut steps = 0;
+        while self.t_s + self.dt <= until_s + 1e-10 {
+            self.step();
+            steps += 1;
+        }
+        steps
+    }
+
     /// Run the strike over its horizon: the time for the round to cross twice the plate and its own
     /// length and a calibre at its striking speed, two and a half times over (a fixed span, so the
     /// solve's length never depends on how its debris settles).
@@ -1142,12 +1182,15 @@ pub fn impact_of(event: &crate::ballistics::ImpactEvent, seed: u32) -> Option<Sh
         crate::ballistics::ArmorMaterial::LateGerman => 0.92,
         _ => 1.0,
     };
+    let jet=event.shell.kind==ShellKind::Heat;
+    let v=if jet{2500.0}else{event.striking_v};
     Some(ShotImpact {
         design,
-        v_in: event.striking_v,
+        v_in:v,
         obliquity_rad: event.impact_angle_deg.to_radians().min(1.45),
         thickness_m: event.plate.thickness_mm * 0.001,
-        resistance_pa: resistance_pa(event.shell, &design, event.striking_v, quality),
+        resistance_pa: if crate::ballistics::is_hesh(event.shell){2.0e11}
+            else {resistance_pa(event.shell, &design,v, quality)},
         seed,
     })
 }
@@ -1297,5 +1340,20 @@ mod tests {
             let sizes: Vec<usize> = out.pieces.iter().take(8).map(|p| p.cell_count).collect();
             println!("    lost by zone (kg, single cells): {lost:?}; largest pieces {sizes:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod review_profile_tests {
+    use super::*;
+    #[test]
+    fn modern_rounds_have_distinct_material_bodies_and_no_jet_filler(){
+        let rod=design(&crate::ballistics::M829A2_REVIEW).unwrap();
+        let jet=design(&crate::ballistics::HEAT_REVIEW).unwrap();
+        let hesh=design(&crate::ballistics::HESH_REVIEW).unwrap();
+        assert_eq!(rod.homogeneous,Some(Zone::Rod));assert!(rod.calibre_m<0.04);
+        assert_eq!(jet.homogeneous,Some(Zone::Jet));assert_eq!(jet.filler_kg,0.);
+        assert!(jet.mass_kg<crate::ballistics::HEAT_REVIEW.mass_kg);
+        assert_eq!(hesh.homogeneous,Some(Zone::SoftCase));assert_eq!(hesh.calibre_m,0.120000005);
     }
 }

@@ -188,12 +188,12 @@ impl MeadowGpu {
             address_mode_u: wgpu::AddressMode::ClampToEdge, address_mode_v: wgpu::AddressMode::ClampToEdge, ..Default::default()
         });
         let t = |binding: u32, sample_type: wgpu::TextureSampleType| wgpu::BindGroupLayoutEntry {
-            binding, visibility: S::VERTEX, count: None,
+            binding, visibility: if binding==5 || binding==6 {S::VERTEX_FRAGMENT} else {S::VERTEX}, count: None,
             ty: wgpu::BindingType::Texture { sample_type, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
         };
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("meadow"), entries: &[
-                wgpu::BindGroupLayoutEntry { binding: 0, visibility: S::VERTEX, count: None,
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: S::VERTEX_FRAGMENT, count: None,
                     ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None } },
                 t(1, wgpu::TextureSampleType::Float { filterable: false }),
                 t(2, wgpu::TextureSampleType::Float { filterable: true }),
@@ -253,7 +253,9 @@ impl MeadowGpu {
             vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_slab"), buffers: std::slice::from_ref(&instance), compilation_options: Default::default() },
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less,
-                stencil: Default::default(), bias: wgpu::DepthBiasState { constant: -16, slope_scale: -4.0, clamp: 0.0 } }),
+                // The canopy already sits above the ground in metres. A negative camera-depth
+                // bias grows to several metres at battle distances and paints grass over tanks.
+                stencil: Default::default(), bias: Default::default() }),
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState { module: &module, entry_point: Some("fs_slab"), targets: &targets, compilation_options: Default::default() }),
             multiview: None, cache: None,

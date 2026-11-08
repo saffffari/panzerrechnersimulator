@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 pub const CELL_M: f32 = 0.010;
 pub const MAX_GRAINS: usize = 32_768;
 pub const MAX_CELLS: usize = 65_536;
+pub const MAX_CREW_STAINS: usize = 8192;
 const MAX_FRONTIER: usize = MAX_CELLS * 4;
 /// Visual droplets are one eighth of the live 30 mm tissue cell. Emission is artistic,
 /// independent of a conserved blood-volume budget.
@@ -55,6 +56,11 @@ pub trait SourceQuery {
     fn sweep_batch(&self, paths: &[[Vec3; 2]], models: &[Mat4; FRAMES]) -> Vec<Option<Contact>>;
     fn supports_batch(&self, frame: usize, paths: &[[Vec3; 2]]) -> Vec<bool>;
     fn supports_cell(&self, frame: usize, corners: &[Vec3; 4]) -> bool;
+    fn dynamic_sweep(&self, _from:Vec3, _to:Vec3)->Option<super::particle_contacts::Hit>{None}
+    fn dynamic_sweep_batch(&self,paths:&[[Vec3;2]])->Vec<Option<super::particle_contacts::Hit>> {
+        paths.iter().map(|p|self.dynamic_sweep(p[0],p[1])).collect()
+    }
+    fn dynamic_model(&self, _key:u64)->Option<Mat4>{None}
 }
 
 impl SourceQuery for super::surface_fire::SourceContacts<'_> {
@@ -228,6 +234,7 @@ impl RenderRun {
 pub struct Diagnostics {
     pub emitted: u64,
     pub measured_contacts: u64,
+    #[serde(default)] pub crew_contacts: u64,
     pub airborne: usize,
     pub retained_cells: usize,
     pub wall_cells: usize,
@@ -240,6 +247,7 @@ pub struct Diagnostics {
 #[derive(Clone)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SurfaceBlood {
+    #[serde(default)] crew_stains: Vec<(u64,Mat4)>,
     #[serde(default)] visual: bool,
     #[serde(default)] visual_limit: usize,
     grains: Vec<Option<Grain>>,
@@ -268,6 +276,7 @@ impl Default for SurfaceBlood {
 impl SurfaceBlood {
     pub fn new() -> Self {
         Self {
+            crew_stains: Vec::new(),
             visual: false,
             visual_limit: 0,
             grains: vec![None; MAX_GRAINS],
@@ -414,13 +423,28 @@ impl SurfaceBlood {
             g.planned = true; g.landing = hit;
             g.land_at_s = hit.map_or(1.0,|h| {
                 let end=models[h.frame].transform_point3(h.point);
-                (end.distance(path[0])/g.emission.velocity.length().max(1.0)).clamp(0.005,2.0)
+                // A minimum flight time let close droplets cross the wall before their stain
+                // appeared. Contact time is geometric, including at slow-motion substeps.
+                (end.distance(path[0])/g.emission.velocity.length().max(1.0)).clamp(0.0,2.0)
             });
         }
         let mut deposits = Vec::new();
+        let mut crew_deposits = Vec::new();
+        let crew_paths:Vec<_>=self.grains.iter().filter_map(|g|g.as_ref().filter(|g|g.planned)).map(|g| {
+            let from=models[g.emission.frame].transform_point3(g.emission.position);
+            let to=models[g.emission.frame].transform_point3(g.emission.position+g.emission.velocity*dt);
+            [from,to+(to-from).normalize_or_zero()*droplet_m(g.emission.seed)*0.5]
+        }).collect();
+        let mut crew_hits=source.dynamic_sweep_batch(&crew_paths).into_iter();
         for slot in &mut self.grains {
             let Some(g) = slot else {continue};
             if !g.planned { continue; }
+            if let Some(hit)=crew_hits.next().flatten() {
+                let wall_fraction=if dt>0.0{(g.land_at_s-g.age)/dt}else{f32::INFINITY};
+                if g.landing.is_none()||hit.fraction<=wall_fraction {
+                    crew_deposits.push(hit);*slot=None;continue;
+                }
+            }
             g.age += dt;
             g.emission.position += g.emission.velocity * dt;
             g.emission.rotation += g.emission.spin * dt;
@@ -429,10 +453,21 @@ impl SurfaceBlood {
                 *slot = None;
             }
         }
+        for hit in crew_deposits {self.stamp_crew(hit);}
         for (hit,owner,actor,seed) in deposits { self.stamp_visual(hit,owner,actor,seed); }
         self.rebuild_runs();
     }
 
+    pub fn needs_crew_geometry(&self)->bool{!self.crew_stains.is_empty()||self.grains.iter().any(Option::is_some)}
+    fn stamp_crew(&mut self,hit:super::particle_contacts::Hit){
+        self.diagnostics.measured_contacts+=1;self.diagnostics.crew_contacts+=1;
+        // Attach the mark to its actual triangle or voxel, including detached moving pieces.
+        if self.crew_stains.len()<MAX_CREW_STAINS {self.crew_stains.push((hit.key,hit.local_stamp));}
+    }
+    pub fn crew_stain_models(&mut self,source:&impl SourceQuery)->Vec<Mat4>{
+        self.crew_stains.retain(|(key,_)|source.dynamic_model(*key).is_some());
+        self.crew_stains.iter().filter_map(|(key,local)|source.dynamic_model(*key).map(|m|m**local)).collect()
+    }
     pub fn record_contact(&mut self, hit: Contact, owner: u8, actor_id: u32, seed: u32) -> bool {
         let Some(key) = Key::at(hit) else {
             return false;
@@ -478,7 +513,7 @@ impl SurfaceBlood {
             // would let a nearby pool spend it elsewhere before proving connection. Keep an
             // independent seed, even when another component has queued this same cell.
             self.queued.entry(key).or_insert(pool);
-            self.pools[pool].frontier.push_back(Candidate {
+            self.pools[pool].frontier.push_front(Candidate {
                 key,
                 from: hit.point,
             });
@@ -526,15 +561,33 @@ impl SurfaceBlood {
                 paths.push([from, leading]);
             }
             let hits = source.sweep_batch(&paths, models);
+            let crew_hits=source.dynamic_sweep_batch(&paths);
             assert_eq!(
                 hits.len(),
                 paths.len(),
                 "source sweep batch must preserve input indices"
             );
-            for ((index, end), hit) in indices.into_iter().zip(ends).zip(hits) {
+            for (((index, end), hit),crew) in indices.into_iter().zip(ends).zip(hits).zip(crew_hits) {
+                if let Some(crew)=crew {
+                    if hit.is_none_or(|h|crew.fraction<=h.fraction){
+                        self.stamp_crew(crew);self.grains[index]=None;continue;
+                    }
+                }
                 let emission = self.grains[index].as_ref().unwrap().emission;
                 if let Some(hit) = hit {
-                    self.record_contact(hit, emission.owner, emission.actor_id, emission.seed);
+                    if self.record_contact(hit, emission.owner, emission.actor_id, emission.seed) {
+                        // Certify and draw the contact cell in this same update. Only subsequent
+                        // spreading consumes the time-based film budget; that budget must never
+                        // delay the first visible stain after the airborne grain disappears.
+                        if let Some(pool) = Key::at(hit).and_then(|key| self.queued.get(&key).copied()) {
+                            let pool = self.root(pool);
+                            if let Some(index) = self.scheduled.iter().rposition(|&id| id == pool) {
+                                self.scheduled.remove(index);
+                                self.scheduled.push_front(pool);
+                                self.grow(1, models, source);
+                            }
+                        }
+                    }
                     self.grains[index] = None; // absorptive contact, not repeated artificial rebound stamps
                 } else {
                     self.grains[index].as_mut().unwrap().emission.position = end;
@@ -920,7 +973,9 @@ mod tests {
             blood.render_runs().iter().map(|r| r.cells).sum::<usize>(),
             blood.cells.len()
         );
-        assert!(blood.render_runs().len() < blood.cells.len() / 3);
+        // The smaller live droplets give this test only twenty 1 cm cells. A compact
+        // connected patch that small cannot guarantee a 3:1 row compression ratio.
+        assert!(blood.render_runs().len() * 2 <= blood.cells.len());
     }
     #[test]
     fn pending_same_cell_contacts_keep_all_credits_only_after_source_connection_is_proved() {
@@ -1211,6 +1266,45 @@ mod visual_particle_tests {
     }
     fn spray(seed:u32)->Emission { Emission {frame:0,owner:0,actor_id:1,position:Vec3::ZERO,
         velocity:Vec3::Z*10.0,rotation:Vec3::ZERO,spin:Vec3::ZERO,seed} }
+    #[test]
+    fn crew_collision_wins_only_when_it_is_before_the_wall(){
+        use super::super::particle_contacts::{Scene,Query};
+        for visual in [false,true] {for body_z in [0.25,0.75]{
+            let mesh=crate::prims::box_mesh(Vec3::new(-2.,-2.,0.5),Vec3::new(2.,2.,0.51),[1,1,1]);
+            let tank=super::super::surface_fire::CabinFire::new(&[(0,&mesh)]);
+            let models=[Mat4::IDENTITY;FRAMES];let mut scene=Scene::default();
+            scene.triangle(11,[Vec3::new(-2.,-2.,body_z),Vec3::new(2.,-2.,body_z),Vec3::new(0.,2.,body_z)]);scene.finish();
+            let query=Query{tank:tank.source_contacts(&models),crew:&scene};
+            let mut blood=SurfaceBlood::new();blood.set_visual(visual);
+            blood.emit(Emission{frame:0,owner:0,actor_id:1,position:Vec3::ZERO,velocity:Vec3::Z*10.,rotation:Vec3::ZERO,spin:Vec3::ZERO,seed:1});
+            blood.update(0.1,&models,&query);
+            assert_eq!(blood.diagnostics().airborne,0);
+            assert_eq!(blood.diagnostics().crew_contacts,u64::from(body_z<0.5));
+            assert_eq!(blood.crew_stain_models(&query).len(),usize::from(body_z<0.5));
+            if body_z<0.5{assert!(blood.render_runs().is_empty(),"no wall stain behind a crew collision");}
+        }}
+    }
+    #[test]
+    fn reference_contacts_paint_in_the_collision_substep_without_film_credit() {
+        let mut blood=SurfaceBlood::new();let wall=Wall {rays:std::cell::Cell::new(0)};
+        for i in 0..32 {
+            blood.emit(Emission {position:Vec3::new(i as f32*0.03,0.015,0.4998),..spray(i)});
+        }
+        blood.update(1.0/15360.0,&[Mat4::IDENTITY;FRAMES],&wall);
+        assert_eq!(blood.diagnostics().airborne,0);
+        assert_eq!(blood.diagnostics().measured_contacts,32);
+        assert_eq!(blood.cells.len(),32,"contact stains cannot wait for later growth credits");
+        assert!(!blood.runs.is_empty());
+    }
+    #[test]
+    fn a_visual_drop_near_a_wall_has_no_minimum_flight_delay() {
+        let mut blood=SurfaceBlood::visual();let wall=Wall {rays:std::cell::Cell::new(0)};
+        blood.emit(Emission {position:Vec3::new(0.0,0.0,0.4998),..spray(1)});
+        blood.update(1.0/15360.0,&[Mat4::IDENTITY;FRAMES],&wall);
+        assert_eq!(blood.diagnostics().airborne,0);
+        assert_eq!(blood.diagnostics().measured_contacts,1);
+        assert_eq!(blood.cells.len(),4);
+    }
     #[test] fn visual_drops_trace_once_and_overlap_merges_without_flow() {
         let mut blood=SurfaceBlood::visual(); let wall=Wall {rays:std::cell::Cell::new(0)};
         for i in 0..100 {assert!(blood.emit(spray(i)));}

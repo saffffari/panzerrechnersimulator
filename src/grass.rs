@@ -430,6 +430,9 @@ impl Grass {
     pub fn trample(&mut self, position: Vec3, heading: f32) {
         self.tracks.stamp(position, heading);
     }
+    pub fn trample_body(&mut self, center: Vec3, heading: f32) {
+        self.tracks.stamp_body(center, heading);
+    }
     pub fn vegetation_at(&self, x: f32, z: f32) -> Option<bool> {
         self.mask.as_ref().map(|mask| {
             let (pasture, woods, crop) = mask.sample(x, z);

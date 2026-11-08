@@ -45,6 +45,7 @@ pub fn cases() -> Vec<Case> {
 
 fn zone_colour(z: Zone) -> [u8; 3] {
     match z {
+        Zone::Rod => [92,94,96], Zone::Jet=>[180,90,45], Zone::SoftCase=>[100,106,110],
         Zone::Nose => [150, 158, 172],
         Zone::Body => [122, 126, 136],
         Zone::Base => [100, 100, 104],

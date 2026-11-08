@@ -164,7 +164,9 @@ impl Game {
     pub(super) fn import_projectiles_world(&mut self,block:&OwnerBlock)->Result<()> {
         let mut fields:StateFields=block.decode("combat.projectiles",2)?;
         self.weapon_vfx.import_world_state(fields.take("weapon_vfx")?)?;
-        self.hot_fragments=fields.take::<Vec<HotFragment>>("hot_fragments")?.try_into().map_err(|_|anyhow::anyhow!("fragment capacity mismatch"))?;
+        let mut fragments=fields.take::<Vec<HotFragment>>("hot_fragments")?;
+        ensure!(!fragments.is_empty() && fragments.len()<=HOT_FRAGMENT_STAGE_CAPACITY,"fragment capacity mismatch");
+        fragments.resize(fragments.len().max(self.hot_fragments.len()),HotFragment::default());self.hot_fragments=fragments;
         self.restore_projectiles(fields)?;
         let mut ids=std::collections::BTreeSet::new();
         ensure!(self.projectiles.iter().all(|p|ids.insert(p.id)&&p.id<self.next_projectile_id&&p.pos.is_finite()&&p.velocity.is_finite()),"invalid in-flight projectile identity/pose");Ok(())

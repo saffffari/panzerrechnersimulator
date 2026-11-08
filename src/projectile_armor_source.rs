@@ -65,7 +65,7 @@ pub(super) fn contact(source:&surface_fire::CabinFire,models:&[Mat4;surface_fire
     let local_normal=model.transpose().transform_vector3(world_normal).normalize_or_zero();
     Some(ProjectileContact{t_m:start.distance(end)*hit.fraction,pos,kind:ProjectileContactKind::Vehicle(VehicleArmorContact{
         vehicle,part,facing:facing_from_local_normal(local_normal,part),local_point,world_normal,
-        surface_plate:Some(plate_on(scheme,part,local_point,local_normal,hit.frame==GUN_FRAME)),})})
+        surface_plate:Some(plate_on(scheme,part,local_point,local_normal,matches!(hit.frame,GUN_FRAME|79))),})})
 }
 
 #[cfg(test)]

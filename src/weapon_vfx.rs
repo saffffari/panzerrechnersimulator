@@ -10,6 +10,8 @@ pub(super) const PAGES: usize = MATERIAL_PAGES + 6;
 const FLIGHTS: usize = 160;
 const BULLET_SEGMENTS:usize=4096;
 const BULLET_EXPOSURE_S:f32=1.0/120.0;
+// Authored optical trail lifetime; the trailing endpoint advances along measured history.
+const CANNON_TRAIL_S:f32=0.035;
 const MAX_BULLET_EXPOSURE_S:f32=1.0/30.0;
 const SMALL_ARM_EVENTS:usize=512;
 const BURSTS: usize = 48;
@@ -131,7 +133,7 @@ struct Burst { pos: Vec3, dir: Vec3, age: f32, life: f32, radius: f32,
     seed: u32, kind: BurstKind, weapon: Weapon, born_s:Option<f32>,anchor:Option<SurfaceAnchor>,
     /// The ground height under the burst when the caller knows it (`set_ground_hint`): a strike's
     /// sparks bounce off it once and lie on it. Cosmetic only; no collision body.
-    ground:Option<f32> }
+    ground:Option<f32>, #[serde(default)] brief_surface_flash:bool }
 
 /// Cosmetic armor grains cannot cross the source plate. Test the complete oriented cuboid,
 /// including its speed streak, rather than only its center. Returning grains disappear on
@@ -151,7 +153,9 @@ fn armor_grain_is_air_side(burst: Burst, pos: Vec3, size: Vec3, rotation: Quat) 
 /// resolved contact. Fixed shutter duration is independent of output frame rate.
 #[derive(Clone, Copy, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
-struct BulletSegment { id:u64, start:Vec3, end:Vec3, at:f32, until:f32 }
+struct BulletSegment { id:u64, start:Vec3, end:Vec3, at:f32, until:f32,
+    #[serde(default="unit_share")] share:f32, #[serde(default)] trail_s:f32 }
+fn unit_share()->f32{1.0}
 impl BulletSegment {
     fn exposed(self,now:f32)->Option<(Vec3,Vec3)> {
         self.exposed_for(now,BULLET_EXPOSURE_S)
@@ -178,6 +182,9 @@ impl SmallArmsReview {
 }
 
 pub(super) struct Effects {
+    // Offline cutaway inspection only: keep the lattice visible under steady scene lighting.
+    pub(super) inspect_plate:bool,
+    pub(super) cabin_sparks:super::cabin_sparks::Pool,
     flights: [Option<Flight>; FLIGHTS], bursts: [Option<Burst>; BURSTS],
     next_flight: usize, next_burst: usize, sequence: u32,
     replaced_bursts:u64,
@@ -198,6 +205,8 @@ pub(super) struct Effects {
 }
 impl Default for Effects {
     fn default() -> Self { Self {
+        inspect_plate:false,
+        cabin_sparks:Default::default(),
         flights: [None; FLIGHTS], bursts: [None; BURSTS], next_flight: 0, next_burst: 0,
         sequence: 0, replaced_bursts:0, pixel_world_scale: 0.0036, gpu_analytic:false,
         gpu_tracers:Vec::with_capacity(BULLET_SEGMENTS), ground_hint:None, bullet_exposure_s:BULLET_EXPOSURE_S, wind: Vec2::ZERO,
@@ -253,7 +262,7 @@ impl Effects {
         if self.bursts[k].is_some(){self.replaced_bursts+=1;}
         self.bursts[k] = Some(Burst { pos, dir: dir.normalize_or_zero(), age: 0.0,
             life, radius: radius.clamp(0.02, 9.0), seed: self.sequence, kind, weapon, born_s:None,anchor:None,
-            ground:self.ground_hint.filter(|g|g.is_finite()) });
+            ground:self.ground_hint.filter(|g|g.is_finite()), brief_surface_flash:false });
         self.next_burst = (k + 1) % BURSTS;
     }
     /// The terrain height under the next strikes' bursts (the caller's heightfield), so their
@@ -358,7 +367,15 @@ impl Effects {
             || event.terminal==Terminal::Penetration && matches!(event.shell.kind,
                 crate::ballistics::ShellKind::He|crate::ballistics::ShellKind::Heat));
         if exterior_detonation {
-            self.blast(point+normal*0.08,normal,(event.shell.filler_g/1000.0).cbrt()*3.0);
+            if self.inspect_plate {
+                // Inspection keeps a brief exterior ignition, followed by source-connected
+                // smoke. A six-second generic HE fireball would mask the plate for most of
+                // a 4096x capture; this authored visual envelope does not alter damage.
+                self.interior_blast(point+normal*0.08,0.18);
+                if let Some(b)=self.bursts[(self.next_burst+BURSTS-1)%BURSTS].as_mut(){
+                    b.brief_surface_flash=true;b.dir=normal;
+                }
+            }else{self.blast(point+normal*0.08,normal,(event.shell.filler_g/1000.0).cbrt()*3.0);}
             self.stamp_newest(at,None);
         }
         match event.terminal {
@@ -431,7 +448,25 @@ impl Effects {
         if self.bullet_segments.len()==BULLET_SEGMENTS {
             self.bullet_segments.pop_front();self.small_arms_review.omitted_segments+=1;
         }
-        self.bullet_segments.push_back(BulletSegment{id,start,end:start.lerp(end,f),at,until:at+(until-at)*f});
+        self.bullet_segments.push_back(BulletSegment{id,start,end:start.lerp(end,f),at,until:at+(until-at)*f,share:1.0,trail_s:0.0});
+    }
+    /// Cannon and fragment trails retain the measured path after the flying owner
+    /// is retired. A rolling time window moves the far endpoint toward the impact.
+    pub(super) fn record_fragment_tracer(&mut self,id:u64,share:f32,start:Vec3,end:Vec3,at:f32,until:f32){
+        if !(share>0.0) || until<=at || start.distance_squared(end)<1e-12{return;}
+        let share=share.clamp(0.,1.);
+        // Coalesce straight microsteps without inventing a future path. Curves and ricochets
+        // remain separate. This bounds slow-motion history when hundreds of fragments fly.
+        if let Some(previous)=self.bullet_segments.iter_mut().rev().find(|s|s.id==id) {
+            let a=previous.end-previous.start;let b=end-start;
+            if previous.trail_s>0. && (previous.share-share).abs()<1e-6 && (previous.until-at).abs()<1e-5
+                && previous.end.distance_squared(start)<1e-8 && a.normalize_or_zero().dot(b.normalize_or_zero())>0.99999
+                && a.cross(b).length()/a.length().max(1e-6)<0.00025 {
+                previous.end=end;previous.until=until;return;
+            }
+        }
+        self.record_bullet_segment(id,true,start,end,at,until,0.,start.distance(end));
+        if let Some(segment)=self.bullet_segments.back_mut().filter(|s|s.id==id&&s.until==until){segment.share=share;segment.trail_s=CANNON_TRAIL_S;}
     }
     pub(super) fn record_small_arm_contact(&mut self,p:&AuthoritativeProjectile,c:ProjectileContact) {
         let at=self.bullet_times.remove(&p.id).unwrap_or(self.now_s);
@@ -488,10 +523,10 @@ impl Effects {
     /// Sparks thrown into the compartment from the inside of a perforation (the owner, 2 November
     /// 2026: sparks flying out of the impact site inside): incandescent plate dust leaving the
     /// back face along `inward`, from `energy_j` of the plate's work (the exterior strike's share).
-    pub(super) fn interior_spall_sparks(&mut self,point:Vec3,inward:Vec3,energy_j:f32,weapon:Weapon) {
+    pub(super) fn interior_spall_sparks(&mut self,point:Vec3,inward:Vec3,energy_j:f32,_weapon:Weapon) {
         let n=inward.normalize_or_zero();
         if !point.is_finite() || n.length_squared()<0.5 || !(energy_j>=1.0) {return;}
-        self.burst(point+n*ARMOR_RICOCHET_OFFSET_M,n,0.02,0.45,BurstKind::BulletArmor{normal:n,energy_j,cosine:1.0},weapon);
+        self.cabin_sparks.spawn(point,n,energy_j);
     }
     /// The simulation clock the segments are timed on.
     pub(super) fn now(&self)->f32 {self.now_s}
@@ -518,14 +553,14 @@ impl Effects {
     fn draw_bullet_segments(&mut self,eye:Vec3) {
         self.gpu_tracers.clear();
         let now=self.now_s;
-        self.bullet_segments.retain(|s|s.until>now-self.bullet_exposure_s);
-        let visible:Vec<_>=self.bullet_segments.iter().filter_map(|s|s.exposed_for(now,self.bullet_exposure_s).map(|(a,b)|(s.id,a,b))).collect();
+        self.bullet_segments.retain(|s|s.until>now-self.bullet_exposure_s.max(s.trail_s));
+        let visible:Vec<_>=self.bullet_segments.iter().filter_map(|s|s.exposed_for(now,self.bullet_exposure_s.max(s.trail_s)).map(|(a,b)|(s.id,a,b,s.share))).collect();
         if !visible.is_empty(){self.small_arms_review.tracer_frames+=1;}
-        for (id,a,b) in visible {
+        for (id,a,b,share) in visible {
             let delta=b-a;let length=delta.length();if length<1e-5 {continue;}
             let center=(a+b)*0.5;
             if self.gpu_analytic {
-                self.gpu_tracers.push(GpuWeaponRecord::tracer(a,b));
+                let mut record=GpuWeaponRecord::tracer(a,b); record.parameters[0]=share; self.gpu_tracers.push(record);
             } else {
                 // Legacy physical backend fallback; native raster uses per-view projected strips.
                 let width=(center.distance(eye)*self.pixel_world_scale).max(0.002).min(0.65);
@@ -534,7 +569,7 @@ impl Effects {
             }
             self.small_arms_review.tracer_segments_submitted+=1;
             self.small_arms_review.event(serde_json::json!({"event":"tracer_segment_submitted",
-                "projectile_id":id,"at_s":now,"start":a.to_array(),"end":b.to_array()}));
+                "projectile_id":id,"share":share,"at_s":now,"start":a.to_array(),"end":b.to_array()}));
         }
     }
     pub(super) fn small_arm(&mut self, from: Vec3, to: Vec3, weapon: Weapon) {
@@ -630,7 +665,8 @@ impl Effects {
         }
     }
     fn gpu_bursts(&self)->Vec<GpuWeaponRecord> {
-        self.bursts.iter().flatten().filter_map(|&b|gpu_burst_record(b)).collect()
+        self.bursts.iter().flatten().filter(|b|!self.inspect_plate || !matches!(b.kind,BurstKind::ArmorImpact(_)|BurstKind::HotRim{..}))
+            .filter_map(|&b|gpu_burst_record(b)).collect()
     }
     fn draw_burst(&mut self, mut b: Burst, eye: Vec3, remaining: usize) -> usize {
         // The raster path draws a cook-off's fireball as the blast flash at its size (bounded).
@@ -709,6 +745,7 @@ impl Effects {
                 }
             }
         }
+        if self.inspect_plate && matches!(b.kind, BurstKind::ArmorImpact(_)) { return spark_count; }
         let muzzle = matches!(b.kind, BurstKind::Muzzle);
         let blast = matches!(b.kind, BurstKind::Blast | BurstKind::InteriorBlast);
         let hot = !matches!(b.kind, BurstKind::Dust);
@@ -721,16 +758,16 @@ impl Effects {
         // Coarsen distant silhouettes only as grain count decreases; close fire is composed of
         // thousands of fine voxels, while its bounded, less detailed far LOD remains recognizable.
         let grain_scale = (GRAINS as f32 / desired as f32).sqrt().clamp(1.0, 3.5);
-        let flash_life = if muzzle { 0.11 } else if blast { 0.28 } else { 0.24 };
+        let flash_life = if b.brief_surface_flash { 0.00035 } else if muzzle { 0.11 } else if blast { 0.28 } else { 0.24 };
         let age = b.age;
         // Past the flash (and a blast's delayed lobes) nothing below is drawn. Returning the
         // full grain count here starved newer flashes of the frame budget for seconds.
-        if age >= flash_life + if blast { 0.13 } else { 0.0 } { return spark_count; }
+        if age >= flash_life + if blast && !b.brief_surface_flash { 0.13 } else { 0.0 } { return spark_count; }
         for j in 0..count {
             let seed = b.seed.wrapping_mul(3948571).wrapping_add(j as u32 * 977);
             let ray = direction(seed);
             let rnd = random(seed.wrapping_add(11));
-            let delayed = if blast { (j % 3) as f32 * 0.065 } else { 0.0 };
+            let delayed = if blast && !b.brief_surface_flash { (j % 3) as f32 * 0.065 } else { 0.0 };
             let t = age - delayed;
             if t < 0.0 { continue; }
             let f = (t / (b.life - delayed)).clamp(0.0, 1.0);
@@ -978,7 +1015,8 @@ impl Game {
             let radius=if muzzle {b.radius*(0.22+age.sqrt()*0.70)}else{b.radius*(0.25+0.60*age.sqrt())};
             let center=if muzzle {b.pos+propellant_offset(b.dir,Vec3::ZERO,age,b.radius,0.5,wind)}
                 else {b.pos+Vec3::new(wind.x*age*0.55,age*b.radius*0.32,wind.y*age*0.55)};
-            let onset=if matches!(b.kind,BurstKind::Impact|BurstKind::ArmorImpact(_)) {impact_smoke_build(age)} else {smoothstep(0.0,0.08,age)};
+            let onset=if b.brief_surface_flash {smoothstep(0.003,0.06,age)} else if matches!(b.kind,BurstKind::InteriorBlast) {smoothstep(0.0,0.003,age)}
+                else if matches!(b.kind,BurstKind::Impact|BurstKind::ArmorImpact(_)) {impact_smoke_build(age)} else {smoothstep(0.0,0.08,age)};
             let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*onset*keep;
             for lobe in 0..3 {
                 let phase=crate::particle_motion::seed_phase(b.seed)+lobe as f32*2.1;
@@ -986,19 +1024,8 @@ impl Game {
                 r.add_smoke_volume(center+offset,radius*0.76,density,age*0.8+phase,if muzzle {0.55}else{0.08});
             }
         }
-        let mut cannon_draws=0;
-        for shot in &self.projectiles {
-            // Bullet tracers use the actual swept history above; ball rounds have no luminous tail.
-            if shot.small_arm.is_some() {continue;}
-            if cannon_draws>=CANNON_DRAWS {continue;}
-            cannon_draws+=1;
-            let weapon=Weapon::Cannon(shot.shell.caliber_mm as u16);
-            // The tracer burns at the round's base, behind the body the round is drawn as
-            // (`drive_lodged_rounds` draws it in flight): its streak starts there, not at the nose.
-            let dir=shot.velocity.normalize_or_zero();
-            let base=shot.pos-dir*super::game_fea::penetrator_body(shot.shell).length_m;
-            self.weapon_vfx.streak(base,dir,shot.distance_m,weapon,r.camera.pos);
-        }
+        // Cannon trails are drawn from retained authoritative flight segments above, so
+        // deleting a shell on impact cannot erase its whole luminous trail in one frame.
         if self.panzerfaust_shot.active {
             let shot = &self.panzerfaust_shot;
             self.weapon_vfx.streak(shot.pos, shot.vel.normalize_or_zero(), shot.distance,
@@ -1596,7 +1623,7 @@ mod tests {
     }
     #[test]
     fn bounded_render_shutter_retains_actual_low_fps_travel_without_extending_contact() {
-        let segment=BulletSegment {id:1,start:Vec3::ZERO,end:Vec3::Z*3.0,at:0.001,until:0.005};
+        let segment=BulletSegment {id:1,start:Vec3::ZERO,end:Vec3::Z*3.0,at:0.001,until:0.005,share:1.0,trail_s:0.0};
         assert!(segment.exposed(1.0/30.0).is_none());
         let (a,b)=segment.exposed_for(1.0/30.0,MAX_BULLET_EXPOSURE_S).unwrap();
         assert_eq!(a,segment.start);assert_eq!(b,segment.end);
@@ -1607,14 +1634,33 @@ mod tests {
 impl Effects {
     pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
         let mut fields=crate::capture_world_fields!(self; next_flight, next_burst, sequence, replaced_bursts, pixel_world_scale, gpu_analytic, bullet_exposure_s, wind, now_s, small_arm_rounds, bullet_segments, bullet_times, last_bullet_contact_s);
-        fields.put("flights",&self.flights.as_slice())?;fields.put("bursts",&self.bursts.as_slice())?;Ok(fields)
+        fields.put("cabin_sparks",&self.cabin_sparks)?;fields.put("flights",&self.flights.as_slice())?;fields.put("bursts",&self.bursts.as_slice())?;Ok(fields)
     }
     pub(crate) fn import_world_state(&mut self,mut fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        if fields.keys().any(|key|key=="cabin_sparks"){self.cabin_sparks=fields.take("cabin_sparks")?;}else{self.cabin_sparks=Default::default();}
         self.flights=fields.take::<Vec<Option<Flight>>>("flights")?.try_into().map_err(|_|anyhow::anyhow!("weapon flight capacity mismatch"))?;
         self.bursts=fields.take::<Vec<Option<Burst>>>("bursts")?.try_into().map_err(|_|anyhow::anyhow!("weapon burst capacity mismatch"))?;
         crate::restore_world_fields!(self,fields; next_flight, next_burst, sequence, replaced_bursts, pixel_world_scale, gpu_analytic, bullet_exposure_s, wind, now_s, small_arm_rounds, bullet_segments, bullet_times, last_bullet_contact_s);
         // Render lists are reconstructed from the retained analytical records at saved now_s.
         self.gpu_tracers.clear();for page in &mut self.mats {page.clear();}for page in &mut self.particle_ids {page.clear();}
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cannon_trail_tests {
+    use super::*;
+    #[test]
+    fn retired_shell_trail_closes_from_far_end_without_moving_past_contact(){
+        let mut fx=Effects::default();fx.gpu_analytic=true;
+        fx.record_fragment_tracer(17,1.,Vec3::ZERO,Vec3::Z*10.,0.,0.01);
+        let s=fx.bullet_segments[0];
+        let (a,b)=s.exposed_for(0.04,s.trail_s).unwrap();
+        assert!((a.z-5.).abs()<1e-4);assert_eq!(b.z,10.);
+        let (c,d)=s.exposed_for(0.044,s.trail_s).unwrap();
+        assert!(c.z>a.z);assert_eq!(d,b);
+        assert!(s.exposed_for(0.046,s.trail_s).is_none());
+        fx.now_s=0.04;fx.draw_bullet_segments(Vec3::X);
+        assert_eq!(fx.gpu_tracers.len(),1,"no live shell object is needed to retain its trail");
     }
 }

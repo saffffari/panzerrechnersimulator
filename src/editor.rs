@@ -2726,6 +2726,7 @@ struct EditorState {
     terrain_stroke: u32,
     terrain_flatten_datum: Option<f32>,
     terrain_dirty_bounds: Option<GridBounds>,
+    integrated_range: bool,
     /// Terrain immediately before the first uncaptured dab. Scene-block heights and prop `dy`
     /// are measured from this datum, so raising the anchor itself survives save/reload.
     terrain_capture_base: Option<Vec<f32>>,
@@ -3264,6 +3265,7 @@ impl EditorState {
             terrain_stroke: 0,
             terrain_flatten_datum: None,
             terrain_dirty_bounds: None,
+            integrated_range: false,
             terrain_capture_base: None,
             terrain_render_dirty: false,
             terrain_undo: None,
@@ -3651,7 +3653,14 @@ impl EditorState {
     fn save_document(&mut self) -> anyhow::Result<()> {
         anyhow::ensure!(!self.mode.has_cancelable_transform(), "confirm the transform with LMB or cancel it with Escape first");
         anyhow::ensure!(!self.manifest_save_conflicted(), "the source changed; reload or rebase before saving");
-        anyhow::ensure!(self.terrain_dirty_bounds.is_none(), "capture sculpted terrain with F7 before saving");
+        if self.terrain_dirty_bounds.is_some() {
+            // Saving terrain must not depend on selecting an unrelated prop. Keep the edit
+            // as a reversible terrain-only scene block over the original heightfield.
+            let selected=std::mem::take(&mut self.sel);
+            self.capture_scene_block();
+            self.sel=selected;
+            anyhow::ensure!(self.terrain_dirty_bounds.is_none(),"{}",self.status);
+        }
         self.world.save_edits()?;
         let props = self.save_tank_dressing()?;
         self.dirty = false;
@@ -4540,12 +4549,6 @@ impl EditorState {
                     .is_some_and(|placement| !placement.deleted)
             })
             .collect();
-        if selected.is_empty() {
-            self.status =
-                "F7 needs selected scene props (Shift+LMB); F6 remains prop-only prefab capture"
-                    .into();
-            return;
-        }
         if self.terrain_dirty_bounds.is_none() {
             self.status =
                 "F7 needs an uncaptured terrain sculpt — press H and shape the site first".into();
@@ -5706,7 +5709,8 @@ impl EditorState {
             3 => format!("{:+.2}", r.display_grade[2]),
             4 => format!("{:.2}", r.display_grade[3]),
             5 => ["screen Bayer4", "blue noise", "sphere Bayer8", "screen Bayer8"][(r.display_dither_pattern.round() as usize).min(3)].into(),
-            6 => format!("{:.1}", r.master_retro),
+            6 => format!("{:.1}", r.display_tuning.map(|p| p.retro_strength)
+                .unwrap_or(if r.shader_backend { 1.0 } else { r.master_retro })),
             7 => format!("{:.4}", l.fog_density),
             8 => format!("{:.2}", l.overcast),
             _ => l.utc.unwrap_or(r.sky_clock.now()).to_iso(),
@@ -5726,7 +5730,18 @@ impl EditorState {
             3 => r.display_grade[2] = (r.display_grade[2] + 0.05 * dir).clamp(-1.0, 1.0),
             4 => r.display_grade[3] = (r.display_grade[3] + 0.05 * dir).clamp(0.5, 2.0),
             5 => r.display_dither_pattern = (r.display_dither_pattern + dir).rem_euclid(4.0),
-            6 => r.master_retro = (r.master_retro + 0.1 * dir).clamp(0.0, 1.0),
+            6 => {
+                let mut tuning = r.display_tuning.unwrap_or_else(|| {
+                    let mut tuning = crate::renderer::display_tuning::DisplayTuning::at_resolution(r.iw, r.ih);
+                    if !r.shader_backend { tuning.retro_strength = r.master_retro; }
+                    tuning
+                });
+                tuning.retro_strength = (tuning.retro_strength + 0.1 * dir).clamp(0.0, 1.0);
+                r.master_retro = tuning.retro_strength;
+                r.display_tuning = Some(tuning);
+                self.world.display_tuning = Some(tuning);
+                self.dirty = true;
+            }
             7 | 8 => {
                 if !self.world.lighting.enabled { self.select_environment_lighting(); }
                 let l = &mut self.world.lighting;
@@ -7105,6 +7120,13 @@ impl EditorState {
         );
         if !self.browser.open {
             draw_editor_toolbar(&mut self.renderer, self.walkthrough, self.haze_off);
+            if self.integrated_range {
+                for (i,label) in ["RANGE","BATTLE","WORLD"].iter().enumerate() {
+                    let x=0.01+i as f32*0.085;
+                    self.renderer.fill_rect(x,0.95,0.080,0.036,if i==2 {[0.9,0.9,0.9,1.]}else{[0.05,0.05,0.05,1.]});
+                    self.renderer.draw_text(label,x+0.040,0.958,0.018,if i==2 {[0.,0.,0.,1.]}else{[1.,1.,1.,1.]},Align::Center);
+                }
+            }
             if self.render_panel { self.draw_render_panel(); }
         }
         if !self.status.is_empty() {
@@ -7270,6 +7292,101 @@ impl DestructiveActionGuard {
     }
 }
 
+/// Session camera/display state shared by RANGE and WORLD. Keep the legacy flat look fields
+/// for existing presets, but carry the full profile and resolution across renderer rebuilds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct EditorSessionLook {
+    look: f32,
+    grade: [f32; 4],
+    dither: f32,
+    master_retro: f32,
+    resolution: (u32, u32),
+    pub(crate) display: Option<crate::renderer::display_tuning::DisplayTuning>,
+    exposure: Option<f32>,
+}
+
+impl EditorSessionLook {
+    pub(crate) fn capture(r: &Renderer) -> Self {
+        Self { look: r.look, grade: r.display_grade, dither: r.display_dither_pattern,
+            master_retro: r.master_retro, resolution: (r.iw, r.ih), display: r.display_tuning,
+            exposure: r.exposure_override }
+    }
+
+    pub(crate) fn read(state: &serde_json::Value, mut fallback: Self) -> anyhow::Result<Self> {
+        use crate::renderer::display_tuning::DisplayTuning;
+        let l = &state["look"];
+        let number = |v: &serde_json::Value| v.as_f64().map(|v| v as f32).filter(|v| v.is_finite());
+        if let Some(v) = number(&l["look"]) { fallback.look = v; }
+        if let Some(a) = l["grade"].as_array().filter(|a| a.len() == 4) {
+            if let Some(values) = a.iter().map(number).collect::<Option<Vec<_>>>() {
+                fallback.grade.copy_from_slice(&values);
+            }
+        }
+        if let Some(v) = number(&l["dither"]) { fallback.dither = v; }
+        if let Some(v) = number(&l["master_retro"]) { fallback.master_retro = v.clamp(0., 1.); }
+        if let (Some(w), Some(h)) = (l["width"].as_u64(), l["height"].as_u64()) {
+            let size = (u32::try_from(w)?, u32::try_from(h)?);
+            anyhow::ensure!(crate::renderer::INTERNAL_RES_PRESETS.contains(&size), "unsupported session display resolution");
+            fallback.resolution = size;
+        }
+        if l["tuned"].as_bool() == Some(false) {
+            fallback.display = None;
+        } else if !l["display_tuning"].is_null() {
+            let profile = DisplayTuning::from_json(&l["display_tuning"])?;
+            fallback.resolution = (profile.width, profile.height);
+            fallback.display = Some(profile);
+        } else if l["tuned"].as_bool() == Some(true) {
+            let mut profile = fallback.display.unwrap_or_else(|| DisplayTuning::at_resolution(fallback.resolution.0, fallback.resolution.1));
+            (profile.width, profile.height) = fallback.resolution;
+            if let Some(v) = number(&l["palette_levels"]) { profile.palette_levels = v; }
+            if let Some(v) = number(&l["ordered_dither"]) { profile.ordered_dither = v; }
+            if let Some(v) = number(&l["ldr_dither"]) { profile.ldr_dither = v; }
+            if let Some(v) = number(&l["retro"]) { profile.retro_strength = v; }
+            if let Some(v) = l["white_balance"].as_bool() { profile.ambient_white_balance = v; }
+            if let Some(v) = number(&l["white_balance_strength"]) { profile.ambient_white_balance_strength = v; }
+            fallback.display = Some(DisplayTuning::from_json(&profile.to_json())?);
+        }
+        if state["sky"].get("exposure").is_some() {
+            fallback.exposure = number(&state["sky"]["exposure"]).filter(|v| *v > 0.);
+        }
+        Ok(fallback)
+    }
+
+    pub(crate) fn write(self, state: &mut serde_json::Value) {
+        let l = &mut state["look"];
+        l["look"] = serde_json::json!(self.look);
+        l["grade"] = serde_json::json!(self.grade);
+        l["dither"] = serde_json::json!(self.dither);
+        l["master_retro"] = serde_json::json!(self.master_retro);
+        l["width"] = serde_json::json!(self.resolution.0);
+        l["height"] = serde_json::json!(self.resolution.1);
+        l["tuned"] = serde_json::json!(self.display.is_some());
+        l["display_tuning"] = self.display.map(|p| p.to_json()).unwrap_or(serde_json::Value::Null);
+        if let Some(p) = self.display {
+            l["palette_levels"] = serde_json::json!(p.palette_levels);
+            l["ordered_dither"] = serde_json::json!(p.ordered_dither);
+            l["ldr_dither"] = serde_json::json!(p.ldr_dither);
+            l["retro"] = serde_json::json!(p.retro_strength);
+            l["white_balance"] = serde_json::json!(p.ambient_white_balance);
+            l["white_balance_strength"] = serde_json::json!(p.ambient_white_balance_strength);
+        }
+        state["sky"]["exposure"] = serde_json::json!(self.exposure);
+    }
+
+    pub(crate) fn apply(self, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Result<()> {
+        // Validate/rebuild the complete target graph before mutating the active look. A rejected
+        // backend or resolution leaves the live renderer and its profile unchanged.
+        if (r.iw, r.ih) != self.resolution { r.resize_shader_resolution(device, queue, self.resolution)?; }
+        r.look = self.look;
+        r.display_grade = self.grade;
+        r.display_dither_pattern = self.dither;
+        r.master_retro = self.master_retro;
+        r.display_tuning = self.display;
+        r.exposure_override = self.exposure;
+        Ok(())
+    }
+}
+
 pub struct EditorApp {
     manifest_path: PathBuf,
     asset_yard: bool,
@@ -7278,6 +7395,8 @@ pub struct EditorApp {
     last: Option<Instant>,
     destructive_action_guard: DestructiveActionGuard,
     smoke_error: Option<String>,
+    range_return: Option<bool>,
+    range_state: serde_json::Value,
 }
 
 impl EditorApp {
@@ -7290,7 +7409,47 @@ impl EditorApp {
             last: None,
             destructive_action_guard: DestructiveActionGuard::default(),
             smoke_error: None,
+            range_return: None,
+            range_state: serde_json::Value::Null,
         }
+    }
+
+    pub(crate) fn attach(window:Arc<Window>,manifest:PathBuf,look:&serde_json::Value)->anyhow::Result<Self> {
+        let mut app=Self::new(manifest.clone(),false);
+        app.range_state=look.clone();
+        let mut st=EditorState::new(window.clone(),manifest,false)?;
+        st.integrated_range=true;
+        let display = EditorSessionLook::read(look, EditorSessionLook::capture(&st.renderer))?;
+        display.apply(&mut st.renderer, &st.device, &st.queue)?;
+        st.world.display_tuning = display.display;
+        if let (Some(day),Some(hour))=(look["sky"]["day"].as_i64(),look["sky"]["local_h"].as_f64()) {
+            st.world.lighting.enabled=true;
+            st.world.lighting.utc=Some(crate::ephemeris::UtcInstant::from_calendar(1942,12,21,0,0,0.).plus_seconds(day as f64*86400.+(hour-3.)*3600.));
+            if let Some(v)=look["sky"]["weather"].as_f64(){st.world.lighting.overcast=v as f32;}
+            if let Some(v)=look["look"]["fog"].as_f64(){st.world.lighting.fog_density=v as f32;}
+            st.apply_lighting_preview();
+        }
+        window.set_title("Panzerrechnersystem — WORLD");
+        window.request_redraw();app.state=Some(st);Ok(app)
+    }
+
+    pub(crate) fn take_range_return(&mut self)->Option<(Arc<Window>,bool,serde_json::Value)> {
+        let battle=self.range_return.take()?;let st=self.state.as_ref()?;
+        let mut state=self.range_state.clone();
+        EditorSessionLook::capture(&st.renderer).write(&mut state);
+        state["look"]["fog"]=serde_json::json!(st.renderer.fog_density);
+        let utc=st.world.lighting.utc.unwrap_or_else(||st.renderer.sky_clock.now());
+        let days=(utc.plus_seconds(3.*3600.).jd-crate::ephemeris::UtcInstant::from_calendar(1942,12,21,0,0,0.).jd).max(0.);
+        state["sky"]["day"]=serde_json::json!(days.floor() as i32);
+        state["sky"]["local_h"]=serde_json::json!((days-days.floor())*24.);
+        state["sky"]["weather"]=serde_json::json!(st.world.lighting.overcast);
+        state["sky"]["running"]=serde_json::json!(false);
+        Some((st.window.clone(),battle,state))
+    }
+
+    pub(crate) fn run_integrated_probe(&mut self,prefix:&str)->anyhow::Result<()> {
+        self.state.as_mut().unwrap().run_editor_smoke(prefix)?;
+        self.range_return=Some(false);Ok(())
     }
 }
 
@@ -7404,6 +7563,13 @@ impl ApplicationHandler for EditorApp {
                 match button {
                     MouseButton::Left => {
                         if btn.is_pressed() && !st.pointer_captured && !st.browser.open {
+                            if st.integrated_range && (0.95..=0.986).contains(&st.cursor[1]) {
+                                if let Some(i)=(0..2).find(|&i|(0.01+i as f32*0.085..=0.09+i as f32*0.085).contains(&st.cursor[0])) {
+                                    let result=if st.has_unsaved_changes(){st.save_document()}else{Ok(())};
+                                    match result {Ok(())=>{st.release_editor_pointer();self.range_return=Some(i==1);},Err(e)=>st.status=format!("Save before returning: {e:#}")}
+                                    return;
+                                }
+                            }
                             if let Some(index) = editor_toolbar_hit(st.cursor) {
                                 st.toolbar_action(index, &mut self.keys);
                                 return;
@@ -8340,7 +8506,7 @@ impl ApplicationHandler for EditorApp {
                         st.status = "save blocked: worldgen changed the base, so stale placement indices cannot be written safely; keep the editor open and rebase before F9".into();
                     }
                     KeyCode::F5 if st.terrain_dirty_bounds.is_some() => {
-                        st.status = "uncaptured terrain would be lost — select the scene props and press F7 (captures + saves)".into();
+                        if let Err(e)=st.save_document(){st.status=format!("Save failed: {e:#}");}
                     }
                     KeyCode::F5 => match st.world.save_edits() {
                         Ok(n) => match st.save_tank_dressing() {
@@ -8640,6 +8806,71 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn session_look_fixture() -> EditorSessionLook {
+        EditorSessionLook { look: 2., grade: [1.25, 1.3, -0.15, 0.95], dither: 2.,
+            master_retro: 0.45, resolution: (960, 540), display: None, exposure: Some(0.75) }
+    }
+
+    #[test]
+    fn range_world_display_transfer_preserves_full_profile_and_camera_exposure() {
+        let mut expected = session_look_fixture();
+        let mut display = crate::renderer::display_tuning::DisplayTuning::at_resolution(1280, 720);
+        display.palette_levels = 17.;
+        display.ordered_dither = 0.35;
+        display.ldr_dither = 0.65;
+        display.retro_strength = 0.2;
+        display.ambient_white_balance = true;
+        display.ambient_white_balance_strength = 0.6;
+        expected.display = Some(display);
+        expected.resolution = (1280, 720);
+        let mut state = serde_json::json!({"camera":{"eye":[1,2,3]},"look":{"eye_fx":{"flash":true}},"sky":{"day":4}});
+        expected.write(&mut state);
+        assert_eq!(EditorSessionLook::read(&state, session_look_fixture()).unwrap(), expected);
+        assert_eq!(state["camera"]["eye"], serde_json::json!([1,2,3]));
+        assert_eq!(state["look"]["eye_fx"]["flash"], true);
+        assert_eq!(state["sky"]["day"], 4);
+        assert_eq!(state["look"]["retro"], serde_json::json!(0.2_f32));
+    }
+
+    #[test]
+    fn range_world_display_transfer_reads_legacy_flat_profiles() {
+        let state = serde_json::json!({"look":{"tuned":true,"palette_levels":23,
+            "ordered_dither":0.35,"ldr_dither":0.65,"retro":0.2,
+            "white_balance":true,"white_balance_strength":0.6},"sky":{"exposure":null}});
+        let got = EditorSessionLook::read(&state, session_look_fixture()).unwrap();
+        let display = got.display.unwrap();
+        assert_eq!((display.width, display.height), (960,540));
+        assert_eq!(display.palette_levels, 23.);
+        assert_eq!(display.ordered_dither, 0.35);
+        assert_eq!(display.ldr_dither, 0.65);
+        assert_eq!(display.retro_strength, 0.2);
+        assert!(display.ambient_white_balance);
+        assert_eq!(display.ambient_white_balance_strength, 0.6);
+        assert_eq!(got.exposure, None);
+    }
+
+    #[test]
+    fn range_world_display_transfer_clears_profile_and_exposure_when_disabled() {
+        let mut fallback = session_look_fixture();
+        fallback.display = Some(crate::renderer::display_tuning::DisplayTuning::at_resolution(960,540));
+        let state = serde_json::json!({"look":{"tuned":false,"master_retro":0.8},"sky":{"exposure":null}});
+        let got = EditorSessionLook::read(&state, fallback).unwrap();
+        assert_eq!(got.display, None);
+        assert_eq!(got.master_retro, 0.8);
+        assert_eq!(got.exposure, None);
+        let mut saved = serde_json::json!({});
+        got.write(&mut saved);
+        assert_eq!(EditorSessionLook::read(&saved, fallback).unwrap(), got);
+    }
+
+    #[test]
+    fn range_world_display_transfer_rejects_unsupported_targets_and_invalid_profiles() {
+        let invalid_size = serde_json::json!({"look":{"width":777,"height":333}});
+        assert!(EditorSessionLook::read(&invalid_size, session_look_fixture()).is_err());
+        let invalid_profile = serde_json::json!({"look":{"tuned":true,"palette_levels":1}});
+        assert!(EditorSessionLook::read(&invalid_profile, session_look_fixture()).is_err());
+    }
 
     #[test]
     fn placement_tilt_manifest_edits_roundtrip_and_model_agree() {
