@@ -21,6 +21,8 @@
 #                                                 colour, pyramid bloom); the default is the standard display at 1280x720,
 #                                                 the owner's pick of 2026-11-02 over deltaP's colour
 #   tools/launch_demo_20261101.sh --cabin-look pastel  the pastel palette itself inside the hull under the tinted look
+#   tools/launch_demo_20261101.sh --one-man       the player alone in the Tiger: the other four seats unmanned, he works
+#                                                 every post (KESSEL_ONE_MAN=1; singleplayer only)
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
 #   tools/launch_demo_20261101.sh --canyon --t34s 5 --no-guns
 #                                                 a 1v5: five T-34s at the first-encounter knot (the deep platoons benched,
@@ -45,7 +47,7 @@ RUNTIME="$ROOT/artifacts/runtime"
 # levels) on the 1024x576 grid, exactly 5x on the 5120x2880 panel. Agents: do not change these
 # defaults without asking the owner to confirm first; --look/--res still choose others per run.
 REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
-BERLIN=0 BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+BERLIN=0 BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -56,6 +58,7 @@ while (( $# )); do
         --menu) MODE=menu ;;
         --windowed) WINDOWED=1 ;;
         --platoon) PLATOON=1 ;;
+        --one-man) ONE_MAN=1 ;;
         --res) RES=$2; RES_SET=1; shift ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;   # standard (default) | deltap-tinted | deltap | pastel ...
         --cabin-look) CABIN_LOOK=$2; shift ;;   # pastel: the palette itself inside the hull (tinted look)
@@ -140,6 +143,7 @@ export KESSEL_AUDIO_RANGE="$AUDIO_RANGE"
 # Every demo run records its simulation phases per second (tools/sim_calls.py, tools/sim_segments.py).
 export KESSEL_SESSION_LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).session.jsonl"
 (( PLATOON )) && export KESSEL_PLATOON=2
+(( ONE_MAN )) && export KESSEL_ONE_MAN=1
 [[ -n "$SEED" ]] && export KESSEL_CANYON_SEED="$SEED"
 [[ -n "$T34S" ]] && export KESSEL_CANYON_T34S="$T34S"
 [[ -n "$BRAIN" ]] && export KESSEL_T34_BRAIN="$BRAIN"
@@ -149,7 +153,7 @@ export KESSEL_SESSION_LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).session.jsonl"
 
 LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).log"
 {
-    printf '[launcher] %s mode=%s res=%s look=%s windowed=%s platoon=%s order=%s forward=%s\n' "$(date --iso-8601=seconds)" "$MODE" "$RES" "${LOOK:-standard}" "$WINDOWED" "$PLATOON" "${ORDER:--}" "$FORWARD"
+    printf '[launcher] %s mode=%s res=%s look=%s windowed=%s platoon=%s one_man=%s order=%s forward=%s\n' "$(date --iso-8601=seconds)" "$MODE" "$RES" "${LOOK:-standard}" "$WINDOWED" "$PLATOON" "$ONE_MAN" "${ORDER:--}" "$FORWARD"
     env | grep '^KESSEL_' | sort
 } > "$LOG"
 ln -sfn "$(basename -- "$LOG")" "$RUNTIME/demo-latest.log"

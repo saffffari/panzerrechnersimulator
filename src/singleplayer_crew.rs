@@ -195,6 +195,13 @@ impl Game {
         if self.singleplayer_crew_active && self.singleplayer_crew.is_none() {
             self.singleplayer_crew = Some(SingleplayerCrew::new(SINGLEPLAYER_CREWMAN));
             fill_roster(&mut self.crew);
+            // KESSEL_ONE_MAN=1 (launcher --one-man): the player alone aboard. The other four
+            // seats are unmanned from the start, the state a killed man leaves; he works every post.
+            if std::env::var("KESSEL_ONE_MAN").is_ok_and(|v| v == "1") {
+                for person in self.crew.iter_mut().filter(|p| p.role != SINGLEPLAYER_CREWMAN) {
+                    person.ok = false;
+                }
+            }
             self.crew_solo.enabled = true;
             self.crew_solo.fire_at_will = false;
         }
