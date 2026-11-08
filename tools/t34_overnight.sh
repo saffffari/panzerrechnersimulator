@@ -39,7 +39,7 @@ EOF
 echo "[overnight] resuming after generation $LAST from $P1, $P2"
 nice -n 10 python3 "$HERE/tools/t34_canyon_es.py" --bin "$BIN" --init "$RUN/gen0.bin" \
   --parents "$RUN/genomes/$P1.bin,$RUN/genomes/$P2.bin" --start-gen $((LAST + 1)) --gens "$GENS" \
-  --july "$JULY" --out "$RUN" --pop 8 --mu 2 --workers 2 --secs 90 | tee -a "$RUN/run.log"
+  --july "$JULY" --out "$RUN" --pop 8 --mu 2 --workers "${WORKERS:-2}" --secs 90 | tee -a "$RUN/run.log"
 
 CHAMP=$(ls -t "$RUN"/gen_*.bin | head -1)
 mkdir -p "$OUT/after" "$OUT/before"
