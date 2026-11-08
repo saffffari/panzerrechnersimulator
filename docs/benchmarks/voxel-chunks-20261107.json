@@ -1,0 +1,372 @@
+{
+  "fixtures": [
+    {
+      "after_obj": "target/integration-20261107/voxel-chunk-meshes/the-window-solnechnaya-after.obj",
+      "axis_convention": "Z up (core is axis agnostic)",
+      "bounds_cells": {
+        "max_inclusive": [
+          119,
+          99,
+          72
+        ],
+        "min": [
+          0,
+          0,
+          0
+        ]
+      },
+      "cell_size_m": 0.1,
+      "checks": {
+        "final_occupancy": true,
+        "immediate_collision": true,
+        "publication_budget": true,
+        "unreached_cells_unchanged": true
+      },
+      "edit_timing_scope": "Per update: nine DDA segments, reached-cell erasure and immediate collision assertions; excludes mesh publication",
+      "edit_timings": {
+        "count": 32,
+        "max_ms": 0.008245,
+        "p50_ms": 0.0011179999999999999,
+        "p95_ms": 0.007911,
+        "total_ms": 0.062131
+      },
+      "final": {
+        "chunk_cell_bytes": 1196032,
+        "chunks": 146,
+        "mesh": {
+          "quads": 9077,
+          "surface_area_m2": 630.2400000000001,
+          "triangles": 18154
+        },
+        "occupied": 184043
+      },
+      "fixture": "assets/concepts/primary-accounts-20261107/athena/the-window-solnechnaya/model.voxels.json",
+      "initial": {
+        "chunk_cell_bytes": 1196032,
+        "chunks": 146,
+        "mesh": {
+          "quads": 9097,
+          "surface_area_m2": 630.3000000000001,
+          "triangles": 18194
+        },
+        "occupied": 184107
+      },
+      "load_world_ms": 7.7655579999999995,
+      "locality": {
+        "unchanged_chunks_verified": 144,
+        "unrelated_chunks_published": 0
+      },
+      "parse_ms": 49.496563,
+      "publication": {
+        "budget_chunks_per_update": 2,
+        "drain_updates": 0,
+        "during_and_after_edits": {
+          "count": 32,
+          "max_ms": 0.191088,
+          "p50_ms": 0.000013000000000000001,
+          "p95_ms": 0.184296,
+          "total_ms": 0.5008780000000002
+        },
+        "initial": {
+          "count": 73,
+          "max_ms": 0.561615,
+          "p50_ms": 0.30807399999999996,
+          "p95_ms": 0.553557,
+          "total_ms": 24.532119999999995
+        },
+        "max_pending_chunks": 1,
+        "published_distinct_chunks": 2
+      },
+      "schema": "panzer.original-concept-voxels.v1",
+      "source_bytes": 2670553,
+      "source_fnv1a64": "9e9bccdeb628a8f9",
+      "tool": {
+        "anchor": [
+          66,
+          53,
+          27
+        ],
+        "kind": "nine elapsed-segment-local single-cell erasure sweeps",
+        "removed_cells": 64,
+        "steps": 32
+      }
+    },
+    {
+      "after_obj": "target/integration-20261107/voxel-chunk-meshes/water-under-fire-after.obj",
+      "axis_convention": "Z up (core is axis agnostic)",
+      "bounds_cells": {
+        "max_inclusive": [
+          139,
+          109,
+          39
+        ],
+        "min": [
+          0,
+          0,
+          0
+        ]
+      },
+      "cell_size_m": 0.1,
+      "checks": {
+        "final_occupancy": true,
+        "immediate_collision": true,
+        "publication_budget": true,
+        "unreached_cells_unchanged": true
+      },
+      "edit_timing_scope": "Per update: nine DDA segments, reached-cell erasure and immediate collision assertions; excludes mesh publication",
+      "edit_timings": {
+        "count": 32,
+        "max_ms": 0.010842000000000001,
+        "p50_ms": 0.001182,
+        "p95_ms": 0.00221,
+        "total_ms": 0.04983
+      },
+      "final": {
+        "chunk_cell_bytes": 737280,
+        "chunks": 90,
+        "mesh": {
+          "quads": 8082,
+          "surface_area_m2": 626.0,
+          "triangles": 16164
+        },
+        "occupied": 87247
+      },
+      "fixture": "assets/concepts/primary-accounts-20261107/athena/water-under-fire/model.voxels.json",
+      "initial": {
+        "chunk_cell_bytes": 745472,
+        "chunks": 91,
+        "mesh": {
+          "quads": 8103,
+          "surface_area_m2": 626.2600000000001,
+          "triangles": 16206
+        },
+        "occupied": 87267
+      },
+      "load_world_ms": 3.821895,
+      "locality": {
+        "unchanged_chunks_verified": 89,
+        "unrelated_chunks_published": 0
+      },
+      "parse_ms": 19.657643,
+      "publication": {
+        "budget_chunks_per_update": 2,
+        "drain_updates": 0,
+        "during_and_after_edits": {
+          "count": 32,
+          "max_ms": 0.198174,
+          "p50_ms": 0.000014,
+          "p95_ms": 0.000038,
+          "total_ms": 0.19863799999999987
+        },
+        "initial": {
+          "count": 46,
+          "max_ms": 0.5117430000000001,
+          "p50_ms": 0.28955000000000003,
+          "p95_ms": 0.387208,
+          "total_ms": 12.718732000000003
+        },
+        "max_pending_chunks": 2,
+        "published_distinct_chunks": 2
+      },
+      "schema": "panzer.original-concept-voxels.v1",
+      "source_bytes": 1278411,
+      "source_fnv1a64": "e570e087c090b654",
+      "tool": {
+        "anchor": [
+          60,
+          58,
+          16
+        ],
+        "kind": "nine elapsed-segment-local single-cell erasure sweeps",
+        "removed_cells": 20,
+        "steps": 32
+      }
+    },
+    {
+      "after_obj": "target/integration-20261107/voxel-chunk-meshes/factory-cellar-ward.voxels-after.obj",
+      "axis_convention": "Z up (core is axis agnostic)",
+      "bounds_cells": {
+        "max_inclusive": [
+          158,
+          135,
+          69
+        ],
+        "min": [
+          5,
+          5,
+          0
+        ]
+      },
+      "cell_size_m": 0.1,
+      "checks": {
+        "final_occupancy": true,
+        "immediate_collision": true,
+        "publication_budget": true,
+        "unreached_cells_unchanged": true
+      },
+      "edit_timing_scope": "Per update: nine DDA segments, reached-cell erasure and immediate collision assertions; excludes mesh publication",
+      "edit_timings": {
+        "count": 32,
+        "max_ms": 0.017388,
+        "p50_ms": 0.001178,
+        "p95_ms": 0.010995999999999999,
+        "total_ms": 0.07627099999999999
+      },
+      "final": {
+        "chunk_cell_bytes": 1622016,
+        "chunks": 198,
+        "mesh": {
+          "quads": 33508,
+          "surface_area_m2": 881.8800000000001,
+          "triangles": 67016
+        },
+        "occupied": 229490
+      },
+      "fixture": "assets/concepts/primary-accounts-20261107/hephaestus/factory-cellar-ward.voxels.json",
+      "initial": {
+        "chunk_cell_bytes": 1622016,
+        "chunks": 198,
+        "mesh": {
+          "quads": 33470,
+          "surface_area_m2": 881.5,
+          "triangles": 66940
+        },
+        "occupied": 229568
+      },
+      "load_world_ms": 9.886703,
+      "locality": {
+        "unchanged_chunks_verified": 194,
+        "unrelated_chunks_published": 0
+      },
+      "parse_ms": 59.901926,
+      "publication": {
+        "budget_chunks_per_update": 2,
+        "drain_updates": 0,
+        "during_and_after_edits": {
+          "count": 32,
+          "max_ms": 0.223514,
+          "p50_ms": 0.000013000000000000001,
+          "p95_ms": 0.162444,
+          "total_ms": 0.5428300000000004
+        },
+        "initial": {
+          "count": 99,
+          "max_ms": 0.632498,
+          "p50_ms": 0.31416,
+          "p95_ms": 0.548029,
+          "total_ms": 31.704916
+        },
+        "max_pending_chunks": 2,
+        "published_distinct_chunks": 4
+      },
+      "schema": "panzer.sparse-voxel-concept.v1",
+      "source_bytes": 3731358,
+      "source_fnv1a64": "4afb13c9b18c16c7",
+      "tool": {
+        "anchor": [
+          91,
+          70,
+          45
+        ],
+        "kind": "nine elapsed-segment-local single-cell erasure sweeps",
+        "removed_cells": 78,
+        "steps": 32
+      }
+    },
+    {
+      "after_obj": "target/integration-20261107/voxel-chunk-meshes/no-departure-airfield.voxels-after.obj",
+      "axis_convention": "Z up (core is axis agnostic)",
+      "bounds_cells": {
+        "max_inclusive": [
+          184,
+          160,
+          44
+        ],
+        "min": [
+          5,
+          5,
+          0
+        ]
+      },
+      "cell_size_m": 0.15,
+      "checks": {
+        "final_occupancy": true,
+        "immediate_collision": true,
+        "publication_budget": true,
+        "unreached_cells_unchanged": true
+      },
+      "edit_timing_scope": "Per update: nine DDA segments, reached-cell erasure and immediate collision assertions; excludes mesh publication",
+      "edit_timings": {
+        "count": 32,
+        "max_ms": 0.021123,
+        "p50_ms": 0.015529999999999999,
+        "p95_ms": 0.020762,
+        "total_ms": 0.48402400000000007
+      },
+      "final": {
+        "chunk_cell_bytes": 1425408,
+        "chunks": 174,
+        "mesh": {
+          "quads": 43336,
+          "surface_area_m2": 1982.2049999999997,
+          "triangles": 86672
+        },
+        "occupied": 180309
+      },
+      "fixture": "assets/concepts/primary-accounts-20261107/hephaestus/no-departure-airfield.voxels.json",
+      "initial": {
+        "chunk_cell_bytes": 1425408,
+        "chunks": 174,
+        "mesh": {
+          "quads": 42960,
+          "surface_area_m2": 1963.665,
+          "triangles": 85920
+        },
+        "occupied": 181465
+      },
+      "load_world_ms": 8.073860999999999,
+      "locality": {
+        "unchanged_chunks_verified": 162,
+        "unrelated_chunks_published": 0
+      },
+      "parse_ms": 39.531712,
+      "publication": {
+        "budget_chunks_per_update": 2,
+        "drain_updates": 0,
+        "during_and_after_edits": {
+          "count": 32,
+          "max_ms": 0.518114,
+          "p50_ms": 0.258181,
+          "p95_ms": 0.503482,
+          "total_ms": 9.945315000000003
+        },
+        "initial": {
+          "count": 87,
+          "max_ms": 0.66053,
+          "p50_ms": 0.329472,
+          "p95_ms": 0.552175,
+          "total_ms": 27.919675999999992
+        },
+        "max_pending_chunks": 2,
+        "published_distinct_chunks": 12
+      },
+      "schema": "panzer.sparse-voxel-concept.v1",
+      "source_bytes": 2962374,
+      "source_fnv1a64": "085811f7b12cbafa",
+      "tool": {
+        "anchor": [
+          94,
+          82,
+          5
+        ],
+        "kind": "nine elapsed-segment-local single-cell erasure sweeps",
+        "removed_cells": 1156,
+        "steps": 32
+      }
+    }
+  ],
+  "memory_limit": "chunk_cell_bytes excludes allocator, map, queue, fixture JSON, mesh and renderer allocations",
+  "schema": "panzer.voxel-chunk-probe.v1",
+  "scope": "Experimental CPU storage/collision/meshing lab, not integrated gameplay or a ballistics solver",
+  "timing_limit": "Exploratory wall timings while other workloads may be active. Count budget is not a wall-time guarantee or hardware FPS proof."
+}

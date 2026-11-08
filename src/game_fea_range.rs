@@ -3770,7 +3770,10 @@ impl App {
             }
             self.saved = Some(now);
         }
-        let dt = self.last.map_or(1.0 / 60.0, |t| (now - t).as_secs_f32()).min(0.1);
+        // Keep the uncapped redraw interval separate from the simulation safety clamp.
+        // A 370 ms stall must remain a 370 ms telemetry sample, not be reported as 100 ms.
+        let interval_s = self.last.map(|t| (now - t).as_secs_f64());
+        let dt = interval_s.unwrap_or(1.0 / 60.0).min(0.1) as f32;
         self.last = Some(now);
         let input = &mut self.input;
         let Some(st) = self.state.as_mut() else { return };
@@ -3845,6 +3848,7 @@ impl App {
         let sim_started = std::time::Instant::now();
         rg.tick(dt);
         let sim_ms = sim_started.elapsed().as_secs_f32() * 1000.0;
+        let acquire_started = std::time::Instant::now();
         let frame = match st.surface.get_current_texture() {
             Ok(f) => f,
             Err(_) => {
@@ -3852,25 +3856,31 @@ impl App {
                 return;
             }
         };
+        let acquire_ms = acquire_started.elapsed().as_secs_f64() * 1000.0;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let render_started = std::time::Instant::now();
         rg.render(&view, st.config.format, st.config.width, st.config.height, input.cursor);
         // Frame rate and where the time goes (smoothed): the simulation's step, the renderer's frame.
         let render_ms = render_started.elapsed().as_secs_f32() * 1000.0;
         let k = 0.1;
-        rg.perf = [rg.perf[0] + (dt.max(1.0e-4) - rg.perf[0]) * k, rg.perf[1] + (sim_ms - rg.perf[1]) * k,
+        rg.perf = [rg.perf[0] + (interval_s.unwrap_or(1.0 / 60.0).max(1.0e-4) as f32 - rg.perf[0]) * k, rg.perf[1] + (sim_ms - rg.perf[1]) * k,
             rg.perf[2] + (render_ms - rg.perf[2]) * k];
+        let present_started = std::time::Instant::now();
+        frame.present();
+        let present_ms = present_started.elapsed().as_secs_f64() * 1000.0;
         // KESSEL_FEA_RANGE_FRAMELOG=FILE: one JSON line a frame (wall dt, sim and render ms, the
         // game's own phase timings) to find what a strike's frames spend.
         static FRAME_LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>> = std::sync::OnceLock::new();
         if let Some(log) = FRAME_LOG.get_or_init(|| std::env::var_os("KESSEL_FEA_RANGE_FRAMELOG")
             .and_then(|p| std::fs::File::create(p).ok()).map(|f| std::sync::Mutex::new(std::io::BufWriter::new(f)))) {
             use std::io::Write;
-            let line = serde_json::json!({"dt_ms": dt * 1000.0, "sim_ms": sim_ms, "render_ms": render_ms,
-                "shot_t": rg.shot_t, "phases": rg.g.sim_phase.take()});
+            let line = serde_json::json!({"schema":"panzer.range-frame.v2",
+                "interval_ms":interval_s.map(|s|s*1000.0), "dt_ms": dt * 1000.0,
+                "sim_ms": sim_ms, "render_ms": render_ms, "acquire_ms":acquire_ms,
+                "present_cpu_ms":present_ms, "frame_work_ms":now.elapsed().as_secs_f64()*1000.0,
+                "shot_t": rg.shot_t, "playing":rg.playing, "phases": rg.g.sim_phase.take()});
             if let Ok(mut f) = log.lock() { let _ = writeln!(f, "{line}"); let _ = f.flush(); }
         }
-        frame.present();
     }
 }
 
