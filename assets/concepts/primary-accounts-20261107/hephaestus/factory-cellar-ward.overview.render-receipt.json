@@ -1,0 +1,23 @@
+{
+  "asset": "factory-cellar-ward",
+  "preview": "/windows/shop/panzerrechnersystem/captures/screenshots/voxel-runtime-concept-hephaestus-factory-cellar-ward-overview-20261107.png",
+  "renderer": "5.1.2",
+  "engine": "Cycles CPU",
+  "threads": 4,
+  "samples": 24,
+  "resolution": [
+    1600,
+    1280
+  ],
+  "imported_semantic_meshes": 45,
+  "imported_triangles": 176300,
+  "elapsed_import_and_render_s": 26.345,
+  "geometry_source": "/home/alex/panzer/voxel-runtime/assets/concepts/primary-accounts-20261107/hephaestus/factory-cellar-ward.glb",
+  "render_only_geometry": [
+    "studio floor"
+  ],
+  "human_review": "not performed",
+  "geometry_sha256": "04fd851c6f508d8bfc9459a62235e388320bb47f5ff3084a744ad991d2892dcd",
+  "preview_sha256": "87f7c4708ac9e59ae3367b505d08a0c6aa42f14c8a1cdb8c32453a5fc7bbd8c5",
+  "ai_visual_review": "Reviewed final overview in image viewer; corrected unsupported snow/rubble and metre-scale figure proportions before final render."
+}

@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "check": "Identical SHA-256 for all six editable/model artifacts after a fresh deterministic rebuild",
+  "artifacts": {
+    "factory-cellar-ward.voxels.json": "202e8fddfe8abf156c5f6b3941c9f48aebf61b77ec043de42e2fbd7bf3555326",
+    "factory-cellar-ward.vox": "76d738a7f34f29c69b2e7ed1cf4c5296024db4c679b44a76d395ba5f843bf9fe",
+    "factory-cellar-ward.glb": "04fd851c6f508d8bfc9459a62235e388320bb47f5ff3084a744ad991d2892dcd",
+    "no-departure-airfield.voxels.json": "4451557ef052aa52cfede466309f9c8c3b7b5ffd45e2015906dbb1e7b63658cd",
+    "no-departure-airfield.vox": "ef9bc07158acde3cb1f8942a64eed2a73739c416731ab2a3bbf60cedd22f75ea",
+    "no-departure-airfield.glb": "e3b40f09e006a6f9e914efe6116af470d0521e51949d12c90f40283760a1d230"
+  },
+  "elapsed_s": 2.301
+}

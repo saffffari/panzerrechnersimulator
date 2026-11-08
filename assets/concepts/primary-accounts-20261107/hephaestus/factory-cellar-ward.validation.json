@@ -1,0 +1,111 @@
+{
+  "schema": "panzer.concept-validation.v1",
+  "asset": "factory-cellar-ward",
+  "checks": {
+    "glb_header_and_length": "pass",
+    "glb_buffer_bounds": "pass",
+    "finite_positions": "pass",
+    "triangle_index_bounds": "pass",
+    "vox_header": "pass",
+    "vox_round_trip_palette_and_cells": "pass",
+    "voxel_palette_and_grid_bounds": "pass",
+    "hidden_faces_culled": "pass",
+    "files_under_20_mib": "pass"
+  },
+  "occupied_voxels": 229568,
+  "voxel_cell_m": 0.1,
+  "grid_dimensions": [
+    164,
+    140,
+    76
+  ],
+  "occupied_bounds_m_z_up": [
+    [
+      0.5,
+      15.9
+    ],
+    [
+      0.5,
+      13.600000000000001
+    ],
+    [
+      0.0,
+      7.0
+    ]
+  ],
+  "occupied_16_cube_chunks": 198,
+  "semantic_parts": {
+    "anonymous_patient_01": 591,
+    "anonymous_patient_01_bedding": 200,
+    "anonymous_patient_02": 591,
+    "anonymous_patient_02_bedding": 200,
+    "anonymous_patient_03": 591,
+    "anonymous_patient_03_bedding": 200,
+    "anonymous_patient_04": 591,
+    "anonymous_patient_04_bedding": 200,
+    "anonymous_patient_05": 591,
+    "anonymous_patient_05_bedding": 200,
+    "anonymous_patient_06": 591,
+    "anonymous_patient_06_bedding": 200,
+    "detachable_roof_remnant": 4832,
+    "distant_cellar_threshold": 3396,
+    "empty_arrival_stretcher": 212,
+    "empty_mess_tins": 24,
+    "exhausted_figure_by_wall": 478,
+    "exit_stair": 12468,
+    "factory_columns": 984,
+    "factory_floor": 42830,
+    "figure_near_fire": 478,
+    "floor_fire_ash": 108,
+    "floor_fire_core": 4,
+    "floor_fire_embers": 61,
+    "floor_fire_flame": 11,
+    "floor_fire_fuel": 76,
+    "floor_fire_ring": 204,
+    "frozen_exterior": 6715,
+    "left_cellar_wall": 22032,
+    "outside_ruins": 3778,
+    "outside_snow": 150,
+    "ration_crate": 315,
+    "ration_kettle": 106,
+    "rear_cellar_wall": 31038,
+    "right_wall_remnant": 7388,
+    "roof_girders": 1890,
+    "scattered_rubble": 994,
+    "sectioned_ground": 76844,
+    "stair_handrail": 108,
+    "upper_factory_ruin": 4888,
+    "upper_fallen_beam": 951,
+    "upper_snow": 102,
+    "waiting_figure": 478,
+    "window_frames": 29,
+    "window_sills": 850
+  },
+  "surface_quads": 88150,
+  "triangles": 176300,
+  "vertices": 352600,
+  "semantic_nodes": 45,
+  "primitives": 143,
+  "not_validated": [
+    "Gameplay integration",
+    "runtime frame budget",
+    "collision setup",
+    "destruction connectivity",
+    "historical reconstruction accuracy",
+    "canonical game-dev package unavailable"
+  ],
+  "artifacts": {
+    "factory-cellar-ward.voxels.json": {
+      "bytes": 3731358,
+      "sha256": "202e8fddfe8abf156c5f6b3941c9f48aebf61b77ec043de42e2fbd7bf3555326"
+    },
+    "factory-cellar-ward.vox": {
+      "bytes": 919368,
+      "sha256": "76d738a7f34f29c69b2e7ed1cf4c5296024db4c679b44a76d395ba5f843bf9fe"
+    },
+    "factory-cellar-ward.glb": {
+      "bytes": 10673464,
+      "sha256": "04fd851c6f508d8bfc9459a62235e388320bb47f5ff3084a744ad991d2892dcd"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "water-under-fire",
+  "voxel_size_m": 0.1,
+  "dimensions_m": [
+    14.0,
+    11.0,
+    4.0
+  ],
+  "occupied_voxels": 87267,
+  "exposed_quads": 62626,
+  "triangles": 125252,
+  "mesh_parts": 8,
+  "material_count": 28,
+  "previews": [
+    "/windows/shop/panzerrechnersystem/captures/screenshots/voxel-runtime-concept-athena-water-under-fire-overview-20261107-r2.png",
+    "/windows/shop/panzerrechnersystem/captures/screenshots/voxel-runtime-concept-athena-water-under-fire-outlet-20261107-r2.png"
+  ],
+  "editable_sources": [
+    "model.vox",
+    "model.voxels.json",
+    "model.blend"
+  ],
+  "export": "model.glb",
+  "original_geometry": true,
+  "runtime_import_tested": false,
+  "performance_budget_claim": null,
+  "files": {
+    "model.voxels.json": {
+      "bytes": 1278411,
+      "sha256": "1a8a5f23ba25c24d1fda911dd599b0251cfd8cafa81519b5c1d6a960dffdd5d1"
+    },
+    "model.vox": {
+      "bytes": 350164,
+      "sha256": "b348dd57ab3002c029acde04e02022ae75292ef391280205256f54e85598307b"
+    },
+    "model.glb": {
+      "bytes": 6789604,
+      "sha256": "eeb111c18b542b7a0cf894229a634d9dccf73cc9f68c490a317bbef98ecf649d"
+    },
+    "model.blend": {
+      "bytes": 2630919,
+      "sha256": "f680ec3b77b5db4e4ea6126c325ec376bb893f8049947a035eccaf3a31740363"
+    }
+  }
+}

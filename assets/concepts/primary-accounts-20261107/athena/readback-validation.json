@@ -1,0 +1,93 @@
+{
+  "schema": "panzer.concept-readback.v1",
+  "assets": [
+    {
+      "name": "the-window-solnechnaya",
+      "passed": true,
+      "occupied_voxels": 184107,
+      "source_dimensions_m": [
+        12.0,
+        10.0,
+        7.3
+      ],
+      "glb_bounds_y_up_m": [
+        [
+          0.0,
+          12.0
+        ],
+        [
+          0.0,
+          7.300000190734863
+        ],
+        [
+          -10.0,
+          -0.0
+        ]
+      ],
+      "triangles": 126060,
+      "mesh_parts": 8,
+      "checks": [
+        "unique integer bounded cells",
+        "valid material and part references",
+        "VOX150 exact cells/palette roundtrip",
+        "GLB2 container and buffer/accessor bounds",
+        "finite positions and unit normals",
+        "triangle indices in range",
+        "GLB/source bounds agree after Z-up to Y-up conversion",
+        "triangles agree with exposed surface export",
+        "each editable/export file below20MB",
+        "artifact SHA256 verification"
+      ],
+      "not_tested": [
+        "native engine import",
+        "runtime frame rate",
+        "collision/FEA behavior",
+        "LOD suitability"
+      ]
+    },
+    {
+      "name": "water-under-fire",
+      "passed": true,
+      "occupied_voxels": 87267,
+      "source_dimensions_m": [
+        14.0,
+        11.0,
+        4.0
+      ],
+      "glb_bounds_y_up_m": [
+        [
+          0.0,
+          14.0
+        ],
+        [
+          0.0,
+          4.0
+        ],
+        [
+          -11.0,
+          -0.0
+        ]
+      ],
+      "triangles": 125252,
+      "mesh_parts": 8,
+      "checks": [
+        "unique integer bounded cells",
+        "valid material and part references",
+        "VOX150 exact cells/palette roundtrip",
+        "GLB2 container and buffer/accessor bounds",
+        "finite positions and unit normals",
+        "triangle indices in range",
+        "GLB/source bounds agree after Z-up to Y-up conversion",
+        "triangles agree with exposed surface export",
+        "each editable/export file below20MB",
+        "artifact SHA256 verification"
+      ],
+      "not_tested": [
+        "native engine import",
+        "runtime frame rate",
+        "collision/FEA behavior",
+        "LOD suitability"
+      ]
+    }
+  ]
+}

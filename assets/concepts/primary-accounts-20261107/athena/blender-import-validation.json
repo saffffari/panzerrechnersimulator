@@ -1,0 +1,49 @@
+{
+  "blender_version": "5.1.2",
+  "assets": [
+    {
+      "name": "the-window-solnechnaya",
+      "passed": true,
+      "importer": "Blender built-in glTF2",
+      "bounds_z_up_m": [
+        [
+          0.0,
+          12.0
+        ],
+        [
+          0.0,
+          10.0
+        ],
+        [
+          0.0,
+          7.300000190734863
+        ]
+      ],
+      "objects": 8,
+      "triangles": 126060,
+      "runtime_import_tested": false
+    },
+    {
+      "name": "water-under-fire",
+      "passed": true,
+      "importer": "Blender built-in glTF2",
+      "bounds_z_up_m": [
+        [
+          0.0,
+          14.0
+        ],
+        [
+          0.0,
+          11.0
+        ],
+        [
+          0.0,
+          4.0
+        ]
+      ],
+      "objects": 8,
+      "triangles": 125252,
+      "runtime_import_tested": false
+    }
+  ]
+}

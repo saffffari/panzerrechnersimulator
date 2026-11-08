@@ -1,0 +1,45 @@
+{
+  "name": "the-window-solnechnaya",
+  "voxel_size_m": 0.1,
+  "dimensions_m": [
+    12.0,
+    10.0,
+    7.300000000000001
+  ],
+  "occupied_voxels": 184107,
+  "exposed_quads": 63030,
+  "triangles": 126060,
+  "mesh_parts": 8,
+  "material_count": 28,
+  "previews": [
+    "/windows/shop/panzerrechnersystem/captures/screenshots/voxel-runtime-concept-athena-the-window-solnechnaya-overview-20261107-r2.png",
+    "/windows/shop/panzerrechnersystem/captures/screenshots/voxel-runtime-concept-athena-the-window-solnechnaya-threshold-20261107-r2.png"
+  ],
+  "editable_sources": [
+    "model.vox",
+    "model.voxels.json",
+    "model.blend"
+  ],
+  "export": "model.glb",
+  "original_geometry": true,
+  "runtime_import_tested": false,
+  "performance_budget_claim": null,
+  "files": {
+    "model.voxels.json": {
+      "bytes": 2670553,
+      "sha256": "5a4bb399f7681decf09c11c3e5e23350e73a265465d5ebd3c0912d0f277ce29d"
+    },
+    "model.vox": {
+      "bytes": 737524,
+      "sha256": "6b89430d6a44152d87d48a790bda1da598d5933eb3f103b756b49704ef0b5d23"
+    },
+    "model.glb": {
+      "bytes": 7033184,
+      "sha256": "07000377103234ef2cafacfeb4ef6f6d2d137a9761ab389730eb427afde39902"
+    },
+    "model.blend": {
+      "bytes": 2408965,
+      "sha256": "b5b93d738a692edbf51e22fb409b6cd6472662fde766d04ee6616c3e206e3d6d"
+    }
+  }
+}

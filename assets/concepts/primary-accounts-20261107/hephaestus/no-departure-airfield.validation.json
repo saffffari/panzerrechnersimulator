@@ -1,0 +1,113 @@
+{
+  "schema": "panzer.concept-validation.v1",
+  "asset": "no-departure-airfield",
+  "checks": {
+    "glb_header_and_length": "pass",
+    "glb_buffer_bounds": "pass",
+    "finite_positions": "pass",
+    "triangle_index_bounds": "pass",
+    "vox_header": "pass",
+    "vox_round_trip_palette_and_cells": "pass",
+    "voxel_palette_and_grid_bounds": "pass",
+    "hidden_faces_culled": "pass",
+    "files_under_20_mib": "pass"
+  },
+  "occupied_voxels": 181465,
+  "voxel_cell_m": 0.15,
+  "grid_dimensions": [
+    190,
+    166,
+    58
+  ],
+  "occupied_bounds_m_z_up": [
+    [
+      0.75,
+      27.75
+    ],
+    [
+      0.75,
+      24.15
+    ],
+    [
+      0.0,
+      6.75
+    ]
+  ],
+  "occupied_16_cube_chunks": 174,
+  "semantic_parts": {
+    "abandoned_strip": 3395,
+    "broken_handcart": 719,
+    "crater_ejecta": 1237,
+    "dispersed_aid_shelter_1_attendant": 140,
+    "dispersed_aid_shelter_1_cold_stove": 52,
+    "dispersed_aid_shelter_1_detachable_roof": 2445,
+    "dispersed_aid_shelter_1_earth_roof": 2697,
+    "dispersed_aid_shelter_1_entrance_steps": 472,
+    "dispersed_aid_shelter_1_floor": 6800,
+    "dispersed_aid_shelter_1_log_courses": 1854,
+    "dispersed_aid_shelter_1_patient_1": 124,
+    "dispersed_aid_shelter_1_patient_2": 124,
+    "dispersed_aid_shelter_1_roof_snow": 949,
+    "dispersed_aid_shelter_1_small_medical_bundle": 75,
+    "dispersed_aid_shelter_1_snow_bank": 8598,
+    "dispersed_aid_shelter_1_stove_pipe": 21,
+    "dispersed_aid_shelter_1_walls": 3294,
+    "dispersed_aid_shelter_2_attendant": 140,
+    "dispersed_aid_shelter_2_cold_stove": 52,
+    "dispersed_aid_shelter_2_detachable_roof": 2241,
+    "dispersed_aid_shelter_2_earth_roof": 2481,
+    "dispersed_aid_shelter_2_entrance_steps": 414,
+    "dispersed_aid_shelter_2_floor": 5210,
+    "dispersed_aid_shelter_2_log_courses": 1592,
+    "dispersed_aid_shelter_2_patient_1": 124,
+    "dispersed_aid_shelter_2_patient_2": 124,
+    "dispersed_aid_shelter_2_roof_snow": 873,
+    "dispersed_aid_shelter_2_small_medical_bundle": 75,
+    "dispersed_aid_shelter_2_snow_bank": 7246,
+    "dispersed_aid_shelter_2_stove_pipe": 21,
+    "dispersed_aid_shelter_2_walls": 2831,
+    "frozen_ground_section": 102699,
+    "handcart_wheels": 74,
+    "interrupted_footpaths": 515,
+    "orderly_bag": 30,
+    "rutted_wheel_tracks": 456,
+    "sagging_telephone_wire": 44,
+    "scattered_winter_debris": 69,
+    "shell_crater_bowl": 2875,
+    "snow_surface": 17000,
+    "strip_edge_markers": 60,
+    "supply_case_bands": 96,
+    "supply_cases": 624,
+    "telephone_posts": 97,
+    "torn_wind_marker_cloth": 60,
+    "waiting_orderly": 140,
+    "wind_marker": 206
+  },
+  "surface_quads": 87274,
+  "triangles": 174548,
+  "vertices": 349096,
+  "semantic_nodes": 47,
+  "primitives": 108,
+  "not_validated": [
+    "Gameplay integration",
+    "runtime frame budget",
+    "collision setup",
+    "destruction connectivity",
+    "historical reconstruction accuracy",
+    "canonical game-dev package unavailable"
+  ],
+  "artifacts": {
+    "no-departure-airfield.voxels.json": {
+      "bytes": 2962374,
+      "sha256": "4451557ef052aa52cfede466309f9c8c3b7b5ffd45e2015906dbb1e7b63658cd"
+    },
+    "no-departure-airfield.vox": {
+      "bytes": 726956,
+      "sha256": "ef9bc07158acde3cb1f8942a64eed2a73739c416731ab2a3bbf60cedd22f75ea"
+    },
+    "no-departure-airfield.glb": {
+      "bytes": 10550016,
+      "sha256": "e3b40f09e006a6f9e914efe6116af470d0521e51949d12c90f40283760a1d230"
+    }
+  }
+}

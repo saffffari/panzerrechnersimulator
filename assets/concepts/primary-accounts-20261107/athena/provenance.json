@@ -1,0 +1,56 @@
+{
+  "schema": "panzer.concept-provenance.v1",
+  "created": "2026-11-07",
+  "author": "Athena AI for the Panzer project",
+  "original_local_geometry": true,
+  "external_artwork_embedded": false,
+  "paid_generation_used": false,
+  "primary_account": {
+    "witness": "Agrafena Petrovna Pozdnyakova",
+    "form": "Historical Commission interview",
+    "recorded": "1943-03-14",
+    "place": "Stalingrad",
+    "archive_reference_as_printed_in_Russian_extract": "NA IRI RAN, F. 2, R. III, Op. 5, D. 22, fols. 66–71",
+    "source_status": "Published edited transcript consulted; original manuscript not inspected",
+    "urls": [
+      "https://daily.afisha.ru/archive/vozduh/books/stalingradskaya-bitva-glazami-ee-ochevidcev/",
+      "https://erenow.org/ww/stalingrad-city-that-defeated-third-reich/18.php"
+    ]
+  },
+  "local_index": "docs/research/environmental-storytelling-report-source.md",
+  "concepts": [
+    {
+      "id": "the-window-solnechnaya",
+      "index_section": "A1-01 — Burned cellar household",
+      "source_locator": "English chapter18, Commission interview, paragraphs beginning We lived on Solnechnaya Street / Around eleven / That morning",
+      "evidence_tags": [
+        "two-storey home",
+        "burned block",
+        "window escape",
+        "abandoned possessions",
+        "courtyard trench",
+        "family loss from shelling"
+      ]
+    },
+    {
+      "id": "water-under-fire",
+      "index_section": "A1-02 — Oil-water railway siding",
+      "source_locator": "English chapter18, Commission interview, adjacent paragraphs beginning I could have gotten out / Bullets flying overhead",
+      "evidence_tags": [
+        "railway water collection",
+        "tank water mixed with fuel oil",
+        "exposed route under fire",
+        "collectors sometimes did not return"
+      ]
+    }
+  ],
+  "interpretations": [
+    "dimensions and exact layout",
+    "architectural and wagon type",
+    "all furniture and loose props",
+    "anonymous figure and pose",
+    "colors and studio lighting",
+    "material mechanics are unspecified"
+  ],
+  "rights": "Original project work; distribution follows owner policy. No new public license granted; historical text not redistributed."
+}

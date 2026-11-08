@@ -1,0 +1,23 @@
+{
+  "asset": "no-departure-airfield",
+  "preview": "/windows/shop/panzerrechnersystem/captures/screenshots/voxel-runtime-concept-hephaestus-no-departure-airfield-overview-20261107.png",
+  "renderer": "5.1.2",
+  "engine": "Cycles CPU",
+  "threads": 4,
+  "samples": 24,
+  "resolution": [
+    1600,
+    1280
+  ],
+  "imported_semantic_meshes": 47,
+  "imported_triangles": 174548,
+  "elapsed_import_and_render_s": 22.351,
+  "geometry_source": "/home/alex/panzer/voxel-runtime/assets/concepts/primary-accounts-20261107/hephaestus/no-departure-airfield.glb",
+  "render_only_geometry": [
+    "studio floor"
+  ],
+  "human_review": "not performed",
+  "geometry_sha256": "e3b40f09e006a6f9e914efe6116af470d0521e51949d12c90f40283760a1d230",
+  "preview_sha256": "4e371dc66ff83ca8d6ce726db92f9436132625d58d11d4003a549bab291fbf9e",
+  "ai_visual_review": "Reviewed final overview in image viewer; corrected unsupported snow/rubble and metre-scale figure proportions before final render."
+}
