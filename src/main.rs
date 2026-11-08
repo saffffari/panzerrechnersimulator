@@ -112,6 +112,7 @@ mod sky_review;
 mod canyon;
 mod canyon_attempt;
 mod t34_canyon_training;
+mod t34_generation_film;
 mod mission;
 mod mission_capture;
 mod radio_llm;
@@ -17711,6 +17712,12 @@ fn main() -> anyhow::Result<()> {
             .split(',').filter_map(|t| t.trim().parse().ok()).collect();
         let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60.0f32);
         return t34_canyon_training::serve(&seeds, secs);
+    }
+    if args.len() >= 2 && args[1] == "t34-gen-film" {
+        // One training episode of a T-34 policy as a film at game pixels, whole-factor scaled.
+        anyhow::ensure!(args.len() >= 6, "t34-gen-film PREFIX SEED SECONDS WEIGHTS [CAPTION]");
+        return t34_generation_film::run(&capture_arg(&args, 2, "t34_gen_film"), args[3].parse()?,
+            args[4].parse()?, &args[5], args.get(6).map(String::as_str));
     }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {
         return canyon_attempt::run(
