@@ -603,3 +603,63 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     }
     Ok(())
 }
+
+/// `sight-scatter-check PREFIX SEED [AHEAD_M]`: the gunner's eyepiece as the window draws it (the
+/// optic pass, then the 24 m surround of the eyepiece with the circle seated in it), the eye
+/// focused on the sight, the gun laid on the ground AHEAD_M (default 250) down the Tiger's bow.
+/// Writes the composite at the internal grid after a dozen frames and prints the strewn field's
+/// camera counts. `KESSEL_SCATTER_HIZ_LEGACY=1` reproduces the cull before 2026-11-08 (the sight
+/// picture's field tested against the surround pass's depth) for a before/after pair.
+pub fn sight_scatter_check(prefix: &str, seed: u64, ahead_m: f32) -> anyhow::Result<()> {
+    if std::env::var_os("KESSEL_SCATTER_STATS").is_none() { std::env::set_var("KESSEL_SCATTER_STATS", "1"); }
+    let (device, queue, mut r, mut g, _manifest) = build_course(seed)?;
+    g.station = crate::game::Station::Gunner;
+    let bow = glam::Vec3::new(g.player.heading.sin(), 0.0, g.player.heading.cos());
+    let mut target = g.player.pos + bow * ahead_m;
+    target.y = g.hf.height_at(target.x, target.z) + 0.5;
+    let aim = TankInput { aim: true, ..TankInput::default() };
+    let dt = 1.0 / 60.0;
+    let mut pixels = Vec::new();
+    let mut frame_ms: Vec<f64> = Vec::new();
+    for frame in 0..60 {
+        g.station = crate::game::Station::Gunner;
+        g.debug_lay_gun_at(target);
+        g.update(&aim, dt, &mut r);
+        if frame < 28 { continue; }
+        anyhow::ensure!(g.optic_composite_active(), "the gunner's eyepiece composite is not active");
+        let began = std::time::Instant::now();
+        // Pass A: the optic as the game posed it.
+        let saved = (r.camera, r.reticle, r.optic_mask, r.weather_shelter, r.precipitation);
+        r.weather_shelter = 1.0;
+        g.configure_crew_render_view(crate::lan::LanRole::Gunner, true, &mut r);
+        r.set_active_view(crate::renderer::OPTIC_EYE_VIEW);
+        let hidden = g.hide_first_person_for_optic(&mut r);
+        r.render_optic_snapshot(&device, &queue);
+        for (slot, visible) in hidden { r.set_visible(slot, visible); }
+        // Pass B: the surround, as `render_optic_composite`.
+        let (eye, forward, fov) = g.gunner_interior_camera();
+        r.camera.pos = eye;
+        r.camera.set_forward(forward);
+        r.camera.fov_y = fov;
+        r.camera.zfar = crate::PROTECTED_INTERIOR_FAR_M;
+        r.precipitation = 0.0;
+        r.reticle = false;
+        r.optic_mask = 4.0;
+        g.configure_crew_render_view(crate::lan::LanRole::Gunner, false, &mut r);
+        r.set_active_view(0);
+        r.rt_skip = true;
+        pixels = r.render_to_rgba(&device, &queue, r.iw, r.ih)?;
+        r.rt_skip = false;
+        (r.camera, r.reticle, r.optic_mask, r.weather_shelter, r.precipitation) = saved;
+        frame_ms.push(began.elapsed().as_secs_f64() * 1e3);
+    }
+    frame_ms.sort_by(f64::total_cmp);
+    println!("[sight-scatter] both passes with the frame read back: median {:.1} ms over {} frames (render only, no simulation)",
+        frame_ms.get(frame_ms.len() / 2).copied().unwrap_or(0.0), frame_ms.len());
+    image::save_buffer(format!("{prefix}.png"), &pixels, r.iw, r.ih, image::ColorType::Rgba8)?;
+    let stats = r.scatter_stats();
+    println!("[sight-scatter] {prefix}.png: gun laid {ahead_m:.0} m ahead, optic field {:.1} deg, strewn field camera view {:?} instances, by LOD {:?}, legacy {}",
+        r.camera.fov_y.to_degrees(), stats.map(|s| s.visible[3]), stats.map(|s| s.camera_lod),
+        std::env::var("KESSEL_SCATTER_HIZ_LEGACY").as_deref() == Ok("1"));
+    Ok(())
+}

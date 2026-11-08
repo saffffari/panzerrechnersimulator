@@ -45,6 +45,22 @@ pub fn run(prefix: &str, seed: u64, secs: f32, weights: &str, caption: Option<&s
     let mut pilot = CanyonPilot::new(&g);
     g.update(&TankInput::default(), 0.0, &mut r);
 
+    // The picture's sky. By default the episode is filmed under a clear sky at local noon of its
+    // own date: no storm, snowfall, fog bank or cloud deck in the frames. The simulation keeps the
+    // attempt's own weather fronts (the crews' sight in the storm is the encounter's, set in
+    // `Game::update`); the frame's weather is swapped in for the render and put back after it.
+    // The sky clock is moved once, here. `KESSEL_T34_FILM_WEATHER=episode` films the episode's own.
+    let clear = std::env::var("KESSEL_T34_FILM_WEATHER").as_deref() != Ok("episode");
+    if clear {
+        let site = r.sky_clock.site;
+        let iso = r.sky_clock.start.to_iso();
+        let date: Vec<u32> = iso.get(..10).unwrap_or("1942-12-20").split('-').filter_map(|v| v.parse().ok()).collect();
+        anyhow::ensure!(date.len() == 3, "unreadable sky clock start {iso}");
+        let noon = crate::ephemeris::UtcInstant::from_calendar(date[0] as i32, date[1], date[2], 12, 0, 0.0)
+            .plus_seconds(-site.longitude_deg_east * 240.0);
+        println!("[t34-film] clear noon picture: sky clock {} -> {} (the episode's weather still runs the simulation)", iso, noon.to_iso());
+        r.set_sky_clock(crate::celestial_sky::SkyClock::new(noon, site));
+    }
     let (iw, ih) = (r.iw, r.ih);
     let scale = display_scale(ih);
     let (ow, oh) = (iw * scale, ih * scale);
@@ -134,7 +150,7 @@ pub fn run(prefix: &str, seed: u64, secs: f32, weights: &str, caption: Option<&s
             r.interior_haze = 0.0;
             r.weather_shelter = 0.0;
             r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
-            // Marks at game pixels, so the fight reads through seed 29's overcast and snow: the
+            // Marks at game pixels, so the fight reads at a glance: the
             // Tiger's place and range (it stands beyond the fog's reach for most of an episode),
             // each crew's slot number over its hull, and the clock, the crews' state, shots and
             // hits along the bottom; the caption (the generation) top left.
@@ -171,7 +187,16 @@ pub fn run(prefix: &str, seed: u64, secs: f32, weights: &str, caption: Option<&s
             if let Some(text) = caption {
                 r.draw_text_bold(text, 0.012, 0.03, 0.034, dim, Align::Left);
             }
+            let weather = (r.storm, r.precipitation, r.fog_density, r.overcast, r.low_clouds.clone());
+            if clear {
+                r.storm = 0.0;
+                r.precipitation = 0.0;
+                r.fog_density = 0.00035;
+                r.overcast = 0.0;
+                r.low_clouds = None;
+            }
             let rgba = r.render_to_rgba_with_hud(&device, &queue, iw, ih)?;
+            (r.storm, r.precipitation, r.fog_density, r.overcast, r.low_clouds) = weather;
             pipe.write_all(&rgba)?;
             frames += 1;
         }
@@ -204,6 +229,7 @@ pub fn run(prefix: &str, seed: u64, secs: f32, weights: &str, caption: Option<&s
     let _ = std::fs::remove_file(&wav);
     let receipt = serde_json::json!({"schema": "panzer.t34-generation-film.v1", "film": output, "weights": weights,
         "caption": caption, "seed": seed, "seconds": secs, "outcome": outcome, "tiger_alive": g.player.alive,
+        "picture_weather": if clear { "clear sky at local noon (picture only; the simulation ran the episode's own fronts)" } else { "the episode's own" },
         "frames": frames, "fps": FPS, "game_pixels": [iw, ih], "scale": scale, "output_pixels": [ow, oh], "codec": "hevc_nvenc cq 29", "pix_fmt": pix_fmt,
         "camera": "aerial over the platoon's shoulder: the living crews' centroid pulled a quarter toward the Tiger, seen from behind them at 70-140 m; the game's first-person mix at the Tiger as the soundtrack",
         "fielding": "as t34-canyon-eval: enable_canyon_course_seeded, the policy over the doctrine's orders, the rule-based Canyon pilot drives the Tiger",

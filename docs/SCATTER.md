@@ -174,7 +174,18 @@ sky-cover map, camera):
    frustum test, distance, projected size → LOD, and for the camera the Hi-Z occlusion test
    against the previous frame's depth pyramid under the previous camera (max-reduced mips; the
    sphere's nearest depth against the farthest depth of the ≤ 2×2 texels its screen rectangle
-   covers at the matching mip); survivors count into a (prototype, LOD) bucket;
+   covers at the matching mip); survivors count into a (prototype, LOD) bucket. The pyramid
+   belongs to the renderer view that drew it: another view's cull does not test against it
+   (occlusion from one eye is not occlusion from another), and a compartment pass (far plane
+   under 100 m: the 24 m surround of the gunner's eyepiece) neither tests against it nor rebuilds
+   it, and culls at its own far plane. Until 2026-11-08 the sight picture's field was tested
+   against the surround pass's depth, which removed everything beyond its 24 m far plane: through
+   the gunner's eyepiece the strewn field appeared only within about 24 m. The camera's reach is
+   1500 m at a 60-degree field and grows as the field narrows (tan 30° / tan(fov/2)), bounded by
+   the far plane, so a sight draws the field as far as its magnification resolves it; the
+   projected-size test still decides each piece. `sight-scatter-check PREFIX SEED` renders the
+   eyepiece composite (`KESSEL_SCATTER_HIZ_LEGACY=1` for the old cull). Seats of a splitscreen
+   other than the one drawn last cull without occlusion (one pyramid, named limit);
 3. scan: an exclusive prefix over the buckets of each view (one workgroup per view) that also
    writes the indirect draw arguments (index range of the prototype's LOD, instance count,
    first instance = bucket offset);

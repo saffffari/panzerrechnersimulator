@@ -17713,6 +17713,11 @@ fn main() -> anyhow::Result<()> {
         let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60.0f32);
         return t34_canyon_training::serve(&seeds, secs);
     }
+    if args.len() >= 2 && args[1] == "sight-scatter-check" {
+        return canyon_attempt::sight_scatter_check(&capture_arg(&args, 2, "sight_scatter_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(250.0));
+    }
     if args.len() >= 2 && args[1] == "t34-gen-film" {
         // One training episode of a T-34 policy as a film at game pixels, whole-factor scaled.
         anyhow::ensure!(args.len() >= 6, "t34-gen-film PREFIX SEED SECONDS WEIGHTS [CAPTION]");

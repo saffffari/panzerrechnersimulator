@@ -7,8 +7,9 @@
 //! field is drawn with one multi-draw per texture page. The camera view takes every tier; the
 //! sun cascades and the sky-cover map take the large tier at the reduced LOD only.
 //!
-//! Named limits: Hi-Z is the previous frame's depth under the previous camera (one frame of
-//! latency on disocclusion); the reduced LOD is a vertex-clustering of the source mesh, the far
+//! Named limits: Hi-Z is the previous frame's depth under the previous camera of the same view (one
+//! frame of latency on disocclusion; a view that did not draw last frame, as every seat of a
+//! splitscreen but the last, culls without occlusion); the reduced LOD is a vertex-clustering of the source mesh, the far
 //! LOD a one-pixel stand-in carrying the mean albedo; metallic-roughness and normal maps of a
 //! prototype are not carried (the kit has none); point-light faces take no scatter shadows.
 use std::cell::{Cell, RefCell};
@@ -30,6 +31,15 @@ const MID_PX: f32 = 5.0;
 const FAR_PX: f32 = 0.8;
 const MAX_DISTANCE_M: f32 = 1500.0;
 const SHADOW_DISTANCE_M: f32 = 700.0;
+/// A camera pass whose far plane is nearer than this is a compartment pass (the 24 m surround of
+/// the gunner's eyepiece, `PROTECTED_INTERIOR_FAR_M`): its depth says nothing about the field
+/// beyond its far plane, so it neither tests against the Hi-Z nor rebuilds it, and its cull
+/// distance is its far plane.
+const COMPARTMENT_FAR_M: f32 = 100.0;
+/// tan of half the vertical field `MAX_DISTANCE_M` was chosen at (60 degrees). A narrower field (a
+/// sight, the eye focused on one) reaches further by the same ratio, bounded by the far plane: the
+/// projected-size test still decides what is drawn.
+const REFERENCE_HALF_FOV_TAN: f32 = 0.577_350_3;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -138,6 +148,13 @@ pub struct ScatterGpu {
     /// (camera-relative view_proj, eye, projection scale) of the frame whose depth the Hi-Z holds.
     hiz_frame: Cell<Option<(Mat4, Vec3, [f32; 2])>>,
     hiz_valid: Cell<bool>,
+    /// The renderer view (`Renderer::active_view`) whose depth the Hi-Z holds. Another view's cull
+    /// does not test against it: occlusion from one eye is not occlusion from another (the
+    /// gunner's sight and his cabin eye are two cameras in one frame).
+    hiz_view: Cell<usize>,
+    /// `KESSEL_SCATTER_HIZ_LEGACY=1` (diagnostic): the cull before 2026-11-08, any pass testing
+    /// against whichever pass drew last, at the fixed 1500 m. For before/after stills only.
+    legacy_hiz: bool,
     /// CPU copies of the instances and cells (the hull's push shoves heavy pieces along), and
     /// the shoves waiting for the next upload.
     cpu_placements: Vec<Packed>,
@@ -234,6 +251,7 @@ impl ScatterGpu {
         let multi_draw = device.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         let skip_draw = std::env::var("KESSEL_SCATTER_SKIP").as_deref() == Ok("1");
         let skip_hiz = std::env::var("KESSEL_SCATTER_NO_HIZ").as_deref() == Ok("1");
+        let legacy_hiz = std::env::var("KESSEL_SCATTER_HIZ_LEGACY").as_deref() == Ok("1");
         let stats_every = std::env::var("KESSEL_SCATTER_STATS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
         // ── prototypes: assign texture pages, order by page, build the mega buffers ──
         let page_of = |mesh: &CpuMesh| -> usize {
@@ -563,7 +581,7 @@ impl ScatterGpu {
             n_instances, n_cells, n_buckets, placements: placements_buf, cells: cells_buf, protos: protos_buf, vbuf, ibuf, cull_uniform, draw_uniforms,
             cell_vis, slot, bucket_count, bucket_offset, bucket_cursor, visible, indirect, stats_readback, cull_bind, draw_binds, pages,
             cells_pipe, count_pipe, scan_pipe, write_pipe, gbuffer_pipe, depth_pipe, hiz_tex, hiz_mips, hiz_copy_pipe, hiz_reduce_pipe, hiz_binds,
-            hiz_full_view, hiz_frame: Cell::new(None), hiz_valid: Cell::new(false), multi_draw, skip_draw, skip_hiz, stats_every, frame: Cell::new(0),
+            hiz_full_view, hiz_frame: Cell::new(None), hiz_valid: Cell::new(false), hiz_view: Cell::new(usize::MAX), legacy_hiz, multi_draw, skip_draw, skip_hiz, stats_every, frame: Cell::new(0),
             stats: RefCell::new(stats), cull_dims: [iw, ih],
             cpu_placements: placements, cpu_cells: built.cells, pending_shoves: Vec::new(),
         }
@@ -598,15 +616,15 @@ impl ScatterGpu {
         *self.stats.borrow()
     }
 
-    fn view_uniform(vp: Mat4, planes_vp: Mat4, origin: Vec3, eye: Vec3, pixel_angle: f32, camera: bool, iw: u32, ih: u32) -> GpuView {
+    fn view_uniform(vp: Mat4, planes_vp: Mat4, origin: Vec3, eye: Vec3, pixel_angle: f32, camera: Option<f32>, iw: u32, ih: u32) -> GpuView {
         let planes = frustum_planes(planes_vp);
         GpuView {
             vp: vp.to_cols_array_2d(),
             planes: planes.map(|p: Vec4| p.to_array()),
             origin: [origin.x, origin.y, origin.z, 0.0],
             eye: [eye.x, eye.y, eye.z, pixel_angle],
-            params: [if camera { 1.0 } else { 0.0 }, NEAR_PX, MID_PX, FAR_PX],
-            params2: [if camera { MAX_DISTANCE_M } else { SHADOW_DISTANCE_M }, iw as f32, ih as f32, 0.0],
+            params: [if camera.is_some() { 1.0 } else { 0.0 }, NEAR_PX, MID_PX, FAR_PX],
+            params2: [camera.unwrap_or(SHADOW_DISTANCE_M), iw as f32, ih as f32, 0.0],
         }
     }
 
@@ -621,11 +639,18 @@ impl ScatterGpu {
         let mut views = [GpuView { vp: [[0.0; 4]; 4], planes: [[0.0; 4]; 6], origin: [0.0; 4], eye: [0.0; 4], params: [0.0; 4], params2: [0.0; 4] }; VIEWS];
         for (i, view) in views.iter_mut().enumerate().take(3) {
             let m = shadow_views.get(i).copied().unwrap_or(Mat4::IDENTITY);
-            *view = Self::view_uniform(m, m, Vec3::ZERO, eye, pixel_angle, false, r.iw, r.ih);
+            *view = Self::view_uniform(m, m, Vec3::ZERO, eye, pixel_angle, None, r.iw, r.ih);
         }
-        views[3] = Self::view_uniform(vp_rel, vp_abs, eye, eye, pixel_angle, true, r.iw, r.ih);
+        // The camera's reach: the far plane for a compartment pass; otherwise 1500 m at a 60-degree
+        // field, further in proportion as the field narrows (a sight), never past the far plane.
+        let compartment = cam.zfar < COMPARTMENT_FAR_M && !self.legacy_hiz;
+        let reach = if self.legacy_hiz { MAX_DISTANCE_M } else if compartment { cam.zfar } else {
+            (MAX_DISTANCE_M * (REFERENCE_HALF_FOV_TAN / (cam.fov_y * 0.5).tan().max(1.0e-4)).max(1.0)).min(cam.zfar.max(MAX_DISTANCE_M))
+        };
+        views[3] = Self::view_uniform(vp_rel, vp_abs, eye, eye, pixel_angle, Some(reach), r.iw, r.ih);
+        let own_hiz = self.legacy_hiz || (!compartment && self.hiz_view.get() == r.active_view);
         let (prev_vp, prev_origin, proj_scale, valid) = match self.hiz_frame.get() {
-            Some((vp, origin, scale)) if !self.skip_hiz => (vp, origin, scale, 1.0),
+            Some((vp, origin, scale)) if !self.skip_hiz && own_hiz => (vp, origin, scale, 1.0),
             _ => (Mat4::IDENTITY, Vec3::ZERO, [1.0, 1.0], 0.0),
         };
         let cull = CullUniform {
@@ -730,6 +755,10 @@ impl ScatterGpu {
         if self.skip_hiz {
             return;
         }
+        // A compartment pass leaves the Hi-Z to the view that reaches the field (see `prepare`).
+        if r.camera.zfar < COMPARTMENT_FAR_M && !self.legacy_hiz {
+            return;
+        }
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("scatter-hiz"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("scatter-hiz")),
         });
@@ -746,5 +775,6 @@ impl ScatterGpu {
         let proj = Mat4::perspective_rh(cam.fov_y, cam.aspect.max(0.01), cam.znear, cam.zfar);
         self.hiz_frame.set(Some((cam.relative_view_proj(), cam.pos, [proj.x_axis.x, proj.y_axis.y])));
         self.hiz_valid.set(true);
+        self.hiz_view.set(r.active_view);
     }
 }
