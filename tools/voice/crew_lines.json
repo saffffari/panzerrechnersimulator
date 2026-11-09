@@ -1,0 +1,142 @@
+{
+ "roles": {
+  "KDT": {
+   "post": "Kommandant",
+   "english": "commander",
+   "design": "Deep bass-baritone voice of a German man of about 38, a tank commander. Very low pitched, dark chest resonance, slightly gravelly. Calm authority: short, dry, clipped commands, firm and level. Native German speaker, no accent, close microphone."
+  },
+  "RS": {
+   "post": "Richtschütze",
+   "english": "gunner",
+   "design": "Low, dark baritone voice of a German man of about 27, a tank gunner. Quiet, focused and precise, terse replies, steady and level, very little melody. Native German speaker, no accent, close microphone."
+  },
+  "LS": {
+   "post": "Ladeschütze",
+   "english": "loader",
+   "design": "Low-pitched, rough and slightly hoarse voice of a young German man of about 21, a tank loader. Short, loud, blunt reports, breathy from physical work, but the voice stays low. Native German speaker, no accent, close microphone."
+  },
+  "FA": {
+   "post": "Fahrer",
+   "english": "driver",
+   "design": "Very deep, slow, gravelly bass voice of a German man of about 33, a tank driver. Laconic and matter-of-fact, heavy and unhurried. Native German speaker, no accent, close microphone."
+  },
+  "FU": {
+   "post": "Funker",
+   "english": "radio operator",
+   "design": "Low, even baritone voice of a German man of about 29, a radio operator. Clear crisp articulation, measured and businesslike, slightly nasal. Native German speaker, no accent, close microphone."
+  }
+ },
+ "delivery": {
+  "calm": " He speaks calmly at a steady moderate pace, level intonation, low in his voice.",
+  "urgent": " He speaks fast, hard and clipped with urgent force, like an order in combat, but his voice stays deep and low: no rise in pitch, no shouting high, no panic, controlled."
+ },
+ "reference_text": "Kiebitz an alle. Wir stehen am Waldrand, die Sicht nach Osten ist frei. Munition reicht, der Motor läuft ruhig.",
+ "lines": [
+  {
+   "id": "K01",
+   "role": "KDT",
+   "register": "calm",
+   "de": "Richtschütze! Panzer, zwo Uhr, achthundert, am Waldrand.",
+   "en": "Gunner! Tank, two o'clock, eight hundred, at the edge of the woods."
+  },
+  {
+   "id": "K02",
+   "role": "KDT",
+   "register": "urgent",
+   "de": "Panzer, drei Uhr, nah! Turm rechts, schnell!",
+   "en": "Tank, three o'clock, close! Turret right, quick!"
+  },
+  {
+   "id": "K03",
+   "role": "KDT",
+   "register": "urgent",
+   "de": "Feuer!",
+   "en": "Fire!"
+  },
+  {
+   "id": "K04",
+   "role": "KDT",
+   "register": "calm",
+   "de": "Zu kurz. Hundert mehr, gleiches Ziel.",
+   "en": "Short. Add one hundred, same target."
+  },
+  {
+   "id": "K05",
+   "role": "KDT",
+   "register": "calm",
+   "de": "Abschuss. Gut gemacht. Nächstes Ziel.",
+   "en": "Kill. Well done. Next target."
+  },
+  {
+   "id": "R01",
+   "role": "RS",
+   "register": "calm",
+   "de": "Erkannt.",
+   "en": "Identified."
+  },
+  {
+   "id": "R02",
+   "role": "RS",
+   "register": "urgent",
+   "de": "Treffer! Er brennt!",
+   "en": "Hit! He's burning!"
+  },
+  {
+   "id": "R03",
+   "role": "RS",
+   "register": "calm",
+   "de": "Daneben. Richte neu.",
+   "en": "Missed. Re-laying."
+  },
+  {
+   "id": "L01",
+   "role": "LS",
+   "register": "calm",
+   "de": "Panzergranate geladen!",
+   "en": "AP loaded!"
+  },
+  {
+   "id": "L02",
+   "role": "LS",
+   "register": "urgent",
+   "de": "Feuer im Kampfraum!",
+   "en": "Fire in the fighting compartment!"
+  },
+  {
+   "id": "L03",
+   "role": "LS",
+   "register": "urgent",
+   "de": "Ich bin getroffen! Mein Arm!",
+   "en": "I'm hit! My arm!"
+  },
+  {
+   "id": "F01",
+   "role": "FA",
+   "register": "urgent",
+   "de": "Treffer vorne! Die Platte hält.",
+   "en": "Hit up front! The plate is holding."
+  },
+  {
+   "id": "F02",
+   "role": "FA",
+   "register": "calm",
+   "de": "Verstanden. Fahre an.",
+   "en": "Understood. Moving off."
+  },
+  {
+   "id": "U01",
+   "role": "FU",
+   "register": "calm",
+   "de": "Adler von Kiebitz: ein Feindpanzer abgeschossen.",
+   "en": "Adler from Kiebitz: one enemy tank knocked out."
+  },
+  {
+   "id": "U02",
+   "role": "FU",
+   "register": "urgent",
+   "de": "Treffer links vorne! Funkgerät ausgefallen!",
+   "en": "Hit front left! The radio is out!"
+  }
+ ],
+ "wording": "ours: plausible Wehrmacht tank-crew intercom German, not from a period source"
+}
