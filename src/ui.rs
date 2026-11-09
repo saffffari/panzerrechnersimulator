@@ -2575,8 +2575,8 @@ pub fn draw_controls(r: &mut Renderer) {
         "enter looked-at station",
     );
     row(r, lk, 0.275, "Q / E", "driver cruise down / up");
-    row(r, lk, 0.320, "X", "leave station / lower tool");
-    row(r, lk, 0.365, "Space", "climb / enter / leave hatch");
+    row(r, lk, 0.320, "X", "put away what is held");
+    row(r, lk, 0.365, "Space", "hatch in / out, leave a station");
     row(r, lk, 0.405, "H / LS+A", "open / close own hatch");
     header(r, lh, 0.44, "FIGHTING");
     row(r, lk, 0.490, "W S A D", "drive / walk at own station");
