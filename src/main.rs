@@ -10178,7 +10178,8 @@ impl Keys {
             crouch: self.ctrl, // on foot: crouch (lower, slower, quieter, smaller)
             coax: self.mmb,    // gunner sights: middle mouse = coax MG34
             reload: self.r,    // on foot: Luger magazine change
-            jump: self.space,  // Space: chassis/roof/hatch/cabin traversal, otherwise foot jump.
+            jump: self.space,  // Space: hatch in/out, leave a sight or seat; on foot outside, jump.
+            pad_jump: false,   // set where a pad's A is merged in
             trigger: self.lmb,
             enter: self.e,
             interaction: false, // set after the E key is resolved against the game
@@ -15223,7 +15224,7 @@ fn settle_couch_overlay_owner(state: &mut WindowState, keys: &mut Keys, binocs: 
 
 /// The controller's A / Cross button shares the physical LMB interaction chain.
 fn controller_interact(state: &mut WindowState, keys: &mut Keys, binocs: &mut bool) {
-    if interact_under_crosshair(state,keys,true) { *binocs=false; }
+    if interact_under_crosshair(state,keys,true,false) { *binocs=false; }
 }
 
 /// Controller B / Circle is the same one-layer-at-a-time embodied back-out as keyboard Q.
@@ -15476,7 +15477,10 @@ impl WindowState {
 /// Work whatever usable thing is under the crosshair: a hatch lid or its lever, a door, a
 /// carried item, a tool on its bracket, a seat, the tank from outside. Shared by the action
 /// button and by E. `with_pickups` adds the things only E collects (cigarette packs, tools).
-fn interact_under_crosshair(state: &mut WindowState, keys: &mut Keys, with_pickups: bool) -> bool {
+/// `kit_stays` is the left mouse button's rule: a click that finds nothing else to work never
+/// sets the carried track kit down (X does that), so the hammer can come along to a seat, a
+/// lid or a lever. E and the pad's A keep their older meaning and put the kit down.
+fn interact_under_crosshair(state: &mut WindowState, keys: &mut Keys, with_pickups: bool, kit_stays: bool) -> bool {
     // The transport has its own driving controls; clicking through its cab cannot operate
     // the Tiger, loot a nearby prop or pick up someone outside the vehicle.
     if state.game.halftrack_occupied() { return true; }
@@ -15512,7 +15516,7 @@ fn interact_under_crosshair(state: &mut WindowState, keys: &mut Keys, with_picku
     if state.game.interact_world_door(fwd, pos) || state.game.interact_portable_item(fwd, pos) { return true; }
     if state.lan.is_some() && state.game.hover_hatch_lever() { keys.lan_hatch_pulse = true; return true; }
     if state.game.interact_hatch_lever(fwd, pos) { return true; }
-    if with_pickups && state.game.interact_equip() { return true; }
+    if with_pickups && !(kit_stays && state.game.carried_tools()) && state.game.interact_equip() { return true; }
     if state.game.click_station() { return true; }
     if state.game.hover_hatch() {
         if state.lan.is_some() { keys.lan_hatch_pulse = true; } else { state.game.click_hatch_or_exit(); }
@@ -15566,8 +15570,9 @@ fn interaction_primary(latch: &mut InteractLatch, e_down: bool, lmb_down: bool,
     let edge = e_down && !latch.key_was_down;
     latch.key_was_down = e_down;
     let kind = game.interact_kind();
-    if game.interaction_tool_in_hand() {
-        // E stows through the key handler; the trigger works the tool.
+    if game.interaction_tool_in_hand() && !game.kit_yields_primary() {
+        // E stows through the key handler; the trigger works the tool. (The track kit alone
+        // yields the button to a control, a round or a case under the crosshair.)
         latch.held = false;
         return lmb_down;
     }
@@ -15611,8 +15616,9 @@ struct App {
     /// Binocular TOGGLE state (playtest: toggle, not hold) — flipped by B / RMB press in the
     /// tank and Left Shift press on foot; injected into TankInput each frame.
     binocs: bool,
-    /// Space hold timer (s) (pad: dismount button, whose tap toggles the head): a FULL 1.5 s hold at the open cupola climbs
-    /// out on foot (the HUD ring fills while it runs). Only counts at Commander + hatch open.
+    /// The pad's dismount-button hold timer (s); its tap toggles the head. A FULL 1.5 s hold at the
+    /// open cupola climbs out on foot (the HUD ring fills while it runs). Only counts at Commander
+    /// + hatch open. The keyboard's Space is a tap now and never runs this timer.
     x_hold: f32,
     x_was_down: bool,
     shift_was_down: bool,
@@ -16042,9 +16048,10 @@ impl ApplicationHandler for App {
                                 .game
                                 .select_foot_weapon(crate::foot::FootWeapon::Panzerfaust);
                         }
-                        // X = EXIT the current view/thing (playtest: one universal back-out).
-                        // Pops ONE layer per press, topmost first: binoculars down → equipped
-                        // tool racked → sights/breech stand-up → head back in from the cupola.
+                        // X = put away what is held. Pops ONE layer per press, topmost first:
+                        // binoculars down → hand item → load → pistol → compass → equipped tool
+                        // racked. At the cupola with empty hands it is also the head out/in
+                        // toggle. Leaving a sight or a seat is Space (8 November 2026).
                         // (Ctrl freed: on foot it stays crouch; in the tank it does nothing now.)
                         KeyCode::KeyX
                             if state.game.mode == game::Mode::Foot && !state.game.is_climbing() =>
@@ -16071,27 +16078,21 @@ impl ApplicationHandler for App {
                             } else if g.compass_equipped { g.toggle_compass(); }
                             else if g.ext_equipped || g.carried_tools() || g.carried_panzerfaust() {
                                 g.interact_equip(); // racks the extinguisher back on the wall
-                            } else if matches!(g.station, game::Station::Gunner) {
-                                // X off the sights: back on your feet in the turret.
-                                g.sights_mag = 0;
-                                g.jump_station(game::Station::Loader);
-                            } else if matches!(g.station, game::Station::Driver | game::Station::Radioman) {
-                                g.jump_station(game::Station::Loader);
                             } else if g.commander_outside {
                                 g.commander_outside = false;
                                 println!("[panzerrechnersystem] view: PERISCOPE (safe)");
                             } else if matches!(g.station, game::Station::Commander) && g.hatch_is_open() {
                                 // X from the buttoned periscope with the lid open: up through it,
                                 // head out (2026-11-01: the owner lost head-out when X became the
-                                // one back-out key; Shift still toggles it, Space descends).
+                                // one back-out key; Shift still toggles it). This is the head in
+                                // the opening and back, the same as Shift, not a way off the post.
                                 g.toggle_commander_head();
                                 println!("[panzerrechnersystem] view: CUPOLA (head out, exposed)");
-                            } else if matches!(g.station, game::Station::Commander) {
-                                // X from the buttoned periscope under a shut lid: drop down into the
-                                // fighting compartment (the interior/loader view).
-                                g.jump_station(game::Station::Loader);
-                                println!("[panzerrechnersystem] down into the compartment");
                             }
+                            // X no longer leaves a sight, a seat or the cupola (the owner,
+                            // 8 November 2026: "instead of x to exit gun sights or cupola we just
+                            // use spacebar"). Space does that in Game::update
+                            // (`hatch_access::try_space_traversal`); X is the held item's key.
                         }
                         // B — binoculars TOGGLE: on foot, head-OUT of the cupola, OR buttoned in the
                         // commander periscope view. NOT in the gunner sight (that has its own optic).
@@ -16123,7 +16124,7 @@ impl ApplicationHandler for App {
                                 && !state.game.interaction_tool_in_hand() {
                                 // A hovered breech, rack, case or control, or a load in the
                                 // hands: Game::update acts on it through the interaction primary.
-                            } else if interact_under_crosshair(state, &mut self.keys, true) {
+                            } else if interact_under_crosshair(state, &mut self.keys, true, false) {
                                 self.binocs = false;
                             }
                         }
@@ -16357,7 +16358,7 @@ impl ApplicationHandler for App {
                             && !state.game.mounted_sidearm_owns_input(self.keys.rmb)
                             && !state.game.personal_item_blocks_interaction()
                             && !state.game.primary_loader_owns_click()
-                            && interact_under_crosshair(state, &mut self.keys, true) {
+                            && interact_under_crosshair(state, &mut self.keys, true, true) {
                             state.game.consume_primary_press();
                             self.binocs = false;
                         }
@@ -16564,7 +16565,7 @@ impl ApplicationHandler for App {
                     let legacy_interact_key = state.lan.is_some() && self.keys.e;
                     input.enter = legacy_interact_key;
                     input.mg_coax = interaction_primary(&mut self.interact_latch, legacy_interact_key, self.keys.lmb, &mut state.game, dt);
-                    input.interaction = !state.game.interaction_tool_in_hand()
+                    input.interaction = (!state.game.interaction_tool_in_hand() || state.game.kit_yields_primary())
                         && (self.interact_latch.held || state.game.interact_kind() != game::InteractKind::None);
                 }
                 if pad.connected && !couch {
@@ -16588,6 +16589,9 @@ impl ApplicationHandler for App {
                     input.aim |= pad.aim;
                     input.coax |= pad.coax;
                     input.reload |= pad.reload;
+                    // The pad's A is its interact button too: aboard it must not also take the
+                    // man off his seat, so Game is told when the jump is A alone.
+                    input.pad_jump = pad.jump && !input.jump;
                     input.jump |= pad.jump;
                     input.crouch |= pad.crouch;
                     input.ignition |= pad.ignition;
@@ -17039,8 +17043,12 @@ impl ApplicationHandler for App {
                                     && !g.is_climbing()
                                     && !couch
                                     && g.can_climb_out();
-                                // Held Space (or the pad's dismount button) climbs out, and only
-                                // through a lid that is already open. Shift is head out and in.
+                                // The pad's dismount button, held, climbs out, and only through a
+                                // lid that is already open. Shift is head out and in. The keyboard
+                                // has no hold any more (8 November 2026): a Space tap with the head
+                                // out, or looking up into the open cupola, climbs out, and any other
+                                // Space tap at the buttoned cupola goes down into the compartment
+                                // (`hatch_access::try_space_traversal`).
                                 let pad_held = local_x_enabled && !couch && pad.dismount_held;
                                 let at_cupola = g.mode == game::Mode::Tank
                                     && matches!(g.station, game::Station::Commander)
@@ -17052,14 +17060,12 @@ impl ApplicationHandler for App {
                                         if out { "CUPOLA (head out, exposed)" } else { "PERISCOPE (safe)" });
                                 }
                                 self.shift_was_down = shift_down;
-                                let exit_held = (local_x_enabled && self.keys.space && at_cupola)
-                                    || pad_held;
+                                let exit_held = pad_held;
                                 if exit_held {
                                     if can_exit {
                                         self.x_hold += dt;
                                         if self.x_hold >= X_EXIT_HOLD {
                                             self.x_hold = 0.0;
-                                            self.keys.space = false; // consume keyboard side of this hold
                                             g.climb_out();
                                         }
                                     } else {

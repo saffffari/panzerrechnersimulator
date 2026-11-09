@@ -144,15 +144,36 @@ pub struct TargetScore {
 
 /// Rank a possible crossing without permitting ground-level roof entry. Exterior roofs allow
 /// 2.6 m eye reach and feet up to 0.45 m below the rim (the cupola rim is above the turret roof).
-/// Side entry allows 2.0 m, inside reach 2.2 m. The 0.12 m gaze margin makes the aperture rim
-/// forgiving to select; it does not change collision geometry or authorize a closed hatch.
+/// Side entry allows 2.0 m, inside reach 2.2 m. The 0.12 m gaze margin (`GAZE_MARGIN_M`) makes the
+/// aperture rim forgiving to select; it does not change collision geometry or authorize a closed
+/// hatch.
 pub fn target_score(
     eye: Vec3, forward: Vec3, feet: Option<Vec3>, aperture: Aperture, entering: bool,
+) -> Option<TargetScore> {
+    target_score_gaze(eye, forward, feet, aperture, entering, GAZE_MARGIN_M, false)
+}
+
+/// The rim's ordinary gaze margin.
+pub const GAZE_MARGIN_M: f32 = 0.12;
+/// The gaze margin of the cupola seen from its own seat. The buttoned commander's eye sits on the
+/// cupola's axis 0.19 m under the rim and his head stops 34 degrees above the horizon, where the
+/// crosshair meets the opening's plane 0.275 m off the axis: on the rim itself (radius 0.25 m),
+/// never inside it. With this margin, looking up past about 20 degrees is looking into the
+/// opening. Selection only: no collision geometry and no closed lid is affected.
+pub const CUPOLA_SEAT_GAZE_MARGIN_M: f32 = 0.27;
+
+/// `target_score` with the gaze margin given, and with `on_lid` saying that the crosshair already
+/// rests on this hatch's own open lid, which counts as looking at its opening (the owner,
+/// 8 November 2026: "not necessarily sky as you may spacebar on the open hatch but thats ok").
+/// Reach, the side of the plane and the roof-footing rule are the same either way.
+pub fn target_score_gaze(
+    eye: Vec3, forward: Vec3, feet: Option<Vec3>, aperture: Aperture, entering: bool,
+    margin: f32, on_lid: bool,
 ) -> Option<TargetScore> {
     if !eye.is_finite() || !forward.is_finite() || !aperture.center.is_finite()
         || !aperture.normal.is_finite() || !aperture.radius.is_finite()
         || aperture.radius <= 0.0 || forward.length_squared() < 1e-8
-        || aperture.normal.length_squared() < 1e-8 {
+        || aperture.normal.length_squared() < 1e-8 || !margin.is_finite() || margin < 0.0 {
         return None;
     }
     let normal = aperture.normal.normalize();
@@ -184,11 +205,11 @@ pub fn target_score(
     }
 
     let denominator = forward.dot(normal);
-    let aimed = if denominator.abs() > 1e-5 {
+    let aimed = on_lid || if denominator.abs() > 1e-5 {
         let travel = -signed_eye / denominator;
         if travel >= 0.0 && travel <= reach {
             let miss = eye + forward * travel - aperture.center;
-            miss.length_squared() <= (aperture.radius + 0.12).powi(2)
+            miss.length_squared() <= (aperture.radius + margin).powi(2)
         } else { false }
     } else { false };
     if entering && !aimed && !over_opening { return None; }

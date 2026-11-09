@@ -10,8 +10,9 @@ and the current driver cruise setting.
 | Input | Current solo action |
 |---|---|
 | LMB | Interact, pick up, enter, equip or use; fires the main gun only while in its sights (a click from any other post never fires) |
-| X | Put away the topmost held item or exit the current station/view; one layer per press. At the commander's periscope with the lid open, X puts the head out through the cupola and X again brings it back in; with the lid shut it drops into the compartment |
-| Shift / Space (cupola) | Shift: head out and in through the open cupola lid. Space tap at the buttoned cupola: down into the compartment; Space held with the head out: climb out on foot |
+| X | Put away the topmost held item; one layer per press. At the commander's periscope with the lid open and empty hands, X puts the head out through the cupola and X again brings it back in. X no longer leaves a sight, a seat or the cupola (8 November 2026): Space does |
+| Space | Aboard: looking through the open hatch of your post (or at its open lid), climb out; otherwise leave the sight or seat for the compartment (cupola, gunner, driver, radio). Outside on foot: with the crosshair in an open hatch (or on its open lid), climb in; otherwise jump. No jumping inside the tank. A rolling tank cannot be left (except the bail from a burning tank through the cupola) |
+| Shift (cupola) | Head out and in through the open cupola lid |
 | Q / E | Decrease/increase driver cruise: reverse 3/2/1, stop, forward 1/2/3 |
 | W/S, A/D | Manual drive/steer at control stations; walk in the compartment or on foot |
 | Arrow keys | Coarse traverse/elevation through a capable gunner; direct control at gun sights |
@@ -190,10 +191,11 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    toolbox visibly with the hammer, then press X to put it down nearby. It returns to its
    wall mount only when that mount is within reach and under your gaze. A carried Panzerfaust
    returns to its own empty rack slot when you face that slot within reach.
-   Open a hatch with **LMB**, then press **Space** at its opening to climb through. This works
-   both ways for the driver, radio, loader, side escape and cupola hatches. Roof entry requires
-   climbing onto the tank first. Space remains jump away from an opening; holding it cannot
-   reverse a completed climb. **Hold Space for 1.5 seconds** at the open cupola is the exit.
+   Open a hatch with **LMB**, then press **Space** looking into its opening (or at its open lid)
+   to climb through. This works both ways for the driver, radio, loader, side escape and cupola
+   hatches; aboard, only the hatches of your own post count. Roof entry requires climbing onto
+   the tank first. Space is a jump only on foot away from an opening. **LMB** takes a station,
+   **Space** leaves it. The carried hammer owns LMB only where it has work under the crosshair.
 
 ## Xbox / PlayStation controller
 
@@ -262,7 +264,7 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **F3** | performance statistics overlay (also works over the map and controls sheet) |
 | **Ctrl** (hold) | crouch inside or outside; release stands only with headroom |
 | **Shift** | head out of the cupola ↔ duck back in (commander; only through a hatch already opened at its lever) |
-| **Space** (hold 1.5 s) | climb OUT on foot, head in or head out, only with the cupola hatch open; the HUD ring fills while you hold. Nothing opens the hatch for you |
+| **Space** (tap) | at the cupola with the lid open, looking up into the opening or with the head out: climb OUT on foot. Any other tap at the cupola: down into the compartment. Nothing opens the hatch for you (the pad's dismount button keeps its 1.5 s hold) |
 | **T** | ammunition reminder; actual AP/HE choice is the grey/yellow physical rack round you equip |
 | **LMB with a tool equipped** | use the extinguisher or repair the actual broken component within reach |
 | **X with toolbox** | put the visible toolbox and hammer down nearby; face its reachable mount to stow it there |
@@ -272,7 +274,7 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **K** | solo crew: the gunner's standing order, fire at will / hold fire |
 | **Y / N** | solo crew: yes / no to a crewman's request (the loader asking to dump the empties out of the side hatch) |
 | **V**, or **MMB** (pad **RB**) at the cupola | indicate a coarse clock-bearing sector for the gunner; no precise target lock |
-| **X** | stow held item or leave the current station/view; empty-space LMB never commands gunner fire |
+| **X** | stow the held item (Space leaves a station or view); empty-space LMB never commands gunner fire |
 | **E** (hold) on a wounded crewman, a body, or the first-aid box | solo crew: treat him / drag the body off the seat / treat yourself |
 | **LMB** on the driver's seat from the front of the basket floor | solo crew: take the driver's seat (the clamber takes a beat) |
 | **F6** | LAN: request the next open station; Strongpoint: take over an open KIA post |
@@ -516,9 +518,10 @@ size, and stitch-apron rules.
   as it did before. (E was tried for this and kept bailing the player out in combat.) On open
   ground Space jumps; with clothes alight it beats out the flames.
 - **E is a second interact key**: it does whatever the action button would do under the crosshair.
-- **At the cupola, Shift puts the head out and back in, and held Space climbs out.** Both need
-  the hatch already open; neither opens it. A tap of Space there does nothing, so a stray press
-  cannot leave the tank. X drops back into the turret. R throws carried cases; X leaves the station.
+- **At the cupola, Shift puts the head out and back in, and Space climbs out** when you look up
+  into the open lid or have the head out; any other Space tap there drops back into the turret.
+  Neither opens the hatch. R throws carried cases. Space leaves a station; X only puts things away
+  (8 November 2026).
 - **The hatch lever's target is the grip and the pivot cylinder it turns**, outlined together.
 - **R throws the spent case in your hands** where you are looking. Through an open hatch it
   leaves the tank and lies on the ground. LMB still just lets go of it.
@@ -533,8 +536,8 @@ size, and stitch-apron rules.
   quarter, and in the mouth). C with one in the mouth takes it back in the hand. A lit cigarette
   goes to the mouth by itself when the hands are needed.
 - **Leaving by the cupola needs the cupola view first.** From below, click the cupola to climb
-  into its seat; only there does held Space climb out. The hatch lever itself can be worked from
-  below as well as from the seat. X drops back down.
+  into its seat; only there does Space climb out. The hatch lever itself can be worked from
+  below as well as from the seat. Space drops back down.
 - **Day and night.** Every mode now runs a fifteen minute day: five minutes of full day,
   two and a half each of sunrise and sunset, and five of night. The Sun and Moon keep their true positions for the map's date and place; only the
   clock runs fast. `KESSEL_DAY_NIGHT=0` restores the real-time clock.

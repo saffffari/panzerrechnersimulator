@@ -8052,6 +8052,10 @@ pub struct TankInput {
     pub crouch: bool, // ctrl — on-foot crouch (lower eye, slower, quieter, smaller target)
     pub reload: bool, // R — on-foot Luger magazine change
     pub jump: bool, // Space: chassis, roof, open hatch or cabin; otherwise jump on foot
+    /// This `jump` is the pad's A alone. A is also the pad's interact button, so aboard it keeps
+    /// its older meaning: it never takes the man off a seat or out of the cupola the way the
+    /// keyboard's Space does (the pad has B to back out and Y held to dismount).
+    pub pad_jump: bool,
     /// E held: enter and exit (hatches, the climb, a spare tank). Space is only a jump.
     pub enter: bool,
     /// The raw trigger (left mouse), whatever `mg_coax` has been turned into by the E key.
@@ -18038,8 +18042,9 @@ impl Game {
         self.sim_phase.seg("hatch_track_grass");
         let burning = self.update_player_burn(dt, input.jump && !self.prev_jump);
         // Space is the way in and out of hatches, the cabin and a spare tank (owner's second
-        // revision: E for this kept bailing him out of the tank in combat).
-        if !burning && !self.halftrack_occupied() && input.jump && !self.prev_jump && self.try_space_traversal(r) {
+        // revision: E for this kept bailing him out of the tank in combat), and since 8 November
+        // 2026 the way off a sight or a seat. It is a jump only on foot outside.
+        if !burning && !self.halftrack_occupied() && input.jump && !self.prev_jump && self.try_space_traversal(r, input.pad_jump) {
             self.prev_jump = true; // contextual Space cannot also become an ordinary foot jump
         }
         if self.climb.active || (!matches!(self.mode, Mode::Foot) && self.station != Station::Loader) {
@@ -18157,8 +18162,10 @@ impl Game {
                 && self.station == Station::Loader && self.carry_mesh.is_none()
                 && self.carried_casing.is_none() && !self.ext_equipped
             {
-                if !self.carrying_track_kit && !self.panzerfaust_claimed
+                if !self.panzerfaust_claimed
                     && matches!(self.hover, Some(Hotspot::Extinguisher | Hotspot::RepairKit | Hotspot::PanzerfaustRack(_))) {
+                    // Both hands for the bottle or the tube: the track kit is set down first.
+                    if self.carrying_track_kit { self.put_down_toolbox(); }
                     if self.interact_equip() { self.primary_pickup_press = true; }
                 }
             }
@@ -22003,6 +22010,12 @@ impl Game {
             return false;
         }
         if let Some(s) = self.hover_station {
+            // The gun's handwheels and the driver's levers take both hands: the track kit is set
+            // down where he stands before he takes either seat. Up into the cupola it comes along
+            // (that is the way out to a thrown track).
+            if self.carrying_track_kit && matches!(s, Station::Gunner | Station::Driver | Station::Radioman) {
+                self.put_down_toolbox();
+            }
             self.commander_outside = false;
             self.sights_mag = 0;
             self.jump_station(s);
@@ -22565,27 +22578,7 @@ impl Game {
         // hole and hold the repair control. One spare-parts unit supplies track shoes plus
         // fasteners. They cover the breach and restore partial resistance; ArmorField deliberately
         // keeps it weaker than factory plate. This is spatial work, not a menu heal.
-        let hull_local = self
-            .player
-            .hull_model()
-            .inverse()
-            .transform_point3(self.foot.pos + Vec3::Y * 0.9);
-        let turret_local = self
-            .player
-            .turret_model()
-            .inverse()
-            .transform_point3(self.foot.pos + Vec3::Y * 0.9);
-        let patch_target = self
-            .armor_scars
-            .nearest_hole(hull_local, false, 2.4)
-            .or_else(|| self.armor_scars.nearest_hole(turret_local, true, 2.4))
-            .filter(|&index| {
-                let scar = self.armor_scars.scars()[index];
-                let model = if scar.is_turret() { self.player.turret_model() } else { self.player.hull_model() };
-                let point = model.transform_point3(scar.local_position());
-                equipment::repair_in_reach(r.camera.pos, r.camera.forward(), point, scar.radius_m().max(0.18))
-                    && self.equipment_path_clear(r.camera.pos, point, 0.12)
-            });
+        let patch_target = self.armor_patch_target(r.camera.pos, r.camera.forward());
         let mut at_armor_patch = false;
         if self.carrying_track_kit {
             if let Some(index) = patch_target {
@@ -34250,14 +34243,59 @@ impl Game {
     /// Physical loader targets own LMB before nearby hatch/station anchors can steal the click.
     pub fn primary_loader_owns_click(&self) -> bool {
         if self.personal_item_blocks_interaction()||self.personal_primary_guard {return true;}
-        if self.carrying_track_kit || (self.mode == Mode::Foot && self.hover == Some(Hotspot::RepairKit)) {
+        // The hammer owns the click only where it has work under the crosshair (the owner,
+        // 8 November 2026: "the hammer blocks you from interacting with stuff and exiting the
+        // hatches"). Everywhere else the kit stays in the hand and the click goes to the seat,
+        // the lid, the lever or the prop it rests on.
+        if self.kit_owns_primary() || (self.mode == Mode::Foot && self.hover == Some(Hotspot::RepairKit)) {
             return true;
         }
         self.mode == Mode::Tank && self.station == Station::Loader
-            && (self.carry_mesh.is_some() || self.carried_casing.is_some() || self.ext_equipped || self.compass_equipped || self.carrying_track_kit || self.panzerfaust_claimed
+            && (self.carry_mesh.is_some() || self.carried_casing.is_some() || self.ext_equipped || self.compass_equipped || self.panzerfaust_claimed
                 || matches!(self.hover, Some(Hotspot::GunLever | Hotspot::SpentCasing
                     | Hotspot::LoadedRound | Hotspot::RackSlot(_) | Hotspot::FloorShell(_) | Hotspot::FloorCasing(_)
                     | Hotspot::Extinguisher | Hotspot::RepairKit | Hotspot::PanzerfaustRack(_))))
+    }
+
+    /// The carried hammer has work under the crosshair: a job on the tank it can do now, the
+    /// thrown track's ritual, an armour hole to cover, or a repair already under way. There the
+    /// action button is the hammer's. Read at the last camera `update_equipment_hover` saw.
+    pub fn kit_owns_primary(&self) -> bool {
+        if !self.carrying_track_kit { return false; }
+        let (eye, look) = (self.equipment_eye, self.equipment_look);
+        matches!(self.activity, Some(Activity::Repair(_)))
+            || self.physical_repair_target(eye, look).is_some()
+            || self.track_owns_carried_primary(eye, look)
+            || self.armor_patch_target(eye, look).is_some()
+    }
+
+    /// The track kit is the only thing in the hand, it has no work under the crosshair, and the
+    /// crosshair rests on something the hands work inside the tank (a control, a round, a case):
+    /// the action button is that thing's. A control is worked with the kit still in the hand; a
+    /// load needs both hands, so the kit is set down first (`interact_round`, the bracket click).
+    pub fn kit_yields_primary(&self) -> bool {
+        self.carrying_track_kit && !self.ext_equipped && !self.compass_equipped
+            && !self.panzerfaust_claimed && !self.hand_torch_on
+            && !self.workshop_owns_primary(self.equipment_eye, self.equipment_look)
+            && self.interact_kind() != InteractKind::None && !self.kit_owns_primary()
+    }
+
+    /// The armour hole the dismounted man could cover from where he stands and looks.
+    pub(super) fn armor_patch_target(&self, eye: Vec3, look: Vec3) -> Option<usize> {
+        if self.mode != Mode::Foot { return None; }
+        let chest = self.foot.pos + Vec3::Y * 0.9;
+        let hull_local = self.player.hull_model().inverse().transform_point3(chest);
+        let turret_local = self.player.turret_model().inverse().transform_point3(chest);
+        self.armor_scars
+            .nearest_hole(hull_local, false, 2.4)
+            .or_else(|| self.armor_scars.nearest_hole(turret_local, true, 2.4))
+            .filter(|&index| {
+                let scar = self.armor_scars.scars()[index];
+                let model = if scar.is_turret() { self.player.turret_model() } else { self.player.hull_model() };
+                let point = model.transform_point3(scar.local_position());
+                equipment::repair_in_reach(eye, look, point, scar.radius_m().max(0.18))
+                    && self.equipment_path_clear(eye, point, 0.12)
+            })
     }
 
     /// A world interaction consumes this whole press so picking up or setting down a prop cannot
@@ -34390,7 +34428,16 @@ impl Game {
     /// the loader update; this entry point is shared by mouse/controller and capture fixtures.
     pub fn interact_round(&mut self, _cam_fwd: Vec3) -> bool {
         if self.mode == Mode::Tank && self.station == Station::Commander { return false; }
-        if self.compass_equipped || self.carrying_track_kit || self.panzerfaust_claimed { return false; }
+        if self.compass_equipped || self.panzerfaust_claimed { return false; }
+        if self.carrying_track_kit {
+            // Both hands for a round, a case or a fragment: with one under the crosshair the
+            // track kit is set down on the basket floor first, then the load is taken.
+            let load = self.mode == Mode::Tank && self.station == Station::Loader
+                && self.carry_mesh.is_none() && self.kit_yields_primary()
+                && self.interact_kind() == InteractKind::Holdable;
+            if !load { return false; }
+            self.put_down_toolbox();
+        }
         if matches!(self.mode, Mode::Tank)
             && matches!(self.station, Station::Loader)
             && self.carry_mesh.is_some()

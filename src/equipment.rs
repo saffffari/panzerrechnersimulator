@@ -268,7 +268,13 @@ impl Game {
     }
 
     fn equipment_hands_free(&self) -> bool {
-        !self.workshop_held() && !self.carrying_track_kit && !self.ext_equipped && !self.compass_equipped
+        !self.carrying_track_kit && self.equipment_hands_free_but_for_kit()
+    }
+
+    /// Nothing in the hands except, perhaps, the track kit: the bottle and the tube on their
+    /// brackets can still be aimed at, and taking one sets the kit down first.
+    fn equipment_hands_free_but_for_kit(&self) -> bool {
+        !self.workshop_held() && !self.ext_equipped && !self.compass_equipped
             && self.carry_mesh.is_none() && self.carried_casing.is_none()
             && self.fea.carried_fragment.is_none()
             && self.held_item.is_none() && !self.panzerfaust_claimed
@@ -292,23 +298,26 @@ impl Game {
         if self.climb.active || self.switch_t > 0.0 { return; }
         let eye = r.camera.pos;
         let look = r.camera.forward();
-        if self.carrying_track_kit {
-            self.hover = None;
+        let kit = self.carrying_track_kit;
+        if kit {
             // The same actionable point drives the dot, outline and hammer. Outside generic
             // jobs (especially the turret-ring fragment) need the same feedback as inside jobs.
+            // Where the hammer has work it owns the action button and nothing else is offered;
+            // away from a job the kit in hand hides nothing under the crosshair (the owner,
+            // 8 November 2026): controls, seats and lids stay workable, loads stay takeable.
             if let Some(job) = self.physical_repair_target(eye, look) {
+                self.hover = None;
                 self.hover_label = Some(self.job_prompt(job));
-            } else if self.mode == Mode::Tank {
-                self.hover_label = None;
+                return;
             }
-            return;
+            if self.mode != Mode::Tank { self.hover = None; return; }
         }
         if self.panzerfaust_claimed && self.mode == Mode::Tank {
             self.hover = None;
             self.hover_label = Some("PANZERFAUST IN HAND - CARRY OUTSIDE; Q/E: RETURN TO RACK");
             return;
         }
-        if !self.equipment_hands_free() { return; }
+        if !self.equipment_hands_free_but_for_kit() { return; }
         let mut nearest = f32::INFINITY;
         if self.mode == Mode::Tank && self.station == Station::Loader {
             if let Ok(mesh) = extinguisher_source_mesh() {
@@ -323,7 +332,8 @@ impl Game {
             }
         }
         let model = self.toolbox_model();
-        if let Some(t) = ray_loader_ammunition_mesh(eye, look, model, 1.85, toolbox_mesh()) {
+        // The box in the hand is not on its mount to be aimed at.
+        if let Some(t) = ray_loader_ammunition_mesh(eye, look, model, 1.85, toolbox_mesh()).filter(|_| !kit) {
             if t < nearest && self.equipment_path_clear(eye, eye + look * t, 0.04) {
                 nearest = t;
                 self.hover = Some(Hotspot::RepairKit);
@@ -622,7 +632,7 @@ impl Game {
 
     /// Match the existing outside track interaction before starting an ordinary hammer swing.
     /// Keeping its input and timer separate prevents a free swing from fitting/driving a track pin.
-    fn track_owns_carried_primary(&self, eye: Vec3, look: Vec3) -> bool {
+    pub(super) fn track_owns_carried_primary(&self, eye: Vec3, look: Vec3) -> bool {
         if self.mode != Mode::Foot || self.foot.reload_t > 0.0 || self.foot.panzerfaust_swap_t > 0.0 {
             return false;
         }
@@ -640,6 +650,10 @@ impl Game {
         if self.workshop_tool_active() {self.repair_hammer_t=0.0;return;}
         let track_owns_primary = self.carrying_track_kit && self.track_owns_carried_primary(eye, look);
         let job = if track_owns_primary { None } else { self.physical_repair_target(eye, look) };
+        // A press on a control, a round or a case under the crosshair is that thing's click:
+        // the hammer is not swung at the breech lever on the way.
+        let trigger = trigger && !(job.is_none() && !track_owns_primary && self.carrying_track_kit
+            && self.interact_kind() != InteractKind::None);
         let step = carried_hammer_step(self.repair_hammer_t, trigger, self.primary_pickup_press,
             self.carrying_track_kit, track_owns_primary, job.is_some(), dt);
         self.repair_hammer_t = step.remaining_s;

@@ -1,6 +1,6 @@
 //! Space traverses the open aperture. LMB selection of the articulated lid stays independent.
 use super::*;
-use hatch_traversal::{Aperture, choose_target, exit_offsets, target_score};
+use hatch_traversal::{Aperture, choose_target, exit_offsets, target_score_gaze};
 
 impl Game {
     /// Local identity is not a seat lock. Only another living crewman occupying the destination
@@ -18,9 +18,13 @@ impl Game {
             && self.crew_solo_station_blocked(Self::access_hatch_station(index)).is_none()
     }
 
-    /// Outside, Space is an ordinary jump unless the player aims at a reachable open hatch.
-    /// Tank proximity alone never starts an assisted climb or consumes the jump.
-    pub(super) fn try_space_traversal(&mut self, r: &Renderer) -> bool {
+    /// One Space press (the owner, 8 November 2026). Outside on foot it is an ordinary jump
+    /// unless the crosshair is on a reachable open hatch, which it enters; tank proximity alone
+    /// never starts an assisted climb or consumes the jump. Aboard it never jumps: looking
+    /// through an open hatch of the occupied post it climbs out; otherwise at a sight or a seat
+    /// it goes back to the compartment; otherwise it does nothing. Returns whether the press is
+    /// spent. `pad_interact` says the press is the pad's A alone (see `TankInput::pad_jump`).
+    pub(super) fn try_space_traversal(&mut self, r: &Renderer, pad_interact: bool) -> bool {
         // A dismounted man at an untaken spare Tiger climbs it by the existing mount ritual.
         // His own living Tiger's aimed hatch keeps priority; a lost Tiger never blocks this.
         if self.spare_mount_target(r).is_some()
@@ -30,31 +34,74 @@ impl Game {
             self.consume_primary_press();
             return true;
         }
+        let aboard = self.mode == Mode::Tank;
         if self.climb.active || !self.recoverable_tiger_access_allowed() || self.activity.is_some()
             || self.switch_t > 0.0 || self.carried_casing.is_some()
-        { return false; }
-        // The commander leaves by HOLDING Space with the lid open (the shell runs the hold and its
-        // ring). A tap does nothing here, and never opens the lid; Q drops back into the turret.
-        if self.mode == Mode::Tank && self.station == Station::Commander {
-            self.hint_cupola_closed();
-            return true;
-        }
-        if self.mode == Mode::Tank && self.station == Station::Gunner {
-            if !self.hatch_entry_post_available(1) {
-                self.hover_label = Some("TURRET CABIN OCCUPIED - CREWMAN BLOCKS THE WAY");
-                return true;
-            }
-            self.sights_mag = 0;
-            self.commander_outside = false;
-            self.jump_station(Station::Loader);
-            self.consume_primary_press();
-            return true;
+        { return aboard; }
+        if aboard {
+            self.space_aboard(r, pad_interact);
+            return true; // no jumping inside the tank
         }
         if let Some(index) = self.space_hatch_target(r) {
             self.start_hatch_passage(index, r);
             return true;
         }
         false
+    }
+
+    /// Space aboard, in order: out through the open hatch of this post the player is looking
+    /// through; else off the sight or the seat, back into the compartment; else nothing.
+    fn space_aboard(&mut self, r: &Renderer, pad_interact: bool) {
+        // The pad's A at the cupola keeps its older meaning: a hint under a shut lid and nothing
+        // else. The pad's Y, held, dismounts (the shell runs that hold and its ring).
+        if pad_interact && self.station == Station::Commander {
+            self.hint_cupola_closed();
+            return;
+        }
+        match self.space_hatch_gaze(r) {
+            Some((index, true)) => {
+                self.start_hatch_passage(index, r);
+                return;
+            }
+            Some((_, false)) => {
+                // Rolling: no climbing out, except the bail from a burning tank through the
+                // cupola, which was the old Space hold's exception and keeps its instant form.
+                if self.station == Station::Commander && self.can_climb_out() { self.climb_out(); }
+                return;
+            }
+            None => {}
+        }
+        let leave = match self.station {
+            Station::Gunner => true,
+            // Head out with the lid still swinging: nothing, he neither ducks nor drops below.
+            Station::Commander => !self.commander_outside,
+            Station::Driver | Station::Radioman => !pad_interact,
+            Station::Loader => false,
+        };
+        if !leave { return; }
+        if !self.hatch_entry_post_available(1) {
+            self.hover_label = Some("TURRET CABIN OCCUPIED - CREWMAN BLOCKS THE WAY");
+            return;
+        }
+        let from = self.station;
+        self.sights_mag = 0;
+        self.commander_outside = false;
+        self.jump_station(Station::Loader);
+        self.consume_primary_press();
+        if self.station == Station::Loader && from != Station::Gunner {
+            println!("[panzerrechnersystem] Space: {from:?} post left, down into the compartment");
+        }
+    }
+
+    /// The hatches a man aboard can leave by: those of the post he is at. The gunner has none.
+    fn post_hatches(station: Station) -> &'static [usize] {
+        match station {
+            Station::Driver => &[0],
+            Station::Radioman => &[2],
+            Station::Loader => &[1, 3],
+            Station::Commander => &[4],
+            Station::Gunner => &[],
+        }
     }
 
     /// The untaken spare Tiger a living dismounted man stands at and faces. Proximity alone does
@@ -92,37 +139,50 @@ impl Game {
         (eye - aperture.center).dot(aperture.normal) < 0.0
     }
 
+    /// The open hatch a Space press would take the player through right now, in either direction.
     pub(super) fn space_hatch_target(&self, r: &Renderer) -> Option<usize> {
+        self.space_hatch_gaze(r).and_then(|(index, still)| still.then_some(index))
+    }
+
+    /// The open hatch the player is looking through, and whether the tank is still enough to
+    /// climb through it. In both directions the crosshair must be in the opening or resting on
+    /// that hatch's own open lid; sitting under an open lid is no longer enough (the owner,
+    /// 8 November 2026). A commander with his head already out is in his opening. Aboard, only
+    /// the hatches of the occupied post are candidates.
+    pub(super) fn space_hatch_gaze(&self, r: &Renderer) -> Option<(usize, bool)> {
         if self.climb.active || !self.recoverable_tiger_access_allowed() || self.activity.is_some()
             || self.switch_t > 0.0
-            || self.carried_casing.is_some()
-            || self.player.speed.abs() >= 0.6 { return None; }
+            || self.carried_casing.is_some() { return None; }
         let entering = self.mode == Mode::Foot;
-        let preferred = if entering { None } else {
-            match self.station {
-                Station::Driver => Some(0), Station::Radioman => Some(2),
-                Station::Commander => Some(4), _ => None,
-            }
-        };
+        // A man aboard leaves by the hatch of his own post (the cupola from the cupola: a man
+        // below it must first climb into its seat).
+        let candidate = |index: usize| self.access_hatch_open(index)
+            && if entering { self.hatch_entry_post_available(index) }
+                else { Self::post_hatches(self.station).contains(&index) };
+        // No open hatch in question (the usual frame): no collision set is built.
+        if !(0..5).any(candidate) { return None; }
         let models = self.fire_surface_models();
         let contacts = self.cabin_fire.source_contacts(&models);
         let mut candidates = Vec::with_capacity(5);
         for index in 0..5 {
-            if !self.access_hatch_open(index) { continue; }
-            if entering && !self.hatch_entry_post_available(index) { continue; }
-            // The cupola is left from the cupola: a man below it must first climb into its seat.
-            if !entering && index == 4 && self.station != Station::Commander { continue; }
+            if !candidate(index) { continue; }
             let aperture = self.access_aperture(index);
-            let Some(score) = target_score(r.camera.pos, r.camera.forward(),
-                entering.then_some(self.foot.pos), aperture, entering) else { continue; };
-            if entering && !score.aimed { continue; }
+            let head_out = !entering && index == 4 && self.commander_outside;
+            let margin = if !entering && index == 4 { hatch_traversal::CUPOLA_SEAT_GAZE_MARGIN_M }
+                else { hatch_traversal::GAZE_MARGIN_M };
+            let on_lid = head_out || self.hover_roof_hatch == Some(index);
+            let Some(score) = target_score_gaze(r.camera.pos, r.camera.forward(),
+                entering.then_some(self.foot.pos), aperture, entering, margin, on_lid) else { continue; };
+            if !score.aimed { continue; }
             // A near face of the opening must be visible. Do not hit-test the open lid's new
-            // location, or require a standing body to fit a crawl-sized opening.
+            // location, or require a standing body to fit a crawl-sized opening. A head that is
+            // already out through the cupola needs no line to it.
             let near = aperture.center + aperture.normal * if entering { 0.07 } else { -0.07 };
-            if contacts.sweep_batch(&[[r.camera.pos, near]])[0].is_some() { continue; }
+            if !head_out && contacts.sweep_batch(&[[r.camera.pos, near]])[0].is_some() { continue; }
             candidates.push((index, score));
         }
-        choose_target(&candidates, preferred)
+        let index = choose_target(&candidates, None)?;
+        Some((index, self.player.speed.abs() < 0.6))
     }
 
     /// Find source-supported feet beside this particular hatch, with standing headroom. The
@@ -239,24 +299,55 @@ impl Game {
 
     pub(super) fn update_hatch_access_prompt(&mut self, r: &Renderer) {
         // Preserve LMB equipment/handle prompts; the opening has its own Space hint.
-        if self.hover_roof_hatch.is_some() || self.hover_lever || self.hover.is_some() { return; }
-        if self.mode == Mode::Tank && self.station == Station::Commander
-            && !self.commander_outside && !self.climb.active {
-            self.hover_label = Some("DESCEND INTO TURRET CABIN [SPACE]");
-            return;
-        }
-        let Some(index) = self.space_hatch_target(r) else {
-            self.blocked_hatch_exit = None;
-            if self.spare_mount_target(r).is_some() {
-                self.hover_label = Some("CLIMB ABANDONED TIGER [SPACE]");
+        if self.hover_roof_hatch.is_none() && (self.hover_lever || self.hover.is_some()) { return; }
+        let entering = self.mode == Mode::Foot;
+        let gaze = self.space_hatch_gaze(r);
+        // The crosshair on an open lid: the button shuts it, and Space goes through its opening.
+        if let (Some(lid), Some((index, true))) = (self.hover_roof_hatch, gaze) {
+            if lid == index && self.blocked_hatch_exit != Some(index) {
+                self.hover_label = Some(match (entering, index) {
+                    (true, 0) => "CLOSE DRIVER HATCH [LMB] - ENTER [SPACE]",
+                    (true, 1) => "CLOSE LOADER HATCH [LMB] - ENTER [SPACE]",
+                    (true, 2) => "CLOSE RADIO HATCH [LMB] - ENTER [SPACE]",
+                    (true, 3) => "CLOSE SIDE ESCAPE HATCH [LMB] - ENTER [SPACE]",
+                    (true, _) => "CLOSE CUPOLA HATCH [LMB] - ENTER [SPACE]",
+                    (false, 0) => "CLOSE DRIVER HATCH [LMB] - CLIMB OUT [SPACE]",
+                    (false, 1) => "CLOSE LOADER HATCH [LMB] - CLIMB OUT [SPACE]",
+                    (false, 2) => "CLOSE RADIO HATCH [LMB] - CLIMB OUT [SPACE]",
+                    (false, 3) => "CLOSE SIDE ESCAPE HATCH [LMB] - CLIMB OUT [SPACE]",
+                    (false, _) => "CLOSE CUPOLA HATCH [LMB] - CLIMB OUT [SPACE]",
+                });
+                return;
             }
-            return;
+        }
+        if self.hover_roof_hatch.is_some() { return; }
+        let index = match gaze {
+            Some((index, true)) => index,
+            Some((_, false)) => {
+                // Looking through the opening of a rolling tank: Space is spent and nothing
+                // happens, so say why. A head-out commander riding along is told nothing.
+                self.blocked_hatch_exit = None;
+                if !entering && !self.commander_outside {
+                    self.hover_label = Some("STOP THE TANK TO CLIMB OUT");
+                }
+                return;
+            }
+            None => {
+                self.blocked_hatch_exit = None;
+                if self.mode == Mode::Tank && self.station == Station::Commander
+                    && !self.commander_outside && !self.climb.active {
+                    self.hover_label = Some("DESCEND INTO TURRET CABIN [SPACE]");
+                } else if self.spare_mount_target(r).is_some() {
+                    self.hover_label = Some("CLIMB ABANDONED TIGER [SPACE]");
+                }
+                return;
+            }
         };
         if self.blocked_hatch_exit == Some(index) {
             self.hover_label = Some("HATCH EXIT BLOCKED - CLEAR THE LANDING");
             return;
         }
-        self.hover_label = Some(match (self.mode == Mode::Foot, index) {
+        self.hover_label = Some(match (entering, index) {
             (true, 0) => "ENTER DRIVER HATCH [SPACE]",
             (true, 1) => "ENTER LOADER HATCH [SPACE]",
             (true, 2) => "ENTER RADIO HATCH [SPACE]",
