@@ -134,6 +134,38 @@ Named approximations and unknowns:
 Still open on the deck: the two louvred radiator grilles are part of the roof `33B01` and are not
 cut out; the round cover `34B23` behind the hatch is not identified.
 
+## Built: the running gear (rows A1 to A7)
+
+Script: `tools/tiger_production/running_gear_rig.py`. Stations are numbered 1 to 8 from the front
+on each side; discs are `in`, `mid`, `out` from the hull outward.
+
+| Control | Kind | Count | Range or note |
+|---|---|---|---|
+| `CTRL.Arm_<L|R><1-8>` | hinge on the torsion bar's axis | 16 | swept with the wheels on and the track ignored: up to 35 degrees with nothing in the way (18 on R2, 34 on L8 and R8), down 5 to 6 degrees where the next station's disc stops it |
+| `CTRL.Wheel_<id>` | hinge, continuous | 16 | the station's three discs turn together |
+| `CTRL.Wheel_<id>_in`, `_mid`, `_out` | stowed part | 48 | each disc draws off its axle outward |
+| `CTRL.Sprocket_L/R`, `CTRL.Sprocket_Cap_L/R` | continuous hinge; stowed hub cap | 2 + 2 | tooth ring not cut from its disc |
+| `CTRL.Idler_L/R` on `CTRL.Idler_Tension_L/R` | continuous hinge on a slide | 2 + 2 | slide 0 to 0.08 m rearward |
+| `CTRL.Track_Tensioner_L/R` | socket for the track wrench | 2 | at the conical cap low on the rear plate; drives the idler slide |
+| `CTRL.Final_Drive_L/R`, `CTRL.Final_Drive_Cover_L/R` | stowed parts | 2 + 2 | workshop job |
+| `CTRL.Track_Pin_<L|R>_a`, `_b` and `CTRL.Track_Link_<L|R>` | two slides and a stowed link | 4 + 2 | the joint to break: the rearmost link on the idler |
+| `CTRL.Spare_Link_1` to `_7` | stowed part | 7 | spare links on the turret side |
+
+Also made: `GUIDE.Track_L` and `GUIDE.Track_R`, closed curves through the 96 track units a side in
+loop order (pitch 130.4 mm), and `track_side`, `track_index` on every unit, so the game can run
+the links along the curve and break the track at any unit.
+
+Fasteners: 294 objects in 54 sets, read from the full CAD. Wheel nuts are hex heads: six of 28 mm
+on each outer disc and on the middle disc of the 0B17 stations, eight of 19 mm on the inner disc of
+the 0B18 stations. Fifteen 28 mm bolts hold each final drive box; eight screws each sprocket cap;
+twelve each idler hub; one 32 mm bolt each arm.
+
+Named approximations: an arm and its torsion bar turn as one rigid part; the idler slides in place
+of swinging on a crank the kit does not have, and its travel and the 4 mm a turn of the adjuster
+are placeholders; the adjuster's cap is still part of the rear plate; the joint to break is one
+fixed joint a side; the upper limit of 35 degrees on most arms is the end of the sweep, not a bump
+stop, because the kit has none.
+
 ## Repair animations
 
 The owner, 8 November: "with each repair i want you to animate the repair within blender as a
@@ -179,6 +211,12 @@ Sequences built so far:
 | `engine_hatch_open` | B7 | 8.8 | 8 | both bolts drawn, bar up, lid up to 35 degrees, held, down, bolts home |
 | `fan_grille_off_L`, `_R` | B7 | 18.2 | 17 | two wing nuts off, bar up, grille onto the hatch, plate out, bay open, all back |
 | `deck_cap_FL` | B7 | 5.4 | 5 | cap unscrewed, set down, filler open, cap back |
+| `track_link_replace_L`, `_R` | A1 | 16.2 | 15 | drift and hammer on both pins from between the tracks, broken link out, spare in, pins driven home from outside |
+| `spare_link_off` | A2 | 6.4 | 4 | spare link off the turret side, onto the deck, back |
+| `road_wheel_off_L3` | A3 | 33.5 | 38 | arm jacked, six nuts off, outer disc drawn and laid down, back on, nuts on, jack down |
+| `arm_chained_up_L3` | A4 | 4.3 | 4 | arm jacked to 20 degrees and held (chain not modelled) |
+| `sprocket_cap_off_L` | A5 | 32.9 | 44 | eight screws out, hub cap off, back on |
+| `track_tension_L` | A6 | 3.2 | 3 | track wrench on the adjuster, turned, idler moves rearward |
 
 ## Planned: every other row
 
@@ -187,16 +225,9 @@ repair as ordered rig actions.
 
 ### Tracks and running gear
 
-| Row | Controls | Cuts and sets | Repair sequence in rig terms |
-|---|---|---|---|
-| A1 track runs | a guide curve per side; each link a stowed part on it; `Track_Pin` slide per joint | pins are already separate (`37N01`) | drive one pin out (slide), lift the broken link (stow), seat a spare, drive the pin in |
-| A2 spare links | each link stowed; bracket latch hinge | bracket from link | open the bracket, lift the link |
-| A3 road wheels | `Wheel_<station>_<n>` stowed; hub nuts as a set | wheel discs from hubs where fused; tyre ring from disc | jack the arm (A4 hinge), undo the hub set, pull the outer wheel |
-| A4 swing arms | `Arm_<station>` hinge about the torsion bar axis, limits from the bump stops | none expected | chain the arm up: hinge to its upper limit and hold |
-| A5 sprockets | `Sprocket_L/R` hinge, continuous; tooth ring stowed | tooth ring from hub; ring bolts as a set | undo the ring set, turn the ring, bolt up |
-| A6 idlers, tensioners | `Idler_L/R` hinge on the crank arm; `Tensioner_L/R` socket for the track wrench | find the adjusters first | cap off (stow), wrench in the socket, turns move the idler arm |
-| A7 final drives | housing covers stowed; bolt circle as a set | none | none in the field |
-| A8 guards | each panel stowed; a bend hinge at its root | panels where fused | lever clear (hinge) or tear off (stow) |
+Built, see above, rows A1 to A7. Still open: the sprocket's tooth ring as its own part (A5), a
+tyre-less wheel variant and broken disc pieces (A3), the adjuster cap cut from the rear plate (A6),
+mudguards and track guards (A8, with the hull rows).
 
 ### Hull
 

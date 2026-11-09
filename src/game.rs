@@ -265,6 +265,8 @@ mod enemy_crew;
 mod first_person_arms;
 #[path = "first_person_body_review.rs"]
 pub mod first_person_body_review;
+#[path = "hand_props_review.rs"]
+pub mod hand_props_review;
 #[path = "session_telemetry.rs"]
 mod session_telemetry;
 #[path = "player_burn.rs"]

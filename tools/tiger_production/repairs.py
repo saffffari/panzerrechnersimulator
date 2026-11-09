@@ -372,7 +372,323 @@ def deck_cap_FL():
     return _deck_cap('FL')
 
 
-ALL = [starter_hand_crank, jack_off_the_plate, engine_hatch_open, fan_grille_off_L, fan_grille_off_R, deck_cap_FL]
+# ------------------------------------------------------------------------------- running gear
+def hammer_pose(hammer, target, strike, handle):
+    """World pose of the kit hammer with its face on `target`, striking along `strike`, the handle
+    running off toward `handle`."""
+    o = bpy.data.objects[hammer]
+    y = Vector(strike).normalized()
+    g = Vector(handle)
+    g = (g - y * g.dot(y)).normalized()
+    z = -g
+    x = y.cross(z)
+    m = Matrix((x, y, z)).transposed().to_4x4()
+    m.translation = Vector(target) - m.to_3x3() @ Vector(o['tip_local'])
+    return m
+
+
+def swing_back(hammer, strike_pose, strike, degrees=50.0):
+    """The same hammer swung back about the hand."""
+    o = bpy.data.objects[hammer]
+    grip = strike_pose @ Vector(o['grip_local'])
+    tip = strike_pose @ Vector(o['tip_local'])
+    axis = (tip - grip).cross(Vector(strike)).normalized()
+    for sign in (1.0, -1.0):
+        rot = Matrix.Translation(grip) @ Matrix.Rotation(math.radians(sign * degrees), 4, axis) @ Matrix.Translation(-grip)
+        back = rot @ strike_pose
+        if ((back @ Vector(o['tip_local'])) - tip).dot(Vector(strike)) < 0.0:
+            return back
+    return back
+
+
+def _blows(r, sid, hammer, drift, pin_ctrl, outward, per_blow, blows, handle, inward=False):
+    """Three steps on one pin: drift on, one blow (a cycle), and the rest of the travel."""
+    D = bpy.data.objects
+    e = D[pin_ctrl]
+    lo, hi = float(e['min']), float(e['max'])
+    half = (hi - 0.03) * 0.5
+    drift_off = T(-half, 0, 0) @ Matrix.Rotation(math.radians(-90), 4, 'Y')       # tip on the pin's inner end, shank inboard
+    if inward:
+        drift_off = T(half, 0, 0) @ Matrix.Rotation(math.radians(90), 4, 'Y')     # on the outer end, shank outboard
+    with r.step(sid + '_drift_on', seconds=0.8, tool=drift, player='set the drift on the pin end'):
+        r.follow(drift, pin_ctrl, offset=drift_off, a=0.5, b=1.0, reach=0.35, hold=True)
+        r.hand('L', drift, a=0.0, b=1.0, hold=True)
+    D_dir = Vector(outward) * (-1.0 if inward else 1.0)
+    bpy.context.view_layer.update()
+    end = e.matrix_world.translation + Vector(outward) * ((half if inward else -half)) - D_dir * 0.25
+    if inward:
+        end = end + Vector(outward) * (hi - 0.0)    # the pin stands drawn when it is driven home
+    strike = hammer_pose(hammer, end, D_dir, handle)
+    back = swing_back(hammer, strike, D_dir)
+    step = -per_blow if inward else per_blow
+    start = hi if inward else lo
+    with r.step(sid + '_blow', kind='cycle', seconds=0.7, tool=hammer, repeats=blows, input='strike', player='one blow of the hammer on the drift'):
+        r.place(hammer, back, a=0.0, b=0.4)
+        r.place(hammer, strike, a=0.42, b=0.58)
+        r.place(hammer, back, a=0.62, b=1.0)
+        r.hand('R', hammer, a=0.0, b=1.0, hold=True)
+        r.joint(pin_ctrl, start + step, a=0.58, b=0.66, start=start)
+        r.event('hammer_strike', at=0.58)
+    with r.step(sid + ('_home' if inward else '_drawn'), seconds=1.0, player='the pin is home' if inward else 'the pin is out of both links'):
+        r.joint(pin_ctrl, lo if inward else hi, a=0.0, b=0.6)
+        r.event('pin_home' if inward else 'pin_out', at=0.6)
+
+
+def _track_link_replace(side):
+    """A1. Break the track at the rearmost link on the idler: drive both pins out from between the
+    tracks, lift the broken link out, seat a spare, drive the pins home from outside. The spare
+    lies ready on the ground (sequence spare_link_off fetches it); the drawn pins stay on their
+    own line beside the track; blows per pin are not verified."""
+    D = bpy.data.objects
+    sign = 1.0 if side == 'L' else -1.0
+    out = Vector((sign, 0, 0))
+    tools = ra.kit_tools()
+    hammer, drift = tools['hammer'], ra.ensure_drift().name
+    r = ra.Repair('track_link_replace_' + side, row='A1', title='Track link replaced at the idler, %s side' % side,
+                  note='spare link starts on the ground; drawn pins stay on their line; blow counts not verified; which way the real pins come out is not verified')
+    link_ctrl, spare = 'CTRL.Track_Link_' + side, 'CTRL.Spare_Link_1'
+    link_obj = next(c for c in D[link_ctrl].children if 'TRACK' in c.name)
+    spare_obj = D[spare].children[0]
+    seat = ra._unscaled(link_obj.matrix_world) @ ra._unscaled(spare_obj.matrix_world).inverted() @ ra._unscaled(D[spare].matrix_world)
+    spare_ground = T(sign * 0.45, 4.7, 0.07) @ Matrix.Rotation(math.radians(90), 4, 'X')
+    r.stand((sign * 0.55, 4.25, 0.0), -90.0 * sign)
+    r.start_at(spare, spare_ground)
+    r.bring(hammer, 'R')
+    r.bring(drift, 'L')
+    for tag in ('a', 'b'):
+        _blows(r, 'pin_' + tag, hammer, drift, 'CTRL.Track_Pin_%s_%s' % (side, tag), out, 0.06, 13, handle=(-sign * 0.3, 1.0, 0.4))
+    broken_ground = T(sign * 0.9, 4.75, 0.07) @ Matrix.Rotation(math.radians(90), 4, 'X')
+    with r.step('link_out', seconds=2.0, requires='both pins drawn', player='put the tools down, lift the broken link out of the run'):
+        r.place(hammer, ra.pose((sign * 0.2, 4.4, 0.03)), a=0.0, b=0.2, arc=0.2)
+        r.place(drift, ra.pose((sign * 0.3, 4.5, 0.02), z_axis=(1, 0, 0)), a=0.0, b=0.2, arc=0.2)
+        two_hands(r, link_ctrl, (0.25, 0.0, 0.02), (-0.25, 0.0, 0.02), a=0.35, b=1.0, palm_l=(0, 0, 1), palm_r=(0, 0, 1))
+        up = D['FRAME.Track_Link_' + side].matrix_world.copy()
+        up.translation = up.translation + Vector((0, 0.25, 0.05))
+        r.place(link_ctrl, up, a=0.4, b=0.6)
+        r.place(link_ctrl, broken_ground, a=0.6, b=1.0, arc=0.15)
+        r.event('track_parted', at=0.45)
+    with r.step('spare_in', seconds=2.2, player='lift the spare link into the gap'):
+        two_hands(r, spare, (0.25, 0.0, 0.02), (-0.25, 0.0, 0.02), a=0.1, b=1.0, palm_l=(0, 0, 1), palm_r=(0, 0, 1))
+        near = seat.copy()
+        near.translation = seat.translation + Vector((0, 0.25, 0.05))
+        r.place(spare, near, a=0.2, b=0.7, arc=0.2)
+        r.place(spare, seat, a=0.7, b=1.0)
+        r.event('link_seated', at=1.0)
+    with r.step('round_to_the_outside', seconds=2.0, player='pick the tools up and step round to the outside of the track'):
+        r.stand((sign * 2.3, 4.0, 0.0), 90.0 * sign, a=0.3, b=1.0)
+        r.hand('R', hammer, a=0.05, b=0.3)
+        r.follow(hammer, 'PLAYER.Stand', offset=T(0.28, 0.3, 1.0) @ Matrix.Rotation(math.radians(-90), 4, 'Y'), a=0.25, b=1.0, reach=0.2, hold=True)
+        r.hand('L', drift, a=0.05, b=0.3)
+        r.follow(drift, 'PLAYER.Stand', offset=T(-0.28, 0.3, 1.0) @ Matrix.Rotation(math.radians(-90), 4, 'Y'), a=0.25, b=1.0, reach=0.2, hold=True)
+    for tag in ('b', 'a'):
+        _blows(r, 'pin_%s_in' % tag, hammer, drift, 'CTRL.Track_Pin_%s_%s' % (side, tag), out, 0.06, 13, handle=(sign * 0.3, 1.0, 0.4), inward=True)
+    return r.finish()
+
+
+def track_link_replace_L():
+    return _track_link_replace('L')
+
+
+def track_link_replace_R():
+    return _track_link_replace('R')
+
+
+def spare_link_off():
+    """A2. Lift a spare link off its brackets on the turret side, set it on the deck, put it back."""
+    D = bpy.data.objects
+    ctrl = 'CTRL.Spare_Link_1'
+    c = D[ctrl].matrix_world.translation.copy()
+    r = ra.Repair('spare_link_off', row='A2', title='Spare link off the turret side and back', note='the brackets do not open in the kit: the link lifts straight off them')
+    r.stand((c.x - 0.75 if c.x > 0 else c.x + 0.75, c.y + 0.2, DECK_Z), -90.0 if c.x > 0 else 90.0)
+    out = Vector((1.0 if c.x > 0 else -1.0, 0, 0))
+    with r.step('lift_off', seconds=1.8, player='lift the link up and off its brackets'):
+        two_hands(r, ctrl, (0.0, 0.2, 0.0), (0.0, -0.2, 0.0), a=0.0, b=1.0, palm_l=(0, 0, 1), palm_r=(0, 0, 1))
+        up = D['FRAME.Spare_Link_1'].matrix_world.copy()
+        up.translation = up.translation + Z * 0.08 + out * 0.12
+        r.place(ctrl, up, a=0.3, b=1.0)
+        r.event('link_free', at=0.5)
+    down = T(c.x, c.y + 0.9, DECK_Z + 0.07) @ Matrix.Rotation(math.radians(90), 4, 'X')
+    with r.step('set_down', seconds=1.6, player='set it down on the deck'):
+        two_hands(r, ctrl, (0.0, 0.2, 0.0), (0.0, -0.2, 0.0), a=0.0, b=1.0, palm_l=(0, 0, 1), palm_r=(0, 0, 1))
+        r.place(ctrl, down, a=0.0, b=1.0, arc=0.1)
+    with r.step('in_hand', kind='hold', seconds=0.8, player='a spare link is ready'):
+        pass
+    with r.step('back_on', seconds=2.2, player='hang it back on its brackets'):
+        two_hands(r, ctrl, (0.0, 0.2, 0.0), (0.0, -0.2, 0.0), a=0.0, b=1.0, palm_l=(0, 0, 1), palm_r=(0, 0, 1))
+        r.place(ctrl, up, a=0.0, b=0.6, arc=0.15)
+        r.place(ctrl, D['FRAME.Spare_Link_1'].matrix_world.copy(), a=0.6, b=1.0)
+    return r.finish()
+
+
+def _jack_under(r, sid, sign):
+    """The jack stood under a station's arm (it is fetched by jack_off_the_plate first)."""
+    D = bpy.data.objects
+    axle = D['CTRL.Wheel_' + sid].matrix_world.translation
+    pose_ = T(sign * 1.0, axle.y + 0.33, 0.37) @ Matrix.Rotation(math.radians(90), 4, 'Y')
+    r.start_at('CTRL.Jack', pose_)
+    return pose_
+
+
+def _wind_jack(r, sid, degrees, turns, up=True):
+    D = bpy.data.objects
+    grip = next(o for o in D if '28A-O34_ARM' in o.name)
+    level = ra.hand_pose((0, 0, 0), palm_to=(0, 0, -1), fingers=(0, -1, 0))
+    arm = 'CTRL.Arm_' + sid
+    keys = r.scalar.get((arm, 'rotation_euler', 0))
+    now = math.degrees(keys[-1][1]) if keys else 0.0
+    per = degrees / turns
+    with r.step('jack_%s_turn' % ('up' if up else 'down'), kind='cycle', seconds=1.2, repeats=turns, input='turn', requires='jack under the arm',
+                player='one turn of the jack crank (lift per turn not verified)'):
+        r.turn('CTRL.Jack_Crank', 360.0 if up else -360.0)
+        r.hand('R', grip.name, grip=T(0, 0, 0.09), a=0.0, b=1.0, orient=level)
+        r.joint(arm, now + (per if up else -per), a=0.0, b=1.0, start=now)
+        r.event('jack_ratchet', at=0.5)
+    with r.step('jacked_%s' % ('up' if up else 'down'), seconds=0.6, player='the arm is %s' % ('clear of the track' if up else 'back on the track')):
+        r.joint(arm, now + (degrees if up else -degrees), a=0.0, b=0.8)
+
+
+def road_wheel_off(sid='L3'):
+    """A3. Jack a station's arm up, undo the six nuts of its outer disc, draw the disc off and lay
+    it down; then back on. The jack starts under the arm."""
+    D = bpy.data.objects
+    sign = 1.0 if sid[0] == 'L' else -1.0
+    disc = 'CTRL.Wheel_%s_out' % sid
+    c = D[disc].matrix_world.translation.copy()
+    r = ra.Repair('road_wheel_off_' + sid, row='A3', title='Outer road wheel off station %s and back' % sid,
+                  note='the jack starts under the arm; lift per turn of the jack is not verified')
+    nuts = fasteners('wheel_%s_out' % sid)
+    tool = tool_for(nuts[0])
+    r.stand((sign * 2.45, c.y + 0.1, 0.0), 90.0 * sign)
+    _jack_under(r, sid, sign)
+    r.bring(tool)
+    _wind_jack(r, sid, 6.0, 6, up=True)
+    for i, nut in enumerate(nuts):
+        undo(r, nut, 'nut_%d' % (i + 1))
+    with r.step('disc_off', seconds=2.4, requires='six nuts off, arm jacked', player='put the spanner down, draw the disc off the axle and lean it down'):
+        r.place(tool, ra.pose((sign * 2.3, c.y + 0.7, 0.02)), a=0.0, b=0.15, arc=0.2)
+        two_hands(r, disc, (0.0, 0.3, 0.0), (0.0, -0.3, 0.0), a=0.25, b=1.0, palm_l=(0, -1, 0), palm_r=(0, 1, 0), fingers=(-sign, 0, 0))
+        bpy.context.view_layer.update()
+        off = D[disc].matrix_world.copy()
+        off.translation = off.translation + Vector((sign * 0.4, 0, 0.05))
+        r.place(disc, off, a=0.3, b=0.6)
+        r.place(disc, T(c.x + sign * 0.55, c.y - 0.9, 0.42), a=0.6, b=1.0, arc=0.1)
+        r.event('wheel_off', at=0.6)
+    with r.step('axle_bare', kind='hold', seconds=0.8, player='the outer disc is off'):
+        pass
+    with r.step('disc_on', seconds=2.4, player='lift the disc back on the axle'):
+        two_hands(r, disc, (0.0, 0.3, 0.0), (0.0, -0.3, 0.0), a=0.0, b=1.0, palm_l=(0, -1, 0), palm_r=(0, 1, 0), fingers=(-sign, 0, 0))
+        r.place(disc, off, a=0.1, b=0.6, arc=0.1)
+        r.follow(disc, 'FRAME.Wheel_%s_out' % sid, offset=Matrix.Identity(4), a=0.95, b=1.0, reach=0.35)   # its seat rides on the jacked arm
+    with r.step('pick_up_spanner', seconds=0.9, tool=tool, player='pick the spanner up'):
+        r.hand('R', tool, a=0.3, b=1.0)
+        r.follow(tool, 'PLAYER.Stand', offset=T(0.28, 0.3, 1.0) @ Matrix.Rotation(math.radians(-90), 4, 'Y'), a=0.6, b=1.0, reach=0.3, hold=True)
+    for i, nut in enumerate(nuts):
+        do_up(r, nut, 'nut_%d_on' % (i + 1))
+    _wind_jack(r, sid, 6.0, 6, up=False)
+    return r.finish()
+
+
+def road_wheel_off_L3():
+    return road_wheel_off('L3')
+
+
+def arm_chained_up(sid='L3'):
+    """A4. A sagging station: jack its arm up and chain it clear of the track (concession). The
+    chain is not modelled; the arm is held at 20 degrees."""
+    sign = 1.0 if sid[0] == 'L' else -1.0
+    c = bpy.data.objects['CTRL.Wheel_' + sid].matrix_world.translation.copy()
+    r = ra.Repair('arm_chained_up_' + sid, row='A4', title='Swing arm %s jacked and chained up' % sid, note='chain not modelled; ends with the arm held up')
+    r.stand((sign * 2.45, c.y + 0.3, 0.0), 90.0 * sign)
+    _jack_under(r, sid, sign)
+    _wind_jack(r, sid, 20.0, 16, up=True)
+    with r.step('chain_on', seconds=1.5, player='pass the chain round the arm and make it fast (chain not modelled)'):
+        r.hand('L', 'CTRL.Arm_' + sid, grip=ra.hand_pose((0.2 * sign, -0.3, 0.0), (0, 0, 1), (-sign, 0, 0)), a=0.0, b=1.0)
+        r.event('chain_on', at=0.8)
+    with r.step('held_up', kind='hold', seconds=1.0, player='the station is held clear: the tank runs on the next wheels'):
+        pass
+    return r.finish()
+
+
+def arm_chained_up_L3():
+    return arm_chained_up('L3')
+
+
+def _sprocket_cap(side):
+    """A5 (first part). Undo the eight screws of the sprocket's hub cap and draw the cap; back on.
+    The tooth ring is not separate in the rig yet, so turning it is not shown."""
+    D = bpy.data.objects
+    sign = 1.0 if side == 'L' else -1.0
+    ctrl = 'CTRL.Sprocket_Cap_' + side
+    c = D[ctrl].matrix_world.translation.copy()
+    r = ra.Repair('sprocket_cap_off_' + side, row='A5', title='Sprocket hub cap %s off and back' % side, note='tooth ring not separate yet; the screwdriver is a stand-in')
+    screws = fasteners('sprocket_cap_' + side)
+    tool = tool_for(screws[0])
+    r.stand((sign * 2.4, c.y, 0.0), 90.0 * sign)
+    r.bring(tool)
+    for i, f in enumerate(screws):
+        undo(r, f, 'screw_%d' % (i + 1), seconds=0.6)
+    with r.step('cap_off', seconds=1.6, requires='eight screws out', player='draw the hub cap and set it down'):
+        r.place(tool, ra.pose((sign * 2.3, c.y + 0.6, 0.02)), a=0.0, b=0.15, arc=0.2)
+        r.hand('R', ctrl, grip=ra.hand_pose((sign * 0.1, 0, 0), (-sign, 0, 0), (0, 0, 1)), a=0.25, b=1.0)
+        r.place(ctrl, T(c.x + sign * 0.45, c.y - 0.5, 0.1), a=0.3, b=1.0, arc=0.2)
+        r.event('cap_off', at=0.4)
+    with r.step('hub_open', kind='hold', seconds=0.8, player='the hub is open'):
+        pass
+    with r.step('cap_on', seconds=1.6, player='put the cap back'):
+        r.hand('R', ctrl, grip=ra.hand_pose((sign * 0.1, 0, 0), (-sign, 0, 0), (0, 0, 1)), a=0.0, b=1.0)
+        r.follow(ctrl, 'FRAME.Sprocket_Cap_' + side, offset=Matrix.Identity(4), a=0.9, b=1.0, reach=0.8)
+    with r.step('pick_up_tool', seconds=0.9, tool=tool, player='pick the tool up'):
+        r.hand('R', tool, a=0.3, b=1.0)
+        r.follow(tool, 'PLAYER.Stand', offset=T(0.28, 0.3, 1.0) @ Matrix.Rotation(math.radians(-90), 4, 'Y'), a=0.6, b=1.0, reach=0.3, hold=True)
+    for i, f in enumerate(screws):
+        do_up(r, f, 'screw_%d_in' % (i + 1), seconds=0.6)
+    return r.finish()
+
+
+def sprocket_cap_off_L():
+    return _sprocket_cap('L')
+
+
+def _track_tension(side):
+    """A6. Track wrench on the adjuster at the rear plate, turn: the idler moves rearward and the
+    track tightens. The cap over the adjuster is still part of the plate; 4 mm a turn and the
+    count are placeholders."""
+    D = bpy.data.objects
+    sign = 1.0 if side == 'L' else -1.0
+    sock = 'CTRL.Track_Tensioner_' + side
+    p = D[sock].matrix_world.translation.copy()
+    wrench = ra.ensure_track_wrench().name
+    r = ra.Repair('track_tension_' + side, row='A6', title='Track tensioned at the rear plate, %s side' % side,
+                  note='adjuster cap not cut from the plate; the wrench is a stand-in; 4 mm a turn and ten turns are placeholders')
+    r.stand((p.x, p.y + 0.85, 0.0), FWD)
+    r.bring(wrench)
+    on = Matrix.Rotation(math.radians(-90), 4, 'Y')          # the socket's X runs into the hull: wrench shaft back out along -X
+    with r.step('wrench_on', seconds=1.0, tool=wrench, player='seat the track wrench on the adjuster'):
+        r.follow(wrench, sock, offset=on, a=0.6, b=1.0, reach=0.4)
+        r.hand('R', wrench, a=0.0, b=1.0)
+        r.hand('L', wrench, a=0.5, b=1.0)
+    level = ra.hand_pose((0, 0, 0), palm_to=(0, -1, 0), fingers=(0, 0, 1))
+    with r.step('turn', kind='cycle', seconds=1.4, tool=wrench, repeats=10, input='turn', player='one turn of the adjuster'):
+        r.turn(sock, 360.0)
+        r.follow(wrench, sock, offset=on, a=0.0, b=1.0, reach=0.0)
+        r.hand('R', wrench, a=0.0, b=1.0, orient=level)
+        r.hand('L', wrench, a=0.0, b=1.0, orient=level)
+        r.joint('CTRL.Idler_Tension_' + side, 0.004, a=0.0, b=1.0, start=0.0)
+        r.event('adjuster_click', at=0.5)
+    with r.step('tight', seconds=0.8, tool=wrench, player='the track is tight'):
+        r.joint('CTRL.Idler_Tension_' + side, 0.04, a=0.0, b=0.6)
+        r.follow(wrench, sock, offset=on, a=0.0, b=0.5, reach=0.0)
+        r.carry(wrench, a=0.7, b=1.0)
+        r.event('track_tight', at=0.6)
+    return r.finish()
+
+
+def track_tension_L():
+    return _track_tension('L')
+
+
+ALL = [starter_hand_crank, jack_off_the_plate, engine_hatch_open, fan_grille_off_L, fan_grille_off_R, deck_cap_FL,
+       track_link_replace_L, track_link_replace_R, spare_link_off, road_wheel_off_L3, arm_chained_up_L3, sprocket_cap_off_L, track_tension_L]
 
 
 def build_all(wipe=True, first=0, count=None):

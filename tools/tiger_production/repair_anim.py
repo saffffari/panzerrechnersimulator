@@ -167,6 +167,52 @@ def ensure_crank_handle(throw_m=0.2, bore_m=0.05):
     return o
 
 
+def _stand_in(name, boxes, kind, grip, park, extra=None):
+    import bmesh
+    o = bpy.data.objects.get(name)
+    if o is not None:
+        return o
+    me = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    for size, offset in boxes:
+        bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(offset) @ Matrix.Diagonal((*size, 1.0)))
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    _col(TOOL_COL).objects.link(o)
+    o.rotation_mode = 'QUATERNION'
+    o['tool_kind'], o['tool_stand_in'], o['grip_local'] = kind, True, tuple(grip)
+    for k, v in (extra or {}).items():
+        o[k] = v
+    o.color = (0.25, 0.25, 0.28, 1.0)
+    o.location = park
+    return o
+
+
+def ensure_drift():
+    """A plain pin drift: origin at the working tip, local +Z up the shank to the struck end, 0.25 m.
+    Stand-in: the kit has none."""
+    return _stand_in('TOOL.Drift', [((0.022, 0.022, 0.25), (0.0, 0.0, 0.125))], 'drift', (0.0, 0.0, 0.12), (0.8, 6.4, 0.9), {'length_m': 0.25})
+
+
+def ensure_track_wrench():
+    """A plain T-handled socket wrench for the track adjuster: origin at the working end, local +Z
+    up the shaft (0.5 m), the handle across X at the top. Stand-in: the kit has none."""
+    return _stand_in('TOOL.Track_Wrench', [((0.03, 0.03, 0.5), (0.0, 0.0, 0.25)), ((0.44, 0.03, 0.03), (0.0, 0.0, 0.5))], 'track_wrench',
+                     (0.18, 0.0, 0.5), (1.2, 6.4, 0.9), {'grip2_local': (-0.18, 0.0, 0.5)})
+
+
+def kit_tools():
+    """The kit's own hand tools, with where a hand takes each and where it works (own space)."""
+    out = {}
+    for key, kind, grip, tip, grip2 in (('35O21_HAMMER', 'hammer', (0.0, 0.017, -0.60), (0.0, 0.196, -0.035), (0.0, 0.017, -0.30)),
+                                        ('32O06_TOOL', 'crowbar', (0.0, -0.45, 0.0), (0.0, -1.76, 0.0), (0.0, -0.95, 0.0))):
+        o = next(x for x in bpy.data.objects if x.type == 'MESH' and key in x.name)
+        o['tool_kind'], o['grip_local'], o['tip_local'], o['grip2_local'] = kind, grip, tip, grip2
+        out[kind] = o.name
+    return out
+
+
 def register_tool(obj_name, kind, grip_local, tip_local=(0.0, 0.0, 0.0)):
     """A kit object used as a tool (hammer, crowbar): where a hand takes it and where it works,
     in its own space."""
@@ -400,7 +446,8 @@ class Repair:
         of a second spent getting there from wherever it was. With `hold` it stays so after the
         range too, until the object's next move or the repair's end (a bolt in a pocket)."""
         self._use(name)
-        self._use(target) if target in bpy.data.objects and not target.startswith('TG_') else None
+        if target in bpy.data.objects and not target.startswith(('TG_', 'FRAME.')):
+            self._use(target)
         self.paths.append({'obj': name, 'f0': round(self._f(a)), 'f1': round(self._f(b)), 'kind': 'follow', 'target': target,
                            'offset': offset, 'reach': max(1, round(reach * FPS)), 'orient': orient, 'hold': hold})
 
@@ -574,7 +621,7 @@ class Repair:
         """Resolve an object's world-pose records frame by frame against the evaluated scene."""
         sc = bpy.context.scene
         o = bpy.data.objects[name]
-        euler = o.rotation_mode != 'QUATERNION' and not name.startswith(('HAND.', 'TOOL.', 'PLAYER.'))
+        euler = o.rotation_mode != 'QUATERNION' and not name.startswith(('HAND.', 'TOOL.', 'PLAYER.')) and not o.get('tool_kind')
         if not euler and o.rotation_mode != 'QUATERNION':
             bpy.context.view_layer.update()
             basis = o.matrix_basis.copy()

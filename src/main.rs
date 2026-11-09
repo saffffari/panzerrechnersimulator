@@ -17506,6 +17506,10 @@ fn main() -> anyhow::Result<()> {
         let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!("usage: fp-body-review <new-prefix>"))?;
         return game::first_person_body_review::run(prefix);
     }
+    if early_args.get(1).is_some_and(|arg| arg == "hand-props-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!("usage: hand-props-review <new-prefix>"))?;
+        return game::hand_props_review::run(prefix);
+    }
     if early_args.get(1).is_some_and(|arg| arg == "expedition-lookdown-review") {
         let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
             "usage: expedition-lookdown-review <new-prefix>"))?;

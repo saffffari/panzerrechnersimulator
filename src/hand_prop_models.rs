@@ -430,6 +430,16 @@ impl HandProps {
         .chain(self.stock)
         .chain(self.butts.iter().copied())
     }
+    /// Review harness: the kit's mesh slots by name (the packet's twenty and the butts numbered).
+    pub fn debug_named_slots(&self) -> Vec<(String, usize)> {
+        [("packet_body", self.body), ("packet_lid", self.lid), ("cigarette", self.cigarette),
+            ("lighter", self.lighter), ("ember", self.ember), ("tobacco_cap", self.tobacco_cap),
+            ("charred", self.charred), ("ash", self.ash), ("flame", self.flame), ("glow", self.glow)]
+            .into_iter().map(|(name, slot)| (name.to_string(), slot))
+            .chain(self.stock.iter().enumerate().map(|(i, &slot)| (format!("packet_cigarette_{i}"), slot)))
+            .chain(self.butts.iter().enumerate().map(|(i, &slot)| (format!("butt_{i}"), slot)))
+            .collect()
+    }
     pub fn initialize(&self, r: &mut Renderer) {
         for slot in self.slots() {
             r.mark_raster_only(slot);
