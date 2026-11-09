@@ -216,6 +216,23 @@ to E8: the lever and pedal parts are not identified); the visor shutter (B2); th
 in an animation while the louvred grilles are still part of the roof (E3); the fixed extinguisher
 system (E10, not found); fuel leaks and bungs (E2, no rig motion).
 
+## Fasteners model-wide
+
+`tools/tiger_production/fastener_census.py ALL` read every kit part's full CAD once: 2,113 heads
+on 189 of 367 parts (1,670 round, 370 hex, 73 square; parts that repeat, like wheels, count once).
+The census file is `artifacts/tiger_all_fastener_census_20261108.json` (not committed).
+
+`tools/tiger_production/fasten_all.py` then turned every hex and square head into a bolt object,
+on all 62 parts that have them: 419 objects, every cut closed. With the rear plate, running gear
+and deck that makes **935 fastener objects**: 684 bolts, 53 screws and 4 wing nuts that come out,
+and 194 rivets that do not.
+
+Round heads elsewhere are still moulded into their parts. Whether each part's round heads are
+rivets or screws is a per-part call, and the census lists them: the largest are the driver's
+floor plate `20K29` (125), the hull tub `16LH01` (123), the fuel tanks `27H12` (104 each), plate
+`25K43` (68) and cover `03J69` (44). One mesh, `25K43_PLATE`, has 13 open edges after this pass;
+it has not been checked whether they were there before.
+
 ## Repair animations
 
 The owner, 8 November: "with each repair i want you to animate the repair within blender as a
@@ -327,7 +344,7 @@ for the open items.
 4. Tow cables as ropes (F2), then pioneer tools (F1).
 5. Turret and gun controls (C2, C3, D2 to D7).
 6. Engine removal tree (E1 to E5), driver's controls (E6 to E8).
-7. A model-wide fastener census on the full CAD and a rivet-or-screw decision per part.
+7. The rivet-or-screw decision for the round heads, part by part, from the census.
 
 The game reads none of this yet. The export has to carry the controls and the fastener objects
 (`tools/tiger_production/export_pivots.py` writes every non-mesh object with its properties today;

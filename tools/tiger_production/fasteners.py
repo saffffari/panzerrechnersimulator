@@ -374,11 +374,19 @@ def apply_rows(obj, rows, kind_of, set_name='', cut=True):
         bm = bmesh.new()
         bm.from_mesh(me)
         report['tris_before'] = sum(len(f.verts) - 2 for f in bm.faces)
+        from mathutils import kdtree
+        all_verts = list(bm.verts)
+        kd = kdtree.KDTree(len(all_verts))
+        for i, v in enumerate(all_verts):
+            kd.insert(v.co, i)
+        kd.balance()
         for r, k in todo:
             base, normal = Vector(r['base']), Vector(r['normal'])
             reach = r['ring_radius'] + 0.0012
             inside = []
-            for f in bm.faces:
+            near = {f for _, i, _ in kd.find_range(base + normal * (r['height'] * 0.5), reach + r['height'] + 0.004)
+                    if all_verts[i].is_valid for f in all_verts[i].link_faces}
+            for f in near:
                 good = True
                 for v in f.verts:
                     d = v.co - base
