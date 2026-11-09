@@ -99,6 +99,11 @@ pub struct Cover {
 pub trait CoverSet {
     /// Nearest `ray_box` entry distance along a unit `direction` within `max_distance`.
     fn first_hit(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<f32>;
+    /// The nearest thing that blocks walking along a unit `direction`: what [`Self::occupies`]
+    /// stops a step at. The same as sight unless a cover set keeps finer surfaces for sight.
+    fn first_obstacle(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<f32> {
+        self.first_hit(origin, direction, max_distance)
+    }
     /// Is there a box whose XZ footprint widened by `margin` holds `point` strictly inside, and
     /// whose height range overlaps `(y0, y1)`?
     fn occupies(&self, point: Vec3, margin: f32, y0: f32, y1: f32) -> bool;
@@ -522,11 +527,10 @@ pub fn observe<C: CoverSet + ?Sized>(
     let mut probes = [1.0; 8];
     for (i, value) in probes.iter_mut().enumerate() {
         let a = actor.yaw + i as f32 * std::f32::consts::FRAC_PI_4;
-        *value = first_cover(
+        *value = cover.first_obstacle(
             actor.pos + Vec3::Y * 0.6,
             Vec3::new(a.sin(), 0.0, -a.cos()),
             6.0,
-            cover,
         )
         .unwrap_or(6.0)
             / 6.0;

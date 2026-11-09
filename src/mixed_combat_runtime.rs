@@ -372,6 +372,11 @@ impl Game {
         let cover = self.mixed_cover(None);
         let sight_world=self.world_cover(self.mixed_vehicle_cover_with_player(None,false));
         let player_models=self.fire_surface_models();
+        // Every soldier's sight and feeler rays sweep the Tiger's source surfaces; the frames'
+        // inverses are the same for all of them (they were taken again for every ray: 80
+        // matrix inversions a ray, most of the infantry phase with 156 men, 9 November 2026).
+        let player_inverse=player_models.map(|m|m.inverse());
+        let player_bounds=self.cabin_fire.world_bounds(&player_models);
         let mut snapshot = self.mixed_combat.actors.clone();
         if let Some(player) = self.mixed_player_actor() {
             snapshot.push(player);
@@ -393,7 +398,7 @@ impl Game {
                         let distance=a.distance(b);
                         (distance<0.005 || self.nearest_cover_ray(a,(b-a)/distance,distance-0.005).is_none())
                             && !self.world_doors.blocks_segment(a,b)
-                            && self.cabin_fire.sweep(a,b,&player_models).is_none()
+                            && self.cabin_fire.sweep_posed(a,b,&player_inverse).is_none()
                     });
                 }
             }
@@ -440,7 +445,7 @@ impl Game {
             // Terrain/trees participate in sight, not just in the later bullet collision test.
             // Mounted targets are source points, not fabricated human bodies. Each observer
             // samples the actual visible hull face; head-out anatomy takes priority when clear.
-            let mut candidates=snapshot.clone();
+            let mut candidates={ let _probe = crate::sim_phase::Probe::new("mixed_snapshot_clone"); snapshot.clone() };
             // The aim point lies on the Tiger, and nothing beyond the sensor range can be sensed, so
             // a man farther away than that range plus the hull's reach cannot produce a target.
             // Asking anyway swept the hull's source triangles for every soldier on the map on
@@ -479,9 +484,9 @@ impl Game {
             };
             let actor = &mut self.mixed_combat.actors[i];
             let _observe_probe = crate::sim_phase::Probe::new("mixed_observe_act");
-            let obs = combat::observe(actor, &seen, &small_arms_runtime::PlayerSightCover {
-                world:&sight_world,movement:&cover,source:&self.cabin_fire,models:&player_models,
-            }, heading_for, dt);
+            let obs = { let _probe = crate::sim_phase::Probe::new("mixed_observe"); combat::observe(actor, &seen, &small_arms_runtime::PlayerSightCover {
+                world:&sight_world,movement:&cover,source:&self.cabin_fire,inverse:&player_inverse,bounds:player_bounds,
+            }, heading_for, dt) };
             let policy = if actor.team == Team::German {
                 self.mixed_combat.german_policy.as_ref()
             } else {
@@ -500,11 +505,13 @@ impl Game {
             // Preserve the real contact and its firing gates. A separate navigation observation
             // lets an isolated man rejoin his squad instead of chasing alone indefinitely.
             let regroup_obs = navigation.map(|_| {
+                let _probe = crate::sim_phase::Probe::new("mixed_regroup_observe");
                 let mut navigator=actor.clone();
                 navigator.memory_s=0.0;
                 combat::observe(&mut navigator,&[],&cover,heading_for,0.0)
             });
             if decide || to_post {
+                let _probe = crate::sim_phase::Probe::new("mixed_decide");
                 self.mixed_combat.actions[i] = if to_post {
                     crate::foot_ai::walk_to_goal(regroup_obs.as_ref().unwrap_or(&obs), combat::INFANTRY_SENSOR_RANGE, POST_ARRIVE_M)
                 } else {
@@ -537,8 +544,8 @@ impl Game {
                 if swarm_order.rush.is_some() { action.fire = false; action.aim = false; }
             }
             let before = actor.pos;
-            let shot =
-                combat::apply_action(actor, &obs, action, &cover, dt, self.mixed_combat.tick);
+            let shot = { let _probe = crate::sim_phase::Probe::new("mixed_apply_action");
+                combat::apply_action(actor, &obs, action, &cover, dt, self.mixed_combat.tick) };
             if let Some(goal) = swarm_order.rush {
                 // A bound at a run toward the chosen ground; stopped by what blocks the body.
                 let want = Vec3::new(goal.x - before.x, 0.0, goal.z - before.z);
@@ -582,6 +589,7 @@ impl Game {
                     *side = 0.0;
                 }
             }
+            let _tail_probe = crate::sim_phase::Probe::new("mixed_resolve_pose");
             actor.pos = self.world_doors.resolve_walk(before, actor.pos, crate::foot::STANDING_HEIGHT);
             // No navigation: an open cellar's pit is neither walked into nor climbed out of.
             actor.pos = self.hf.ground_walker(before, actor.pos);
@@ -594,7 +602,7 @@ impl Game {
             self.soldiers[i].pos = actor.pos;
             // Keep the rendered body, hit actor and next observation on the same resolved
             // winter ground/cover position, including a policy's detour around an obstacle.
-            self.constrain_winter_soldier_motion(i, before);
+            { let _probe = crate::sim_phase::Probe::new("mixed_constrain_motion"); self.constrain_winter_soldier_motion(i, before); }
             let actor = &mut self.mixed_combat.actors[i];
             actor.pos = self.soldiers[i].pos;
             if dt > 1e-6 { actor.velocity = (actor.pos - before) / dt; }
