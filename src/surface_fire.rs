@@ -840,17 +840,26 @@ impl CabinFire {
             .filter(|&frame| self.frame_enabled[frame] && !self.grids[frame].triangles.is_empty())
             .map(|frame| { let inv = models[frame].inverse(); (frame, inv, inv.transform_point3(origin)) })
             .collect();
-        endpoints
-            .iter()
-            .map(|&point| {
-                origin.is_finite()
-                    && point.is_finite()
-                    && !live.iter().any(|(frame, inv, from)| {
-                        let to = inv.transform_point3(point);
-                        self.grids[*frame].occluded(*from,to)
-                    })
-            })
-            .collect()
+        let clear = |point: Vec3| origin.is_finite() && point.is_finite()
+            && !live.iter().any(|(frame, inv, from)| {
+                let to = inv.transform_point3(point);
+                self.grids[*frame].occluded(*from,to)
+            });
+        // A large batch (a fire's smoke cubes) is split over worker threads: each path's answer
+        // is computed exactly as before, only concurrently, and returned in order.
+        const PARALLEL_MIN: usize = 768;
+        if endpoints.len() < PARALLEL_MIN {
+            return endpoints.iter().map(|&p| clear(p)).collect();
+        }
+        let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
+        let chunk = endpoints.len().div_ceil(workers);
+        let clear = &clear;
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = endpoints.chunks(chunk)
+                .map(|part| scope.spawn(move || part.iter().map(|&p| clear(p)).collect::<Vec<bool>>()))
+                .collect();
+            handles.into_iter().flat_map(|h| h.join().expect("smoke clearance worker")).collect()
+        })
     }
 
     pub fn emit(&mut self, position: Vec3, velocity: Vec3) {
@@ -1500,6 +1509,23 @@ mod tests {
             Vec3::new(2.0, 0.0, 2.0),
             [128, 128, 128],
         )
+    }
+    #[test]
+    fn parallel_smoke_clearance_answers_exactly_as_one_path_at_a_time() {
+        let mesh = plane();
+        let fire = CabinFire::new(&[(0, &mesh), (1, &mesh)]);
+        let mut models = [Mat4::IDENTITY; FRAMES];
+        models[1] = Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0));
+        let origin = Vec3::new(0.1, 0.5, -0.2);
+        let mut seed = 7u32;
+        let ends: Vec<Vec3> = (0..2000).map(|_| {
+            let mut r = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); (seed >> 8) as f32 / 16_777_216.0 * 4.0 - 2.0 };
+            Vec3::new(r(), r(), r())
+        }).collect();
+        let batch = fire.clear_source_paths(origin, &ends, &models);
+        let single: Vec<bool> = ends.iter().map(|&e| fire.clear_source_paths(origin, &[e], &models)[0]).collect();
+        assert_eq!(batch, single);
+        assert!(batch.iter().any(|v| *v) && batch.iter().any(|v| !*v));
     }
     #[test]
     fn workshop_frame_enable_and_hand_exclusion_preserve_next_source_contact() {
