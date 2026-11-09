@@ -58,7 +58,7 @@ receipt() { # dir bin seed secs [weights]
 }
 for seed in 29 7 211; do
   for secs in 60 180; do
-    receipt before "$BASE" $seed $secs
+    receipt before "$BASE" $seed $secs "$JULY"
     receipt after "$BIN" $seed $secs "$CHAMP"
   done
 done

@@ -661,11 +661,23 @@ const ALARM_RADIUS: f32 = 40.0; // m — a blown encounter cascades to neighbour
 const INF_DAMAGE: f32 = 34.0; // hp per infantry round that connects (~3 = down)
 /// The evolved T-34 policy the arena's crews fight by (docs/ENEMY_TANK_AI.md).
 const ARENA_T34_POLICY: &str = "assets/ai/weights_academy.bin";
-/// The T-34 policy wherever a winter encounter is fielded (`install_t34_brain`):
-/// `KESSEL_T34_WEIGHTS` if set, else `ARENA_T34_POLICY`.
+/// The T-34 policy trained on 8 November 2026 (`tools/t34_canyon_es.py`, run es3, the generation-15
+/// champion `gen_015_4a5ac6df97fe6653.bin`, KSL2, 31 inputs: the "eyes" observation). The default
+/// wherever a winter encounter is fielded; a new file in the asset root, the July policy kept.
+const EYES_T34_POLICY: &str = "assets/ai/weights_t34_eyes_20261108.bin";
+/// The T-34 policy wherever a winter encounter is fielded (`install_t34_brain`: the Canyon run, the
+/// bridge, the live playtest's streets): `KESSEL_T34_WEIGHTS` if set, else `EYES_T34_POLICY`, else
+/// (that file missing) the July `ARENA_T34_POLICY`. The arena's own ruin field keeps the July file.
 fn t34_policy_path() -> String {
-    std::env::var("KESSEL_T34_WEIGHTS").ok().filter(|p| !p.trim().is_empty())
-        .unwrap_or_else(|| ARENA_T34_POLICY.to_string())
+    if let Some(path) = std::env::var("KESSEL_T34_WEIGHTS").ok().filter(|p| !p.trim().is_empty()) {
+        return path;
+    }
+    if crate::resource::resolve(EYES_T34_POLICY).is_ok_and(|path| path.is_file()) {
+        EYES_T34_POLICY.to_string()
+    } else {
+        eprintln!("[t34] {EYES_T34_POLICY} is missing; the July policy {ARENA_T34_POLICY} drives");
+        ARENA_T34_POLICY.to_string()
+    }
 }
 /// How far, and in what steps, a T-34 crew judges the room to drive (`executor_obs` slots 14-17).
 const T34_RAY_M: f32 = 24.0;
