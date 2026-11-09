@@ -366,3 +366,35 @@ the "on the tank" rows also as a wet take heard from inside.
    prompt.
 4. Nothing here is wired into the game yet. Each new family needs an entry in the sound tables
    before it plays.
+
+## 13. What the owner had already starred (read 9 November 2026)
+
+About fifty takes were starred on the generator's Favorites page before this list existed. What
+they have in common is the lesson: nearly all are **wet takes recorded from inside the turret**,
+and several are **whole scenes** in one prompt rather than single events.
+
+| Starred prompt (shortened) | Nearest rows here |
+|---|---|
+| Heavy steel tank hatch unlock and swing open to outside air | IN-23, NF-20 |
+| Heavy steel tank track breaking with a loud clang and shower of sparks | BR-01 |
+| Tank round impacting earth nearby | HT-23 |
+| Rapid thuds of small chunks of metal, or small stones, on a cramped steel-walled vehicle | HT-10, HT-23 debris tail |
+| Gravelly ball bearings on Tiger frontal armour with faint interior ricochets | HT-02, HT-10 |
+| Inside a Tiger, muffled thud of a shell on thick armour; small bullets barely heard through the turret | HT-01 to HT-06, wet interior |
+| AP shell on the mantlet or glacis, recorded in tight stereo inside a resonant turret, with low-frequency weight | HT-06, HT-07, HT-16, wet interior |
+| Round penetrates the hull, fragments tear through crew and components | HT-09, HT-10 |
+| Hatch clangs in winter, boots, panicked Soviet crew shouts; crews scrambling out of stricken tanks | SV-01 to SV-08, TS-09 |
+| Propellant ignites, hiss and popping inside a cramped tank, pressure venting, the turret thrown off | BR-24, BR-25, DS-11 |
+| A 30-second scene: hit, fire, shorts, crew fighting it, heat building, cook-off | a scene, not a row |
+
+Two changes follow for the next batches:
+
+1. Section 5 (hits) gets a wet interior take beside every dry one, with the wording that worked
+   for the owner: "recorded inside the tank turret, tight stereo, resonant steel compartment,
+   distinct low-frequency weight; the impact itself is outside the armour".
+2. Scenes are worth generating as scenes. They cannot be mixed by the game the way single events
+   can, so they suit scripted moments and reference listening, not the event tables.
+
+The first batch rendered from this list (82 takes: sections 5, 1 and 6, one take each, older v2
+effect model) is in the captures folder `sfx-elevenlabs-20261109`, with `prompts.json` recording
+what was sent. The generator now offers a newer effect model; the render script still asks for v2.
