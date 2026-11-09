@@ -2547,6 +2547,483 @@
   "en": "(humming)"
  },
  {
+  "id": "KP-001",
+  "role": "KP",
+  "register": "calm",
+  "int": 1,
+  "when": "radio check before moving off",
+  "de": "[radio voice, even] Kompanie an alle: Verständigungsprobe. Zwo eins eins, kommen.",
+  "en": "Company to all: radio check. Two-one-one, over."
+ },
+ {
+  "id": "KP-002",
+  "role": "KP",
+  "register": "calm",
+  "int": 1,
+  "when": "the Tiger has answered",
+  "de": "[radio voice, flat] Verstanden, zwo eins eins. Höre Sie laut und klar.",
+  "en": "Roger, two-one-one. Hearing you loud and clear."
+ },
+ {
+  "id": "KP-003",
+  "role": "KP",
+  "register": "calm",
+  "int": 1,
+  "when": "start time",
+  "de": "[radio voice, even] An alle: Abmarsch in fünf Minuten. Motoren warmlaufen lassen.",
+  "en": "To all: moving off in five minutes. Warm your engines."
+ },
+ {
+  "id": "KP-004",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "radio silence ordered",
+  "de": "[radio voice, low] An alle: Funkstille bis Feindberührung. Ende.",
+  "en": "To all: radio silence until contact. Out."
+ },
+ {
+  "id": "KP-005",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "move out",
+  "de": "[radio voice, firm] Kompanie an alle: Marsch! Abstand halten.",
+  "en": "Company to all: move! Keep your spacing."
+ },
+ {
+  "id": "KP-006",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "asks where the Tiger is",
+  "de": "[radio voice, even] Zwo eins eins, Frage: Standort? Kommen.",
+  "en": "Two-one-one, question: position? Over."
+ },
+ {
+  "id": "KP-007",
+  "role": "KP",
+  "register": "calm",
+  "int": 1,
+  "when": "busy with something else",
+  "de": "[radio voice, flat] Warten. ... Warten.",
+  "en": "Wait. ... Wait."
+ },
+ {
+  "id": "KP-008",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "did not catch the message",
+  "de": "[radio voice, even] Zwo eins eins, wiederholen Sie. Kommen.",
+  "en": "Two-one-one, say again. Over."
+ },
+ {
+  "id": "KP-020",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "mission order",
+  "de": "[radio voice, measured] Zwo eins eins, Auftrag: Sie nehmen die Brücke und halten sie, bis die Kompanie heran ist. Kommen.",
+  "en": "Two-one-one, your task: take the bridge and hold it until the company comes up. Over."
+ },
+ {
+  "id": "KP-021",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "the point of it",
+  "de": "[radio voice, firm] Die Brücke muss unversehrt bleiben. Unversehrt, verstanden?",
+  "en": "The bridge must stay intact. Intact, understood?"
+ },
+ {
+  "id": "KP-022",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "what is known of the enemy",
+  "de": "[radio voice, even] Aufklärung meldet Feindpanzer ostwärts der Brücke. Stärke unbekannt.",
+  "en": "Reconnaissance reports enemy armour east of the bridge. Strength unknown."
+ },
+ {
+  "id": "KP-023",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "infantry warning",
+  "de": "[radio voice, even] Achtung: starke feindliche Infanterie im Ufergelände. Luken dicht halten.",
+  "en": "Careful: strong enemy infantry along the bank. Keep your hatches shut."
+ },
+ {
+  "id": "KP-024",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "the Tiger reports the bridge taken",
+  "de": "[radio voice, warm] Verstanden, Brücke genommen. Gut gemacht. Jetzt halten.",
+  "en": "Roger, bridge taken. Well done. Now hold it."
+ },
+ {
+  "id": "KP-025",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "hold at any cost",
+  "de": "[radio voice, hard] Sie halten. Keinen Meter zurück. Wir sind in zehn Minuten da.",
+  "en": "You hold. Not one metre back. We're there in ten minutes."
+ },
+ {
+  "id": "KP-026",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "the company is held up",
+  "de": "[radio voice, tense] Zwo eins eins, wir liegen fest. Es dauert länger. Halten Sie aus.",
+  "en": "Two-one-one, we're pinned. It'll take longer. Hang on."
+ },
+ {
+  "id": "KP-027",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "counterattack coming",
+  "de": "[radio voice, urgent] Achtung, zwo eins eins: Gegenangriff aus Nordost, Panzer mit aufgesessener Infanterie!",
+  "en": "Careful, two-one-one: counterattack from the north-east, tanks with infantry riding on them!"
+ },
+ {
+  "id": "KP-028",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "relief in sight",
+  "de": "[radio voice, relieved] Zwo eins eins, wir sehen die Brücke. Wir kommen von Westen. Nicht auf uns schießen.",
+  "en": "Two-one-one, we can see the bridge. We're coming from the west. Don't shoot at us."
+ },
+ {
+  "id": "KP-029",
+  "role": "KP",
+  "register": "calm",
+  "int": 1,
+  "when": "mission done",
+  "de": "[radio voice, warm] Brücke ist in unserer Hand. Saubere Arbeit, zwo eins eins. Ende.",
+  "en": "The bridge is ours. Clean work, two-one-one. Out."
+ },
+ {
+  "id": "KP-040",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "mission order",
+  "de": "[radio voice, measured] Zwo eins eins, Auftrag: Durchstoß durch die Schlucht bis zum Ausgang. Nicht stehen bleiben. Kommen.",
+  "en": "Two-one-one, your task: push through the ravine to the far end. Do not stop. Over."
+ },
+ {
+  "id": "KP-041",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "warning about the ground",
+  "de": "[radio voice, even] In der Schlucht ist kein Platz zum Wenden. Augen auf die Hänge.",
+  "en": "There's no room to turn in the ravine. Eyes on the slopes."
+ },
+ {
+  "id": "KP-042",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "ambush expected",
+  "de": "[radio voice, firm] Der Feind sitzt auf den Höhen. Rechnen Sie mit Pak und mit Nahkämpfern.",
+  "en": "The enemy is on the heights. Expect anti-tank guns and men with charges."
+ },
+ {
+  "id": "KP-043",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "too slow",
+  "de": "[radio voice, sharp] Schneller, zwo eins eins! Sie halten die ganze Kolonne auf.",
+  "en": "Faster, two-one-one! You're holding up the whole column."
+ },
+ {
+  "id": "KP-044",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "signal failing between the walls",
+  "de": "[radio voice, breaking up] Zwo eins eins... höre Sie... sehr schwach... wiederholen Sie...",
+  "en": "Two-one-one... hearing you... very weak... say again..."
+ },
+ {
+  "id": "KP-045",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "the Tiger reports the exit reached",
+  "de": "[radio voice, even] Verstanden, Ausgang erreicht. Sichern und warten.",
+  "en": "Roger, exit reached. Cover it and wait."
+ },
+ {
+  "id": "KP-060",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "enemy tanks sighted by the company",
+  "de": "[radio voice, urgent] Achtung an alle: Feindpanzer, drei, vier Stück, vom Waldrand her. Feuer frei!",
+  "en": "All stations: enemy tanks, three, four of them, from the wood's edge. Open fire!"
+ },
+ {
+  "id": "KP-061",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "fire at will",
+  "de": "[radio voice, even] Feuer frei nach eigenem Ermessen.",
+  "en": "Fire at your own discretion."
+ },
+ {
+  "id": "KP-062",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "friendly troops in the line of fire",
+  "de": "[radio voice, sharp] Feuer einstellen! Feuer einstellen! Eigene Truppe voraus!",
+  "en": "Cease fire! Cease fire! Our own men ahead!"
+ },
+ {
+  "id": "KP-063",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "friendly artillery about to fall",
+  "de": "[radio voice, even] Eigene Artillerie schießt in zwei Minuten auf den Ortsrand. Kopf einziehen.",
+  "en": "Our artillery fires on the village edge in two minutes. Heads down."
+ },
+ {
+  "id": "KP-064",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "enemy artillery",
+  "de": "[radio voice, urgent] Achtung, feindliches Artilleriefeuer! Stellung wechseln!",
+  "en": "Enemy artillery fire! Change position!"
+ },
+ {
+  "id": "KP-065",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "aircraft",
+  "de": "[radio voice, urgent] Flieger! Flieger von Osten! Auseinanderziehen!",
+  "en": "Aircraft! Aircraft from the east! Spread out!"
+ },
+ {
+  "id": "KP-066",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "mines reported",
+  "de": "[radio voice, even] Vorsicht, Minen an der Straße gemeldet. In der Spur bleiben.",
+  "en": "Careful, mines reported by the road. Stay in the tracks."
+ },
+ {
+  "id": "KP-067",
+  "role": "KP",
+  "register": "urgent",
+  "int": 4,
+  "when": "another tank sees men on the Tiger's deck",
+  "de": "[radio voice, shouting] Zwo eins eins, Sie haben Russen auf dem Heck! Luken zu!",
+  "en": "Two-one-one, you've got Russians on your rear deck! Hatches shut!"
+ },
+ {
+  "id": "KP-068",
+  "role": "KP",
+  "register": "urgent",
+  "int": 4,
+  "when": "a friendly tank will sweep the Tiger with its MG",
+  "de": "[radio voice, urgent] Luken dicht, wir schießen Sie frei! Nicht aussteigen!",
+  "en": "Stay buttoned up, we'll shoot them off you! Don't get out!"
+ },
+ {
+  "id": "KP-069",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "the deck is clear again",
+  "de": "[radio voice, even] Sie sind sauber, zwo eins eins. Weiter.",
+  "en": "You're clean, two-one-one. Carry on."
+ },
+ {
+  "id": "KP-070",
+  "role": "KP",
+  "register": "urgent",
+  "int": 4,
+  "when": "fire seen on the Tiger from outside",
+  "de": "[radio voice, urgent] Zwo eins eins, Sie brennen am Heck! Löschen!",
+  "en": "Two-one-one, your rear deck is burning! Put it out!"
+ },
+ {
+  "id": "KP-071",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "smoke laid to cover a move",
+  "de": "[radio voice, even] Nebel kommt. Unter Nebel absetzen.",
+  "en": "Smoke's coming. Pull back under it."
+ },
+ {
+  "id": "KP-072",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "the Tiger is being outflanked",
+  "de": "[radio voice, firm] Zwo eins eins, der Feind umgeht Sie links. Links sichern!",
+  "en": "Two-one-one, the enemy's going round your left. Cover your left!"
+ },
+ {
+  "id": "KP-080",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "wants a report",
+  "de": "[radio voice, even] Zwo eins eins, Lagemeldung. Kommen.",
+  "en": "Two-one-one, situation report. Over."
+ },
+ {
+  "id": "KP-081",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "no report came",
+  "de": "[radio voice, impatient] Zwo eins eins, melden Sie sich! Kommen!",
+  "en": "Two-one-one, report in! Over!"
+ },
+ {
+  "id": "KP-082",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "still no answer",
+  "de": "[radio voice, tense] Zwo eins eins, kommen. ... Zwo eins eins, bitte kommen.",
+  "en": "Two-one-one, come in. ... Two-one-one, please come in."
+ },
+ {
+  "id": "KP-083",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "asks about ammunition",
+  "de": "[radio voice, even] Frage: Munitionslage? Kommen.",
+  "en": "Question: ammunition state? Over."
+ },
+ {
+  "id": "KP-084",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "the Tiger reported damage",
+  "de": "[radio voice, firm] Frage: Sind Sie fahrbereit? Kommen.",
+  "en": "Question: can you move? Over."
+ },
+ {
+  "id": "KP-085",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "the Tiger asked for help",
+  "de": "[radio voice, flat, tired] Verstanden. Ich habe niemanden frei. Sie müssen allein zurechtkommen.",
+  "en": "Understood. I have nobody to spare. You'll have to manage alone."
+ },
+ {
+  "id": "KP-086",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "the Tiger is immobilised",
+  "de": "[radio voice, even] Der Bergezug ist unterwegs. Bleiben Sie beim Fahrzeug.",
+  "en": "The recovery section is on its way. Stay with the vehicle."
+ },
+ {
+  "id": "KP-087",
+  "role": "KP",
+  "register": "urgent",
+  "int": 4,
+  "when": "the Tiger cannot be saved",
+  "de": "[radio voice, heavy] Verstanden. Fahrzeug sprengen und ausbooten. Schlagen Sie sich zu uns durch.",
+  "en": "Understood. Blow up the vehicle and bail out. Fight your way back to us."
+ },
+ {
+  "id": "KP-088",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "the Tiger ignored an order",
+  "de": "[radio voice, cold] Das war kein Befehl, das war eine Eigenmächtigkeit. Darüber reden wir noch.",
+  "en": "That was no order, that was you acting on your own. We'll talk about it."
+ },
+ {
+  "id": "KP-089",
+  "role": "KP",
+  "register": "calm",
+  "int": 1,
+  "when": "the Tiger did well",
+  "de": "[radio voice, warm] Zwo eins eins, das war erstklassig. Weiter so.",
+  "en": "Two-one-one, that was first class. Keep it up."
+ },
+ {
+  "id": "KP-100",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "another tank is lost",
+  "de": "[radio voice, grim] Zwo eins drei ist ausgefallen. Volltreffer. ... Weiter.",
+  "en": "Two-one-three is out. Direct hit. ... Carry on."
+ },
+ {
+  "id": "KP-101",
+  "role": "KP",
+  "register": "calm",
+  "int": 2,
+  "when": "another tank reports kills",
+  "de": "[radio voice, even] Zwo eins zwo meldet zwei Abschüsse. Die rechte Flanke ist frei.",
+  "en": "Two-one-two reports two kills. The right flank is clear."
+ },
+ {
+  "id": "KP-102",
+  "role": "KP",
+  "register": "urgent",
+  "int": 4,
+  "when": "the company itself is under fire",
+  "de": "[radio voice, shouting over noise] Wir stehen selbst im Feuer! Halten Sie, so lange es geht!",
+  "en": "We're under fire ourselves! Hold as long as you can!"
+ },
+ {
+  "id": "KP-103",
+  "role": "KP",
+  "register": "urgent",
+  "int": 5,
+  "when": "his own tank is hit and the net goes dead",
+  "de": "[radio voice, shouting] Pak von rechts! Rückwärts, rück— [static]",
+  "en": "Anti-tank gun right! Reverse, rev—"
+ },
+ {
+  "id": "KP-104",
+  "role": "KP",
+  "register": "urgent",
+  "int": 3,
+  "when": "withdrawal, the Tiger covers",
+  "de": "[radio voice, firm] An alle: Absetzen auf die Ausgangsstellung. Zwo eins eins deckt.",
+  "en": "To all: fall back to the start line. Two-one-one covers."
+ },
+ {
+  "id": "KP-105",
+  "role": "KP",
+  "register": "calm",
+  "int": 1,
+  "when": "end of the day",
+  "de": "[radio voice, tired] An alle: Sammeln am Ortsrand. Tanken, munitionieren. Ende.",
+  "en": "To all: rally at the village edge. Refuel, rearm. Out."
+ },
+ {
   "id": "LS-001",
   "role": "LS",
   "register": "calm",

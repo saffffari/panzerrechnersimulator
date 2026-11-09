@@ -22,7 +22,7 @@ def main():
     args = sys.argv[1:]
     opt = lambda k, d: args[args.index(k) + 1] if k in args else d
     lo, hi = int(opt("--min-int", 1)), int(opt("--max-int", 5))
-    roles = set(opt("--role", "KDT,RS,LS,FA,FU").split(","))
+    roles = set(opt("--role", "KDT,RS,LS,FA,FU,KP").split(","))
     out_path = next((a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or not args[i - 1].startswith("--"))), None)
     lines = []
     for sheet in sorted(SHEETS.glob("*.md")):
