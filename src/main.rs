@@ -111,6 +111,7 @@ mod repair_manual_capture;
 mod sky_review;
 mod canyon;
 mod canyon_attempt;
+mod playtest_smoke;
 mod t34_canyon_training;
 mod t34_generation_film;
 mod mission;
@@ -2627,7 +2628,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
     r.ui_reset();
     match kind {
         "menu" => {
-            let selected = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0usize) % ui::MENU_COUNT;
+            let selected = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0usize) % ui::MenuModel::default().row_count();
             let time = match args.get(5).map(|s| s.as_str()) {
                 Some("nacht") | Some("Nacht") => TimeOfDay::Nacht,
                 _ => TimeOfDay::Tag,
@@ -2647,9 +2648,13 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                     expedition_save_available: false,
                     canyon_times: canyon::times_path().ok()
                         .and_then(|path| { let t = canyon::load_times(&path); t.last_s.zip(t.best_s) }),
+                    full: ui::full_menu_requested(),
                 },
             );
-            return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
+            // KESSEL_UI_MENU_SIZE=WxH renders the title at another size (1920x1080 by default).
+            let (mw, mh) = std::env::var("KESSEL_UI_MENU_SIZE").ok().and_then(|v| v.split_once('x')
+                .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))).unwrap_or((1920u32, 1080u32));
+            return r.render_driver_menu_to_png(&device, &queue, &path, mw, mh);
         }
         "death" => draw_fallen_card(&mut r, death_card::identity(1943, 1943)),
         "runbrief" => ui::draw_run_brief(&mut r, &canyon::RunBrief::example()),
@@ -12298,6 +12303,9 @@ struct WindowState {
     /// Seconds since the CANYON run reached its goal (the finish fade), while it plays out.
     canyon_finish: Option<f32>,
     canyon_v2: bool,
+    /// The playtest menu's bridge mission: the Canyon flow on the spring bridge's course
+    /// (`BRIDGE_COURSE`) instead of `KESSEL_CANYON_MANIFEST` or the Canyon v2 course.
+    bridge_course: bool,
     /// The after-action card's facts, built once when the run ends (src/canyon.rs).
     run_report: Option<canyon::RunReport>,
     /// The kept times after a finish was recorded, with the best before it (for NEW BEST).
@@ -12460,6 +12468,7 @@ impl WindowState {
             death_fade: None,
             canyon_finish: None,
             canyon_v2: std::env::var_os("KESSEL_CANYON_V2").is_some(),
+            bridge_course: false,
             run_report: None,
             canyon_finish_times: None,
             canyon_briefed: false,
@@ -13288,6 +13297,7 @@ impl WindowState {
                 self.current_act = 1;
                 self.campaign = None;
                 self.canyon_v2 = true;
+                self.bridge_course = false;
                 select_lan_canyon_manifest()?;
                 anyhow::ensure!(self.build_act_world(1), "LAN canyon build failed");
                 if game::platoon::requested() {
@@ -14149,9 +14159,9 @@ impl WindowState {
                 KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % count,
                 KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
                     if let Some(target) = ui::EDITOR_TARGETS.get(self.menu.selected) { self.launch_editor(target); }
-                    else { self.menu.editor_page = false; self.menu.selected = ui::IDX_EDITOR; }
+                    else { self.menu.editor_page = false; self.menu.selected = self.menu.row_of(ui::MenuAction::Editor).unwrap_or(0); }
                 }
-                KeyCode::Escape => { self.menu.editor_page = false; self.menu.selected = ui::IDX_EDITOR; }
+                KeyCode::Escape => { self.menu.editor_page = false; self.menu.selected = self.menu.row_of(ui::MenuAction::Editor).unwrap_or(0); }
                 _ => {}
             }
             return;
@@ -14168,11 +14178,13 @@ impl WindowState {
                 Some(ui::MenuAction::ResumeExpedition) => self.load_live_expedition(true),
                 Some(ui::MenuAction::Editor) => { self.menu.editor_page = true; self.menu.selected = 0; },
                 Some(ui::MenuAction::LoadCheckpoint) => self.load_campaign_checkpoint(),
-                Some(ui::MenuAction::Canyon) => { self.canyon_v2 = false; self.start_play(PlayMode::Canyon); },
-                Some(ui::MenuAction::CanyonV2) => { self.canyon_v2 = true; self.start_play(PlayMode::Canyon); },
+                Some(ui::MenuAction::Bridge) => { self.canyon_v2 = true; self.bridge_course = true; self.start_play(PlayMode::Canyon); },
+                Some(ui::MenuAction::Canyon) => { self.canyon_v2 = false; self.bridge_course = false; self.start_play(PlayMode::Canyon); },
+                Some(ui::MenuAction::CanyonV2) => { self.canyon_v2 = true; self.bridge_course = false; self.start_play(PlayMode::Canyon); },
                 Some(ui::MenuAction::Platoon) => {
                     std::env::set_var(game::platoon::ENV_PLATOON, "2");
                     self.canyon_v2 = true;
+                    self.bridge_course = false;
                     self.start_play(PlayMode::Canyon);
                 },
                 None => {},
@@ -15376,7 +15388,10 @@ impl WindowState {
     fn start_canyon(&mut self) {
         self.canyon_finish = None;
         // `KESSEL_CANYON_MANIFEST` pins the course file for v2 too (a frozen workshop snapshot).
-        let path = if self.canyon_v2 { std::env::var_os(canyon::MANIFEST_ENV).map(std::path::PathBuf::from)
+        let path = if self.bridge_course {
+                // The playtest menu's bridge mission: its own course whatever the launcher pinned.
+                crate::resource::resolve(canyon::BRIDGE_COURSE).unwrap_or_else(|_| canyon::BRIDGE_COURSE.into())
+            } else if self.canyon_v2 { std::env::var_os(canyon::MANIFEST_ENV).map(std::path::PathBuf::from)
                 .unwrap_or_else(|| std::path::PathBuf::from(canyon::V2_MANIFEST)) }
             else { canyon::manifest_path() };
         let selected = act_manifest::select_runtime_manifest(Some(path.clone())).and_then(|act| {
@@ -15455,7 +15470,8 @@ impl WindowState {
 
     /// The Canyon v1 and v2 courses keep separate time records.
     fn canyon_times_path(&self) -> anyhow::Result<std::path::PathBuf> {
-        canyon::times_path().map(|path| if self.canyon_v2 { path.with_file_name("canyon-v2-times.v1.json") } else { path })
+        canyon::times_path().map(|path| if self.bridge_course { path.with_file_name("bridge-times.v1.json") }
+            else if self.canyon_v2 { path.with_file_name("canyon-v2-times.v1.json") } else { path })
     }
 
     /// The brief has been read: drop into the waiting world.
@@ -15479,7 +15495,9 @@ impl WindowState {
         let _ = act_manifest::select_runtime_manifest(None);
         self.refresh_canyon_menu_detail();
         self.enter_menu(false);
-        self.menu.selected = ui::IDX_CANYON + usize::from(self.canyon_v2);
+        let entry = if self.bridge_course { ui::MenuAction::Bridge }
+            else if self.canyon_v2 { ui::MenuAction::CanyonV2 } else { ui::MenuAction::Canyon };
+        self.menu.selected = self.menu.row_of(entry).unwrap_or(0);
         self.render_menu();
     }
 
@@ -17820,6 +17838,12 @@ fn main() -> anyhow::Result<()> {
         anyhow::ensure!(args.len() >= 6, "t34-gen-film PREFIX SEED SECONDS WEIGHTS [CAPTION]");
         return t34_generation_film::run(&capture_arg(&args, 2, "t34_gen_film"), args[3].parse()?,
             args[4].parse()?, &args[5], args.get(6).map(String::as_str));
+    }
+    if args.len() >= 2 && args[1] == "playtest-smoke" {
+        // GPU: a playtest menu mission's first minute, headless (KESSEL_CANYON_MANIFEST).
+        return playtest_smoke::run(&capture_arg(&args, 2, "playtest_smoke"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60.0),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(29));
     }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {
         return canyon_attempt::run(

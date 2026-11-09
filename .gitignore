@@ -216,3 +216,6 @@ target_rm/
 !/assets/worldgen/workshops/gaea-canyon-run-v2/
 /assets/worldgen/workshops/gaea-canyon-run-v2/*
 !/assets/worldgen/workshops/gaea-canyon-run-v2/mission.v1.json
+!/assets/worldgen/workshops/spring-bridge-v2/
+/assets/worldgen/workshops/spring-bridge-v2/*
+!/assets/worldgen/workshops/spring-bridge-v2/mission.v1.json

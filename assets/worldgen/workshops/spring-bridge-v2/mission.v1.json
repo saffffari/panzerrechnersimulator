@@ -1,0 +1,240 @@
+{
+ "act_id": 1,
+ "beats": [
+  {
+   "at": {
+    "x": -238.0,
+    "z": -1.0
+   },
+   "complete": {
+    "dwell_s": 1.0,
+    "kind": "enter"
+   },
+   "goal": "reach",
+   "id": "edge",
+   "lines": {
+    "done": [
+     {
+      "from": "Adler",
+      "text": "Kiebitz at the edge. Tanks in the streets on this bank. Out."
+     }
+    ],
+    "open": [
+     {
+      "from": "Adler",
+      "text": "Kiebitz, Adler. The town is 300 metres east. Bridge in its centre. Out."
+     }
+    ]
+   },
+   "map": {
+    "bearing": true,
+    "mark": "box"
+   },
+   "radius_m": 120.0,
+   "title": "The town's west edge"
+  },
+  {
+   "at": {
+    "x": -108.0,
+    "z": -1.0
+   },
+   "complete": {
+    "count": 2,
+    "kind": "destroy_near",
+    "radius_m": 320.0
+   },
+   "cues": [
+    {
+     "kind": "alert",
+     "radius_m": 420.0
+    }
+   ],
+   "goal": "destroy",
+   "id": "west_bank",
+   "lines": {
+    "done": [
+     {
+      "from": "Adler",
+      "text": "West bank clear. The bridge. Out."
+     }
+    ],
+    "open": [
+     {
+      "from": "Adler",
+      "text": "Kiebitz, Adler. Clear the streets to the river. Out."
+     }
+    ]
+   },
+   "map": {
+    "bearing": true,
+    "mark": "cross"
+   },
+   "radius_m": 200.0,
+   "title": "Clear the west bank"
+  },
+  {
+   "at": {
+    "x": 2.0,
+    "z": -1.0
+   },
+   "complete": {
+    "contest_radius_m": 200.0,
+    "kind": "capture",
+    "seconds": 20.0
+   },
+   "cues": [
+    {
+     "at": {
+      "x": 152.0,
+      "z": -1.0
+     },
+     "kind": "alert",
+     "radius_m": 500.0
+    }
+   ],
+   "goal": "hold",
+   "id": "bridge",
+   "lines": {
+    "done": [
+     {
+      "from": "Adler",
+      "text": "Bridge taken. Armour on the east road. Hold. Out."
+     }
+    ],
+    "open": [
+     {
+      "from": "Adler",
+      "text": "Kiebitz, Adler. On the bridge. Nothing of theirs within 200 metres while you hold it. Out."
+     }
+    ]
+   },
+   "map": {
+    "bearing": true,
+    "mark": "circle"
+   },
+   "radius_m": 30.0,
+   "title": "Take the bridge"
+  },
+  {
+   "at": {
+    "x": 2.0,
+    "z": -1.0
+   },
+   "complete": {
+    "contest_radius_m": 250.0,
+    "kind": "capture",
+    "seconds": 60.0
+   },
+   "goal": "hold",
+   "id": "first_counterattack",
+   "lines": {
+    "done": [
+     {
+      "from": "Adler",
+      "text": "First attack beaten off. More behind it. Out."
+     }
+    ],
+    "open": [
+     {
+      "from": "Adler",
+      "text": "Kiebitz, Adler. Three tanks coming down the east road. Hold the bridge. Out."
+     }
+    ]
+   },
+   "map": {
+    "bearing": true,
+    "mark": "circle"
+   },
+   "pacing": {
+    "release": {
+     "count": 3,
+     "fraction": 0.8677
+    }
+   },
+   "radius_m": 120.0,
+   "title": "Hold: the first counterattack"
+  },
+  {
+   "at": {
+    "x": 2.0,
+    "z": -1.0
+   },
+   "complete": {
+    "contest_radius_m": 250.0,
+    "kind": "capture",
+    "seconds": 60.0
+   },
+   "goal": "hold",
+   "id": "second_counterattack",
+   "lines": {
+    "done": [
+     {
+      "from": "Adler",
+      "text": "Second attack beaten off. Out."
+     }
+    ],
+    "open": [
+     {
+      "from": "Adler",
+      "text": "Kiebitz, Adler. Second attack, three tanks, east road. Out."
+     }
+    ]
+   },
+   "map": {
+    "bearing": true,
+    "mark": "circle"
+   },
+   "pacing": {
+    "release": {
+     "count": 3,
+     "fraction": 1.0
+    }
+   },
+   "radius_m": 120.0,
+   "title": "Hold: the second counterattack"
+  },
+  {
+   "at": {
+    "x": 2.0,
+    "z": -1.0
+   },
+   "complete": {
+    "kind": "destroy_all"
+   },
+   "goal": "destroy",
+   "id": "all_tanks",
+   "lines": {
+    "done": [
+     {
+      "from": "Adler",
+      "text": "Kiebitz, Adler. No more armour. The bridge is ours. Out."
+     }
+    ],
+    "open": [
+     {
+      "from": "Adler",
+      "text": "Kiebitz, Adler. Tanks still in the town. Destroy them. Out."
+     }
+    ]
+   },
+   "map": {
+    "bearing": false,
+    "mark": "cross"
+   },
+   "radius_m": 120.0,
+   "title": "Destroy every tank"
+  }
+ ],
+ "callsign": "Kiebitz",
+ "id": "spring-bridge",
+ "net": "Adler",
+ "note": "Spring bridge test map (tools/worldgen/spring_bridge.py). Places are the map's own geometry: the town's west edge, its west-bank streets, the bridge deck, the east road the counterattacks come down. The garrison is the street platoons, one loop on each bank; the counterattacks are platoons released on the east road when the bridge is taken. A generated test map, not a recorded engagement. Played from the playtest menu as \"Bridge: Take and Hold\" with the living AI crew aboard (2026-11-08).",
+ "order": [
+  "Panzer 231. Full crew aboard, you command. The camp and the half-track are behind you on the west road.",
+  "The road bridge in the town is intact. Soviet tanks hold both banks of the town.",
+  "Take the bridge and hold it. Expect armour from the east once you are on it. Destroy every tank."
+ ],
+ "schema": "kessel.mission",
+ "title": "BEFEHL: BRUECKE NEHMEN UND HALTEN",
+ "version": 1
+}

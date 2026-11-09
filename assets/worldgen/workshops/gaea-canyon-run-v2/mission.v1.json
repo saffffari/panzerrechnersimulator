@@ -8,7 +8,7 @@
   "net": "Adler",
   "note": "The Canyon v2 winter run as a mission (docs/MISSIONS.md). Places are the course's own authored geography (manifest_edits.json canyon_course / street_encounter): the wreck field marker, the hamlet at 12 % of the route, the choke-1 gun line and its kill-zone fork, platoon B's factory yard, platoon A's final basin by the strongpoint, the goal disc. Fiction: the Tiger is the rearguard of a Kampfgruppe that went up the ravine at first light; its rear party holds the ravine head. Scripted flares are retired (2026-11-08): the flare cues below still parse and are never fired, and no line mentions a star. Smoke is a modeled emitter; alerts change real enemy knowledge; nothing else is scripted.",
   "order": [
-    "Panzer 231, rearguard of the Kampfgruppe. Crew: you alone. The column went up the ravine at first light; you are the last vehicle.",
+    "Panzer 231, rearguard of the Kampfgruppe. Full crew aboard, you command. The column went up the ravine at first light; you are the last vehicle.",
     "Soviet tanks and 45 mm guns have cut the ravine at the settlement, the saddle and the factory. The rear party holds the ravine head.",
     "Break through to the ravine head, 4.9 km: north to the hamlet, then east. Arrive mounted before dark. Nothing waits for you behind."
   ],

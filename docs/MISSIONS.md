@@ -125,7 +125,7 @@ holds the ravine head and signals the phase lines. Six beats along the authored 
 | 5 | The final basin | destroy | platoon A's beat (1180, 420), opens at 76 % | two tanks dead within 450 m, or past 94 % | red star at 93 %, alert 700 m | cap 9; nudge 300 s; after 720 s a platoon down |
 | 6 | The ravine head | reach | the goal disc | the run's own finish | white star every 75 s | cap 9; nudge 240 s |
 
-The written order: *Panzer 231, rearguard of the Kampfgruppe. Crew: you alone. The column went
+The written order: *Panzer 231, rearguard of the Kampfgruppe. Full crew aboard, you command. The column went
 up the ravine at first light; you are the last vehicle. / Soviet tanks and 45 mm guns have cut
 the ravine at the settlement, the saddle and the factory. The rear party holds the ravine head: a
 white star over each phase line it still holds, a red one where the enemy stands. / Break through

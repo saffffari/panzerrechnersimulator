@@ -4,7 +4,10 @@
 # A port of tools/launch_windows.ps1's profile: assets from the Windows checkout on /windows,
 # saves/caches/config kept under artifacts/runtime so nothing touches ~/.config or ~/.local.
 #
-#   tools/launch_demo_20261101.sh                 title menu (New Expedition / Resume Expedition / Canyon Run v2 ...)
+#   tools/launch_demo_20261101.sh                 the playtest title menu (2026-11-08): Bridge: Take and Hold, Canyon Run
+#                                                 (both solo: you and the living crew), Editor, Graphics
+#   tools/launch_demo_20261101.sh --full-menu     every title entry (Singleplayer, Co-op, Expedition, Platoon ...;
+#                                                 KESSEL_MENU_FULL=1)
 #   tools/launch_demo_20261101.sh --expedition    straight into a new expedition: the camp, the Tiger, the halftrack
 #   tools/launch_demo_20261101.sh --expedition --order 10            the order for site 10 accepted at once (M: the map)
 #   tools/launch_demo_20261101.sh --expedition --order 10 --forward  and the crewed Tiger staged on the approach road,
@@ -47,7 +50,7 @@ RUNTIME="$ROOT/artifacts/runtime"
 # levels) on the 1024x576 grid, exactly 5x on the 5120x2880 panel. Agents: do not change these
 # defaults without asking the owner to confirm first; --look/--res still choose others per run.
 REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
-BERLIN=0 BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+FULL_MENU=0 BERLIN=0 BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -56,6 +59,7 @@ while (( $# )); do
         --berlin) MODE=canyon; COURSE=berlin-reichstag-v1; BERLIN=1 ;;
         --expedition) MODE=expedition ;;
         --menu) MODE=menu ;;
+        --full-menu) MODE=menu; FULL_MENU=1 ;;
         --windowed) WINDOWED=1 ;;
         --platoon) PLATOON=1 ;;
         --one-man) ONE_MAN=1 ;;
@@ -144,6 +148,7 @@ export KESSEL_AUDIO_RANGE="$AUDIO_RANGE"
 export KESSEL_SESSION_LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).session.jsonl"
 (( PLATOON )) && export KESSEL_PLATOON=2
 (( ONE_MAN )) && export KESSEL_ONE_MAN=1
+(( FULL_MENU )) && export KESSEL_MENU_FULL=1
 [[ -n "$SEED" ]] && export KESSEL_CANYON_SEED="$SEED"
 [[ -n "$T34S" ]] && export KESSEL_CANYON_T34S="$T34S"
 [[ -n "$BRAIN" ]] && export KESSEL_T34_BRAIN="$BRAIN"

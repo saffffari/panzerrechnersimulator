@@ -98,25 +98,41 @@ pub enum PlayMode {
     Canyon,
 }
 
-// Menu item indices (order they appear on screen). Keep the campaign alias for existing callers.
-pub const IDX_SINGLEPLAYER: usize = 0;
-pub const IDX_KAMPAGNE: usize = IDX_SINGLEPLAYER;
-pub const IDX_COOP: usize = 1;
-pub const IDX_PLAYTEST: usize = 2;
-pub const IDX_EDITOR: usize = 3;
-pub const IDX_LOAD_CHECKPOINT: usize = 4;
-pub const IDX_CANYON: usize = 5;
-pub const MENU_LABELS: [&str; 11] = [
-    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2", "Platoon", "New Expedition", "Resume Expedition", "Graphics",
+/// The title menu's rows. By default it is the playtest menu (the owner, 8 November 2026: the
+/// bridge mission and the canyon run "should be the only items on the main menu as far as
+/// playtesting goes"), with the Editor and Graphics; `KESSEL_MENU_FULL=1` brings back every entry.
+/// No entry's code is removed; the hidden ones are only not listed.
+pub const MENU_FULL_ENV: &str = "KESSEL_MENU_FULL";
+const PLAYTEST_MENU: [MenuAction; 4] = [
+    MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Editor, MenuAction::Graphics,
 ];
-pub const MENU_COUNT: usize = MENU_LABELS.len();
+const FULL_MENU: [MenuAction; 12] = [
+    MenuAction::Bridge, MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
+    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon,
+    MenuAction::Expedition, MenuAction::ResumeExpedition, MenuAction::Graphics,
+];
+/// Whether this process shows the full title menu (`KESSEL_MENU_FULL=1`).
+pub fn full_menu_requested() -> bool {
+    std::env::var(MENU_FULL_ENV).is_ok_and(|v| v.trim() == "1")
+}
+/// The title rows in order: the playtest menu or the full one; the fixed graphics profile drops
+/// Graphics from either.
+pub fn title_actions(full: bool, fixed_graphics: bool) -> Vec<MenuAction> {
+    let rows: &[MenuAction] = if full { &FULL_MENU } else { &PLAYTEST_MENU };
+    rows.iter().copied().filter(|&a| !(fixed_graphics && a == MenuAction::Graphics)).collect()
+}
 const MENU_ROW_TOP: f32 = 0.445;
 const MENU_ROW_STEP: f32 = 0.041;
+/// The title rows end above the detail line (0.905): a longer list packs its rows closer.
+const MENU_ROW_BOTTOM: f32 = 0.896;
 const MENU_ROW_LEFT: f32 = 0.20;
 const MENU_ROW_RIGHT: f32 = 0.80;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAction {
+    /// The spring bridge (`spring-bridge-v2`): take it from its defenders, then hold it against
+    /// the counter-attacks, one human with the living AI crew.
+    Bridge,
     Singleplayer,
     Coop,
     Playtest,
@@ -130,10 +146,26 @@ pub enum MenuAction {
     Graphics,
 }
 
-const MENU_ACTIONS: [MenuAction; MENU_COUNT] = [
-    MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition, MenuAction::Graphics,
-];
+impl MenuAction {
+    /// The row's name; the populated canyon is plainly "Canyon Run" on the playtest menu.
+    pub fn label(self, full: bool) -> &'static str {
+        match self {
+            MenuAction::Bridge => "Bridge: Take and Hold",
+            MenuAction::Singleplayer => "Singleplayer",
+            MenuAction::Coop => "Co-op",
+            MenuAction::Playtest => "Act One Playtest",
+            MenuAction::Editor => "Editor",
+            MenuAction::LoadCheckpoint => "Load checkpoint",
+            MenuAction::Canyon => "Canyon Run",
+            MenuAction::CanyonV2 if full => "Canyon Run v2",
+            MenuAction::CanyonV2 => "Canyon Run",
+            MenuAction::Platoon => "Platoon",
+            MenuAction::Expedition => "New Expedition",
+            MenuAction::ResumeExpedition => "Resume Expedition",
+            MenuAction::Graphics => "Graphics",
+        }
+    }
+}
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
 // Tigers are currently advertising, then ends with Back. Keeping this mapping pure makes a browse
@@ -418,12 +450,14 @@ pub struct MenuModel {
     pub expedition_save_available: bool,
     /// The Canyon entry's line: the last and the best run's time (seconds), none before any run.
     pub canyon_times: Option<(f32, f32)>,
+    /// The full title menu (`KESSEL_MENU_FULL=1`) rather than the playtest menu.
+    pub full: bool,
 }
 
 impl Default for MenuModel {
     fn default() -> Self {
         MenuModel {
-            selected: IDX_KAMPAGNE,
+            selected: 0,
             editor_page: false,
             time: TimeOfDay::Tag,
             invincible: false,
@@ -432,22 +466,33 @@ impl Default for MenuModel {
             checkpoint_available: false,
             expedition_save_available: false,
             canyon_times: None,
+            full: full_menu_requested(),
         }
     }
 }
 
 impl MenuModel {
+    pub fn title_rows(&self) -> Vec<MenuAction> {
+        title_actions(self.full, crate::graphics::fixed_playtest_graphics())
+    }
     pub fn row_count(&self) -> usize {
         if self.editor_page { EDITOR_LABELS.len() }
-        else { title_row_count(crate::graphics::fixed_playtest_graphics()) }
+        else { self.title_rows().len() }
     }
     pub fn action(&self) -> Option<MenuAction> {
-        if self.editor_page || self.selected >= self.row_count() { None }
-        else { MENU_ACTIONS.get(self.selected).copied() }
+        if self.editor_page { None } else { self.title_rows().get(self.selected).copied() }
+    }
+    /// The title rows' pitch: `MENU_ROW_STEP`, or closer when the list would reach the detail line.
+    pub fn row_step(&self) -> f32 {
+        MENU_ROW_STEP.min((MENU_ROW_BOTTOM - MENU_ROW_TOP) / self.title_rows().len().max(1) as f32)
+    }
+    /// The title row of an action, if this menu lists it.
+    pub fn row_of(&self, action: MenuAction) -> Option<usize> {
+        self.title_rows().iter().position(|&a| a == action)
     }
     pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
         if !(MENU_ROW_LEFT..=MENU_ROW_RIGHT).contains(&x) { return None; }
-        let (start, step) = if self.editor_page { (0.40, 0.067) } else { (MENU_ROW_TOP, MENU_ROW_STEP) };
+        let (start, step) = if self.editor_page { (0.40, 0.067) } else { (MENU_ROW_TOP, self.row_step()) };
         (0..self.row_count()).find(|&row| {
             let top = start + row as f32 * step;
             (top..top + step - 0.005).contains(&y)
@@ -455,32 +500,47 @@ impl MenuModel {
     }
 }
 
-fn title_row_count(fixed_graphics: bool) -> usize {
-    MENU_COUNT - usize::from(fixed_graphics)
-}
-
 #[cfg(test)]
 mod title_menu_tests {
     use super::*;
 
-    #[test]
-    fn launch_buttons_have_distinct_actions_and_click_regions() {
-        let mut menu = MenuModel::default();
-        assert_eq!(menu.action(), Some(MenuAction::Singleplayer));
-        let expected = [
-            MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition, MenuAction::Graphics,
-        ];
-        for (index, action) in expected.into_iter().enumerate() {
-            let y = MENU_ROW_TOP + (index as f32 + 0.5) * MENU_ROW_STEP;
+    fn rows_click_to_their_actions(full: bool, expected: &[MenuAction]) {
+        let mut menu = MenuModel { full, ..MenuModel::default() };
+        assert_eq!(menu.action(), Some(expected[0]));
+        assert_eq!(menu.title_rows(), title_actions(full, crate::graphics::fixed_playtest_graphics()));
+        for (index, &action) in expected.iter().enumerate() {
+            let y = MENU_ROW_TOP + (index as f32 + 0.5) * menu.row_step();
             menu.selected = menu.row_at(0.5, y).expect("visible row is clickable");
             assert_eq!(menu.selected, index);
             assert_eq!(menu.action(), Some(action));
+            assert_eq!(menu.row_of(action), Some(index));
         }
         assert_eq!(menu.row_at(MENU_ROW_LEFT - 0.01, MENU_ROW_TOP + 0.02), None);
         assert_eq!(menu.row_at(0.5, 0.95), None);
-        menu.selected = MENU_COUNT;
+        menu.selected = expected.len();
         assert_eq!(menu.action(), None);
+    }
+
+    #[test]
+    fn playtest_menu_lists_the_two_missions_the_editor_and_graphics() {
+        rows_click_to_their_actions(false, &[MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Editor, MenuAction::Graphics]);
+        let menu = MenuModel { full: false, ..MenuModel::default() };
+        for hidden in [MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest, MenuAction::LoadCheckpoint,
+            MenuAction::Canyon, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition] {
+            assert_eq!(menu.row_of(hidden), None, "{hidden:?} is hidden on the playtest menu");
+        }
+        assert_eq!(MenuAction::CanyonV2.label(false), "Canyon Run");
+        assert_eq!(MenuAction::Bridge.label(false), "Bridge: Take and Hold");
+    }
+
+    #[test]
+    fn full_menu_brings_every_entry_back() {
+        rows_click_to_their_actions(true, &[
+            MenuAction::Bridge, MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
+            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon,
+            MenuAction::Expedition, MenuAction::ResumeExpedition, MenuAction::Graphics,
+        ]);
+        assert_eq!(MenuAction::CanyonV2.label(true), "Canyon Run v2");
     }
 
     #[test]
@@ -600,11 +660,14 @@ mod pause_menu_tests {
         // Both profiles retain distinct new/resume expedition routes and all checkpoint
         // controls. Only the graphics route disappears from the fixed-profile title.
         for fixed in [false, true] {
-            let mut expected = vec![MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
+            let mut expected = vec![MenuAction::Bridge, MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
                 MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon,
                 MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition];
             if !fixed { expected.push(MenuAction::Graphics); }
-            assert_eq!(&MENU_ACTIONS[..title_row_count(fixed)], expected.as_slice());
+            assert_eq!(title_actions(true, fixed), expected);
+            let mut playtest = vec![MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Editor];
+            if !fixed { playtest.push(MenuAction::Graphics); }
+            assert_eq!(title_actions(false, fixed), playtest);
             for (row, action) in PauseAction::ALL.into_iter().enumerate() {
                 let routed = pause_action_row(PausePage::Main, row, fixed);
                 assert_eq!(PauseAction::ALL.get(routed), Some(&action));
@@ -1641,25 +1704,29 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         r.draw_text("MOUSE OR ARROWS / ENTER    ESC BACK", 0.50, 0.94, 0.021, COL_HINT, Align::Center);
         return;
     }
-    for (i, label) in MENU_LABELS.iter().take(m.row_count()).enumerate() {
+    let step = m.row_step();
+    for (i, action) in m.title_rows().into_iter().enumerate() {
+        let label = action.label(m.full);
         let selected = i == m.selected;
-        let text = if selected { format!(">  {label}  <") } else { (*label).to_owned() };
-        let enabled = match MENU_ACTIONS[i] {
+        let text = if selected { format!(">  {label}  <") } else { label.to_owned() };
+        let enabled = match action {
             MenuAction::LoadCheckpoint=>m.checkpoint_available,
             MenuAction::ResumeExpedition=>m.expedition_save_available,
             _=>true,
         };
-        let top = MENU_ROW_TOP + i as f32 * MENU_ROW_STEP;
+        let top = MENU_ROW_TOP + i as f32 * step;
         // The two launch actions are visible buttons as well as keyboard/controller rows.
         // Their full rectangles use exactly the same bounds as mouse hit testing above.
-        if matches!(i, IDX_SINGLEPLAYER | IDX_COOP) {
+        let button = if m.full { matches!(action, MenuAction::Bridge | MenuAction::Singleplayer | MenuAction::Coop) }
+            else { matches!(action, MenuAction::Bridge | MenuAction::CanyonV2) };
+        if button {
             let border = if selected { [0.30, 0.17, 0.045, 1.0] } else { [0.075, 0.08, 0.09, 1.0] };
-            r.fill_rect(MENU_ROW_LEFT, top, MENU_ROW_RIGHT - MENU_ROW_LEFT, MENU_ROW_STEP - 0.005, border);
+            r.fill_rect(MENU_ROW_LEFT, top, MENU_ROW_RIGHT - MENU_ROW_LEFT, step - 0.005, border);
             r.fill_rect(MENU_ROW_LEFT + 0.002, top + 0.003,
-                MENU_ROW_RIGHT - MENU_ROW_LEFT - 0.004, MENU_ROW_STEP - 0.011,
+                MENU_ROW_RIGHT - MENU_ROW_LEFT - 0.004, step - 0.011,
                 [0.006, 0.007, 0.009, 1.0]);
         }
-        r.draw_text_bold(&text, 0.50, top + 0.010, 0.031,
+        r.draw_text_bold(&text, 0.50, top + 0.010 * step / MENU_ROW_STEP, 0.031 * (step / MENU_ROW_STEP).max(0.85),
             if !enabled { COL_HINT } else if selected { COL_SELECT } else { COL_ITEM }, Align::Center);
     }
     let canyon_line: String;
@@ -1682,6 +1749,8 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
             }
             None => "ONE TIGER / ADAPTIVE DEFENCE / PERMADEATH",
         },
+        Some(MenuAction::Bridge) => "SPRING BRIDGE / TAKE IT, THEN HOLD IT / YOU AND YOUR CREW",
+        Some(MenuAction::CanyonV2) if !m.full => "POPULATED GAEA CANYON / YOU AND YOUR CREW / PERMADEATH",
         Some(MenuAction::CanyonV2) => "POPULATED GAEA CANYON / ADAPTIVE DEFENCE / PERMADEATH",
         Some(MenuAction::Platoon) => "CANYON V2 / THREE TIGERS / RADIO ORDERS (T) / PERMADEATH",
         None => "",

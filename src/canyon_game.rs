@@ -296,6 +296,8 @@ impl Game {
                 .unwrap_or_else(|| "-".into()),
             weather: crate::canyon::weather_label(self.scene_environment.lighting.storm),
             best_s,
+            take_and_hold: run.spec.finish_by_mission,
+            crew: self.singleplayer_crew_active,
         })
     }
 

@@ -19,6 +19,9 @@ pub const AUTHORING_MODE: &str = "course";
 pub const MANIFEST_ENV: &str = "KESSEL_CANYON_MANIFEST";
 pub const DEFAULT_MANIFEST: &str = "assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json";
 pub const V2_MANIFEST: &str = "assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json";
+/// The spring bridge (tools/worldgen/spring_bridge.py), played as the bridge mission: take it, then
+/// hold it (`mission.v1.json` beside it). The playtest menu's "Bridge: Take and Hold".
+pub const BRIDGE_COURSE: &str = "assets/worldgen/workshops/spring-bridge-v2/manifest.v1.json";
 const TIMES_FILE: &str = "canyon-times.v1.json";
 const TIMES_SCHEMA: &str = "panzerrechnersystem.canyon-times";
 /// The finish: the picture and every sound fade out together over this, the world still running.
@@ -386,16 +389,28 @@ pub struct RunBrief {
     pub start_clock: String,
     pub weather: &'static str,
     pub best_s: Option<f32>,
+    /// A take-and-hold course (`"finish": "mission"`, the bridge): its sheet's last beat ends it.
+    pub take_and_hold: bool,
+    /// The living AI crew holds the posts the player is not at (`enable_singleplayer_crew`).
+    pub crew: bool,
 }
 
 impl RunBrief {
     pub fn lines(&self) -> Vec<String> {
+        let km = self.length_m / 1000.0;
         vec![
-            format!("Drive the ravine {} to its far end, {:.1} km away.", self.direction, self.length_m / 1000.0),
-            "Soviet tanks and anti-tank guns hold the chokes.".into(),
+            if self.take_and_hold {
+                format!("Take the bridge in the town to the {} of you, then hold it.", self.direction)
+            } else {
+                format!("Drive the ravine {} to its far end, {km:.1} km away.", self.direction)
+            },
+            if self.take_and_hold { "Soviet tanks hold both banks; more come down the east road once you are on it.".into() }
+                else { "Soviet tanks and anti-tank guns hold the chokes.".into() },
             "Nothing fires until it has seen or heard you.".into(),
-            "You work every post yourself: E enters the station you look at, Q leaves it.".into(),
-            "Reaching the head of the ravine alive, in the tank, ends the run and keeps the time.".into(),
+            if self.crew { "Your crew holds the other posts. Left click takes the post you look at; Space leaves it.".into() }
+                else { "You work every post yourself: left click takes the post you look at; Space leaves it.".into() },
+            if self.take_and_hold { "Taking the bridge and holding it to the end, alive, ends the run and keeps the time.".into() }
+                else { "Reaching the head of the ravine alive, in the tank, ends the run and keeps the time.".into() },
             "Death ends it too. Every attempt is a new deployment.".into(),
         ]
     }
@@ -405,7 +420,8 @@ impl RunBrief {
     }
     /// A representative brief for the headless UI capture.
     pub fn example() -> Self {
-        Self { direction: "north", length_m: 4930.0, seed: 29, start_clock: "15:48".into(), weather: "snow", best_s: None }
+        Self { direction: "north", length_m: 4930.0, seed: 29, start_clock: "15:48".into(), weather: "snow", best_s: None,
+            take_and_hold: false, crew: true }
     }
 }
 
