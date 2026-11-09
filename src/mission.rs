@@ -692,10 +692,13 @@ impl MissionState {
             run.started_s = self.elapsed_s;
             run.dwell_s = 0.0;
             for (k, cue) in beat.cues.iter().enumerate() {
-                run.cue_due[k] = Some(self.elapsed_s + match cue {
-                    Cue::Flare { delay_s, .. } => *delay_s,
-                    Cue::SmokeColumn { .. } | Cue::Alert { .. } => 0.0,
-                });
+                run.cue_due[k] = match cue {
+                    // Scripted flares are retired (owner, 2026-11-08: a star rising from nowhere on a
+                    // beat's clock). A sheet's `flare` cue still parses and is never fired; a flare
+                    // is launched only by someone in the world (`launch_flare`).
+                    Cue::Flare { .. } => None,
+                    Cue::SmokeColumn { .. } | Cue::Alert { .. } => Some(self.elapsed_s),
+                };
             }
         }
         self.log.push(format!("[mission] {:>7.1}s beat {} {:?} opens: {} ({}) at ({:.0}, {:.0}) r {:.0} m, progress {:.3}",
@@ -739,10 +742,10 @@ impl MissionState {
         let cue = self.mission.beats[index].cues[k].clone();
         let at = self.beats[index].cue_at[k];
         match cue {
-            Cue::Flare { color, repeat_s, .. } => {
-                self.requests.push(Request::FireFlare { at, color });
-                self.beats[index].cue_due[k] = (repeat_s > 0.0).then_some(self.elapsed_s + repeat_s);
-                self.log.push(format!("[mission] {:>7.1}s {} flare at ({:.0}, {:.0})", self.elapsed_s, color.name(), at.x, at.y));
+            Cue::Flare { .. } => {
+                // Retired: see the beat's opening. Nothing is fired on a beat's clock.
+                let _ = at;
+                self.beats[index].cue_due[k] = None;
             }
             Cue::SmokeColumn { height_m, duration_s, .. } => {
                 self.requests.push(Request::LightSmoke { at, height_m, duration_s });
@@ -880,9 +883,6 @@ impl MissionState {
                     if !lines.is_empty() {
                         let line = lines[(nudges as usize - 1) % lines.len()].clone();
                         self.say(&[line]);
-                    }
-                    if let Some(k) = self.mission.beats[index].cues.iter().position(|c| matches!(c, Cue::Flare { .. })) {
-                        self.fire_cue(index, k);
                     }
                     self.log.push(format!("[mission] {:>7.1}s nudge {} on beat {}", self.elapsed_s, nudges, index + 1));
                 }
@@ -1152,14 +1152,14 @@ mod tests {
     #[test]
     fn beats_open_in_order_guide_nudge_and_resolve() {
         let mut s = MissionState::new(parse(&sheet(), Path::new("t.json")).unwrap(), &resolve).unwrap();
-        // The first beat opens with the mission: its line, its cap and its flare after the delay.
+        // The first beat opens with the mission: its line and its cap. Its flare cue is retired.
         let requests = s.step(0.1, &obs(Vec2::ZERO, 0.0));
         assert_eq!(s.current(), Some(0));
         assert!(requests.contains(&Request::LiveCap(Some(3))));
         assert!(requests.contains(&Request::RadioKey));
         assert!(!requests.iter().any(|r| matches!(r, Request::FireFlare { .. })));
         let requests = s.step(0.5, &obs(Vec2::ZERO, 0.0));
-        assert!(requests.iter().any(|r| matches!(r, Request::FireFlare { color: FlareColor::White, .. })));
+        assert!(!requests.iter().any(|r| matches!(r, Request::FireFlare { .. })), "a sheet's flare cue is never fired");
         assert!(s.overlay().order.is_some(), "the order sheet is up");
         assert_eq!(s.overlay().radio.len(), 1);
         let g = s.map_guidance(Vec2::ZERO);
@@ -1201,7 +1201,7 @@ mod tests {
             }
         }
         assert_eq!(s.beats[0].nudges, 2, "nudged at 10 and 20 s");
-        assert_eq!(flares, 3, "the opening flare and one per nudge");
+        assert_eq!(flares, 0, "no flare on a beat's clock or a nudge");
         assert_eq!(releases, 1, "the consequence once");
         assert!(s.overlay().order.is_none(), "the sheet folds away by itself");
         // Beat two: open it, then let its timeout fail it forward.

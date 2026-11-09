@@ -2383,6 +2383,13 @@ are presented as ray tracing, GI or a combustion/solver result:
   (drawn after it); their veiling glare reaches it computed on the host (CIE disability glare by the
   meter's windows, occlusion by the barrel ignored); in a sight the strips take the eyepiece's
   barrel distortion by a two-step inverse, not its lateral colour. Gate: `raymarch-tracers`.
+- TPZ illuminator setting (2026-11-08; `interior_rig::tpz_illuminator_setting`): the instrument's
+  backlight runs at 0.6 of its authored output, and at 0.35 of that with the Sun up (eased from
+  -6 degrees to the horizon), by the owner's direction ("too bright in the canyon run", "lean more
+  on the exterior light sources during the day"). ASSUMED: a dimmer on the Turmpositionszeiger
+  lamp and its two settings have no source; the output was already an appearance calibration.
+  The emitter's power changes; exposure, materials and transport do not. `KESSEL_TPZ_LEGACY=1`
+  restores the full output for before/after stills.
 - TPZ needle and instrument covers (2026-10-28; `game.rs` `TPZ_NEEDLE_WIDTH_M`,
   `Renderer::mark_instrument_cover`, `rm_glass.wgsl`): the TPZ needle is drawn 4.5 mm wide in the
   dial's plane (its source bar is 1 cm; 2.5 mm that morning); instrument covers carry an authored

@@ -56,7 +56,11 @@ A **beat**:
 | `cues` | `flare {color, at, delay_s, repeat_s}`, `smoke_column {at, height_m, duration_s}`, `alert {at, radius_m}`. |
 | `pacing` | `release {count, fraction}` sent when the beat opens; `live_cap` for the course director while the beat is open; `nudge_after_s` (lines and the first flare again, every that often); `consequence_after_s` with `consequence {count, fraction}` (once). |
 
-Every cue is something in the world. A **flare** is a 26.5 mm signal cartridge: the star leaves
+Every cue is something in the world. **Scripted flares are retired (2026-11-08):** a sheet's
+`flare` cue still parses and is never fired, on a beat's opening or on a nudge, because the star
+rose from the ground with nobody there to fire it. Flares are to come back fired by people in the
+world (a bailed-out crewman who got clear, infantry who have found the Tiger); the launch and the
+light below are kept for that. A **flare** is a 26.5 mm signal cartridge: the star leaves
 the ground at 46 m/s, climbs under gravity to about 110 m, opens its parachute at the apex and
 sinks at 3.2 m/s while the wind carries it; it burns 24 s and fades over its last 3.5 s. It is a
 point light with a true source size (90 mm), an emissive grain the display's glare spreads, a
@@ -100,7 +104,7 @@ already take any key or Enter.
 - **The compass (C, or on the map).** The pocket compass's body turns to the open beat's bearing
   as a Marschkompass bezel is set: walk until the needle lies over the north mark and you face the
   bearing. The needle itself always points north.
-- **The world.** Flares over phase lines (white: held by the rear party, red: enemy on it), the
+- **The world.** (Flares over phase lines are retired, see above.) The
   smoke column over the fork, the guns and platoons that heard you, the wrecks of the column that
   went before.
 - **The net.** A line when a beat opens, completes or fails; a nudge when a beat is ignored; a

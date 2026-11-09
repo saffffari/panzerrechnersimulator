@@ -143,6 +143,38 @@ pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.50, 0.14);
 /// Ten percent below the 2026-10-30 output, plus the deeper-orange spectrum above.
 /// This is an owner-directed appearance calibration, not measured period photometry.
 pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.018 * CABIN_PRACTICAL_POWER_SCALE;
+/// The setting the instrument's illuminator is run at, as a share of `TPZ_ILLUMINATOR_INTENSITY`
+/// (owner, 2026-11-08: "tpz dial is too bright in the canyon run as well. lets dim it a bit").
+pub const TPZ_OUTPUT_SETTING: f32 = 0.6;
+/// By day the illuminator is turned down further, to this share of its night setting, so the
+/// compartment leans on the daylight through its ports and sights (same instruction). ASSUMED: no
+/// source for a dimmer on the Tiger's Turmpositionszeiger lamp; the two settings and the switch
+/// by the Sun's altitude are authored (docs/PHYSICAL_TRUTH_AUDIT.md).
+pub const TPZ_DAY_SETTING: f32 = 0.35;
+/// The illuminator's output as a share of `TPZ_ILLUMINATOR_INTENSITY` for the Sun's altitude:
+/// the night setting below civil twilight (-6 degrees), the day setting with the Sun up, eased
+/// between. `KESSEL_TPZ_LEGACY=1` (review gate, before/after stills): the full output always.
+pub fn tpz_illuminator_setting(sun_altitude_deg: f32) -> f32 {
+    static LEGACY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *LEGACY.get_or_init(|| std::env::var("KESSEL_TPZ_LEGACY").as_deref() == Ok("1")) { return 1.0; }
+    let day = if sun_altitude_deg.is_finite() { ((sun_altitude_deg + 6.0) / 6.0).clamp(0.0, 1.0) } else { 0.0 };
+    let day = day * day * (3.0 - 2.0 * day);
+    TPZ_OUTPUT_SETTING * (1.0 + (TPZ_DAY_SETTING - 1.0) * day)
+}
+
+#[cfg(test)]
+mod tpz_setting_tests {
+    use super::*;
+    #[test]
+    fn the_illuminator_is_dimmer_than_full_and_dimmer_still_by_day() {
+        let night = tpz_illuminator_setting(-20.0);
+        let noon = tpz_illuminator_setting(20.0);
+        assert!((night - TPZ_OUTPUT_SETTING).abs() < 1e-6 && night < 1.0);
+        assert!((noon - TPZ_OUTPUT_SETTING * TPZ_DAY_SETTING).abs() < 1e-6);
+        let dusk = tpz_illuminator_setting(-3.0);
+        assert!(dusk < night && dusk > noon, "eased through civil twilight");
+    }
+}
 /// The driver's ignition lamp, a finite cube on his panel (`lamp_mounts::IGNITION`), an indicator's
 /// power. Before 2026-10-28 an invisible point at 0.025, twelve times the dome lamp, which washed
 /// the driver's post red.

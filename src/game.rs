@@ -20748,7 +20748,9 @@ impl Game {
                     pos,
                     source_radius,
                     color,
-                    radiant_intensity: radiant_intensity * practical_gain,
+                    // The instrument illuminator's setting: dimmed, and turned down by day
+                    // (`interior_rig::tpz_illuminator_setting`). `LAMPS` holds that source alone.
+                    radiant_intensity: radiant_intensity * practical_gain * rig::tpz_illuminator_setting(r.sun_altitude_deg()),
                 };
                 if light.radiant_intensity > 0.0 { lights.push(light); }
                 shadowed_cabin_lights.push(light);

@@ -69,11 +69,17 @@ pub fn run(prefix: &str, seed: u64, secs: f32, weights: &str, caption: Option<&s
     // output pixel. KESSEL_T34_FILM_PIXFMT=yuv420p for players without 4:4:4 HEVC.
     let pix_fmt = std::env::var("KESSEL_T34_FILM_PIXFMT").unwrap_or_else(|_| "yuv444p".into());
     let silent = format!("{prefix}_silent.mp4");
+    // NVENC by default; `KESSEL_T34_FILM_ENCODER=x264` encodes on the processor (the card's
+    // encoder refuses to open when its memory is taken, as with several players and Blender up).
+    let x264 = std::env::var("KESSEL_T34_FILM_ENCODER").as_deref() == Ok("x264");
+    let codec: &[&str] = if x264 { &["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"] }
+        else { &["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "29", "-tag:v", "hvc1"] };
     let mut encoder = std::process::Command::new("ffmpeg")
         .args(["-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pixel_format", "rgba",
             "-video_size", &format!("{iw}x{ih}"), "-framerate", &FPS.to_string(), "-i", "pipe:0", "-an",
-            "-vf", &format!("scale={ow}:{oh}:flags=neighbor,format={pix_fmt}"),
-            "-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "29", "-tag:v", "hvc1",
+            "-vf", &format!("scale={ow}:{oh}:flags=neighbor,format={pix_fmt}")])
+        .args(codec)
+        .args([
             "-movflags", "+faststart", &silent])
         .stdin(std::process::Stdio::piped())
         .spawn()?;
@@ -230,7 +236,7 @@ pub fn run(prefix: &str, seed: u64, secs: f32, weights: &str, caption: Option<&s
     let receipt = serde_json::json!({"schema": "panzer.t34-generation-film.v1", "film": output, "weights": weights,
         "caption": caption, "seed": seed, "seconds": secs, "outcome": outcome, "tiger_alive": g.player.alive,
         "picture_weather": if clear { "clear sky at local noon (picture only; the simulation ran the episode's own fronts)" } else { "the episode's own" },
-        "frames": frames, "fps": FPS, "game_pixels": [iw, ih], "scale": scale, "output_pixels": [ow, oh], "codec": "hevc_nvenc cq 29", "pix_fmt": pix_fmt,
+        "frames": frames, "fps": FPS, "game_pixels": [iw, ih], "scale": scale, "output_pixels": [ow, oh], "codec": if x264 { "libx264 crf 18" } else { "hevc_nvenc cq 29" }, "pix_fmt": pix_fmt,
         "camera": "aerial over the platoon's shoulder: the living crews' centroid pulled a quarter toward the Tiger, seen from behind them at 70-140 m; the game's first-person mix at the Tiger as the soundtrack",
         "fielding": "as t34-canyon-eval: enable_canyon_course_seeded, the policy over the doctrine's orders, the rule-based Canyon pilot drives the Tiger",
         "final": state, "enemy_ai": g.enemy_ai_summary(), "manifest": manifest,

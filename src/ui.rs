@@ -2737,24 +2737,11 @@ pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay,
         }
         return;
     }
-    // The net: a signals log, bottom left, oldest first, the newest line nearest the frame's
-    // foot (2026-11-01: the owner wants the words out of the way of the view).
-    let mut y = 0.80 - 0.028 * overlay.radio.len().saturating_sub(1) as f32;
-    for (from, text, alpha) in &overlay.radio {
-        let (color, line) = if from.is_empty() {
-            ([COL_NOTE[0], COL_NOTE[1], COL_NOTE[2], 0.9 * alpha], text.clone())
-        } else if from.eq_ignore_ascii_case(&overlay.callsign) {
-            ([COL_NET_OWN[0], COL_NET_OWN[1], COL_NET_OWN[2], 0.85 * alpha], format!("{}: {}", from.to_uppercase(), text))
-        } else {
-            ([COL_NET[0], COL_NET[1], COL_NET[2], 0.95 * alpha], format!("{}: {}", from.to_uppercase(), text))
-        };
-        r.draw_text(&line, 0.02, y, 0.020, color, Align::Left);
-        y += 0.028;
-    }
-    if !overlay.radio.is_empty() {
-        let alpha = overlay.radio.iter().map(|(_, _, a)| *a).fold(0.0f32, f32::max);
-        r.draw_text("ENTER  clear", 0.02, y, 0.017, [0.70, 0.76, 0.70, 0.85 * alpha], Align::Left);
-    }
+    // The net's lines are not drawn (owner, 2026-11-08: "remove all of those radio lines from the
+    // game. especially from the subtitles text"). A message's arrival is the set keying
+    // (`Request::RadioKey`, a sound in the compartment); `overlay.radio` still records what was
+    // sent, for the mission log and a spoken net to come.
+    let _ = &overlay.radio;
 }
 
 /// The mission's pigment on the held sheet. `proj` maps a world point to the sheet's normalized

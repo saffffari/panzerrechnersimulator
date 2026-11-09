@@ -64,6 +64,13 @@ while IFS='|' read -r weights caption; do
     ( cd "$HERE" && nice -n 10 "$BIN" t34-gen-film "$name" "$SEED" "$SECS" "$weights" "$caption" ) \
         2>&1 | grep -E '^\[t34-film\]|panicked|Error|error:' || true
     clip="$CAPTURES/$(basename "$HERE")-$name.mp4"
+    if [ ! -s "$clip" ]; then
+        # The card's encoder would not open (its memory taken): once more on the processor.
+        echo "[films] retrying $name with libx264"
+        wait_for_owner
+        ( cd "$HERE" && KESSEL_T34_FILM_ENCODER=x264 nice -n 10 "$BIN" t34-gen-film "$name" "$SEED" "$SECS" "$weights" "$caption" ) \
+            2>&1 | grep -E '^\[t34-film\]|panicked|Error|error:' || true
+    fi
     [ -s "$clip" ] && echo "file '$clip'" >> "$CONCAT" || echo "[films] missing $clip" >&2
     n=$((n + 1))
 done <<< "$LIST"
