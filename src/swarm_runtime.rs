@@ -131,13 +131,15 @@ pub(super) struct SwarmRuntime {
     bay_burning_s: f32,
     fixed_used: bool,
     pub sounds: SoundHooks,
-    decoded: std::collections::HashMap<std::path::PathBuf, Option<Vec<f32>>>,
+    decoded: std::collections::HashMap<String, Option<std::sync::Arc<[f32]>>>,
     motion: Option<TankMotion>,
     thrown_slots: Vec<usize>,
     places: Vec<board::Place>,
     stats: Stats,
     wingman_mg: Vec<(f32, u32)>,
     last_shout_s: f32,
+    /// Last update's states for the generated sounds' moments (`Game::sfx_monitor`).
+    monitor: Option<(bool, bool, bool, f32, f32)>,
 }
 
 /// What the shared combat loop does with one soldier this step.
@@ -165,7 +167,7 @@ impl SwarmRuntime {
             enabled, clock_s: 0.0, tick: 0, minds: Vec::new(), lod_dt: Vec::new(), flights: Vec::new(),
             next_id: 1, fires: Vec::new(), classes: Default::default(), intakes, bay_burning_s: 0.0,
             fixed_used: false, sounds: SoundHooks::default(), decoded: Default::default(), motion: None,
-            thrown_slots, places: board::places(), stats: Stats::default(), wingman_mg: Vec::new(), last_shout_s: -100.0,
+            thrown_slots, places: board::places(), stats: Stats::default(), wingman_mg: Vec::new(), last_shout_s: -100.0, monitor: None,
         }
     }
     fn mind(&mut self, i: usize) -> &mut Mind {
@@ -224,15 +226,70 @@ impl Game {
     fn swarm_emit(&mut self, sound: SwarmSound, at: Vec3) {
         let t = self.swarm.clock_s;
         let seed = self.swarm.tick as u32 ^ (sound as u32).wrapping_mul(0x9E37_79B9);
-        if let Some(path) = self.swarm.sounds.emit(sound, at, t, seed) {
-            // A take file of the row's name exists: play it from the place, through the same
-            // propagation as every world sound (a provisional level: the sound tables hold none yet).
-            let decoded = self.swarm.decoded.entry(path.clone()).or_insert_with(|| decode_take(&path)).clone();
-            if let Some(stereo) = decoded {
-                self.schedule_emission(crate::audio::Sfx::ImpactGround, at,
-                    crate::sound_propagation::Emission::from_level(&crate::sound_levels::BULLET_ON_STEEL_1M), None, Some(stereo));
+        let _ = self.swarm.sounds.emit(sound, at, t, seed);
+        self.sfx_row(sound.id(), at, seed);
+    }
+
+    /// A generated take (decoded once, mono at the engine's rate), cached by file.
+    pub(super) fn generated_mono(&mut self, path: &str) -> Option<std::sync::Arc<[f32]>> {
+        self.swarm.decoded.entry(path.to_string()).or_insert_with(|| decode_take(path).map(std::sync::Arc::from)).clone()
+    }
+
+    /// Moments with no sound today, watched from the state (any mode, swarm or not): a track
+    /// breaking (BR-01), the Tiger's fire going out (FR-08), the turret stopping after a traverse
+    /// (IN-04). Generated takes, played by default when installed.
+    pub(super) fn sfx_monitor(&mut self, dt: f32) {
+        if !dt.is_finite() || dt <= 0.0 { return; }
+        let tracks = (self.module_ok(ModuleKind::LeftTrack), self.module_ok(ModuleKind::RightTrack));
+        let fire = self.fire_active;
+        let yaw = self.player.turret_yaw;
+        let seed = self.kill_tick;
+        if let Some((left, right, was_fire, last_yaw, rate)) = self.swarm.monitor {
+            if self.player.alive && ((left && !tracks.0) || (right && !tracks.1)) {
+                let side = if left && !tracks.0 { 1.75 } else { -1.75 };
+                let at = self.player.hull_model().transform_point3(Vec3::new(side, 0.5, 0.0));
+                self.sfx_row("BR-01", at, seed);
             }
+            if was_fire && !fire && self.player.alive { let at = self.player.center(); self.sfx_row("FR-08", at, seed); }
+            let now_rate = ((yaw - last_yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).abs() / dt;
+            // A powered traverse (over about 2 deg/s) coming to rest.
+            if rate > 0.035 && now_rate < 0.002 && self.player.alive {
+                let at = self.player.turret_model().transform_point3(Vec3::new(0.0, 1.2, 0.0));
+                self.sfx_row("IN-04", at, seed);
+            }
+            self.swarm.monitor = Some((tracks.0, tracks.1, fire, yaw, now_rate));
+        } else {
+            self.swarm.monitor = Some((tracks.0, tracks.1, fire, yaw, 0.0));
         }
+    }
+
+    /// A switched row played in place of its existing voice (the caller checked the switch), at
+    /// the row's level or, for a row without one, at the engine-death interior level (estimate).
+    pub(super) fn sfx_row_forced(&mut self, id: &str, at: Vec3, seed: u32) -> bool {
+        let files = crate::sfx_rows::takes(id, false);
+        if files.is_empty() { return false; }
+        let Some(mono) = self.generated_mono(&files[seed as usize % files.len()]) else { return false };
+        let level = crate::sfx_rows::find(id).map_or(0.0, |r| r.lpk_1m_db);
+        let base = crate::sound_propagation::Emission::from_level(&crate::sound_levels::BULLET_ON_STEEL_1M);
+        let emission = base.shifted(if level > 0.0 { level } else { 110.0 } - base.lpk_db);
+        let stereo: Vec<f32> = mono.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect();
+        self.schedule_emission(crate::audio::Sfx::ImpactGround, at, emission, None, Some(stereo));
+        true
+    }
+
+    /// Play a generated row (`sfx_rows`) from `at` through the ordinary propagation, at the row's
+    /// 1 m level (estimate), if the rule wants it and a take is installed. True if one played.
+    pub(super) fn sfx_row(&mut self, id: &str, at: Vec3, seed: u32) -> bool {
+        let Some(row) = crate::sfx_rows::find(id) else { return false };
+        if !crate::sfx_rows::wanted(row) || row.lpk_1m_db <= 0.0 { return false; }
+        let files = crate::sfx_rows::takes(id, false);
+        if files.is_empty() { return false; }
+        let Some(mono) = self.generated_mono(&files[seed as usize % files.len()]) else { return false };
+        let base = crate::sound_propagation::Emission::from_level(&crate::sound_levels::BULLET_ON_STEEL_1M);
+        let emission = base.shifted(row.lpk_1m_db - base.lpk_db);
+        let stereo: Vec<f32> = mono.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect();
+        self.schedule_emission(crate::audio::Sfx::ImpactGround, at, emission, None, Some(stereo));
+        true
     }
 
     /// Per-step cadence: `Some(dt to step with)` when this soldier is due.
@@ -964,9 +1021,18 @@ impl Game {
         }
         self.swarm_crew_burst(kind, id, point);
         let burst = crate::sound_propagation::Emission::he_burst(filler_kg, kind.mass_kg() - filler_kg);
-        self.schedule_emission(crate::audio::Sfx::KillExplosion, point, burst, None, None);
+        // HT-18 (generated) replaces the burst's report on the steel only behind the switch.
+        let generated = (inside || near_steel) && crate::sfx_rows::generated_switch()
+            && !crate::sfx_rows::takes("HT-18", false).is_empty();
+        if generated {
+            let stereo = self.generated_mono(&crate::sfx_rows::takes("HT-18", false)[(id % 2) as usize % crate::sfx_rows::takes("HT-18", false).len()])
+                .map(|m| m.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect::<Vec<f32>>());
+            self.schedule_emission(crate::audio::Sfx::KillExplosion, point, burst, None, stereo);
+        } else {
+            self.schedule_emission(crate::audio::Sfx::KillExplosion, point, burst, None, None);
+        }
         self.queue_blast_front(0x5A00_0000 | u64::from(id), point, filler_kg, true);
-        if inside || near_steel { self.swarm_emit(SwarmSound::GrenadeBurstOnDeck, point); }
+        if inside || near_steel { let t = self.swarm.clock_s; self.swarm.sounds.emit(SwarmSound::GrenadeBurstOnDeck, point, t, id); }
         let _ = owner;
     }
 
@@ -1253,10 +1319,10 @@ impl Game {
     }
 }
 
-/// Decode a take file to an interleaved stereo buffer at the engine's rate (linear resampling).
-fn decode_take(path: &std::path::Path) -> Option<Vec<f32>> {
+/// Decode a take file to mono at the engine's rate (linear resampling).
+fn decode_take(path: &str) -> Option<Vec<f32>> {
     use rodio::Source;
-    let file = std::fs::File::open(path).ok()?;
+    let file = crate::resource::open(path).ok()?;
     let decoder = rodio::Decoder::new(std::io::BufReader::new(file)).ok()?;
     let channels = decoder.channels().max(1) as usize;
     let rate = decoder.sample_rate().max(1) as f32;
@@ -1265,16 +1331,14 @@ fn decode_take(path: &std::path::Path) -> Option<Vec<f32>> {
     if mono.is_empty() { return None; }
     let out_rate = crate::acoustics::SAMPLE_RATE as f32;
     let n = (mono.len() as f32 * out_rate / rate) as usize;
-    let mut stereo = Vec::with_capacity(n * 2);
+    let mut out = Vec::with_capacity(n);
     for k in 0..n {
         let x = k as f32 * rate / out_rate;
         let i = x as usize;
         let f = x - i as f32;
         let a = mono[i.min(mono.len() - 1)];
         let b = mono[(i + 1).min(mono.len() - 1)];
-        let v = (a + (b - a) * f) * std::f32::consts::FRAC_1_SQRT_2;
-        stereo.push(v);
-        stereo.push(v);
+        out.push(a + (b - a) * f);
     }
-    Some(stereo)
+    Some(out)
 }

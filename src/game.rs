@@ -19147,6 +19147,10 @@ impl Game {
         self.sim_phase.seg("dressing_scars_portable");
         let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_wrecks"); self.update_wrecks(dt); } self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
         self.enemy_crew.update(dt, &self.enemies, &self.wrecks, &self.hf, &self.occluders, self.player.center());
+        for (k, (id, at)) in std::mem::take(&mut self.enemy_crew.cues).into_iter().enumerate() {
+            self.sfx_row(id, at, self.kill_tick ^ k as u32);
+        }
+        self.sfx_monitor(dt);
         self.enemy_crew.draw(r);
         self.living_wounds.update_draw(dt,r);
         self.infantry_casualties.update_draw(dt,&self.soldiers,&self.hf,r);
@@ -30660,7 +30664,9 @@ impl Game {
             return;
         }
         self.engine_death_cued = true;
-        if let Some(a) = &self.audio {
+        // BR-08 (generated) stands in behind KESSEL_SFX_GENERATED=1.
+        let generated = crate::sfx_rows::generated_switch() && { let at = self.player.center(); self.sfx_row_forced("BR-08", at, self.kill_tick) };
+        if let (false, Some(a)) = (generated, &self.audio) {
             a.play_at_ear(crate::audio::Sfx::EngineDeath, crate::sound_levels::TIGER_INTERIOR_IDLE.laf_db + crate::audio::effort_db(volume));
         }
     }

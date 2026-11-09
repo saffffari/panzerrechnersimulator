@@ -30,12 +30,28 @@ pub(super) fn own_hull_hit_ear(mut ear: crate::sound_propagation::EarLevel, leve
 }
 
 impl Game {
+    /// With KESSEL_SFX_GENERATED=1 the generated take of the family's row (HT-09 penetration,
+    /// HT-06 stopped; the interior `_w` take for a strike heard inside) replaces the recording,
+    /// at the same calibrated emission with no filter shift.
+    fn generated_hit_take(&mut self, voice: &mut crate::audio::HitVoice, family: HitFamily, seed: u32, inside: bool) {
+        let Some(row) = crate::sfx_rows::hit_row(matches!(family, HitFamily::Penetration)) else { return };
+        let mut files = crate::sfx_rows::takes(row.id, inside);
+        if files.is_empty() { files = crate::sfx_rows::takes(row.id, false); }
+        if files.is_empty() { return; }
+        if let Some(mono) = self.generated_mono(&files[seed as usize % files.len()]) {
+            voice.mono = mono;
+            voice.level_shift_db = 0.0;
+            voice.cutoff_hz = None;
+        }
+    }
+
     /// Schedule a tank hit heard in the world with its recording at `sfx`'s emission (shifted by
     /// the voice's filter loss). False if the recordings are not installed.
     pub(super) fn schedule_hit_recording(&mut self, family: HitFamily, sfx: crate::audio::Sfx,
         src: Vec3, seed: u32, path: &'static str) -> bool
     {
-        let Some(voice) = self.audio.as_ref().and_then(|a| a.hit_voice(family, seed)) else { return false };
+        let Some(mut voice) = self.audio.as_ref().and_then(|a| a.hit_voice(family, seed)) else { return false };
+        self.generated_hit_take(&mut voice, family, seed, false);
         log_hit_voice(path, family, &voice, src.distance(self.threat_center()));
         let emission = sound_emission_for(sfx).shifted(voice.level_shift_db);
         let stereo = voice.stereo();
@@ -52,7 +68,10 @@ impl Game {
         event: &crate::ballistics::ImpactEvent, penetrated: bool, internal_burst: bool,
         station_distance: f32, bearing: f32, impact_pos: Vec3) -> bool
     {
-        let Some(voice) = self.audio.as_ref().and_then(|a| a.hit_voice(family, seed)) else { return false };
+        let Some(mut voice) = self.audio.as_ref().and_then(|a| a.hit_voice(family, seed)) else { return false };
+        let inside = matches!(self.listener_enclosure(), crate::sound_propagation::Enclosure::Buttoned
+            | crate::sound_propagation::Enclosure::HatchOpen);
+        self.generated_hit_take(&mut voice, family, seed, inside);
         log_hit_voice("own_hull", family, &voice, station_distance);
         let enclosure = self.listener_enclosure();
         let ear = own_hull_hit_ear(

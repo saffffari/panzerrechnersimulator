@@ -169,6 +169,7 @@ mod infantry_boarding;
 mod thrown_weapons;
 mod exterior_fire;
 mod swarm_sound;
+mod sfx_rows;
 mod interior_rig;
 mod lamp_mounts;
 mod lan;

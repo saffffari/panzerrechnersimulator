@@ -5188,3 +5188,11 @@ estimates:
   on the existing MG cycle through the ordinary projectile path; friendly fire is physical.
 - **Sounds.** Named events from `docs/SOUND_PROMPTS_20261109.md`; a take file, if present, plays
   at the bullet-on-steel level (provisional; no level table entry yet).
+
+## Generated sound rows, 2026-11-09 (`src/sfx_rows.rs`; `docs/SOUND_WIRING_20261109.md`)
+
+Generated takes (not recordings of the real objects) wired by row ID. Default rows play at a 1 m
+peak level estimated per row (75-120 dB; the table) through the ordinary propagation with the
+bullet-on-steel spectrum class; rows that replace an existing voice (behind
+`KESSEL_SFX_GENERATED=1`) take that voice's calibrated emission, the hit takes with no filter
+shift. Takes are resampled linearly to the engine's rate. Unauditioned.

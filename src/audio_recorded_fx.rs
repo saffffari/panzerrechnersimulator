@@ -277,7 +277,10 @@ pub(crate) fn last_strike_s(mono: &[f32]) -> f32 {
 impl Family {
     fn load(fx: Fx) -> Self {
         let mut clips = Vec::new();
-        for (i, path) in fx.files().iter().enumerate() {
+        // The generated takes of the family's row (`sfx_rows`) behind KESSEL_SFX_GENERATED=1.
+        let generated = crate::sfx_rows::recorded_fx_takes(&fx.name());
+        let files: &[&'static str] = generated.as_deref().unwrap_or(fx.files());
+        for (i, path) in files.iter().enumerate() {
             let Some(mono) = crate::resource::read(path).ok()
                 .and_then(|bytes| Clip::from_encoded_bytes(path, bytes)).map(|clip| clip.world_mono()) else { continue };
             let mono = resample(&trim_head(&mono), fx.pitch());

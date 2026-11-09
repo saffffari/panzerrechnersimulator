@@ -41,6 +41,9 @@ pub(super) struct Aftermath {
     pub(super) parts: [usize; COUNT],
     pub(super) stains: usize,
     pub(super) flames: usize,
+    /// Moments for the generated sounds (`sfx_rows`): (row ID, place), drained by the game.
+    #[serde(skip)]
+    pub(super) cues: Vec<(&'static str, Vec3)>,
 }
 #[derive(Clone, Copy, Default, Debug)]
 pub(super) struct DamageOutcome {
@@ -276,6 +279,7 @@ impl Aftermath {
             parts,
             stains,
             flames,
+            cues: Vec::new(),
         }
     }
     pub(super) fn resolve(
@@ -521,6 +525,7 @@ impl Aftermath {
                 Phase::Waiting => {
                     if person.age > 1.0 + person.identity as f32 * 0.7 {
                         person.phase = Phase::Climbing;
+                        self.cues.push(("SV-01", person.exit));
                     }
                 }
                 Phase::Climbing => {

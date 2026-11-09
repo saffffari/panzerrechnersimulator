@@ -102,6 +102,17 @@ impl OwnerBank {
                 cuts.entry(key).or_default().push(mono);
             }
         }
+        // The generated takes (`sfx_rows`, KESSEL_SFX_GENERATED=1) stand in for a key's cuts.
+        for row in crate::sfx_rows::ROWS {
+            let crate::sfx_rows::Hook::OwnerKey(key) = row.hook else { continue };
+            let Some(files) = crate::sfx_rows::owner_key_takes(key) else { continue };
+            let takes: Vec<Arc<[f32]>> = files.iter().filter_map(|path| crate::resource::read(path).ok()
+                .and_then(|bytes| Clip::from_encoded_bytes(path, bytes)).map(|clip| clip.world_mono())).collect();
+            if !takes.is_empty() {
+                eprintln!("[audio] {key}: {} generated takes of {} stand in (KESSEL_SFX_GENERATED)", takes.len(), row.id);
+                cuts.insert(key, takes);
+            }
+        }
         eprintln!("[audio] owner recordings: {} cuts under {} keys", cuts.values().map(Vec::len).sum::<usize>(), cuts.len());
         Self { cuts, turn: RefCell::default() }
     }
