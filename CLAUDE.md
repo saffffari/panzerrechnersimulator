@@ -6,6 +6,13 @@
 consequences of play. Written orders, radio transcripts, maps, names, and the physical repair
 manual are allowed. Spoken dialogue, voice-over, and spoken narration are excluded.**
 
+**Owner's note, 8 November 2026:** "i think the original no speech rule is not a hard rule."
+Crew speech is on trial: German callouts and injury, damage and fire reports from the crewman who
+would really see and call it, through the intercom and radio filter, with subtitles ("subtitles
+are fine for foreign language dialogue"). Whether the game grows written characters and dialogue
+is undecided. Until the owner settles it, treat the exclusion above as the default for narration
+and voice-over, and build spoken crew lines only where he has asked for them.
+
 Every authored scene must therefore satisfy two non-negotiable rules:
 
 1. The player should understand a scene's human event from space, objects, bodies, damage, absence,

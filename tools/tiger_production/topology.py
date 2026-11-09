@@ -45,16 +45,22 @@ def _deviation(src_bm, src_bvh, new_bm):
     """Two-sided distance (m): the new surface's vertices and face centres to the source surface,
     and a sample of the source's vertices to the new surface."""
     worst = 0.0
-    for v in new_bm.verts:
-        hit = src_bvh.find_nearest(v.co)
+    # Very large candidates (the cables' first collapse steps) are sampled, not walked whole; a
+    # part's final mesh is far below the cap and is measured at every vertex and triangle.
+    new_bm.verts.ensure_lookup_table()
+    vstep = max(1, len(new_bm.verts) // (6 * SAMPLE))
+    for i in range(0, len(new_bm.verts), vstep):
+        hit = src_bvh.find_nearest(new_bm.verts[i].co)
         if hit[0] is not None:
             worst = max(worst, hit[3])
     # Face interiors are sampled at the centroids of the faces' triangles: the median centre of a
     # dissolved face can lie off it (a ring's centre is in its hole).
     tri = new_bm.copy()
     bmesh.ops.triangulate(tri, faces=tri.faces[:])
-    for f in tri.faces:
-        hit = src_bvh.find_nearest(f.calc_center_median())
+    tri.faces.ensure_lookup_table()
+    fstep = max(1, len(tri.faces) // (6 * SAMPLE))
+    for i in range(0, len(tri.faces), fstep):
+        hit = src_bvh.find_nearest(tri.faces[i].calc_center_median())
         if hit[0] is not None:
             worst = max(worst, hit[3])
     new_bvh = _bvh(tri)
