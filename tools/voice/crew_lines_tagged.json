@@ -1,0 +1,4061 @@
+[
+ {
+  "id": "FA-001",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "reporting ready",
+  "de": "[calm] Fahrer bereit.",
+  "en": "Driver ready."
+ },
+ {
+  "id": "FA-002",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "switching on",
+  "de": "[routine] Hauptschalter ein. Zündung ein.",
+  "en": "Main switch on. Ignition on."
+ },
+ {
+  "id": "FA-003",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "engine starts",
+  "de": "[satisfied] Motor läuft.",
+  "en": "Engine's running."
+ },
+ {
+  "id": "FA-004",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "engine will not start",
+  "de": "[annoyed] Springt nicht an. Nochmal.",
+  "en": "Won't start. Again."
+ },
+ {
+  "id": "FA-005",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "cold morning",
+  "de": "[worried] Batterie ist schwach. Das wird nichts mit dem Anlasser.",
+  "en": "Battery's weak. The starter won't do it."
+ },
+ {
+  "id": "FA-006",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "hand start needed",
+  "de": "[resigned] Zwei Mann an die Kurbel, hinten.",
+  "en": "Two men to the crank, at the back."
+ },
+ {
+  "id": "FA-007",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "warming up",
+  "de": "Kühlwasser vierzig Grad. Ich warte noch.",
+  "en": "Coolant forty degrees. I'll wait."
+ },
+ {
+  "id": "FA-008",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "gauges good",
+  "de": "[calm] Öldruck gut. Temperatur gut.",
+  "en": "Oil pressure good. Temperature good."
+ },
+ {
+  "id": "FA-009",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "fuel report",
+  "de": "[flat] Sprit: beide Tanks voll.",
+  "en": "Fuel: both tanks full."
+ },
+ {
+  "id": "FA-010",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "visor check",
+  "de": "Sehschlitz frei. Winkelspiegel sauber.",
+  "en": "Vision slit clear. Periscope clean."
+ },
+ {
+  "id": "FA-020",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "acknowledging advance",
+  "de": "[firm] Jawohl, marsch.",
+  "en": "Yes sir, moving."
+ },
+ {
+  "id": "FA-021",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "acknowledging halt",
+  "de": "[clipped] Halt. Steht.",
+  "en": "Halt. Stopped."
+ },
+ {
+  "id": "FA-022",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "changing up",
+  "de": "[routine] Dritter Gang.",
+  "en": "Third gear."
+ },
+ {
+  "id": "FA-023",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "soft ground",
+  "de": "[wary] Boden ist weich. Wir sinken ein.",
+  "en": "Ground's soft. We're sinking in."
+ },
+ {
+  "id": "FA-024",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "climbing",
+  "de": "[effort] Steigung. Schalte runter.",
+  "en": "Slope. Changing down."
+ },
+ {
+  "id": "FA-025",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "bridge ahead",
+  "de": "[firm] Die Brücke trägt uns nicht. Ich fahre da nicht rauf.",
+  "en": "That bridge won't carry us. I'm not driving onto it."
+ },
+ {
+  "id": "FA-026",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "cannot see",
+  "de": "[frustrated] Ich sehe nichts. Schlamm auf dem Glas.",
+  "en": "I can't see. Mud on the glass."
+ },
+ {
+  "id": "FA-027",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "obstacle ahead",
+  "de": "[sharp] Graben voraus!",
+  "en": "Ditch ahead!"
+ },
+ {
+  "id": "FA-028",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "reversing blind",
+  "de": "[tense] Rückwärts. Ich fahre blind. Weist mich ein!",
+  "en": "Reversing. I'm blind. Guide me!"
+ },
+ {
+  "id": "FA-029",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "crossing a ditch",
+  "de": "[bracing] Festhalten. Das rumpelt.",
+  "en": "Hold on. This'll jolt."
+ },
+ {
+  "id": "FA-030",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "slipping on ice",
+  "de": "[alarmed] Wir rutschen! Ketten greifen nicht!",
+  "en": "We're sliding! Tracks aren't gripping!"
+ },
+ {
+  "id": "FA-031",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "turning in place",
+  "de": "[effort] Drehe auf der Stelle. Langsam.",
+  "en": "Turning on the spot. Slowly."
+ },
+ {
+  "id": "FA-032",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "fording",
+  "de": "[concentrating] Wasser bis zur Wanne. Nicht anhalten jetzt.",
+  "en": "Water up to the hull. Not stopping now."
+ },
+ {
+  "id": "FA-033",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "night driving",
+  "de": "[low] Ich sehe drei Meter weit. Wenn überhaupt.",
+  "en": "I can see three metres. If that."
+ },
+ {
+  "id": "FA-034",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "mines suspected",
+  "de": "[very careful] Erde ist frisch hier. Ich bleibe in der alten Spur.",
+  "en": "The earth's fresh here. I'm staying in the old track."
+ },
+ {
+  "id": "FA-040",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "hull turned to the enemy",
+  "de": "[steady] Bug zum Feind. Steht.",
+  "en": "Bow to the enemy. Stopped."
+ },
+ {
+  "id": "FA-041",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "holding still for the shot",
+  "de": "[low] Stehe. Schießt.",
+  "en": "Stopped. Shoot."
+ },
+ {
+  "id": "FA-042",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "pulling back",
+  "de": "[urgent] Fahre zurück!",
+  "en": "Reversing!"
+ },
+ {
+  "id": "FA-043",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "full throttle",
+  "de": "[shouting] Vollgas! Mehr gibt sie nicht her!",
+  "en": "Full throttle! She's got no more!"
+ },
+ {
+  "id": "FA-044",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "enemy seen through the slit",
+  "de": "[startled] Panzer direkt voraus! Der steht in der Senke!",
+  "en": "Tank dead ahead! He's in the dip!"
+ },
+ {
+  "id": "FA-045",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "sees a gun before the commander",
+  "de": "[urgent] Pak links am Zaun, die drehen auf uns!",
+  "en": "AT gun left by the fence, they're turning on us!"
+ },
+ {
+  "id": "FA-046",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "driving over a gun position",
+  "de": "[grim] Ich fahre drüber. Festhalten!",
+  "en": "I'm driving over it. Hold on!"
+ },
+ {
+  "id": "FA-047",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "hit on the front plate",
+  "de": "[shaken] [exhales sharply] Der ging direkt vor meine Nase.",
+  "en": "That went right in front of my nose."
+ },
+ {
+  "id": "FA-048",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "refusing a bad order",
+  "de": "[firm, strained] Da bleiben wir stecken. Ich nehme den anderen Weg.",
+  "en": "We'll bog there. I'm taking the other way."
+ },
+ {
+  "id": "FA-049",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "stalled in the open",
+  "de": "[frantic] Abgewürgt! Komm schon, KOMM!",
+  "en": "Stalled! Come on, COME ON!"
+ },
+ {
+  "id": "FA-060",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "track broken",
+  "de": "[shouting] Kette links gerissen! Wir drehen uns!",
+  "en": "Left track's broken! We're slewing!"
+ },
+ {
+  "id": "FA-061",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "immobilised",
+  "de": "[flat, grim] Wir stehen. Kette ist runter.",
+  "en": "We're stuck. Track's off."
+ },
+ {
+  "id": "FA-062",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "engine running hot",
+  "de": "[concerned] Motor wird heiß. Fünfundneunzig Grad.",
+  "en": "Engine's getting hot. Ninety-five degrees."
+ },
+ {
+  "id": "FA-063",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "engine overheating",
+  "de": "[urgent] Hundertzehn Grad! Ich muss runter vom Gas!",
+  "en": "A hundred and ten degrees! I have to come off the throttle!"
+ },
+ {
+  "id": "FA-064",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "oil pressure falling",
+  "de": "[alarmed] Öldruck fällt! Motor aus, sonst frisst er!",
+  "en": "Oil pressure's falling! Engine off or it'll seize!"
+ },
+ {
+  "id": "FA-065",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "gearbox will not shift",
+  "de": "[struggling] Getriebe schaltet nicht! Hänge im zweiten!",
+  "en": "Gearbox won't shift! I'm stuck in second!"
+ },
+ {
+  "id": "FA-066",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "emergency gear selection",
+  "de": "[effort] Nehme die Notschaltung. Von Hand.",
+  "en": "Using the emergency shift. By hand."
+ },
+ {
+  "id": "FA-067",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "steering pressure lost",
+  "de": "[strained] Lenkung ohne Druck! Nehme die Hebel!",
+  "en": "Steering's lost pressure! Taking the levers!"
+ },
+ {
+  "id": "FA-068",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "road wheel lost",
+  "de": "[listening] Da schlägt was. Laufrolle, glaube ich.",
+  "en": "Something's knocking. A road wheel, I think."
+ },
+ {
+  "id": "FA-069",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "bogged down",
+  "de": "[frustrated] Wir sitzen fest. Je mehr Gas, desto tiefer.",
+  "en": "We're stuck fast. The more gas, the deeper."
+ },
+ {
+  "id": "FA-070",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "fuel low",
+  "de": "[flat] Sprit: noch fünfzig Liter. Das reicht nicht zurück.",
+  "en": "Fuel: fifty litres left. That won't get us back."
+ },
+ {
+  "id": "FA-071",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "fuel smell",
+  "de": "[alarmed] Es riecht nach Benzin. Stark.",
+  "en": "It smells of petrol. Strongly."
+ },
+ {
+  "id": "FA-072",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "engine dies",
+  "de": "[desperate] Motor ist aus! Springt nicht mehr an!",
+  "en": "Engine's dead! Won't start again!"
+ },
+ {
+  "id": "FA-073",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "brakes failing",
+  "de": "Bremse zieht nicht mehr richtig!",
+  "en": "The brake's not holding properly any more!"
+ },
+ {
+  "id": "FA-074",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "track slack",
+  "de": "[listening] Kette schlägt. Die muss gespannt werden.",
+  "en": "Track's slapping. It needs tensioning."
+ },
+ {
+  "id": "FA-075",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "repair done",
+  "de": "[relieved] Läuft wieder. Rund wie am ersten Tag.",
+  "en": "Running again. Smooth as the first day."
+ },
+ {
+  "id": "FA-100",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "splinters from the visor",
+  "de": "[crying out] [hisses] Glas im Auge! Ich sehe nur noch rechts!",
+  "en": "Glass in my eye! I can only see on the right!"
+ },
+ {
+  "id": "FA-101",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "leg wound",
+  "de": "[through gritted teeth] Bein ist getroffen. Kuppeln geht nicht mehr.",
+  "en": "Leg's hit. I can't work the clutch."
+ },
+ {
+  "id": "FA-102",
+  "role": "FA",
+  "register": "urgent",
+  "int": 5,
+  "when": "cannot drive on",
+  "de": "[fading] Ich... kann nicht mehr. Funker, nimm das Steuer.",
+  "en": "I... can't go on. Radio operator, take the wheel."
+ },
+ {
+  "id": "FA-103",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "fear, shut in",
+  "de": "[tight, fast] Ich sehe nichts und es knallt überall. Sagt mir was!",
+  "en": "I can't see and it's banging everywhere. Tell me something!"
+ },
+ {
+  "id": "FA-104",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "anger at the machine",
+  "de": "[furious] Verdammte Kiste!",
+  "en": "Damned crate!"
+ },
+ {
+  "id": "FA-105",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "pride in the machine",
+  "de": "[fond] Sie ist schwer, aber sie bringt uns heim.",
+  "en": "She's heavy, but she'll get us home."
+ },
+ {
+  "id": "FA-106",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "after a narrow escape",
+  "de": "[shaky laugh] [laughs] Ich dachte, das war's.",
+  "en": "I thought that was it."
+ },
+ {
+  "id": "FA-107",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "radio operator beside him hit",
+  "de": "[shouting] Der Funker! Er rührt sich nicht!",
+  "en": "The radio operator! He's not moving!"
+ },
+ {
+  "id": "FA-120",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "engine fire warning",
+  "de": "[shouting] Motor brennt! Löschanlage ausgelöst!",
+  "en": "Engine's on fire! Extinguisher triggered!"
+ },
+ {
+  "id": "FA-121",
+  "role": "FA",
+  "register": "urgent",
+  "int": 5,
+  "when": "fire at his feet",
+  "de": "[screaming] Es brennt hier vorne! Ich muss raus!",
+  "en": "It's burning up front! I have to get out!"
+ },
+ {
+  "id": "FA-122",
+  "role": "FA",
+  "register": "urgent",
+  "int": 5,
+  "when": "his hatch blocked by the gun",
+  "de": "[panicked] Rohr steht über meiner Luke! TURM DREHEN!",
+  "en": "The gun's over my hatch! TURN THE TURRET!"
+ },
+ {
+  "id": "FA-123",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "out of the hatch",
+  "de": "[shouting] Fahrer ist raus!",
+  "en": "Driver's out!"
+ },
+ {
+  "id": "FA-124",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "fire out, engine saved",
+  "de": "[panting] Feuer aus. Motor läuft noch. Unglaublich.",
+  "en": "Fire's out. Engine's still running. Unbelievable."
+ },
+ {
+  "id": "FA-140",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "listening to the engine",
+  "de": "[content] Hört ihr das? Zwölf Zylinder. Musik.",
+  "en": "Hear that? Twelve cylinders. Music."
+ },
+ {
+  "id": "FA-141",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "long march",
+  "de": "[weary] Sechs Stunden an den Hebeln. Meine Schultern.",
+  "en": "Six hours at the levers. My shoulders."
+ },
+ {
+  "id": "FA-142",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "mud",
+  "de": "[dry] Russland besteht aus Schlamm. Der Rest ist Gerücht.",
+  "en": "Russia is made of mud. The rest is rumour."
+ },
+ {
+  "id": "FA-143",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "maintenance never ends",
+  "de": "[resigned] Eine Stunde fahren, drei Stunden schrauben.",
+  "en": "One hour driving, three hours with the spanner."
+ },
+ {
+  "id": "FA-144",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "asked if she will hold",
+  "de": "[honest] Sie hält. Aber fragt mich nicht, wie lange.",
+  "en": "She'll hold. But don't ask me how long."
+ },
+ {
+  "id": "FA-145",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "dawn start",
+  "de": "[yawns] Guten Morgen, altes Mädchen.",
+  "en": "Good morning, old girl."
+ },
+ {
+  "id": "FA-146",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "quiet dread",
+  "de": "[low] Ich fahre uns da rein. Ich fahre uns auch wieder raus.",
+  "en": "I'm driving us in. I'll drive us out again too."
+ },
+ {
+  "id": "FA-190",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "hauling a lever",
+  "de": "[strains] Hngh.",
+  "en": "(effort)"
+ },
+ {
+  "id": "FA-191",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "jolt over an obstacle",
+  "de": "[grunts] Uff.",
+  "en": "(jolt)"
+ },
+ {
+  "id": "FA-192",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "near miss on the front",
+  "de": "[gasps]",
+  "en": "(gasp)"
+ },
+ {
+  "id": "FA-193",
+  "role": "FA",
+  "register": "urgent",
+  "int": 4,
+  "when": "wounded",
+  "de": "[cries out in pain]",
+  "en": "(pain)"
+ },
+ {
+  "id": "FA-194",
+  "role": "FA",
+  "register": "urgent",
+  "int": 5,
+  "when": "burned",
+  "de": "[screams]",
+  "en": "(scream)"
+ },
+ {
+  "id": "FA-195",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "relief after bogging",
+  "de": "[long exhale]",
+  "en": "(relief)"
+ },
+ {
+  "id": "FA-196",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "swearing at the gearbox",
+  "de": "[growls] Verdammt nochmal.",
+  "en": "Damn it all."
+ },
+ {
+  "id": "FA-197",
+  "role": "FA",
+  "register": "urgent",
+  "int": 3,
+  "when": "dust and fumes",
+  "de": "[coughs]",
+  "en": "(cough)"
+ },
+ {
+  "id": "FA-198",
+  "role": "FA",
+  "register": "calm",
+  "int": 2,
+  "when": "coaxing the engine",
+  "de": "[murmurs] Komm, komm, komm...",
+  "en": "Come on, come on, come on..."
+ },
+ {
+  "id": "FA-199",
+  "role": "FA",
+  "register": "calm",
+  "int": 1,
+  "when": "whistling at the wheel",
+  "de": "[whistles a few notes]",
+  "en": "(whistling)"
+ },
+ {
+  "id": "FU-001",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "reporting ready",
+  "de": "[calm] Funker bereit.",
+  "en": "Radio operator ready."
+ },
+ {
+  "id": "FU-002",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "set warmed up",
+  "de": "[routine] Gerät ist warm. Empfang klar.",
+  "en": "Set's warm. Reception clear."
+ },
+ {
+  "id": "FU-003",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "intercom check",
+  "de": "Bordsprechanlage geprüft. Hört mich jeder?",
+  "en": "Intercom checked. Does everyone hear me?"
+ },
+ {
+  "id": "FU-004",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "frequency set",
+  "de": "[precise] Frequenz eingestellt. Kompanie ist auf Empfang.",
+  "en": "Frequency set. Company is listening."
+ },
+ {
+  "id": "FU-005",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "bow MG ready",
+  "de": "Bug-MG geladen und gesichert.",
+  "en": "Bow MG loaded and on safe."
+ },
+ {
+  "id": "FU-006",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "radio silence ordered",
+  "de": "[low] Funkstille. Ich höre nur mit.",
+  "en": "Radio silence. I'm only listening."
+ },
+ {
+  "id": "FU-007",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "checking the aerial",
+  "de": "Antenne steht.",
+  "en": "Aerial's up."
+ },
+ {
+  "id": "FU-020",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "message arrives",
+  "de": "[alert] Funkspruch von Kompanie.",
+  "en": "Message from company."
+ },
+ {
+  "id": "FU-021",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "order to advance",
+  "de": "[reading back, flat] Befehl: Angriff auf die Höhe, sofort antreten.",
+  "en": "Order: attack the hill, move off at once."
+ },
+ {
+  "id": "FU-022",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "order to hold",
+  "de": "Wir sollen halten, bis die Infanterie da ist.",
+  "en": "We're to hold until the infantry arrives."
+ },
+ {
+  "id": "FU-023",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "order to fall back",
+  "de": "[urgent] Befehl: absetzen auf die Ausgangsstellung!",
+  "en": "Order: fall back to the start line!"
+ },
+ {
+  "id": "FU-024",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "company asks for a report",
+  "de": "Kompanie fragt nach unserer Lage.",
+  "en": "Company's asking for our situation."
+ },
+ {
+  "id": "FU-025",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "warning from a wingman",
+  "de": "[quick] Zwo eins zwo meldet Pak rechts von uns!",
+  "en": "Two-one-two reports an AT gun to our right!"
+ },
+ {
+  "id": "FU-026",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "wingman knocked out",
+  "de": "[shaken] Zwo eins drei ist ausgefallen. Die melden sich nicht mehr.",
+  "en": "Two-one-three is out. They've stopped answering."
+ },
+ {
+  "id": "FU-027",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "help is coming",
+  "de": "[relieved] Zug kommt uns entgegen. Zehn Minuten.",
+  "en": "The platoon's coming to meet us. Ten minutes."
+ },
+ {
+  "id": "FU-028",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "no help",
+  "de": "[flat, grim] Keine Unterstützung. Wir sind allein hier.",
+  "en": "No support. We're alone here."
+ },
+ {
+  "id": "FU-029",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "enemy armour reported",
+  "de": "[tense] Meldung: zwanzig Feindpanzer aus Nordost.",
+  "en": "Report: twenty enemy tanks from the north-east."
+ },
+ {
+  "id": "FU-030",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "garbled message",
+  "de": "[straining to hear] Verstehe nur die Hälfte. ...Wiederholen, bitte wiederholen.",
+  "en": "I'm only getting half. ...Repeat, please repeat."
+ },
+ {
+  "id": "FU-031",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "artillery warning",
+  "de": "[urgent] Eigene Artillerie schießt auf den Waldrand, in zwei Minuten!",
+  "en": "Own artillery firing on the wood's edge, in two minutes!"
+ },
+ {
+  "id": "FU-032",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "good news",
+  "de": "[light] Kompanie meldet: Feldküche ist nachgekommen.",
+  "en": "Company reports: the field kitchen's caught up."
+ },
+ {
+  "id": "FU-040",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "calling in",
+  "de": "[radio voice, even] Zwo eins eins an Kompanie. Kommen.",
+  "en": "Two-one-one to company. Over."
+ },
+ {
+  "id": "FU-041",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "sending a contact report",
+  "de": "[radio voice, even] Zwo eins eins: Feindberührung, Planquadrat Dora vier. Kommen.",
+  "en": "Two-one-one: contact, grid Dora four. Over."
+ },
+ {
+  "id": "FU-042",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "acknowledging",
+  "de": "[radio voice] Verstanden. Ende.",
+  "en": "Understood. Out."
+ },
+ {
+  "id": "FU-043",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "calling under fire",
+  "de": "[radio voice breaking] Zwo eins eins an alle! Wir liegen fest, brauchen HILFE!",
+  "en": "Two-one-one to all! We're pinned, we need HELP!"
+ },
+ {
+  "id": "FU-044",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "no reply",
+  "de": "[anxious] Kompanie, kommen. ... Kompanie! ... Nichts.",
+  "en": "Company, come in. ... Company! ... Nothing."
+ },
+ {
+  "id": "FU-045",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "jamming",
+  "de": "[annoyed] Störung. Nur Rauschen auf dem Kanal.",
+  "en": "Interference. Only static on the channel."
+ },
+ {
+  "id": "FU-046",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "aerial shot away",
+  "de": "[sharp] Antenne ist ab! Ich sende ins Leere!",
+  "en": "Aerial's gone! I'm sending into nothing!"
+ },
+ {
+  "id": "FU-047",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "set dead",
+  "de": "[frustrated] Gerät tot. Röhre durch oder Sicherung.",
+  "en": "Set's dead. A valve's gone, or a fuse."
+ },
+ {
+  "id": "FU-048",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "set repaired",
+  "de": "[pleased] Sicherung gewechselt. Wir sind wieder auf dem Netz.",
+  "en": "Fuse changed. We're back on the net."
+ },
+ {
+  "id": "FU-049",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "spare rod fitted",
+  "de": "Ersatzstab ist drauf. Empfang wieder da.",
+  "en": "Spare rod's on. Reception's back."
+ },
+ {
+  "id": "FU-050",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "intercom fails",
+  "de": "[shouting across the hull] Sprechanlage ist tot! Ich muss RUFEN!",
+  "en": "Intercom's dead! I have to SHOUT!"
+ },
+ {
+  "id": "FU-051",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "hearing the enemy net",
+  "de": "[intrigued, low] Ich habe die Russen drauf. Die reden schnell. Viel.",
+  "en": "I've got the Russians on here. They're talking fast. A lot."
+ },
+ {
+  "id": "FU-060",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "opening fire",
+  "de": "[steady] Bug-MG feuert.",
+  "en": "Bow MG firing."
+ },
+ {
+  "id": "FU-061",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "infantry sighted",
+  "de": "[urgent] Infanterie links im Graben! Ich halte drauf!",
+  "en": "Infantry left in the ditch! I'm on them!"
+ },
+ {
+  "id": "FU-062",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "close assault at the bow",
+  "de": "[shouting] Die sind am Bug! Ich komme nicht tief genug!",
+  "en": "They're at the bow! I can't depress far enough!"
+ },
+ {
+  "id": "FU-063",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "stoppage",
+  "de": "[sharp] Bug-MG: Hemmung!",
+  "en": "Bow MG: stoppage!"
+ },
+ {
+  "id": "FU-064",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "changing the belt",
+  "de": "[quick] Gurt leer. Wechsle.",
+  "en": "Belt empty. Changing."
+ },
+ {
+  "id": "FU-065",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "target down",
+  "de": "[flat] Die liegen. Bewegt sich keiner mehr.",
+  "en": "They're down. Nobody's moving."
+ },
+ {
+  "id": "FU-066",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "enemy withdraws",
+  "de": "[watching] Die ziehen sich zurück. Durch das Kornfeld.",
+  "en": "They're pulling back. Through the cornfield."
+ },
+ {
+  "id": "FU-067",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "cannot see a target",
+  "de": "[frustrated] Ich sehe durch das Loch nur Gras.",
+  "en": "All I see through this hole is grass."
+ },
+ {
+  "id": "FU-068",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "barrel hit",
+  "de": "MG ist getroffen. Lauf verbogen. Unbrauchbar.",
+  "en": "MG's hit. Barrel's bent. Useless."
+ },
+ {
+  "id": "FU-069",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "reluctant to fire",
+  "de": "[uneasy] Die werfen die Gewehre weg. Soll ich...?",
+  "en": "They're throwing their rifles away. Should I...?"
+ },
+ {
+  "id": "FU-080",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "sees fresh earth",
+  "de": "[careful] Vorsicht, voraus ist die Erde aufgeworfen. Minen?",
+  "en": "Careful, the earth's turned up ahead. Mines?"
+ },
+ {
+  "id": "FU-081",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "sees a muzzle flash",
+  "de": "[quick] Mündungsfeuer rechts am Haus!",
+  "en": "Muzzle flash right, by the house!"
+ },
+ {
+  "id": "FU-082",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "guiding the driver",
+  "de": "[calm] Weiter links. Noch. Gut, gerade.",
+  "en": "Further left. More. Good, straight."
+ },
+ {
+  "id": "FU-083",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "dressing a wound",
+  "de": "[steady, close] Ich verbinde ihn. Halt still, Kamerad.",
+  "en": "I'm dressing it. Hold still, comrade."
+ },
+ {
+  "id": "FU-084",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "wound is bad",
+  "de": "[low, urgent] Er verliert viel Blut. Wir müssen zurück.",
+  "en": "He's losing a lot of blood. We have to go back."
+ },
+ {
+  "id": "FU-085",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "taking the driver's place",
+  "de": "[resolute] Ich übernehme das Steuer. Habe ich einmal gemacht.",
+  "en": "I'll take the wheel. I've done it once."
+ },
+ {
+  "id": "FU-086",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "told to load",
+  "de": "[quick] Komme nach oben. Wo liegen die Panzergranaten?",
+  "en": "Coming up. Where are the AP rounds?"
+ },
+ {
+  "id": "FU-087",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "handing out the extinguisher",
+  "de": "[urgent] Löscher! Hier, nimm!",
+  "en": "Extinguisher! Here, take it!"
+ },
+ {
+  "id": "FU-088",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "counting crew by voice",
+  "de": "[careful] Fahrer? ... Ladeschütze? ... Alle melden sich.",
+  "en": "Driver? ... Loader? ... Everyone's answering."
+ },
+ {
+  "id": "FU-100",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "hit in the arm",
+  "de": "[crying out] [hisses] Mein Arm! ...Senden kann ich noch.",
+  "en": "My arm! ...I can still send."
+ },
+ {
+  "id": "FU-101",
+  "role": "FU",
+  "register": "urgent",
+  "int": 5,
+  "when": "gravely wounded",
+  "de": "[weak, wet breathing] Sagt meiner Mutter... nein. Fahrt weiter.",
+  "en": "Tell my mother... no. Drive on."
+ },
+ {
+  "id": "FU-102",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "driver beside him dead",
+  "de": "[horrified whisper] Der Fahrer. Er ist... [swallows] er ist tot.",
+  "en": "The driver. He's... he's dead."
+ },
+ {
+  "id": "FU-103",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "panic rising",
+  "de": "[fast, high tension] Wir kommen hier nicht raus, wir kommen hier nicht raus...",
+  "en": "We're not getting out of here, we're not getting out of here..."
+ },
+ {
+  "id": "FU-104",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "pulled back from panic",
+  "de": "[breath steadying] ...Bin wieder da. Entschuldigung.",
+  "en": "...I'm back. Sorry."
+ },
+ {
+  "id": "FU-105",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "first fight",
+  "de": "[young, unsure] Ist das immer so laut?",
+  "en": "Is it always this loud?"
+ },
+ {
+  "id": "FU-106",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "hears a friend die on the net",
+  "de": "[stunned, quiet] Das war Werners Stimme. Mitten im Satz.",
+  "en": "That was Werner's voice. Mid-sentence."
+ },
+ {
+  "id": "FU-107",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "defiant",
+  "de": "[hard] Ich sende, bis das Gerät brennt.",
+  "en": "I'll keep sending until the set burns."
+ },
+ {
+  "id": "FU-120",
+  "role": "FU",
+  "register": "urgent",
+  "int": 5,
+  "when": "last message",
+  "de": "[radio voice, shouting] Zwo eins eins brennt! Wir booten aus! ENDE!",
+  "en": "Two-one-one's burning! We're bailing out! OUT!"
+ },
+ {
+  "id": "FU-121",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "smoke forward",
+  "de": "[coughing] [coughs] Qualm vorne! Ich sehe die Luke nicht!",
+  "en": "Smoke up front! I can't see the hatch!"
+ },
+ {
+  "id": "FU-122",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "hatch open",
+  "de": "[shouting] Luke ist auf! Ich bin raus!",
+  "en": "Hatch is open! I'm out!"
+ },
+ {
+  "id": "FU-123",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "dragging a comrade",
+  "de": "[straining] [grunts] Ich hab ihn! Zieh mit!",
+  "en": "I've got him! Pull with me!"
+ },
+ {
+  "id": "FU-124",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "in the ditch afterwards",
+  "de": "[panting, dazed] Das Gerät. Die Schlüsselunterlagen sind noch drin.",
+  "en": "The set. The code papers are still in there."
+ },
+ {
+  "id": "FU-140",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "music on the set",
+  "de": "[soft, pleased] Ich habe Musik. Belgrad. Wollt ihr hören?",
+  "en": "I've got music. Belgrade. Want to hear?"
+ },
+ {
+  "id": "FU-141",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "writing a letter",
+  "de": "[absent] Wie schreibt man \"Dnjepr\"?",
+  "en": "How do you spell \"Dnieper\"?"
+ },
+ {
+  "id": "FU-142",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "the net is quiet",
+  "de": "[bored] Nichts. Seit einer Stunde nur einer, der hustet.",
+  "en": "Nothing. For an hour just someone coughing."
+ },
+ {
+  "id": "FU-143",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "teasing",
+  "de": "[amused] Der Kommandant schnarcht auf Sendung. Soll ich abschalten?",
+  "en": "The commander's snoring on air. Shall I switch off?"
+ },
+ {
+  "id": "FU-144",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "homesick",
+  "de": "[quiet] Bei uns ist jetzt Kirmes.",
+  "en": "It's fair time at home now."
+ },
+ {
+  "id": "FU-145",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "reading the mood",
+  "de": "[low] Die Stimmen auf dem Netz sind anders heute. Kürzer.",
+  "en": "The voices on the net are different today. Shorter."
+ },
+ {
+  "id": "FU-146",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "cold feet",
+  "de": "[shivering] [exhales] Hier vorne zieht es wie im Stall.",
+  "en": "There's a draught up front like a barn."
+ },
+ {
+  "id": "FU-190",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "keying the set",
+  "de": "[clears throat]",
+  "en": "(clears throat)"
+ },
+ {
+  "id": "FU-191",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "listening hard",
+  "de": "[holds breath]",
+  "en": "(held breath)"
+ },
+ {
+  "id": "FU-192",
+  "role": "FU",
+  "register": "urgent",
+  "int": 3,
+  "when": "near miss",
+  "de": "[yelps]",
+  "en": "(yelp)"
+ },
+ {
+  "id": "FU-193",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "wounded",
+  "de": "[cries out] Ah!",
+  "en": "(pain)"
+ },
+ {
+  "id": "FU-194",
+  "role": "FU",
+  "register": "urgent",
+  "int": 5,
+  "when": "dying",
+  "de": "[ragged, failing breaths]",
+  "en": "(failing breath)"
+ },
+ {
+  "id": "FU-195",
+  "role": "FU",
+  "register": "calm",
+  "int": 2,
+  "when": "nervous laugh",
+  "de": "[nervous laugh] Heh-heh.",
+  "en": "(nervous laugh)"
+ },
+ {
+  "id": "FU-196",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "sobbing once",
+  "de": "[single sob]",
+  "en": "(sob)"
+ },
+ {
+  "id": "FU-197",
+  "role": "FU",
+  "register": "urgent",
+  "int": 4,
+  "when": "smoke",
+  "de": "[coughing]",
+  "en": "(coughing)"
+ },
+ {
+  "id": "FU-198",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "relief",
+  "de": "[breath out, almost a laugh]",
+  "en": "(relief)"
+ },
+ {
+  "id": "FU-199",
+  "role": "FU",
+  "register": "calm",
+  "int": 1,
+  "when": "humming along to the set",
+  "de": "[hums softly]",
+  "en": "(humming)"
+ },
+ {
+  "id": "KDT-001",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "crew boards, before start",
+  "de": "[calm, low] Alles auf Gefechtsstation. Meldung.",
+  "en": "All at battle stations. Report."
+ },
+ {
+  "id": "KDT-002",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "ready to start",
+  "de": "[calm] Motor anlassen.",
+  "en": "Start the engine."
+ },
+ {
+  "id": "KDT-003",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "moving off",
+  "de": "[firm] Panzer marsch!",
+  "en": "Tank, advance!"
+ },
+ {
+  "id": "KDT-004",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "closing up before contact",
+  "de": "[quiet, steady] Luken dicht.",
+  "en": "Hatches shut."
+ },
+ {
+  "id": "KDT-005",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "routine halt",
+  "de": "[clipped] Fahrer, halt.",
+  "en": "Driver, halt."
+ },
+ {
+  "id": "KDT-006",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "creeping forward",
+  "de": "[calm] Langsam vor. Schritt.",
+  "en": "Slowly forward. Walking pace."
+ },
+ {
+  "id": "KDT-007",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "choosing a route",
+  "de": "Fahrer, links ran an die Baumreihe.",
+  "en": "Driver, close up left to the tree line."
+ },
+ {
+  "id": "KDT-008",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "nerves before contact",
+  "de": "[low, to himself] [exhales] Ruhig... ganz ruhig.",
+  "en": "Easy... nice and easy."
+ },
+ {
+  "id": "KDT-009",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "marching in column",
+  "de": "[firm] Abstand halten. Nicht aufschließen.",
+  "en": "Keep distance. Don't close up."
+ },
+ {
+  "id": "KDT-010",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "stuffy cabin on the march",
+  "de": "[dry] Wer raucht, lüftet.",
+  "en": "Whoever smokes, airs out."
+ },
+ {
+  "id": "KDT-011",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "a noise ahead",
+  "de": "[sharp] Halt! Motor aus. Horchen.",
+  "en": "Halt! Engine off. Listen."
+ },
+ {
+  "id": "KDT-012",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "lying in ambush",
+  "de": "[whispering] Keiner rührt sich.",
+  "en": "Nobody moves."
+ },
+ {
+  "id": "KDT-013",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "head out of the cupola",
+  "de": "[calm, raised over wind] Ich bin oben. Fahrt halten.",
+  "en": "I'm up top. Hold speed."
+ },
+ {
+  "id": "KDT-014",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "dropping back inside",
+  "de": "[quick] Kopf rein. Luke zu.",
+  "en": "Head in. Hatch shut."
+ },
+ {
+  "id": "KDT-020",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "tank sighted, far",
+  "de": "[alert] Achtung. Panzer, zwei Uhr, achthundert.",
+  "en": "Attention. Tank, two o'clock, eight hundred."
+ },
+ {
+  "id": "KDT-021",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "tank sighted, moving",
+  "de": "[urgent] Panzer! Elf Uhr, sechshundert, fährt nach rechts!",
+  "en": "Tank! Eleven o'clock, six hundred, moving right!"
+ },
+ {
+  "id": "KDT-022",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "tank sighted, close",
+  "de": "[shouting] Panzer rechts! Dreihundert! Turm rechts, SCHNELL!",
+  "en": "Tank right! Three hundred! Turret right, FAST!"
+ },
+ {
+  "id": "KDT-023",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "anti-tank gun sighted",
+  "de": "[urgent] Pak! Zwölf Uhr, am Waldrand, vierhundert!",
+  "en": "AT gun! Twelve o'clock, at the wood's edge, four hundred!"
+ },
+ {
+  "id": "KDT-024",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "infantry sighted",
+  "de": "[steady] Infanterie, zehn Uhr, im Graben. Funker, Bug-MG.",
+  "en": "Infantry, ten o'clock, in the ditch. Radio operator, bow MG."
+ },
+ {
+  "id": "KDT-025",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "infantry at the hull",
+  "de": "[sharp] Nahkämpfer links am Wagen! MG!",
+  "en": "Close-assault men left of the vehicle! MG!"
+ },
+ {
+  "id": "KDT-026",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "muzzle flash seen",
+  "de": "[thinking aloud] Da... Mündungsfeuer. Halb eins, hinter dem Schuppen.",
+  "en": "There... muzzle flash. Half past twelve, behind the shed."
+ },
+ {
+  "id": "KDT-027",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "enemy unaware",
+  "de": "[calm, precise] Zwei T vierunddreißig, ein Uhr, tausendzweihundert. Die sehen uns nicht.",
+  "en": "Two T-34s, one o'clock, twelve hundred. They don't see us."
+ },
+ {
+  "id": "KDT-028",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "choosing between targets",
+  "de": "[tense] Der Linke zuerst. Der dreht den Turm.",
+  "en": "The left one first. He's turning his turret."
+ },
+ {
+  "id": "KDT-029",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "distant movement",
+  "de": "[low] Staubfahne am Horizont. Beobachten.",
+  "en": "Dust plume on the horizon. Observe."
+ },
+ {
+  "id": "KDT-030",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "enemy behind",
+  "de": "[shouting] Hinter uns! Sechs Uhr! Fahrer, wenden!",
+  "en": "Behind us! Six o'clock! Driver, turn about!"
+ },
+ {
+  "id": "KDT-031",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "unsure who it is",
+  "de": "[doubtful] Eigene? ... Nein. Nicht schießen, erst sicher sein.",
+  "en": "Ours? ... No. Don't fire, be sure first."
+ },
+ {
+  "id": "KDT-032",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "soft target",
+  "de": "[hissing] Lastwagen mit Geschütz, drei Uhr. Sprenggranate.",
+  "en": "Truck with a gun, three o'clock. HE."
+ },
+ {
+  "id": "KDT-033",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "target lost",
+  "de": "[annoyed] Weg. Hinter die Häuser. Rohr auf die Lücke.",
+  "en": "Gone. Behind the houses. Gun on the gap."
+ },
+ {
+  "id": "KDT-034",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "many targets",
+  "de": "[strained, fast] Vier, fünf... das ist eine ganze Kompanie!",
+  "en": "Four, five... that's a whole company!"
+ },
+ {
+  "id": "KDT-040",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "releasing the gunner",
+  "de": "[firm] Panzergranate. Feuer frei.",
+  "en": "AP. Fire at will."
+ },
+ {
+  "id": "KDT-041",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "the order to fire",
+  "de": "[sharp] Feuer!",
+  "en": "Fire!"
+ },
+ {
+  "id": "KDT-042",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "engaging a gun or infantry",
+  "de": "[calm] Sprenggranate, Aufschlagzünder. Auf die Pak.",
+  "en": "HE, impact fuse. On the AT gun."
+ },
+ {
+  "id": "KDT-043",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "holding fire for a better shot",
+  "de": "[steady, drawn out] Warten... warten...",
+  "en": "Wait... wait..."
+ },
+ {
+  "id": "KDT-044",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "the moment comes",
+  "de": "[sharp] Jetzt! Feuer!",
+  "en": "Now! Fire!"
+ },
+ {
+  "id": "KDT-045",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "target still alive",
+  "de": "[clipped] Noch einen drauf.",
+  "en": "Another one on him."
+ },
+ {
+  "id": "KDT-046",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "too slow",
+  "de": "[urgent] Schneller laden!",
+  "en": "Load faster!"
+ },
+ {
+  "id": "KDT-047",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "round fell short",
+  "de": "[correcting] Zu kurz. Hundert zulegen.",
+  "en": "Short. Add a hundred."
+ },
+ {
+  "id": "KDT-048",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "round went over",
+  "de": "[correcting] Zu weit. Fünfzig abbrechen.",
+  "en": "Over. Drop fifty."
+ },
+ {
+  "id": "KDT-049",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "crossing target",
+  "de": "[calm] Halbe Zielbreite vorhalten. Er fährt.",
+  "en": "Lead half a target width. He's moving."
+ },
+ {
+  "id": "KDT-050",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "picking the weak spot",
+  "de": "[tense] Auf den Turmdrehkranz halten.",
+  "en": "Aim for the turret ring."
+ },
+ {
+  "id": "KDT-051",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "stopping the shooting",
+  "de": "Feuer einstellen.",
+  "en": "Cease fire."
+ },
+ {
+  "id": "KDT-052",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "gun silent under threat",
+  "de": "[shouting over noise] Feuer, verdammt, FEUER!",
+  "en": "Fire, damn it, FIRE!"
+ },
+ {
+  "id": "KDT-053",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "infantry in the open",
+  "de": "[low] Turm-MG, kurze Feuerstöße.",
+  "en": "Coax MG, short bursts."
+ },
+ {
+  "id": "KDT-054",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "saving ammunition",
+  "de": "[measured] Munition sparen. Nur sichere Schüsse.",
+  "en": "Save ammunition. Sure shots only."
+ },
+ {
+  "id": "KDT-060",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "own round hits",
+  "de": "[satisfied, short] Treffer.",
+  "en": "Hit."
+ },
+ {
+  "id": "KDT-061",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "enemy tank burns",
+  "de": "[relieved exhale] Abschuss! Der brennt.",
+  "en": "Kill! He's burning."
+ },
+ {
+  "id": "KDT-062",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "own round misses",
+  "de": "[flat] Vorbei. Rechts vorbei.",
+  "en": "Miss. Wide right."
+ },
+ {
+  "id": "KDT-063",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "own round bounces",
+  "de": "[frustrated] Abpraller! Nochmal, tiefer!",
+  "en": "Ricochet! Again, lower!"
+ },
+ {
+  "id": "KDT-064",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "enemy crew bails out",
+  "de": "[watching] Besatzung bootet aus. Lassen.",
+  "en": "Crew's bailing out. Leave them."
+ },
+ {
+  "id": "KDT-065",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "hit enemy keeps firing",
+  "de": "[grim] Der schießt noch. Nachsetzen!",
+  "en": "He's still firing. Follow up!"
+ },
+ {
+  "id": "KDT-066",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "after several kills",
+  "de": "[quiet, almost to himself] Das war der Dritte heute.",
+  "en": "That was the third today."
+ },
+ {
+  "id": "KDT-067",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "a perfect shot",
+  "de": "[breathless] Volltreffer! [laughs] Sauber, Richtschütze!",
+  "en": "Direct hit! Clean, gunner!"
+ },
+ {
+  "id": "KDT-068",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "enemy immobilised",
+  "de": "[dry] Der steht. Nächstes Ziel.",
+  "en": "He's stopped. Next target."
+ },
+ {
+  "id": "KDT-069",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "enemy ammunition cooks off",
+  "de": "[warning] Munitionsbrand drüben. Kopf runter!",
+  "en": "Ammunition fire over there. Heads down!"
+ },
+ {
+  "id": "KDT-070",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "the field falls quiet",
+  "de": "[exhales] ...Keiner mehr.",
+  "en": "...None left."
+ },
+ {
+  "id": "KDT-080",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "under accurate fire",
+  "de": "[urgent] Fahrer, rückwärts marsch! In Deckung!",
+  "en": "Driver, reverse! Into cover!"
+ },
+ {
+  "id": "KDT-081",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "flank exposed",
+  "de": "[sharp] Links einschlagen! Bug zum Feind!",
+  "en": "Hard left! Bow to the enemy!"
+ },
+ {
+  "id": "KDT-082",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "time to move",
+  "de": "[firm] Stellungswechsel. Fünfzig Meter rechts, hinter die Kuppe.",
+  "en": "Change position. Fifty metres right, behind the crest."
+ },
+ {
+  "id": "KDT-083",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "crossing open ground",
+  "de": "[shouting] Gas! Gas! DURCH!",
+  "en": "Gas! Gas! THROUGH!"
+ },
+ {
+  "id": "KDT-084",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "setting the hull angle",
+  "de": "Schräg stellen. Zwei Uhr anwinkeln.",
+  "en": "Angle her. Angle to two o'clock."
+ },
+ {
+  "id": "KDT-085",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "driver turning wrongly",
+  "de": "[sharp] Nicht die Flanke zeigen!",
+  "en": "Don't show the flank!"
+ },
+ {
+  "id": "KDT-086",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "stopping to shoot",
+  "de": "[calm] Halt. Gut so. Stehen bleiben zum Schuss.",
+  "en": "Halt. Good. Stay still for the shot."
+ },
+ {
+  "id": "KDT-087",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "enemy has the range",
+  "de": "[strained] Raus hier, die haben sich eingeschossen!",
+  "en": "Out of here, they've ranged in on us!"
+ },
+ {
+  "id": "KDT-088",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "bad ground ahead",
+  "de": "Fahrer, Achtung, Mulde voraus.",
+  "en": "Driver, careful, hollow ahead."
+ },
+ {
+  "id": "KDT-089",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "bridge or soft ground",
+  "de": "[wary] Langsam. Ich traue dem Boden nicht.",
+  "en": "Slowly. I don't trust the ground."
+ },
+ {
+  "id": "KDT-100",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "hit taken, armour holds",
+  "de": "[jolted] [grunts] Treffer! Alles in Ordnung? Meldung!",
+  "en": "Hit! Everyone all right? Report!"
+ },
+ {
+  "id": "KDT-101",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "round bounced off",
+  "de": "[tense] Abgeprallt. Front hält.",
+  "en": "Bounced. Front holds."
+ },
+ {
+  "id": "KDT-102",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "hit from an unseen gun",
+  "de": "[shouting] Treffer links! WOHER?!",
+  "en": "Hit on the left! FROM WHERE?!"
+ },
+ {
+  "id": "KDT-103",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 5,
+  "when": "armour penetrated",
+  "de": "[shouting, coughing] [coughs] Durchschuss! Wer ist verletzt?!",
+  "en": "Penetration! Who's hurt?!"
+ },
+ {
+  "id": "KDT-104",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "hull lurches after a hit",
+  "de": "[urgent] Kette getroffen? Fahrer!",
+  "en": "Track hit? Driver!"
+ },
+ {
+  "id": "KDT-105",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "turret will not turn",
+  "de": "[strained] Turm klemmt. Richtschütze, von Hand!",
+  "en": "Turret's jammed. Gunner, by hand!"
+ },
+ {
+  "id": "KDT-106",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "after the first shock",
+  "de": "[controlled] Schäden melden, der Reihe nach.",
+  "en": "Report damage, in order."
+ },
+ {
+  "id": "KDT-107",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "gunner's sight destroyed",
+  "de": "Optik ist hin. Ich weise ein.",
+  "en": "Optic's gone. I'll direct."
+ },
+ {
+  "id": "KDT-108",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "deafened by a hit",
+  "de": "[too loud, dazed] Ich höre nichts! Lauter!",
+  "en": "I can't hear! Louder!"
+ },
+ {
+  "id": "KDT-109",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "tank badly hurt",
+  "de": "[grim] Noch so einer und wir stehen.",
+  "en": "One more like that and we're stuck."
+ },
+ {
+  "id": "KDT-110",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "immobilised under fire",
+  "de": "[forcing calm] Wir stehen. Dann kämpfen wir von hier.",
+  "en": "We're stuck. Then we fight from here."
+ },
+ {
+  "id": "KDT-120",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "a crewman goes silent",
+  "de": "[urgent] Funker, was ist mit dir? ANTWORTE!",
+  "en": "Radio operator, what's wrong? ANSWER!"
+ },
+ {
+  "id": "KDT-121",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "loader wounded",
+  "de": "[strained] Ladeschütze ist getroffen. Verbandpäckchen, schnell!",
+  "en": "Loader's hit. Field dressing, quick!"
+ },
+ {
+  "id": "KDT-122",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "commander wounded, light",
+  "de": "[through gritted teeth] [hisses] Mich hat's am Arm. Geht schon. Weiter.",
+  "en": "Got me in the arm. I'm fine. Carry on."
+ },
+ {
+  "id": "KDT-123",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 5,
+  "when": "commander wounded, grave",
+  "de": "[gasping] Ich... sehe nichts mehr. Richtschütze, du führst.",
+  "en": "I... can't see. Gunner, you lead."
+ },
+ {
+  "id": "KDT-124",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "a crewman is dead",
+  "de": "[quiet, hollow] ...Er ist tot. Lasst ihn. Wir müssen weiter.",
+  "en": "...He's dead. Leave him. We must go on."
+ },
+ {
+  "id": "KDT-125",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "grief pushed aside",
+  "de": "[low, shaken] Später. Darüber reden wir später.",
+  "en": "Later. We'll talk about it later."
+ },
+ {
+  "id": "KDT-126",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "a crewman freezes",
+  "de": "[barking] Reiß dich zusammen! Ich brauche dich JETZT!",
+  "en": "Pull yourself together! I need you NOW!"
+ },
+ {
+  "id": "KDT-127",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "calming a shaken man",
+  "de": "[soft] Gut gemacht, Junge. Atmen.",
+  "en": "Well done, lad. Breathe."
+ },
+ {
+  "id": "KDT-128",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "reassigning a post",
+  "de": "[decisive] Funker, du lädst. Los, rüber!",
+  "en": "Radio operator, you load. Go, get across!"
+ },
+ {
+  "id": "KDT-140",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "engine bay fire",
+  "de": "[shouting] Feuer im Motorraum! Löscher!",
+  "en": "Fire in the engine bay! Extinguisher!"
+ },
+ {
+  "id": "KDT-141",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 5,
+  "when": "fire in the crew space",
+  "de": "[screaming] Feuer im Kampfraum! Raus! ALLE RAUS!",
+  "en": "Fire in the fighting compartment! Out! EVERYBODY OUT!"
+ },
+ {
+  "id": "KDT-142",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 5,
+  "when": "the order to abandon",
+  "de": "[shouting] Ausbooten! Ausbooten!",
+  "en": "Bail out! Bail out!"
+ },
+ {
+  "id": "KDT-143",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "smoke fills the turret",
+  "de": "[coughing] [coughs] Luke auf! Qualm!",
+  "en": "Hatch open! Smoke!"
+ },
+ {
+  "id": "KDT-144",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "extinguisher used",
+  "de": "[urgent] Feuer aus? Meldung!",
+  "en": "Fire out? Report!"
+ },
+ {
+  "id": "KDT-145",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 5,
+  "when": "outside, tank burning",
+  "de": "[desperate] Die Munition geht hoch, weg vom Wagen!",
+  "en": "The ammunition's going up, away from the vehicle!"
+ },
+ {
+  "id": "KDT-146",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "in cover after bailing out",
+  "de": "[breathing hard] Alle da? Durchzählen.",
+  "en": "All here? Count off."
+ },
+ {
+  "id": "KDT-147",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "looking back at the wreck",
+  "de": "[exhausted, flat] Wagen ist verloren.",
+  "en": "The vehicle's lost."
+ },
+ {
+  "id": "KDT-160",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "contact report",
+  "de": "[radio voice, measured] Hier Tiger zwo eins eins. Feindpanzer, Planquadrat Dora vier. Kommen.",
+  "en": "This is Tiger two-one-one. Enemy armour, grid Dora four. Over."
+ },
+ {
+  "id": "KDT-161",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "calling for help",
+  "de": "[urgent] Zwo eins eins an Kompanie: liegen unter Pakfeuer, brauchen Nebel!",
+  "en": "Two-one-one to company: under AT fire, need smoke!"
+ },
+ {
+  "id": "KDT-162",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "acknowledging an order",
+  "de": "[clipped] Verstanden. Greifen an. Ende.",
+  "en": "Understood. Attacking. Out."
+ },
+ {
+  "id": "KDT-163",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "wingman missing",
+  "de": "[tense] Zwo eins zwo, wo bleibt ihr?!",
+  "en": "Two-one-two, where are you?!"
+ },
+ {
+  "id": "KDT-164",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "result report",
+  "de": "[flat] Melde: drei Feindpanzer vernichtet, eigener Wagen fahrbereit.",
+  "en": "Report: three enemy tanks destroyed, own vehicle mobile."
+ },
+ {
+  "id": "KDT-165",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "immobilised",
+  "de": "[strained] Kette gerissen, bewegungsunfähig. Erbitte Bergung.",
+  "en": "Track broken, immobile. Request recovery."
+ },
+ {
+  "id": "KDT-166",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "quiet sector",
+  "de": "[tired] Zwo eins eins, in Stellung. Ruhe im Abschnitt.",
+  "en": "Two-one-one, in position. Sector quiet."
+ },
+ {
+  "id": "KDT-167",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "no answer on the net",
+  "de": "[uneasy] Kompanie, kommen. ... Kompanie, bitte kommen.",
+  "en": "Company, come in. ... Company, please come in."
+ },
+ {
+  "id": "KDT-180",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "long wait",
+  "de": "[sighs] Zigarette? ... Nein. Später.",
+  "en": "Cigarette? ... No. Later."
+ },
+ {
+  "id": "KDT-181",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "bad news on the net",
+  "de": "[dry humour] Wenn das der Wetterbericht war, will ich den Rest nicht hören.",
+  "en": "If that was the weather report, I don't want the rest."
+ },
+ {
+  "id": "KDT-182",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "dawn after no sleep",
+  "de": "[quiet] Wie viel Schlaf hattet ihr? ... Dachte ich mir.",
+  "en": "How much sleep did you get? ... Thought so."
+ },
+ {
+  "id": "KDT-183",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "nothing moves",
+  "de": "[uneasy] Zu still. Gefällt mir nicht.",
+  "en": "Too quiet. I don't like it."
+ },
+ {
+  "id": "KDT-184",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "after a hard fight",
+  "de": "[warm] Ihr habt euch gut gehalten.",
+  "en": "You held up well."
+ },
+ {
+  "id": "KDT-185",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "end of the day",
+  "de": "[mutters] [exhales] Noch ein Tag.",
+  "en": "One more day."
+ },
+ {
+  "id": "KDT-186",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "before an attack",
+  "de": "[cold] Keine Heldentaten. Wir kommen heil zurück.",
+  "en": "No heroics. We come back in one piece."
+ },
+ {
+  "id": "KDT-187",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "fighting sleep",
+  "de": "[yawns] Entschuldigung. Weiter beobachten.",
+  "en": "Excuse me. Keep observing."
+ },
+ {
+  "id": "KDT-188",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "engines in the dark",
+  "de": "[whispering urgently] Still! ... Hört ihr das? Ketten.",
+  "en": "Quiet! ... Hear that? Tracks."
+ },
+ {
+  "id": "KDT-189",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "rain on the armour",
+  "de": "[soft, distant] Bei uns zu Hause regnet es jetzt auch.",
+  "en": "It's raining at home now too."
+ },
+ {
+  "id": "KDT-190",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "tension eases",
+  "de": "[exhales slowly]",
+  "en": "(long breath out)"
+ },
+ {
+  "id": "KDT-191",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "sudden sighting",
+  "de": "[sharp inhale]",
+  "en": "(sharp breath in)"
+ },
+ {
+  "id": "KDT-192",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "struck by a splinter",
+  "de": "[grunts in pain] Ah!",
+  "en": "(pain)"
+ },
+ {
+  "id": "KDT-193",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 5,
+  "when": "burned or badly hit",
+  "de": "[screams]",
+  "en": "(scream)"
+ },
+ {
+  "id": "KDT-194",
+  "role": "KDT",
+  "register": "calm",
+  "int": 2,
+  "when": "about to give an order",
+  "de": "[clears throat]",
+  "en": "(clears throat)"
+ },
+ {
+  "id": "KDT-195",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "smoke in the turret",
+  "de": "[coughing fit]",
+  "en": "(coughing)"
+ },
+ {
+  "id": "KDT-196",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "grim amusement",
+  "de": "[short dry laugh] Ha.",
+  "en": "(dry laugh)"
+ },
+ {
+  "id": "KDT-197",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 3,
+  "when": "something goes wrong",
+  "de": "[curses under breath] Scheiße.",
+  "en": "Shit."
+ },
+ {
+  "id": "KDT-198",
+  "role": "KDT",
+  "register": "urgent",
+  "int": 4,
+  "when": "after running",
+  "de": "[panting]",
+  "en": "(out of breath)"
+ },
+ {
+  "id": "KDT-199",
+  "role": "KDT",
+  "register": "calm",
+  "int": 1,
+  "when": "passing time on watch",
+  "de": "[hums tunelessly] Hm-hm...",
+  "en": "(humming)"
+ },
+ {
+  "id": "LS-001",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "reporting ready",
+  "de": "[calm] Ladeschütze bereit.",
+  "en": "Loader ready."
+ },
+ {
+  "id": "LS-002",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "checking the breech",
+  "de": "Verschluss frei. Rohr frei.",
+  "en": "Breech clear. Barrel clear."
+ },
+ {
+  "id": "LS-003",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "counting the load",
+  "de": "[routine] Zweiundneunzig Schuss an Bord. Alles verzurrt.",
+  "en": "Ninety-two rounds aboard. All lashed."
+ },
+ {
+  "id": "LS-004",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "first round ordered up",
+  "de": "[alert] Welche zuerst? Panzer oder Spreng?",
+  "en": "Which first? AP or HE?"
+ },
+ {
+  "id": "LS-005",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "MG belts ready",
+  "de": "Turm-MG geladen. Gurte liegen bereit.",
+  "en": "Coax loaded. Belts laid ready."
+ },
+ {
+  "id": "LS-006",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "ventilator on",
+  "de": "[flat] Lüfter läuft.",
+  "en": "Ventilator's running."
+ },
+ {
+  "id": "LS-007",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "hatch check",
+  "de": "[quiet] Meine Luke ist dicht.",
+  "en": "My hatch is shut."
+ },
+ {
+  "id": "LS-020",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "AP loaded",
+  "de": "[loud, clear] Panzergranate geladen!",
+  "en": "AP loaded!"
+ },
+ {
+  "id": "LS-021",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "HE loaded",
+  "de": "[loud, clear] Sprenggranate geladen!",
+  "en": "HE loaded!"
+ },
+ {
+  "id": "LS-022",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "loaded, fast fight",
+  "de": "[sharp] Geladen!",
+  "en": "Loaded!"
+ },
+ {
+  "id": "LS-023",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "loading under pressure",
+  "de": "[strains] [grunts] Drin! Geladen!",
+  "en": "In! Loaded!"
+ },
+ {
+  "id": "LS-024",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "acknowledging the round type",
+  "de": "[clipped] Panzergranate, jawohl.",
+  "en": "AP, yes sir."
+ },
+ {
+  "id": "LS-025",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "change of round ordered late",
+  "de": "[annoyed] Panzer ist schon drin! Erst raus damit!",
+  "en": "AP's already in! Got to fire it first!"
+ },
+ {
+  "id": "LS-026",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "standing clear of the recoil",
+  "de": "[quick] Frei!",
+  "en": "Clear!"
+ },
+ {
+  "id": "LS-027",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "keeping the rhythm",
+  "de": "[breathing hard] Nächste liegt bereit!",
+  "en": "Next one's ready!"
+ },
+ {
+  "id": "LS-028",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "slow because of the turret angle",
+  "de": "[strained] Komme schlecht ran, Turm steht quer!",
+  "en": "Hard to reach, turret's across!"
+ },
+ {
+  "id": "LS-029",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "exhausted but loading",
+  "de": "[panting] Geladen... [exhales] geladen.",
+  "en": "Loaded... loaded."
+ },
+ {
+  "id": "LS-030",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "a heavy round slips",
+  "de": "[alarmed] Vorsicht! Fast gefallen!",
+  "en": "Careful! Nearly dropped it!"
+ },
+ {
+  "id": "LS-031",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "fastest loading of his life",
+  "de": "[shouting] Geladen, geladen, SCHIESS!",
+  "en": "Loaded, loaded, SHOOT!"
+ },
+ {
+  "id": "LS-040",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "spent case stuck",
+  "de": "[urgent] Hülse klemmt!",
+  "en": "Case is stuck!"
+ },
+ {
+  "id": "LS-041",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "breech will not close",
+  "de": "[straining] [grunts] Verschluss geht nicht zu!",
+  "en": "Breech won't close!"
+ },
+ {
+  "id": "LS-042",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "misfire",
+  "de": "[tense] Versager! Nicht anfassen. Warten.",
+  "en": "Misfire! Don't touch. Wait."
+ },
+ {
+  "id": "LS-043",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "counting off a misfire",
+  "de": "[counting, low] ...achtundzwanzig, neunundzwanzig, dreißig. Öffne.",
+  "en": "...twenty-eight, twenty-nine, thirty. Opening."
+ },
+ {
+  "id": "LS-044",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "case cleared",
+  "de": "[relieved] Hülse ist raus! Weiter!",
+  "en": "Case is out! Carry on!"
+ },
+ {
+  "id": "LS-045",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "round stuck in its rack",
+  "de": "[frustrated] Die Granate sitzt fest im Halter!",
+  "en": "The round's stuck in its rack!"
+ },
+ {
+  "id": "LS-046",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "case bin full",
+  "de": "[annoyed] Hülsensack voll. Die fallen mir vor die Füße.",
+  "en": "Case bag's full. They're falling at my feet."
+ },
+ {
+  "id": "LS-047",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "hot case burns him",
+  "de": "[hisses] Heiß! Verdammte Hülse!",
+  "en": "Hot! Damned case!"
+ },
+ {
+  "id": "LS-048",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "recoil guard bent",
+  "de": "Abweiser verbogen! Ich komme nicht mehr durch!",
+  "en": "Recoil guard's bent! I can't get through!"
+ },
+ {
+  "id": "LS-049",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "breech cleared by force",
+  "de": "[effort] Mit dem Hammer. [grunts] So. Geht wieder.",
+  "en": "With the hammer. There. Works again."
+ },
+ {
+  "id": "LS-060",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "routine count",
+  "de": "[flat] Noch vierzig Panzer, dreißig Spreng.",
+  "en": "Forty AP left, thirty HE."
+ },
+ {
+  "id": "LS-061",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "running low",
+  "de": "[concerned] Noch zehn Panzergranaten.",
+  "en": "Ten AP left."
+ },
+ {
+  "id": "LS-062",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "nearly out",
+  "de": "[urgent] Drei Panzergranaten! Dann nur noch Spreng!",
+  "en": "Three AP! Then only HE!"
+ },
+ {
+  "id": "LS-063",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "AP gone",
+  "de": "[shouting] Panzergranaten ALLE!",
+  "en": "AP's ALL GONE!"
+ },
+ {
+  "id": "LS-064",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "ready racks empty",
+  "de": "[breathing hard] Bereitschaftsmunition leer. Greife auf den Boden.",
+  "en": "Ready rounds are gone. Going to the floor stowage."
+ },
+ {
+  "id": "LS-065",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "damaged rounds found",
+  "de": "[wary] Zwei Hülsen sind eingedrückt. Die lade ich nicht.",
+  "en": "Two cases are dented. I'm not loading those."
+ },
+ {
+  "id": "LS-066",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "throwing out damaged rounds",
+  "de": "[effort] Die fliegen raus. Luke auf, kurz!",
+  "en": "They're going out. Hatch open, quick!"
+ },
+ {
+  "id": "LS-067",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "last round",
+  "de": "[grim] Das ist die Letzte. Mach was draus.",
+  "en": "That's the last one. Make it count."
+ },
+ {
+  "id": "LS-068",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "MG ammunition low",
+  "de": "Noch zwei Gurte fürs MG.",
+  "en": "Two belts left for the MG."
+ },
+ {
+  "id": "LS-080",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "belt changed",
+  "de": "[quick] Gurt gewechselt!",
+  "en": "Belt changed!"
+ },
+ {
+  "id": "LS-081",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "clearing an MG stoppage",
+  "de": "[concentrating] Hemmung... Patrone quer. Moment!",
+  "en": "Stoppage... round's crossed. A moment!"
+ },
+ {
+  "id": "LS-082",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "barrel change",
+  "de": "[effort] Laufwechsel. [hisses] Heiß.",
+  "en": "Barrel change. Hot."
+ },
+ {
+  "id": "LS-083",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "MG ready again",
+  "de": "MG wieder klar!",
+  "en": "MG clear again!"
+ },
+ {
+  "id": "LS-084",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "closing his hatch",
+  "de": "[grunts] Luke zu!",
+  "en": "Hatch shut!"
+ },
+ {
+  "id": "LS-085",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "throwing a spent case out",
+  "de": "[effort] Raus mit dem Ding.",
+  "en": "Out with the thing."
+ },
+ {
+  "id": "LS-100",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "fumes build up",
+  "de": "[coughs] Pulvergase! Lüfter schafft das nicht!",
+  "en": "Powder fumes! The ventilator can't keep up!"
+ },
+ {
+  "id": "LS-101",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "ventilator dead",
+  "de": "[coughing] Lüfter steht! Luke auf, bitte!",
+  "en": "Ventilator's stopped! Hatch open, please!"
+ },
+ {
+  "id": "LS-102",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "dizzy from fumes",
+  "de": "[slurred, weak] Mir wird schwarz...",
+  "en": "Everything's going black..."
+ },
+ {
+  "id": "LS-103",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "heat in the turret",
+  "de": "[wipes face] [exhales] Wie im Backofen.",
+  "en": "Like an oven."
+ },
+ {
+  "id": "LS-104",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "arms giving out",
+  "de": "[panting] Arme sind Blei. Ich mach weiter.",
+  "en": "Arms are lead. I'll keep going."
+ },
+ {
+  "id": "LS-105",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "drinking",
+  "de": "[swallows] [exhales] Wasser. Wer noch?",
+  "en": "Water. Anyone else?"
+ },
+ {
+  "id": "LS-106",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "asks what is happening",
+  "de": "[anxious] Was ist da draußen? Ich sehe nichts!",
+  "en": "What's out there? I can't see anything!"
+ },
+ {
+  "id": "LS-107",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "hears a hit on the armour",
+  "de": "[startled] Was war das?!",
+  "en": "What was that?!"
+ },
+ {
+  "id": "LS-120",
+  "role": "LS",
+  "register": "urgent",
+  "int": 5,
+  "when": "hand caught in the breech",
+  "de": "[screaming] Meine Hand! Die Hand ist drin!",
+  "en": "My hand! My hand's in it!"
+ },
+ {
+  "id": "LS-121",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "struck by the recoil",
+  "de": "[winded] [gasps] Rücklauf... hat mich erwischt.",
+  "en": "The recoil... caught me."
+ },
+ {
+  "id": "LS-122",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "splinter wound",
+  "de": "[through gritted teeth] Splitter in der Schulter. Links kann ich noch.",
+  "en": "Splinter in the shoulder. I can still use the left."
+ },
+ {
+  "id": "LS-123",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "cannot load any more",
+  "de": "[despairing] Ich kriege sie nicht mehr hoch. Jemand muss laden!",
+  "en": "I can't lift them any more. Someone has to load!"
+ },
+ {
+  "id": "LS-124",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "fear, blind in the turret",
+  "de": "[tight] Sagt mir einfach, wenn es vorbei ist.",
+  "en": "Just tell me when it's over."
+ },
+ {
+  "id": "LS-125",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "commander praises him",
+  "de": "[proud, shy] Zwölf Schuss in zwei Minuten. Nicht schlecht, oder?",
+  "en": "Twelve rounds in two minutes. Not bad, eh?"
+ },
+ {
+  "id": "LS-126",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "sees a comrade dead",
+  "de": "[choked] Nein. Nein, nein...",
+  "en": "No. No, no..."
+ },
+ {
+  "id": "LS-127",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "treating a wound",
+  "de": "[steady, gentle] Halt still. Ich drücke drauf.",
+  "en": "Hold still. I'm pressing on it."
+ },
+ {
+  "id": "LS-140",
+  "role": "LS",
+  "register": "urgent",
+  "int": 5,
+  "when": "propellant catches",
+  "de": "[screaming] Die Kartuschen brennen! RAUS!",
+  "en": "The charges are burning! OUT!"
+ },
+ {
+  "id": "LS-141",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "reaching for the extinguisher",
+  "de": "[shouting] Löscher! Gib her!",
+  "en": "Extinguisher! Give it here!"
+ },
+ {
+  "id": "LS-142",
+  "role": "LS",
+  "register": "urgent",
+  "int": 5,
+  "when": "his hatch jammed",
+  "de": "[panicked] Luke klemmt! Ich kriege sie nicht auf!",
+  "en": "Hatch is jammed! I can't open it!"
+ },
+ {
+  "id": "LS-143",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "out through the hatch",
+  "de": "[shouting] Bin draußen!",
+  "en": "I'm out!"
+ },
+ {
+  "id": "LS-144",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "fire put out",
+  "de": "[panting, coughing] [coughs] Aus. Feuer ist aus.",
+  "en": "Out. The fire's out."
+ },
+ {
+  "id": "LS-160",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "resting on the rounds",
+  "de": "[tired] Weckt mich, wenn einer was zu laden hat.",
+  "en": "Wake me when somebody has something to load."
+ },
+ {
+  "id": "LS-161",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "stowing fresh rounds",
+  "de": "[content] Volle Halter. Schöner Anblick.",
+  "en": "Full racks. Fine sight."
+ },
+ {
+  "id": "LS-162",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "joking about his job",
+  "de": "[wry] Ihr schaut raus, ich hebe Eisen. Gerechte Welt.",
+  "en": "You look out, I lift iron. A fair world."
+ },
+ {
+  "id": "LS-163",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "hungry",
+  "de": "[plaintive] Hat einer noch Brot?",
+  "en": "Anyone got bread left?"
+ },
+ {
+  "id": "LS-164",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "superstition",
+  "de": "[low] Die Erste jedes Tages küsse ich. Lacht nur.",
+  "en": "I kiss the first one every day. Go on, laugh."
+ },
+ {
+  "id": "LS-165",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "quiet fear",
+  "de": "[barely audible] Ich will nicht hier drin sterben.",
+  "en": "I don't want to die in here."
+ },
+ {
+  "id": "LS-190",
+  "role": "LS",
+  "register": "calm",
+  "int": 2,
+  "when": "lifting a round",
+  "de": "[strains] Hnnh!",
+  "en": "(lifting effort)"
+ },
+ {
+  "id": "LS-191",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "ramming it home",
+  "de": "[sharp grunt] Hah!",
+  "en": "(ramming effort)"
+ },
+ {
+  "id": "LS-192",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "catching breath",
+  "de": "[panting]",
+  "en": "(out of breath)"
+ },
+ {
+  "id": "LS-193",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "fumes",
+  "de": "[coughs twice]",
+  "en": "(coughing)"
+ },
+ {
+  "id": "LS-194",
+  "role": "LS",
+  "register": "urgent",
+  "int": 3,
+  "when": "burned by a case",
+  "de": "[hisses sharply] Sss!",
+  "en": "(burn)"
+ },
+ {
+  "id": "LS-195",
+  "role": "LS",
+  "register": "urgent",
+  "int": 5,
+  "when": "crushed hand",
+  "de": "[screams]",
+  "en": "(scream)"
+ },
+ {
+  "id": "LS-196",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "relief",
+  "de": "[long exhale]",
+  "en": "(relief)"
+ },
+ {
+  "id": "LS-197",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "retching from fumes",
+  "de": "[gags, coughs]",
+  "en": "(retching)"
+ },
+ {
+  "id": "LS-198",
+  "role": "LS",
+  "register": "calm",
+  "int": 1,
+  "when": "dry laugh",
+  "de": "[chuckles] Heh.",
+  "en": "(chuckle)"
+ },
+ {
+  "id": "LS-199",
+  "role": "LS",
+  "register": "urgent",
+  "int": 4,
+  "when": "whimper",
+  "de": "[whimpers]",
+  "en": "(whimper)"
+ },
+ {
+  "id": "RS-001",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "reporting ready",
+  "de": "[calm] Richtschütze bereit.",
+  "en": "Gunner ready."
+ },
+ {
+  "id": "RS-002",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "checking the sight",
+  "de": "[quiet, concentrating] Optik klar. Strichplatte beleuchtet.",
+  "en": "Optic clear. Reticle lit."
+ },
+ {
+  "id": "RS-003",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "checking traverse",
+  "de": "Turm läuft. Schwenkwerk in Ordnung.",
+  "en": "Turret runs. Traverse in order."
+ },
+ {
+  "id": "RS-004",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "checking the firing circuit",
+  "de": "[routine] Abfeuerung geprüft. Sicherung drin.",
+  "en": "Firing circuit checked. Safety on."
+ },
+ {
+  "id": "RS-005",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "before moving off",
+  "de": "[low] Rohr gezurrt.",
+  "en": "Gun locked."
+ },
+ {
+  "id": "RS-006",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "going into action",
+  "de": "[alert] Rohr frei. Entsichert.",
+  "en": "Gun free. Safety off."
+ },
+ {
+  "id": "RS-007",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "dirty lens",
+  "de": "[mutters] Dreck auf der Optik. Moment.",
+  "en": "Dirt on the optic. A moment."
+ },
+ {
+  "id": "RS-008",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "after boresighting",
+  "de": "[satisfied] Justiert. Die schießt, wohin ich schaue.",
+  "en": "Zeroed. She shoots where I look."
+ },
+ {
+  "id": "RS-020",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "target found",
+  "de": "[alert] Ziel erkannt!",
+  "en": "Target identified!"
+ },
+ {
+  "id": "RS-021",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "target in the reticle",
+  "de": "[focused, low] Hab ihn im Strich.",
+  "en": "Got him on the line."
+ },
+ {
+  "id": "RS-022",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "cannot find the target",
+  "de": "[tense] Sehe ihn nicht. Wo?",
+  "en": "Can't see him. Where?"
+ },
+ {
+  "id": "RS-023",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "range set",
+  "de": "[clipped] Entfernung achthundert. Eingestellt.",
+  "en": "Range eight hundred. Set."
+ },
+ {
+  "id": "RS-024",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "moving target",
+  "de": "[concentrating] Er fährt. Halte vor.",
+  "en": "He's moving. Leading him."
+ },
+ {
+  "id": "RS-025",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "target behind cover",
+  "de": "[patient] Hinter der Deckung. Ich warte auf ihn.",
+  "en": "Behind cover. I'm waiting for him."
+ },
+ {
+  "id": "RS-026",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "target lost in smoke",
+  "de": "[frustrated] Qualm! Ziel verloren!",
+  "en": "Smoke! Target lost!"
+ },
+ {
+  "id": "RS-027",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "traversing a long way",
+  "de": "[strained, fast] Schwenke... schwenke... gleich!",
+  "en": "Traversing... traversing... nearly!"
+ },
+ {
+  "id": "RS-028",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "poor light",
+  "de": "[squinting] Zu dunkel. Ich sehe nur den Umriss.",
+  "en": "Too dark. I only see the outline."
+ },
+ {
+  "id": "RS-029",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "two targets",
+  "de": "[quick] Zwei! Welchen zuerst?",
+  "en": "Two! Which first?"
+ },
+ {
+  "id": "RS-030",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "sun in the sight",
+  "de": "[annoyed] Sonne im Glas. Kaum was zu sehen.",
+  "en": "Sun in the glass. Can hardly see."
+ },
+ {
+  "id": "RS-031",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "target very close",
+  "de": "[startled] Der steht ja direkt vor uns!",
+  "en": "He's right in front of us!"
+ },
+ {
+  "id": "RS-032",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "long range",
+  "de": "[doubtful] Zweitausend. Das wird knapp.",
+  "en": "Two thousand. That'll be tight."
+ },
+ {
+  "id": "RS-033",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "finding the weak spot",
+  "de": "[cold, precise] Seite. Zwischen die Laufrollen.",
+  "en": "Flank. Between the road wheels."
+ },
+ {
+  "id": "RS-040",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "ready to fire",
+  "de": "[steady] Feuerbereit!",
+  "en": "Ready to fire!"
+ },
+ {
+  "id": "RS-041",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "squeezing off",
+  "de": "[holding breath] Achtung... Schuss!",
+  "en": "Stand by... shot!"
+ },
+ {
+  "id": "RS-042",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "round gone",
+  "de": "[sharp] Abgefeuert!",
+  "en": "Fired!"
+ },
+ {
+  "id": "RS-043",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "waiting for the loader",
+  "de": "[impatient] Laden! Ich hab ihn noch!",
+  "en": "Load! I've still got him!"
+ },
+ {
+  "id": "RS-044",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "firing on the move",
+  "de": "[strained] Zu unruhig! Halt den Wagen still!",
+  "en": "Too rough! Hold the vehicle still!"
+ },
+ {
+  "id": "RS-045",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "gun not ready",
+  "de": "[urgent] Noch nicht! Rohr läuft noch vor!",
+  "en": "Not yet! Gun's still running out!"
+ },
+ {
+  "id": "RS-046",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "second shot at once",
+  "de": "[fast] Gleicher Haltepunkt. Schuss!",
+  "en": "Same aim point. Shot!"
+ },
+ {
+  "id": "RS-047",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "told to hold fire",
+  "de": "[low] Halte drauf. Sag wann.",
+  "en": "Holding on him. Say when."
+ },
+ {
+  "id": "RS-060",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "hit",
+  "de": "[flat, professional] Treffer.",
+  "en": "Hit."
+ },
+ {
+  "id": "RS-061",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "hit on the turret",
+  "de": "[pleased] Treffer Turm!",
+  "en": "Hit on the turret!"
+ },
+ {
+  "id": "RS-062",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "fell short",
+  "de": "[annoyed with himself] Kurz. Mein Fehler.",
+  "en": "Short. My mistake."
+ },
+ {
+  "id": "RS-063",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "went over",
+  "de": "Weit. Korrigiere.",
+  "en": "Over. Correcting."
+ },
+ {
+  "id": "RS-064",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "wide",
+  "de": "[clipped] Links vorbei. Er hat gebremst.",
+  "en": "Wide left. He braked."
+ },
+ {
+  "id": "RS-065",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "bounced off",
+  "de": "[disbelief] Abgeprallt?! Aus DER Entfernung?",
+  "en": "Bounced?! From THAT range?"
+ },
+ {
+  "id": "RS-066",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "enemy burning",
+  "de": "[exhales] Brennt. Abschuss.",
+  "en": "Burning. Kill."
+ },
+ {
+  "id": "RS-067",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "tracer watched in",
+  "de": "[quiet] Leuchtspur gut... sitzt.",
+  "en": "Tracer good... it's home."
+ },
+ {
+  "id": "RS-068",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "turret blown off",
+  "de": "[awed] [exhales sharply] Turm ist weg. Mein Gott.",
+  "en": "Turret's gone. My God."
+ },
+ {
+  "id": "RS-069",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "infantry suppressed",
+  "de": "[flat] Liegen in Deckung. Keiner hebt den Kopf.",
+  "en": "They're in cover. Nobody's raising his head."
+ },
+ {
+  "id": "RS-070",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "after a hard duel",
+  "de": "[shaky laugh] [laughs] Der hatte uns auch schon im Glas.",
+  "en": "He already had us in his glass too."
+ },
+ {
+  "id": "RS-080",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "firing the coax",
+  "de": "[steady] Turm-MG feuert.",
+  "en": "Coax firing."
+ },
+ {
+  "id": "RS-081",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "coax stoppage",
+  "de": "[sharp] Hemmung Turm-MG!",
+  "en": "Coax stoppage!"
+ },
+ {
+  "id": "RS-082",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "barrel hot",
+  "de": "Lauf glüht. Ladeschütze, Laufwechsel.",
+  "en": "Barrel's glowing. Loader, change the barrel."
+ },
+ {
+  "id": "RS-083",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "infantry running",
+  "de": "[cold] Die laufen. Feuerstoß hinterher.",
+  "en": "They're running. Burst after them."
+ },
+ {
+  "id": "RS-084",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "belt empty",
+  "de": "[clipped] Gurt leer.",
+  "en": "Belt empty."
+ },
+ {
+  "id": "RS-100",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "power traverse fails",
+  "de": "[urgent] Schwenkwerk fällt aus! Ich kurbele!",
+  "en": "Power traverse is out! I'm cranking!"
+ },
+ {
+  "id": "RS-101",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "turret jammed",
+  "de": "[straining] [grunts] Turm klemmt! Bewegt sich nicht!",
+  "en": "Turret's jammed! Won't move!"
+ },
+ {
+  "id": "RS-102",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "sight cracked",
+  "de": "[alarmed] Optik gesprungen! Ich sehe doppelt!",
+  "en": "Optic's cracked! I'm seeing double!"
+ },
+ {
+  "id": "RS-103",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "sight destroyed",
+  "de": "[strained] Optik ist hin. Ich bin blind!",
+  "en": "Optic's gone. I'm blind!"
+ },
+ {
+  "id": "RS-104",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "elevation stiff",
+  "de": "[effort] Höhenrichtmaschine geht schwer.",
+  "en": "Elevation gear is stiff."
+ },
+ {
+  "id": "RS-105",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "electric firing dead",
+  "de": "[quick] Abfeuerung tot! Nehme die Notabfeuerung!",
+  "en": "Firing circuit dead! Using the emergency trigger!"
+ },
+ {
+  "id": "RS-106",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "gun stays back after firing",
+  "de": "[alarmed] Rohr bleibt hinten! Läuft nicht vor!",
+  "en": "Gun's staying back! Not running out!"
+ },
+ {
+  "id": "RS-107",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "sight knocked out of true",
+  "de": "[frustrated] Sie schießt nicht mehr, wohin ich schaue. Verstellt.",
+  "en": "She doesn't shoot where I look any more. Knocked out."
+ },
+ {
+  "id": "RS-108",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "spare sight fitted",
+  "de": "[relieved] Ersatzoptik sitzt. Bin wieder da.",
+  "en": "Spare optic's in. I'm back."
+ },
+ {
+  "id": "RS-109",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "hand cranking under fire",
+  "de": "[panting] Kurbele ja! Schneller geht's nicht!",
+  "en": "I AM cranking! It won't go faster!"
+ },
+ {
+  "id": "RS-110",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "fumes after many shots",
+  "de": "[coughs] Pulverdampf. Ich sehe den Strich kaum.",
+  "en": "Powder fumes. I can hardly see the reticle."
+ },
+ {
+  "id": "RS-120",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "splinters in the face",
+  "de": "[hissing in pain] [hisses] Splitter im Gesicht. Ich kann noch.",
+  "en": "Splinters in my face. I can still go."
+ },
+ {
+  "id": "RS-121",
+  "role": "RS",
+  "register": "urgent",
+  "int": 5,
+  "when": "badly wounded",
+  "de": "[gasping] Meine Beine... ich spüre meine Beine nicht.",
+  "en": "My legs... I can't feel my legs."
+ },
+ {
+  "id": "RS-122",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "taking command",
+  "de": "[steadying himself] Kommandant fällt aus. Ich führe. Hört auf mich.",
+  "en": "Commander's down. I lead. Listen to me."
+ },
+ {
+  "id": "RS-123",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "fear held down",
+  "de": "[tight, low] Der zielt auf uns. Ich sehe sein Rohr.",
+  "en": "He's aiming at us. I can see his barrel."
+ },
+ {
+  "id": "RS-124",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "anger after a loss",
+  "de": "[furious, low] Den hole ich mir.",
+  "en": "I'll get that one."
+ },
+ {
+  "id": "RS-125",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "hands shaking",
+  "de": "[shaky exhale] Hände zittern. Gleich wieder gut.",
+  "en": "Hands are shaking. Fine in a moment."
+ },
+ {
+  "id": "RS-126",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "refusing to fire",
+  "de": "[firm] Die haben die Hände oben. Ich schieße nicht.",
+  "en": "They've got their hands up. I'm not firing."
+ },
+ {
+  "id": "RS-127",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "praise received",
+  "de": "[modest] War die Kanone, nicht ich.",
+  "en": "That was the gun, not me."
+ },
+ {
+  "id": "RS-140",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "fire seen",
+  "de": "[shouting] Es brennt! Hinter mir!",
+  "en": "Fire! Behind me!"
+ },
+ {
+  "id": "RS-141",
+  "role": "RS",
+  "register": "urgent",
+  "int": 5,
+  "when": "stuck in his seat",
+  "de": "[panicked] Ich komme nicht raus! Der Sitz!",
+  "en": "I can't get out! The seat!"
+ },
+ {
+  "id": "RS-142",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "leaving the turret",
+  "de": "[shouting] Bin raus! Nächster!",
+  "en": "I'm out! Next!"
+ },
+ {
+  "id": "RS-143",
+  "role": "RS",
+  "register": "urgent",
+  "int": 5,
+  "when": "burned hands",
+  "de": "[crying out] Meine Hände!",
+  "en": "My hands!"
+ },
+ {
+  "id": "RS-144",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "outside, counting",
+  "de": "[panting] Wo ist der Ladeschütze?",
+  "en": "Where's the loader?"
+ },
+ {
+  "id": "RS-160",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "cleaning the sight",
+  "de": "[absorbed] Gutes Glas. Das beste, was wir haben.",
+  "en": "Good glass. The best thing we have."
+ },
+ {
+  "id": "RS-161",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "long watch",
+  "de": "[bored] Ich zähle Bäume. Dreiundvierzig bisher.",
+  "en": "I'm counting trees. Forty-three so far."
+ },
+ {
+  "id": "RS-162",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "waiting for the order",
+  "de": "[quiet] Sag einfach, wenn's losgeht.",
+  "en": "Just say when it starts."
+ },
+ {
+  "id": "RS-163",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "watching civilians",
+  "de": "[soft] Da hinten pflügt einer. Als wäre nichts.",
+  "en": "Someone's ploughing back there. As if nothing was happening."
+ },
+ {
+  "id": "RS-164",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "tired eyes",
+  "de": "[rubbing eyes] [sighs] Augen brennen.",
+  "en": "Eyes are burning."
+ },
+ {
+  "id": "RS-165",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "dark thought",
+  "de": "[low] Irgendwann sind wir der im Glas.",
+  "en": "One day we're the one in the glass."
+ },
+ {
+  "id": "RS-166",
+  "role": "RS",
+  "register": "calm",
+  "int": 1,
+  "when": "teasing the loader",
+  "de": "[amused] Du lädst wie meine Großmutter. Aber zuverlässig.",
+  "en": "You load like my grandmother. But reliably."
+ },
+ {
+  "id": "RS-190",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "steadying before the shot",
+  "de": "[inhales and holds]",
+  "en": "(breath held)"
+ },
+ {
+  "id": "RS-191",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "after the shot",
+  "de": "[exhales]",
+  "en": "(breath out)"
+ },
+ {
+  "id": "RS-192",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "straining at the handwheel",
+  "de": "[strains] Hnng...",
+  "en": "(effort)"
+ },
+ {
+  "id": "RS-193",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "hit by splinters",
+  "de": "[cries out] Ah!",
+  "en": "(pain)"
+ },
+ {
+  "id": "RS-194",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "near miss",
+  "de": "[flinches] Huh!",
+  "en": "(flinch)"
+ },
+ {
+  "id": "RS-195",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "grim satisfaction",
+  "de": "[low hum of approval] Mhm.",
+  "en": "(approval)"
+ },
+ {
+  "id": "RS-196",
+  "role": "RS",
+  "register": "calm",
+  "int": 2,
+  "when": "missed an easy shot",
+  "de": "[clicks tongue] Tss.",
+  "en": "(annoyed click)"
+ },
+ {
+  "id": "RS-197",
+  "role": "RS",
+  "register": "urgent",
+  "int": 4,
+  "when": "smoke",
+  "de": "[coughing]",
+  "en": "(coughing)"
+ },
+ {
+  "id": "RS-198",
+  "role": "RS",
+  "register": "urgent",
+  "int": 3,
+  "when": "disbelief",
+  "de": "[breathes out through teeth] Pfff.",
+  "en": "(disbelief)"
+ },
+ {
+  "id": "RS-199",
+  "role": "RS",
+  "register": "urgent",
+  "int": 5,
+  "when": "agony",
+  "de": "[screams]",
+  "en": "(scream)"
+ }
+]
