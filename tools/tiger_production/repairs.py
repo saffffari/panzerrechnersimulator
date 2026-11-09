@@ -8,6 +8,7 @@ open. Counts marked "not verified" are placeholders for numbers no source was fo
 import math
 
 import bpy
+import numpy as np
 from mathutils import Matrix, Vector
 
 import repair_anim as ra
@@ -687,8 +688,133 @@ def track_tension_L():
     return _track_tension('L')
 
 
+# ------------------------------------------------------------------------- tools and cables
+def _tool_off(ctrl, rid):
+    """F1. Open a tool's clamps, lift it off the roof and hold it; then back in its clamps."""
+    D = bpy.data.objects
+    ra.kit_tools()
+    e = D['CTRL.' + ctrl]
+    what = e.get('tool_kind', 'tool')
+    mesh = next(c for c in e.children if c.type == 'MESH')
+    clamps = [c.strip() for c in e['released_by'].split(',') if c.strip().startswith('Tool_')]
+    c = e.matrix_world.translation.copy()
+    r = ra.Repair(rid, row='F1', title='%s off its clamps and back' % what.capitalize(), note='clamp strap cut from its base by colour; the wire loop does not move')
+    side = 1.0 if c.x > 0 else -1.0
+    if abs(c.x) > 1.0:
+        r.stand((c.x - side * 0.6, c.y, DECK_Z), -90.0 * side)
+    else:
+        r.stand((c.x, c.y + 0.75, DECK_Z), FWD)
+    for i, cl in enumerate(clamps):
+        open_to = min(100.0, float(D['CTRL.' + cl]['max']))
+        with r.step('clamp_%d_open' % (i + 1), seconds=0.8, player='slip the wire loop and swing the strap up'):
+            r.hand('L' if i % 2 else 'R', 'CTRL.' + cl, grip=ra.hand_pose((0.0, 0.1, 0.03), (0, 0, -1), (0, 1, 0)), a=0.0, b=1.0)
+            r.joint('CTRL.' + cl, open_to, a=0.3, b=1.0)
+            r.event('clamp_open', at=0.35)
+    held = T(0.25, 0.35, 1.05) @ Matrix.Rotation(math.radians(-90), 4, 'Y')
+    with r.step('lift', seconds=1.6, requires='clamps open', player='lift the %s off the roof' % what):
+        r.hand('R', mesh.name, a=0.0, b=1.0)
+        r.hand('L', mesh.name, a=0.0, b=1.0)
+        up = D['FRAME.' + ctrl].matrix_world.copy()
+        up.translation = up.translation + Z * 0.15
+        r.place('CTRL.' + ctrl, up, a=0.25, b=0.6)
+        r.follow('CTRL.' + ctrl, 'PLAYER.Stand', offset=T(0.0, 0.45, 1.05), a=0.95, b=1.0, reach=0.4, hold=True)
+        r.event('tool_in_hand', at=1.0)
+    with r.step('in_hand', kind='hold', seconds=0.8, player='the %s is in hand' % what):
+        r.hand('R', mesh.name, a=0.0, b=1.0)
+        r.hand('L', mesh.name, a=0.0, b=1.0)
+    with r.step('back', seconds=1.8, player='lay it back in its clamps'):
+        r.hand('R', mesh.name, a=0.0, b=1.0)
+        r.hand('L', mesh.name, a=0.0, b=1.0)
+        r.place('CTRL.' + ctrl, up, a=0.05, b=0.6, arc=0.05)
+        r.place('CTRL.' + ctrl, D['FRAME.' + ctrl].matrix_world.copy(), a=0.6, b=1.0)
+    for i, cl in enumerate(clamps):
+        with r.step('clamp_%d_shut' % (i + 1), seconds=0.7, player='swing the strap down and catch the loop'):
+            r.hand('L' if i % 2 else 'R', 'CTRL.' + cl, grip=ra.hand_pose((0.0, 0.1, 0.03), (0, 0, -1), (0, 1, 0)), a=0.0, b=1.0)
+            r.joint('CTRL.' + cl, 0.0, a=0.1, b=0.8)
+            r.event('clamp_shut', at=0.8)
+    return r.finish()
+
+
+def tool_off_hammer():
+    return _tool_off('Tool_Hammer', 'tool_off_hammer')
+
+
+def tool_off_crowbar():
+    return _tool_off('Tool_Crowbar', 'tool_off_crowbar')
+
+
+def tool_off_axe():
+    return _tool_off('Tool_Axe', 'tool_off_axe')
+
+
+def tool_off_shovel():
+    return _tool_off('Tool_Shovel', 'tool_off_shovel')
+
+
+def tool_off_wire_cutters():
+    return _tool_off('Tool_Wire_Cutters', 'tool_off_wire_cutters')
+
+
+def extinguisher_off():
+    """E10 / F1. Pull the hand extinguisher off its bracket on the engine deck, hold it, put it back."""
+    D = bpy.data.objects
+    ctrl = 'CTRL.Extinguisher'
+    c = D[ctrl].matrix_world.translation.copy()
+    r = ra.Repair('extinguisher_off', row='E10', title='Hand extinguisher off its bracket and back', note='the bracket strap is not separate in the kit')
+    r.stand((c.x * 0.45, c.y, DECK_Z), -90.0 if c.x > 0 else 90.0)
+    with r.step('pull', seconds=1.4, player='pull the bottle off its bracket'):
+        two_hands(r, ctrl, (0.0, 0.1, 0.0), (0.0, -0.1, 0.0), a=0.0, b=1.0, palm_l=(0, -1, 0), palm_r=(0, 1, 0), fingers=(0, 0, 1))
+        r.follow(ctrl, 'PLAYER.Stand', offset=T(0.0, 0.4, 1.1), a=0.9, b=1.0, reach=0.7, hold=True)
+        r.event('extinguisher_in_hand', at=1.0)
+    with r.step('in_hand', kind='hold', seconds=0.8, player='the extinguisher is in hand'):
+        two_hands(r, ctrl, (0.0, 0.1, 0.0), (0.0, -0.1, 0.0), a=0.0, b=1.0, palm_l=(0, -1, 0), palm_r=(0, 1, 0), fingers=(0, 0, 1))
+    with r.step('back', seconds=1.4, player='push it back on its bracket'):
+        two_hands(r, ctrl, (0.0, 0.1, 0.0), (0.0, -0.1, 0.0), a=0.0, b=1.0, palm_l=(0, -1, 0), palm_r=(0, 1, 0), fingers=(0, 0, 1))
+        r.place(ctrl, D['FRAME.Extinguisher'].matrix_world.copy(), a=0.1, b=0.9, arc=0.05)
+    return r.finish()
+
+
+def _tow_cable_lift(side):
+    """F2. Lift a tow cable's two eyes off their posts and put them back. The cable is rigid in
+    the rig, so it only lifts; laying it out and hooking it up need the game's rope."""
+    D = bpy.data.objects
+    ctrl = 'CTRL.Tow_Cable_' + side
+    e = D[ctrl]
+    eyes = [D[e['eye_inner']], D[e['eye_outer']]]
+    pts = []
+    for o in eyes:
+        w = np.array([o.matrix_world @ v.co for v in o.data.vertices])
+        pts.append(Vector(w[w[:, 1].argmin()]))       # the eye's loop end, on its post
+    c = (pts[0] + pts[1]) * 0.5
+    r = ra.Repair('tow_cable_eyes_off_' + side, row='F2', title='Tow cable %s: eyes off their posts and back' % side,
+                  note='rigid cable: it only lifts; hooking up needs the game\'s rope from the guide curve')
+    r.stand((c.x - (0.6 if c.x > 0 else -0.6), c.y + 0.1, DECK_Z), -90.0 if c.x > 0 else 90.0)
+    inv = ra._unscaled(e.matrix_world).inverted()
+    grips = [ra.hand_pose(inv @ (p + Vector((0, 0.08, 0.03))), (0, 0, -1), (0, 1, 0)) for p in pts]
+    with r.step('eyes_off', seconds=1.6, player='lift both eyes off their posts'):
+        r.hand('L', ctrl, grip=grips[0], a=0.0, b=1.0)
+        r.hand('R', ctrl, grip=grips[1], a=0.0, b=1.0)
+        up = D['FRAME.Tow_Cable_' + side].matrix_world.copy()
+        up.translation = up.translation + Z * 0.14
+        r.place(ctrl, up, a=0.35, b=1.0)
+        r.event('cable_free', at=0.9)
+    with r.step('free', kind='hold', seconds=0.8, player='the cable is free of its posts'):
+        r.hand('L', ctrl, grip=grips[0], a=0.0, b=1.0)
+        r.hand('R', ctrl, grip=grips[1], a=0.0, b=1.0)
+    with r.step('eyes_on', seconds=1.4, player='drop the eyes back over their posts'):
+        r.hand('L', ctrl, grip=grips[0], a=0.0, b=1.0)
+        r.hand('R', ctrl, grip=grips[1], a=0.0, b=1.0)
+        r.place(ctrl, D['FRAME.Tow_Cable_' + side].matrix_world.copy(), a=0.1, b=0.9)
+    return r.finish()
+
+
+def tow_cable_eyes_off_L():
+    return _tow_cable_lift('L')
+
+
 ALL = [starter_hand_crank, jack_off_the_plate, engine_hatch_open, fan_grille_off_L, fan_grille_off_R, deck_cap_FL,
-       track_link_replace_L, track_link_replace_R, spare_link_off, road_wheel_off_L3, arm_chained_up_L3, sprocket_cap_off_L, track_tension_L]
+       track_link_replace_L, track_link_replace_R, spare_link_off, road_wheel_off_L3, arm_chained_up_L3, sprocket_cap_off_L, track_tension_L,
+       tool_off_hammer, tool_off_crowbar, tool_off_axe, tool_off_shovel, tool_off_wire_cutters, extinguisher_off, tow_cable_eyes_off_L]
 
 
 def build_all(wipe=True, first=0, count=None):

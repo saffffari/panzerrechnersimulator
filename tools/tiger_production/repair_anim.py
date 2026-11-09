@@ -206,7 +206,10 @@ def kit_tools():
     """The kit's own hand tools, with where a hand takes each and where it works (own space)."""
     out = {}
     for key, kind, grip, tip, grip2 in (('35O21_HAMMER', 'hammer', (0.0, 0.017, -0.60), (0.0, 0.196, -0.035), (0.0, 0.017, -0.30)),
-                                        ('32O06_TOOL', 'crowbar', (0.0, -0.45, 0.0), (0.0, -1.76, 0.0), (0.0, -0.95, 0.0))):
+                                        ('32O06_TOOL', 'crowbar', (0.0, -0.45, 0.0), (0.0, -1.76, 0.0), (0.0, -0.95, 0.0)),
+                                        ('32O12_AXE', 'axe', (0.0, -0.02, -0.62), (0.0, -0.24, -0.03), (0.0, -0.02, -0.32)),
+                                        ('34O26_SHOVEL', 'shovel', (0.0, -0.12, 0.01), (0.0, -0.95, 0.01), (0.0, -0.5, 0.01)),
+                                        ('32O20_PLIERS', 'wire_cutters', (0.05, 0.0, -0.4), (0.0, 0.0, 0.09), (-0.05, 0.0, -0.4))):
         o = next(x for x in bpy.data.objects if x.type == 'MESH' and key in x.name)
         o['tool_kind'], o['grip_local'], o['tip_local'], o['grip2_local'] = kind, grip, tip, grip2
         out[kind] = o.name
@@ -278,6 +281,7 @@ def rest_basis(o):
     if 'rest_basis' not in o:
         bpy.context.view_layer.update()
         o['rest_basis'] = [c for row in o.matrix_basis for c in row]
+        o['rest_world'] = [c for row in o.matrix_world for c in row]
     v = list(o['rest_basis'])
     return Matrix([v[0:4], v[4:8], v[8:12], v[12:16]])
 
@@ -770,6 +774,23 @@ def wipe():
         _remove(a.name[7:])
     _set_registry({})
     _markers()
+    # back to the kit pose by world matrix, parents first, and forget the stored rest poses: a
+    # part may have been given a new parent control since they were taken
+    def depth(o):
+        d = 0
+        while o.parent is not None:
+            d, o = d + 1, o.parent
+        return d
+    kept = sorted([o for o in bpy.data.objects if 'rest_world' in o], key=depth)
+    for o in kept:
+        v = list(o['rest_world'])
+        bpy.context.view_layer.update()
+        o.matrix_world = Matrix([v[0:4], v[4:8], v[8:12], v[12:16]])
+    bpy.context.view_layer.update()
+    for o in bpy.data.objects:
+        for k in ('rest_basis', 'rest_world'):
+            if k in o:
+                del o[k]
 
 
 def focus(rid):
@@ -942,3 +963,34 @@ def check(rid):
             'not_home_at_last_frame': {x.replace('TG_RM5010-', '')[:28]: (round(last[x] * 1000, 1), round(math.degrees(last_rot[x]) % 360, 1)) for x in parts
                                        if last[x] > 0.0005 or 0.5 < math.degrees(last_rot[x]) % 360 < 359.5},
             'rest_after_block_mm': round(after * 1000, 3)}
+
+
+def export_batch(path, first=0, budget_s=35.0):
+    """`export` in pieces for a long timeline: writes the repairs from index `first` (in timeline
+    order) until the time budget runs out, merging into the file at `path`. Returns the next index;
+    call again until it equals the count. Start a fresh file with first=0."""
+    import os
+    import time
+    ids = [r[0] for r in listing()]
+    began = time.time()
+    data = None
+    if first > 0 and os.path.exists(path):
+        data = json.load(open(path))
+    i = first
+    tmp = path + '.part'
+    while i < len(ids) and time.time() - began < budget_s:
+        export(tmp, only=[ids[i]])
+        piece = json.load(open(tmp))
+        if data is None:
+            data = piece
+        else:
+            data['repairs'] = [r for r in data['repairs'] if r['id'] != ids[i]] + piece['repairs']
+        i += 1
+    if data is not None:
+        order = {rid: k for k, rid in enumerate(ids)}
+        data['repairs'].sort(key=lambda r: order.get(r['id'], 1e9))
+        with open(path, 'w') as fh:
+            json.dump(data, fh, separators=(',', ':'))
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    return {'next': i, 'count': len(ids), 'repairs_in_file': len(data['repairs']) if data else 0}

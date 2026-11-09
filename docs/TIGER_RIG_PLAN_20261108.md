@@ -166,6 +166,24 @@ are placeholders; the adjuster's cap is still part of the rear plate; the joint 
 fixed joint a side; the upper limit of 35 degrees on most arms is the end of the sweep, not a bump
 stop, because the kit has none.
 
+## Built: tools and tow cables (rows F1, F2, E10)
+
+Script: `tools/tiger_production/tools_rig.py`.
+
+| Control | Kind | Note |
+|---|---|---|
+| `CTRL.Tool_Axe`, `Tool_Shovel`, `Tool_Hammer`, `Tool_Crowbar`, `Tool_Wire_Cutters` | stowed part | each held by its clamps |
+| `CTRL.Tool_<name>_Clamp_<n>` | hinge, 7 in all | strap swings up: 50 degrees where the turret overhangs (axe, shovel), 106 to 140 elsewhere |
+| `CTRL.Extinguisher` | stowed part | bracket strap not separate |
+| `CTRL.Tow_Cable_L`, `_R` | stowed part | cable with its two eyes, rigid; carries its guide curve |
+| `CTRL.Tow_Point_Front_L/R`, `Tow_Point_Rear_L/R` | socket | at the four shackles |
+
+The seven clamps shared one mesh. It was cut once where the kit changes colour, into a base with
+its wire loop and a strap, and each clamp got its strap as a second object. The hinge pin is put
+at the end away from the wire loop (named approximation). The 1.79 m bar `32O06` is taken for the
+crowbar. A tow cable does not bend in the rig: the game's rope starts from the guide curve. Track
+tools and cleaning rods (F4, F5) are not in the kit; the drift and track wrench are stand-ins.
+
 ## Repair animations
 
 The owner, 8 November: "with each repair i want you to animate the repair within blender as a
@@ -217,6 +235,9 @@ Sequences built so far:
 | `arm_chained_up_L3` | A4 | 4.3 | 4 | arm jacked to 20 degrees and held (chain not modelled) |
 | `sprocket_cap_off_L` | A5 | 32.9 | 44 | eight screws out, hub cap off, back on |
 | `track_tension_L` | A6 | 3.2 | 3 | track wrench on the adjuster, turned, idler moves rearward |
+| `tool_off_hammer`, `_crowbar`, `_axe`, `_shovel`, `_wire_cutters` | F1 | 5.7 to 7.2 | 5 to 7 | clamps open, tool lifted and held, back in, clamps shut |
+| `extinguisher_off` | E10 | 3.6 | 3 | bottle off its bracket, held, back |
+| `tow_cable_eyes_off_L` | F2 | 3.8 | 3 | both eyes lifted off their posts and put back (rigid cable) |
 
 ## Planned: every other row
 
@@ -286,13 +307,9 @@ mudguards and track guards (A8, with the hull rows).
 
 ### Tools and stowage
 
-| Row | Controls | Cuts and sets | Repair sequence in rig terms |
-|---|---|---|---|
-| F1 pioneer tools | each tool stowed; each bracket strap a hinge | tool from its brackets | open the straps, lift |
-| F2 tow cables | each cable a rope along its guide curve with an eye at each end; eyes are stowed parts with sockets on the shackles | rebuild the cables from the guides | lift an eye off its hook, carry it, seat it on a shackle |
-| F3 jack | built, see above; the rack still to move with the crank | rack from body, holder clamps | free the strap and clamps, carry, wind |
-| F4 track tools | stowed, with strap hinges | find them first | lift |
-| F5 cleaning rods | stowed, with strap hinges | find them first | lift |
+F1, F2 and F3 built, see above. Still open: the cables as real ropes with eyes that reach a tow
+point (needs the game's rope), posts and cable clamps that open, track tools and cleaning rods
+(not in the kit).
 
 ## Order of work
 

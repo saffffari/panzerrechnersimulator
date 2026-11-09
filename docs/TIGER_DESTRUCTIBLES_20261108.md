@@ -86,15 +86,15 @@ How to read this:
 | E7 | Steering unit | `21K51`, `21K54` BOX, `21K59` COVER | hydraulic oil lost | wheel steering dead | steer on the emergency brake levers; top up oil | none | steering wheel, the two emergency levers |
 | E8 | Driver's controls | WHELL x2, PEDAL x3, HAND x4 in `0B16`/`0C05` | linkage bent or shot through | a control goes dead | straighten the rod | none | each control with its travel |
 | E9 | Starting gear | electric starter, inertia starter and its hand crank through the rear plate: port cover `28A-B69`, shaft `28A-Z16` (kit reading, not verified) | battery flat, starter burnt out | no electric start | two men on the crank at the rear | rigged; fault none | done 8 Nov: `CTRL.Starter_Port_Cover`, `CTRL.Starter_Crank`, `CTRL.Starter_Crank_Turn` (port cover `28A-B69`, shaft `28A-Z16`: my reading of the kit, not verified; the geared crank named TURN is the jack's) |
-| E10 | Fire extinguishers | fixed engine-bay system **(confirm)**, hand extinguisher `34B67` JAR | bottle spent or holed | the next fire burns | swap the hand bottle; none for the fixed system | fire and extinguish exist | bottle removable from its bracket |
+| E10 | Fire extinguishers | fixed engine-bay system **(confirm)**, hand extinguisher `34B67` JAR | bottle spent or holed | the next fire burns | swap the hand bottle; none for the fixed system | fire and extinguish exist | done 8 Nov: `CTRL.Extinguisher`; fixed system not found in the kit |
 | E11 | Radio and aerial | `21K57` BOX, ANTENNA | set shocked, aerial shot off | no net | re-seat plugs and fuses; screw in a spare rod | `RadioShock` | aerial rod detachable; set face controls |
 
 ## F. Tools and recovery kit (each one gates a repair above)
 
 | # | Component | Kit parts | How it is lost | What stops working | Recovery | In game | Rig prep |
 |---|---|---|---|---|---|---|---|
-| F1 | Pioneer tools | AXE, SHOVEL x3, TOOL (crowbar, hammer, wire cutters **(confirm which)**) | shot off, burnt, left behind | every crowbar and hammer repair | take one from a wreck or the depot | toolbox and hammer exist | each tool a pickup with its bracket |
-| F2 | Tow cables and shackles | WIRE x3 (`35C45CM-L/R`, `36Z53`), HOOK x7, Wire Hook x4 | cut by fire, torn off | no towing, no self-recovery | splice or replace from another tank | recovery rig exists in part | cables as rope with end eyes (6.6 million triangles today: rebuild as a curve) |
+| F1 | Pioneer tools | AXE, SHOVEL x3, TOOL (crowbar, hammer, wire cutters **(confirm which)**) | shot off, burnt, left behind | every crowbar and hammer repair | take one from a wreck or the depot | toolbox and hammer exist | done 8 Nov: five tools as stowed parts with seven hinged clamps |
+| F2 | Tow cables and shackles | WIRE x3 (`35C45CM-L/R`, `36Z53`), HOOK x7, Wire Hook x4 | cut by fire, torn off | no towing, no self-recovery | splice or replace from another tank | recovery rig exists in part | done 8 Nov as rigid stowed cables with guide curves and four tow point sockets; rope behaviour is the game's |
 | F3 | Jack and jack block | `0B30` JACK Unit (5 parts) | shot off the rear plate | wheel and track jobs (A3, A4) | from a wreck or the depot | rigged; fault none | done 8 Nov: `CTRL.Jack`, `CTRL.Jack_Crank`, `CTRL.Jack_Crank_Latch`; rack travel and holder clamps still to do |
 | F4 | Track tools | track wrench, pin drift, cable for pulling the run **(confirm)** | lost | A1, A6 | from a wreck | track cable exists | pickups |
 | F5 | Gun cleaning rods and spare barrel box | on the hull side **(confirm)** | shot away | MG barrel changes | none | none | removable |

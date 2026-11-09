@@ -309,3 +309,36 @@ def restore_from(obj, blend_path):
             del obj[k]
     obj['topo_tris'] = sum(len(p.vertices) - 2 for p in me.polygons)
     return me
+
+
+def split_shared(objs, pick, new_key, role_kept, role_new):
+    """`split` for parts that share one mesh: the mesh is cut once, and every object gets a twin
+    carrying the new piece. `new_key` replaces the kit name in the twins' names
+    ('B76_LOCK' -> 'B76S_STRAP'). Returns the twins in the order of `objs`."""
+    first = objs[0]
+    old_key = first.name.split('TG_RM5010-')[1].split('_îAÔO')[0]
+    name = lambda o: o.name.replace(old_key, new_key)
+    if bpy.data.objects.get(name(first)) is not None:
+        return [bpy.data.objects[name(o)] for o in objs], {'skipped': 'already split'}
+    shared = first.data
+    twin, report = split(first, pick, name(first), role_kept, role_new)
+    if twin is None:
+        return [], report
+    twins = [twin]
+    for o in objs[1:]:
+        if o.data is not shared:
+            raise ValueError(o.name + ' does not share the first object\'s mesh')
+        o.data = first.data
+        t = o.copy()
+        t.name = name(o)
+        t.data = twin.data
+        for col in o.users_collection:
+            col.objects.link(t)
+        for ob, role in ((o, role_kept), (t, role_new)):
+            ob['split_role'] = role
+            ob['topo_tris'] = first['topo_tris'] if ob is o else twin['topo_tris']
+        t['split_from'], o['split_into'] = o.name, t.name
+        twins.append(t)
+    if shared.users == 0:
+        bpy.data.meshes.remove(shared)
+    return twins, report
