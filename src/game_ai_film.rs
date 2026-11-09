@@ -22,6 +22,11 @@
 //! simulation clock (its listener is the Tiger's crewman under every shot). Camera cuts restart the
 //! renderer's history and re-render a few frames before the kept one (more samples, no filter).
 //! `KESSEL_AI_FILM_SCAN=1` runs the same battle without rendering and prints its events.
+//! `KESSEL_AI_FILM_INTERIOR=1` keeps the camera inside the Tiger (the turret-rear lens, turned on
+//! a new hole; the death's shots unchanged); `KESSEL_AI_FILM_NO_CAPTION=1` leaves the bottom
+//! caption off (the top banner stays) so subtitles can go there. The receipt also logs what a crew
+//! would call: each T-34 first in the commander's line of sight (range, clock), the Tiger's rounds
+//! fired, Tiger rounds marking a T-34's armour, and which crew posts fell.
 use super::*;
 use crate::{acoustics, graphics, lan::LanRole};
 use anyhow::{ensure, Context};
@@ -567,6 +572,7 @@ struct Frame<'a> {
     w: u32,
     h: u32,
     banner: String,
+    captions: bool,
 }
 
 impl Frame<'_> {
@@ -577,7 +583,7 @@ impl Frame<'_> {
         r.ui_reset();
         r.fill_rect(0.015, 0.026, 0.0105 * self.banner.len() as f32 + 0.03, 0.048, [0.0, 0.0, 0.0, 0.62]);
         r.draw_text(&self.banner, 0.026, 0.050, 0.020, [0.88, 0.86, 0.80, 1.0], crate::ui::Align::Left);
-        if !caption.is_empty() {
+        if self.captions && !caption.is_empty() {
             r.fill_rect(0.015, 0.922, 0.0105 * caption.len() as f32 + 0.03, 0.052, [0.0, 0.0, 0.0, 0.62]);
             r.draw_text(caption, 0.026, 0.948, 0.020, [0.88, 0.86, 0.80, 1.0], crate::ui::Align::Left);
         }
@@ -596,6 +602,7 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
     let tiger_weights = args.get(6).map(String::as_str).unwrap_or("assets/ai/weights_tiger.bin");
     let ring = env_f32("KESSEL_AI_FILM_RING", 105.0);
     let scan = std::env::var("KESSEL_AI_FILM_SCAN").as_deref() == Ok("1");
+    let interior_only = std::env::var("KESSEL_AI_FILM_INTERIOR").as_deref() == Ok("1");
     ensure!((1..=6).contains(&count), "COUNT must be 1..=6");
     ensure!(scan || graphics::raymarch_backend_enabled(), "ai-film requires KESSEL_RENDERER=raymarch");
     let receipt_path = format!("{prefix}_receipt.json");
@@ -641,7 +648,8 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
         g.act.name, g.player.center(), if scan { ", scan only" } else { "" });
 
     let frame = Frame { device: &device, queue: &queue, w: r.iw, h: r.ih,
-        banner: format!("AI COMBAT  ACT {act}  TIGER: NEURAL PILOT + AI CREW  VS  {count} NEURAL T-34  SEED {seed:#010x}") };
+        banner: format!("AI COMBAT  ACT {act}  TIGER: NEURAL PILOT + AI CREW  VS  {count} NEURAL T-34  SEED {seed:#010x}"),
+        captions: std::env::var("KESSEL_AI_FILM_NO_CAPTION").as_deref() != Ok("1") };
     let mut encoder = if scan { None } else { Some(Encoder::start(&format!("{prefix}_picture.mp4"), r.iw, r.ih)?) };
     let mut pilot = crate::showreel::TigerPilot::new(&tiger);
     let mut director = Director::new();
@@ -652,7 +660,11 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
     let mut over_at: Option<f32> = None;
     let mut death: Option<bool> = None;
     let mut last_shot_label = "";
+    // What a crew would call out (the receipt's `crew_log` events).
+    let mut sighted = vec![false; active.len()];
+    let mut gun_target: Option<usize> = None;
     loop {
+        let mut crew_log: Vec<Value> = Vec::new();
         let mut sound = Vec::with_capacity(FRAME_SAMPLES);
         let mut frame_events = Vec::new();
         for _ in 0..TICKS_PER_FRAME {
@@ -661,6 +673,10 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
             let scars = g.armor_scars.scars().len();
             let crew = g.singleplayer_living_crew().unwrap_or(0);
             let (fire, first, tiger_alive) = (g.fire_active, g.cookoff.first_s.is_some(), g.player.alive);
+            let reload_before = g.player.reload;
+            let loaded_before = g.breech_loaded();
+            let posts_ok: Vec<(CrewRole, bool)> = g.crew.iter().map(|p| (p.role, p.ok)).collect();
+            let enemy_marks: Vec<usize> = active.iter().map(|&i| g.enemies[i].scars.scars().len()).collect();
             let now = (tick + 1) as f64 / f64::from(SIM_HZ);
             g.debug_crew_battle_clock(tick + 1, now);
             g.debug_engage_all();
@@ -676,6 +692,34 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
                     .or_else(|| fresh.first().copied())
                     .or_else(|| g.armor_scars.scars().last().copied())
             };
+            if g.player.alive && g.player.reload > reload_before + 0.2 {
+                crew_log.push(json!({"kind": "tiger_fired", "battle_s": battle_s, "he": g.he_loaded,
+                    "gun_target": gun_target, "range_m": gun_target.map(|i| g.enemies[i].center().distance(g.player.center()))}));
+            }
+            for (k, &i) in active.iter().enumerate() {
+                let marks = g.enemies[i].scars.scars();
+                if marks.len() > enemy_marks[k] {
+                    use crate::armor_damage::ScarKind;
+                    let hole = marks[enemy_marks[k]..].iter().any(|s| s.kind == ScarKind::Hole);
+                    crew_log.push(json!({"kind": "enemy_armour_marked", "battle_s": battle_s, "enemy": i, "hole": hole,
+                        "alive": g.enemies[i].alive, "range_m": g.enemies[i].center().distance(g.player.center()),
+                        "marks": marks[enemy_marks[k]..].iter().map(|s| format!("{:?} {:?}", s.facing, s.kind)).collect::<Vec<_>>()}));
+                }
+            }
+            if g.player.alive && !loaded_before && g.breech_loaded() {
+                crew_log.push(json!({"kind": "breech_loaded", "battle_s": battle_s, "he": g.he_loaded}));
+            }
+            if g.fire_active && !fire {
+                // Where the round that lit it came in, in the hull's frame (+z forward): the crew
+                // call an engine-bay fire differently from one in the fighting compartment.
+                let entry = g.fire_origin.map(|(_, entry, _)| g.player.hull_model().inverse().transform_point3(entry).to_array());
+                crew_log.push(json!({"kind": "fire_origin", "battle_s": battle_s, "entry_hull_local_m": entry}));
+            }
+            let fallen: Vec<String> = posts_ok.iter().filter(|&&(role, ok)| ok && g.crew.iter().any(|p| p.role == role && !p.ok))
+                .map(|(role, _)| format!("{role:?}")).collect();
+            if !fallen.is_empty() {
+                crew_log.push(json!({"kind": "crew_posts_fallen", "battle_s": battle_s, "posts": fallen}));
+            }
             for (k, &i) in active.iter().enumerate() {
                 if alive[k] && !g.enemies[i].alive {
                     frame_events.push(Event::Kill { enemy: i, catastrophic: g.capture_catastrophic(Some(i)) });
@@ -700,6 +744,39 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
                 frame_events.push(Event::TigerDestroyed { cookoff: g.cookoff_death() });
                 break;
             }
+        }
+        if g.player.alive {
+            let tiger = g.player.center();
+            let eye = tiger + Vec3::Y * 2.7;
+            let clock = |p: Vec3| {
+                let to = p - tiger;
+                let rel = to.x.atan2(to.z) - g.player.heading;
+                let hours = (rel.to_degrees().rem_euclid(360.0) / 30.0).round() as i32 % 12;
+                if hours == 0 { 12 } else { hours }
+            };
+            for (k, &i) in active.iter().enumerate() {
+                let c = g.enemies[i].center();
+                if !sighted[k] && g.enemies[i].alive && c.distance(tiger) < 2500.0 && g.los_clear(eye, c + Vec3::Y * 1.2) {
+                    sighted[k] = true;
+                    crew_log.push(json!({"kind": "enemy_in_sight", "battle_s": battle_s, "enemy": i,
+                        "range_m": c.distance(tiger), "clock": clock(c)}));
+                }
+            }
+            let now_target = g.nearest_enemy();
+            if now_target != gun_target {
+                gun_target = now_target;
+                if let Some(i) = now_target {
+                    let c = g.enemies[i].center();
+                    crew_log.push(json!({"kind": "gun_laid_on", "battle_s": battle_s, "enemy": i,
+                        "range_m": c.distance(tiger), "clock": clock(c),
+                        "in_sight": g.los_clear(eye, c + Vec3::Y * 1.2)}));
+                }
+            }
+        }
+        for mut entry in crew_log {
+            entry["film_s"] = json!(encoder.as_ref().map_or(0.0, |e| e.frames as f32 / FPS as f32));
+            println!("[ai-film] crew-log {entry}");
+            events.push(entry);
         }
         for &event in &frame_events {
             let detail = match event {
@@ -745,7 +822,15 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
         director.advance(&g);
         if let Some(enc) = encoder.as_mut() {
             let saved = SavedView::save(&r);
+            let planned = director.shot;
+            if interior_only && !matches!(planned, Shot::PenInside(..)) {
+                director.shot = Shot::Interior;
+            }
             aim_shot(&mut director, &g, &mut r, &active);
+            if interior_only && director.cut && director.shot.label() == last_shot_label {
+                director.cut = false; // the director moved on outside; the lens stays put
+            }
+            let shown = director.shot;
             let settle = if director.cut {
                 r.reset_history();
                 director.cut = false;
@@ -753,11 +838,12 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
             } else {
                 0
             };
-            if director.shot.label() != last_shot_label || settle > 0 {
-                shots.push(json!({"film_s": enc.frames as f32 / FPS as f32, "battle_s": battle_s, "shot": director.shot.label()}));
-                last_shot_label = director.shot.label();
+            if shown.label() != last_shot_label || settle > 0 {
+                shots.push(json!({"film_s": enc.frames as f32 / FPS as f32, "battle_s": battle_s, "shot": shown.label()}));
+                last_shot_label = shown.label();
             }
             let text = caption(&director, &g, battle_s, battle_s < 6.0);
+            director.shot = planned;
             let rgba = frame.finish(&mut r, &text, settle)?;
             enc.push(&rgba, Some(&sound))?;
             saved.restore(&mut r);
@@ -882,7 +968,7 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
     let receipt = json!({
         "schema": "panzer.ai-film.v1", "video": seconds.map(|_| video_path.clone()), "seconds": seconds,
         "act": {"id": g.act.id, "name": g.act.name}, "count": count, "seed": seed, "ring_m": ring, "max_secs": max_secs,
-        "weights": {"t34": t34_weights, "tiger": tiger_weights}, "staged": staged,
+        "weights": {"t34": t34_weights, "tiger": tiger_weights}, "staged": staged, "interior_only": interior_only,
         "staging": "the crew-battle witness's opening: T-34s on the showreel's seeded ring round the Tiger (stage_showreel_t34_gauntlet_at), every T-34 told where the Tiger is each tick (debug_engage_all); the Tiger driven by the neural pilot with its embodied auto-crew (showreel::TigerPilot), the singleplayer crew aboard; nothing after the opening is scripted",
         "film": {"grid": [frame.w, frame.h], "scale": 5, "fps": FPS, "simulation_hz": SIM_HZ,
             "audio": "ordinary gameplay audio recorded offline on the simulation clock; the listener is the Tiger's crewman under every shot; the death's shots after the black are silent as in the app",
