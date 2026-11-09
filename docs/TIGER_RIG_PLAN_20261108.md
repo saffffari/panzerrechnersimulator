@@ -420,3 +420,25 @@ for the open items.
 The game reads none of this yet. The export has to carry the controls and the fastener objects
 (`tools/tiger_production/export_pivots.py` writes every non-mesh object with its properties today;
 fasteners are meshes and need their own table).
+
+## Readable names and the second paint pass (9 November 2026)
+
+**Names.** Every kit object (1,806: parts, grouping empties, the MG 34 pieces) now reads
+`<Zone>.<What>[.L|.R].<kit number>[.NN]`, for example `Turret.Hatch_Loader.02J50`,
+`RearPlate.Starter_Port_Cover.28A-B69`, `Hull.Plate.L.27H25.02`. The main part a control carries
+takes the control's name; other parts take the kit's word with its spelling mended; `+X` is the
+tank's left. The kit number stays in the name and the kit's own name is kept on the object as
+`kit_name`. `tools/tiger_production/rename_parts.py` does it and undoes it (`apply()`,
+`kit_names()`). The older build scripts look parts up by kit name: call `kit_names()` before
+running them and `apply()` after. `rig_build.obj()` and `assembly()` accept kit names either way.
+The rig export carries a `kit_names` map. Zones come from the kit's own assemblies and from the
+controls, so a part filed under "Base Unit" is `Hull` whether it sits inside or outside.
+
+**Paint.** Interior ivory was still showing outside in seams, hatch rims, the mantlet ring and on
+bolt heads. Three passes in `material_fix.py` now decide by what can be seen: `run_fine` (any of
+25 rays from a face leaves the tank, either side of the face), `run_views` (rays sent at the tank
+on a 14 mm grid from 72 directions; the first face each meets is exterior), and the same test for
+fasteners. About 2,700 faces and 126 bolt heads went from ivory to the exterior finish. Named
+limits: an inside face that can be seen through an open port or a gap between kit plates is now
+grey; seams narrower than 14 mm can be missed; red oxide was left on the coarser test so the
+engine bay under its grilles stays red.

@@ -72,7 +72,9 @@ def table():
             guides[o.name[6:]] = {'cyclic': bool(sp.use_cyclic_u), 'points': [_v((o.matrix_world @ Vector(p.co[:3]))) for p in sp.points],
                                   'props': {k: (o[k] if isinstance(o[k], (int, float, str, bool)) else str(o[k])) for k in o.keys() if not k.startswith('_')}}
     return {'format': 'tiger_rig.v1', 'source': bpy.data.filepath, 'frame': 'metres, +Z up, -Y forward, +X the tank\'s left',
-            'controls': controls, 'fasteners': fasteners, 'guides': guides}
+            'controls': controls, 'fasteners': fasteners, 'guides': guides,
+            # readable object name -> the kit's own name (rename_parts.py), so a part can be traced to the kit
+            'kit_names': {o.name: o['kit_name'] for o in D if 'kit_name' in o}}
 
 
 def write(path):

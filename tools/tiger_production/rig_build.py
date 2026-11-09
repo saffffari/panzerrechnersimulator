@@ -35,12 +35,15 @@ def obj(short):
     name = PRE + stem + SUF + (dot + num if dot else '')
     o = bpy.data.objects.get(name)
     if o is None:
+        # the file may carry the readable names (rename_parts.py); the kit name is kept on the object
+        o = next((k for k in bpy.data.objects if k.get('kit_name') in (name, short)), None)
+    if o is None:
         raise KeyError('no object %s (%s)' % (short, name))
     return o
 
 
 def assembly(key):
-    return next(o for o in bpy.data.objects if o.type == 'EMPTY' and (PRE + key) in o.name)
+    return next(o for o in bpy.data.objects if o.type == 'EMPTY' and (PRE + key) in o.get('kit_name', o.name))
 
 
 def under(root):
