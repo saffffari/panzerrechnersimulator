@@ -446,7 +446,7 @@ impl Effects {
         let (kind,normal)=match c.kind {
             ProjectileContactKind::Vehicle(a)=>("armor",Some(a.world_normal.to_array())),
             ProjectileContactKind::RangeLimit=>("range_retirement",None),
-            ProjectileContactKind::Foot|ProjectileContactKind::ExposedCrew(..)|ProjectileContactKind::FieldPerson(..)|ProjectileContactKind::Infantry(_)=>("body",None),
+            ProjectileContactKind::Foot|ProjectileContactKind::ExposedCrew(..)|ProjectileContactKind::FieldPerson(..)|ProjectileContactKind::Infantry(_)|ProjectileContactKind::BailedCrew(_)=>("body",None),
             _=>("world",None),
         };
         if kind=="armor" {self.small_arms_review.armor_contacts+=1;}

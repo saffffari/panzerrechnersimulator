@@ -362,6 +362,13 @@ impl Game {
                 friendly=payload.shot.team==Team::German;
                 self.weapon_vfx.impact(contact.pos,projectile.velocity.normalize_or_zero(),0.10,false,weapon);
             }
+            ProjectileContactKind::BailedCrew(index) => {
+                friendly=payload.shot.team!=Team::German;
+                if self.enemy_crew.hit(index,contact.pos,projectile.velocity,projectile.shell.mass_kg,0.0,false,&mut self.infantry_casualties).is_some_and(|h|h.wounded) {
+                    self.recorded(crate::audio::RecordedFx::MaterialImpact(crate::audio::RecordedMaterial::Body), -6.0, contact.pos);
+                }
+                self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.10, false, weapon);
+            }
             ProjectileContactKind::Infantry(index) => {
                 friendly=self.mixed_combat.actors.get(index).is_some_and(|a|a.team==payload.shot.team);
                 let before=self.mixed_combat.actors.get(index).map_or(100.0,|a|a.hp);
@@ -399,7 +406,7 @@ impl Game {
                 }
             }
         }
-        if matches!(contact.kind,ProjectileContactKind::Foot|ProjectileContactKind::ExposedCrew(..)|ProjectileContactKind::Infantry(_)) {
+        if matches!(contact.kind,ProjectileContactKind::Foot|ProjectileContactKind::ExposedCrew(..)|ProjectileContactKind::Infantry(_)|ProjectileContactKind::BailedCrew(_)) {
             let mono=crate::acoustics::synth_small_arm_body_hit(projectile.velocity.length(),
                 projectile.shell.caliber_mm,projectile.seed);
             let stereo=crate::acoustics::spatialize_mono(&mono,0.0,0.0);

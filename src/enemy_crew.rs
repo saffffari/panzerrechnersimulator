@@ -88,6 +88,52 @@ fn module_contacts(fragments: &[HotFragment]) -> DamageOutcome {
     }
     result
 }
+/// A stride (`phase` in radians, `effort` 0 walk to 1 run): thighs and arms swinging in
+/// opposition, knees bending behind, the torso leaning into it and the pelvis bobbing. Joint
+/// orientations in the man's frame, +Z ahead (`physics::KinematicPose`).
+fn stride_pose(phase: f32, effort: f32) -> physics::KinematicPose {
+    let x = |a: f32| Quat::from_rotation_x(a);
+    let swing = 0.35 + 0.45 * effort;
+    let (l, r) = (phase.sin(), (phase + std::f32::consts::PI).sin());
+    // A thigh swung forward is a negative turn about X (the foot goes to +Z).
+    let thigh = |s: f32| -s * swing;
+    let shin = |s: f32, ph: f32| thigh(s) + (0.25 + 0.9 * effort) * (ph.cos() * 0.5 + 0.5);
+    let lean = 0.08 + 0.22 * effort;
+    let mut pose = physics::KinematicPose::STANDING;
+    pose.pelvis.y -= 0.03 * effort * (2.0 * phase).cos().abs();
+    pose.joints[0] = x(lean);
+    pose.joints[1] = x(lean * 0.5);
+    pose.joints[2] = x(r * swing * 0.8);
+    pose.joints[3] = x(r * swing * 0.8 - 0.4 - 0.6 * effort);
+    pose.joints[4] = x(l * swing * 0.8);
+    pose.joints[5] = x(l * swing * 0.8 - 0.4 - 0.6 * effort);
+    pose.joints[6] = x(thigh(l));
+    pose.joints[7] = x(shin(l, phase));
+    pose.joints[8] = x(thigh(r));
+    pose.joints[9] = x(shin(r, phase + std::f32::consts::PI));
+    pose
+}
+
+/// Climbing out of a hatch: both hands up on the rim, one knee raised to the next hold, the
+/// other leg pushing, alternating every 0.6 s.
+fn climb_pose(age: f32) -> physics::KinematicPose {
+    let x = |a: f32| Quat::from_rotation_x(a);
+    let step = ((age / 0.6) as i32) % 2 == 0;
+    let (lift, push) = (-1.2, 0.15);
+    let mut pose = physics::KinematicPose::STANDING;
+    pose.joints[0] = x(0.25);
+    pose.joints[2] = x(-2.7);
+    pose.joints[3] = x(-2.9);
+    pose.joints[4] = x(-2.6);
+    pose.joints[5] = x(-2.9);
+    let (a, b) = if step { (lift, push) } else { (push, lift) };
+    pose.joints[6] = x(a);
+    pose.joints[7] = x(a + 1.4 * f32::from(a < 0.0));
+    pose.joints[8] = x(b);
+    pose.joints[9] = x(b + 1.4 * f32::from(b < 0.0));
+    pose
+}
+
 fn seats(kind: EnemyKind) -> Vec<Vec3> {
     // Enemy rigs have no authored seated interiors. These stations are broad compartment
     // approximations, not measured historic seat coordinates. All are in hull-local metres.
@@ -382,6 +428,48 @@ impl Aftermath {
     pub(super) fn clear_tank(&mut self, index: usize) {
         self.people.retain(|p| p.tank != index);
     }
+    /// The living men out of their hatches (climbing out, on the roof, on the ground): their
+    /// posed segments, for the projectile sweep. A bailed crewman is a body in the world like any
+    /// infantryman (the owner, 8 November 2026: they had been invincible once out).
+    pub(super) fn exposed(&self) -> impl Iterator<Item = (usize, &[physics::CrewSegment; COUNT])> + '_ {
+        self.people.iter().enumerate()
+            .filter(|(_, p)| matches!(p.phase, Phase::Climbing | Phase::Falling | Phase::Escaping))
+            .map(|(i, p)| (i, &p.segments))
+    }
+    /// A round, a bullet or a blast's pressure on a bailed man, resolved by the infantry's own
+    /// tissue rule (`infantry_casualties::tissue_contact`); his blood joins the infantry's grains.
+    /// `None` when he is not out or already dead.
+    pub(super) fn hit(
+        &mut self,
+        index: usize,
+        point: Vec3,
+        velocity: Vec3,
+        mass: f32,
+        filler_j: f32,
+        blast_only: bool,
+        casualties: &mut super::infantry_casualties::Casualties,
+    ) -> Option<super::infantry_casualties::Hit> {
+        let person = self.people.get_mut(index)?;
+        if !matches!(person.phase, Phase::Climbing | Phase::Falling | Phase::Escaping) {
+            return None;
+        }
+        let hit = super::infantry_casualties::tissue_contact(&mut person.segments, &mut person.missing, point,
+            velocity, mass, filler_j, blast_only, |wound, cubes| casualties.spray(wound, velocity, cubes));
+        person.wounded |= hit.wounded;
+        person.bleeding |= hit.wounded;
+        if hit.wounded {
+            person.blood_pos = point;
+        }
+        if hit.fatal {
+            // He falls as he was running: the segments keep his motion into the ragdoll.
+            for part in &mut person.segments {
+                part.vel += person.velocity;
+            }
+            person.phase = Phase::Dead;
+        }
+        Some(hit)
+    }
+    /// `threat` is the Tiger (the man runs from it, not along his tank's heading).
     pub(super) fn update(
         &mut self,
         dt: f32,
@@ -389,6 +477,7 @@ impl Aftermath {
         wrecks: &[Wreck],
         hf: &Heightfield,
         occluders: &[stealth::Occluder],
+        threat: Vec3,
     ) {
         let dt = dt.clamp(0.0, 0.05);
         for person in &mut self.people {
@@ -414,7 +503,14 @@ impl Aftermath {
             if wreck.cooked && matches!(person.phase, Phase::Waiting | Phase::Climbing) {
                 person.phase = Phase::Dead;
             }
-            // `person.heading` is in the tank convention: forward (sin h, 0, cos h).
+            // `person.heading` is in the tank convention: forward (sin h, 0, cos h). Out of the
+            // hatch a man runs from the Tiger, not along his own tank's heading.
+            let away = Vec3::new(person.pos.x - threat.x, 0.0, person.pos.z - threat.z).normalize_or_zero();
+            if matches!(person.phase, Phase::Falling | Phase::Escaping) && away != Vec3::ZERO {
+                let want = away.x.atan2(away.z);
+                let turn = (want - person.heading + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                person.heading += turn.clamp(-3.0 * dt, 3.0 * dt);
+            }
             let escape = Vec3::new(person.heading.sin(), 0.0, person.heading.cos());
             if person.phase == Phase::Seated {
                 person.phase = Phase::Waiting;
@@ -432,7 +528,10 @@ impl Aftermath {
                     person.pos += delta.normalize_or_zero() * dt * 0.75;
                     if delta.length() < 0.08 {
                         person.phase = Phase::Falling;
-                        person.velocity = escape * 2.0 + Vec3::Y * 1.1;
+                        // Off the roof on the side away from the Tiger.
+                        if away != Vec3::ZERO { person.heading = away.x.atan2(away.z); }
+                        let off = Vec3::new(person.heading.sin(), 0.0, person.heading.cos());
+                        person.velocity = off * 2.0 + Vec3::Y * 1.1;
                     }
                 }
                 Phase::Falling => {
@@ -459,13 +558,19 @@ impl Aftermath {
                         || person.missing[8]
                         || person.missing[9]
                         || person.missing[10];
+                    // A man who got out runs (about 4 m/s in snow and boots), a wounded one stumbles;
+                    // far from the Tiger and his tank he slows to a walk.
+                    let far = person.pos.distance(threat) > 250.0 && person.pos.distance(tank.center()) > 150.0;
                     let speed = if injured_leg {
                         0.22
                     } else if person.wounded {
-                        0.9
+                        1.1
+                    } else if far {
+                        1.4
                     } else {
-                        1.7
+                        4.2
                     };
+                    person.velocity = escape * speed;
                     let next = person.pos + escape * speed * dt;
                     let blocked = occluders.iter().any(|o| {
                         !(o.min.distance_squared(tank.pos - Vec3::new(3.4, 0.0, 3.4)) < 0.001)
@@ -477,6 +582,10 @@ impl Aftermath {
                     });
                     if !blocked {
                         person.pos = next;
+                    } else {
+                        // Round the obstacle: veer and keep going rather than standing at it.
+                        // (faster than the turn back toward "away from the Tiger" above).
+                        person.heading += 5.0 * dt * if person.identity % 2 == 0 { 1.0 } else { -1.0 };
                     }
                     person.pos.y = hf.height_at(person.pos.x, person.pos.z);
                 }
@@ -514,10 +623,18 @@ impl Aftermath {
                 }
             } else {
                 let yaw = Quat::from_rotation_y(person.heading);
-                let rest = if person.phase == Phase::Waiting {
-                    physics::seated_segments(person.pos, yaw, 1.0)
-                } else {
-                    physics::rest_segments(person.pos, yaw, 1.0)
+                let rest = match person.phase {
+                    Phase::Waiting => physics::seated_segments(person.pos, yaw, 1.0),
+                    // Procedural keyframes, not authored animation: hands up on the rim and a knee
+                    // raised while he climbs out; a running stride once he is down.
+                    Phase::Climbing => physics::kinematic_segments(person.pos, yaw, 1.0, &climb_pose(person.age)),
+                    Phase::Escaping if person.velocity.length() > 0.3 => {
+                        let speed = person.velocity.length();
+                        let cadence = if speed > 3.0 { 2.9 } else { 1.7 };
+                        physics::kinematic_segments(person.pos, yaw, 1.0,
+                            &stride_pose(person.age * cadence * std::f32::consts::TAU, (speed / 4.2).min(1.0)))
+                    }
+                    _ => physics::rest_segments(person.pos, yaw, 1.0),
                 };
                 for (i, part) in person.segments.iter_mut().enumerate() {
                     if !person.missing[i] {
@@ -615,6 +732,44 @@ mod tests {
         let (dead, missing, wounded) = apply_damage(&mut s, p, &[f], 0.0);
         assert!(!dead && wounded);
         assert!(missing[4]);
+    }
+    fn bailed(phase: Phase) -> Person {
+        let pos = Vec3::new(10.0, 0.0, 5.0);
+        Person { tank: 0, identity: 0, phase, age: 0.0,
+            segments: physics::rest_segments(pos, Quat::IDENTITY, 1.0), missing: [false; COUNT],
+            wounded: false, bleeding: false, burn_s: 0.0, pos, velocity: Vec3::Z * 4.2, exit: pos,
+            heading: 0.0, interior_floor: 0.0, blood_pos: pos, hull: Mat4::IDENTITY }
+    }
+    #[test]
+    fn a_crewman_out_of_his_hatch_can_be_shot_and_one_inside_cannot() {
+        let mut crew = Aftermath::default();
+        crew.people = vec![bailed(Phase::Escaping), bailed(Phase::Waiting)];
+        assert_eq!(crew.exposed().map(|(i, _)| i).collect::<Vec<_>>(), vec![0]);
+        let mut casualties = super::super::infantry_casualties::Casualties::empty();
+        // A 7.92 mm bullet through the torso from the side.
+        let torso = crew.people[0].segments[physics::CrewBodyPart::Torso.index()].pos;
+        let hit = crew.hit(0, torso, Vec3::X * 760.0, 0.0128, 0.0, false, &mut casualties).unwrap();
+        assert!(hit.wounded);
+        assert!(crew.people[0].wounded);
+        assert!(crew.hit(1, torso, Vec3::X * 760.0, 0.0128, 0.0, false, &mut casualties).is_none());
+        // A cannon round through the head is fatal and he drops.
+        let head = crew.people[0].segments[physics::CrewBodyPart::Head.index()].pos;
+        let hit = crew.hit(0, head, Vec3::X * 800.0, 6.3, 0.0, false, &mut casualties).unwrap();
+        assert!(hit.fatal);
+        assert_eq!(crew.people[0].phase, Phase::Dead);
+        assert_eq!(crew.exposed().count(), 0);
+    }
+    #[test]
+    fn the_stride_and_the_climb_keep_every_joint_closed() {
+        for k in 0..16 {
+            let phase = k as f32 * 0.4;
+            for effort in [0.3, 1.0] {
+                let s = physics::kinematic_segments(Vec3::ZERO, Quat::IDENTITY, 1.0, &stride_pose(phase, effort));
+                assert!(physics::max_joint_error(&s, 1.0) < 1.0e-3);
+            }
+            let s = physics::kinematic_segments(Vec3::ZERO, Quat::IDENTITY, 1.0, &climb_pose(phase));
+            assert!(physics::max_joint_error(&s, 1.0) < 1.0e-3);
+        }
     }
     #[test]
     fn internal_ammunition_energy_is_fatal() {

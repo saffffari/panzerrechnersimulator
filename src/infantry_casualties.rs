@@ -33,6 +33,11 @@ pub(super) struct Hit {
     pub leg_loss: bool,
 }
 impl Casualties {
+    /// A pool with no GPU slots, for tests of the wound rule.
+    #[cfg(test)]
+    pub(super) fn empty() -> Self {
+        Self { bodies: Vec::new(), pools: [[0; COUNT]; 2], blood: 0, grains: Vec::new(), stains: 0 }
+    }
     /// Remove every body and blood grain for a reset match.
     pub fn reset(&mut self) {
         self.bodies.clear();
@@ -129,101 +134,22 @@ impl Casualties {
             }
         }
         let dir = velocity.normalize_or_zero();
-        let energy = 0.5 * mass * velocity.length_squared();
-        let contact = if blast_only {
-            None
-        } else {
-            // The round has already been stopped by the soldier's contact volume, which stands
-            // taller than this anatomy. When the swept line passes above or beside every
-            // segment, deposit into the nearest present part instead of consuming the round
-            // with no effect. This is a named approximation until the anatomy is posed at the
-            // visible body's full height.
-            first_contact(&body.parts, point - dir * 0.7, point + dir * 2.0).or_else(|| {
-                let nearest = physics::nearest_body_part(&body.parts, point, 1.0);
-                body.parts.iter().position(|p| p.present && p.part == nearest)
-            })
-        };
-        let mut output = Hit::default();
-        for p in 0..COUNT {
-            let part = body.parts[p].part;
-            // Contact work is deposited once, in the first solved anatomical volume.
-            // This tissue-work fraction is provisional; remainder exits rather than
-            // being repeatedly assigned to all eleven anatomical segments.
-            let kinetic = if contact == Some(p) {
-                energy * 0.35
-            } else {
-                0.0
-            };
-            let result = crew_damage::resolve_crew_damage(crew_damage::CrewDamageInput {
-                part,
-                fragment_energy_j: kinetic,
-                explosive_energy_j: filler_j,
-                blast_distance_m: body.parts[p].pos.distance(point),
+        let grains = &mut self.grains;
+        let mut output = tissue_contact(&mut body.parts, &mut body.missing, point, velocity, mass,
+            filler_j, blast_only, |wound, requested| {
+                let count = requested.min(48).min(1024 - grains.len());
+                spray_grains(grains, wound, dir, count);
             });
-            if result.outcome == crew_damage::CrewTissueOutcome::None {
-                continue;
-            }
-            output.wounded = true;
-            body.bleeding = true;
-            let fatal = matches!(
-                part,
-                physics::CrewBodyPart::Head
-                    | physics::CrewBodyPart::Torso
-                    | physics::CrewBodyPart::Pelvis
-            ) && (result.total_work_j >= 12.0
-                || result.outcome >= crew_damage::CrewTissueOutcome::Detachment);
-            body.dead |= fatal;
-            output.fatal |= fatal;
-            body.missing[p] |= result.detach_joint || result.hide_mesh_part;
-            body.parts[p].detached |= result.detach_joint;
-            body.parts[p].present &= !result.hide_mesh_part;
-            if kinetic > 0.0 {
-                physics::apply_fragment_impulse_to_part(
-                    &mut body.parts,
-                    part,
-                    point,
-                    velocity,
-                    kinetic,
-                    1.0,
-                );
-            }
-            let wound = if kinetic > 0.0 {
-                point
-            } else {
-                body.parts[p].pos
-            };
-            let count = result
-                .blood_cube_count
-                .min(48)
-                .min(1024 - self.grains.len());
-            for k in 0..count {
-                let u = (k as f32 * 2.399963).sin();
-                let v = (k as f32 * 2.399963).cos();
-                self.grains.push(Grain {
-                    pos: wound,
-                    vel: dir * 1.2 + Vec3::new(u, 0.5 + v.abs(), v) * 1.3,
-                    age: 0.0,
-                });
-            }
-        }
-        for (parent, child) in [(3, 4), (5, 6), (7, 8), (9, 10)] {
-            if body.missing[parent] {
-                body.missing[child] = true;
-                body.parts[child].detached = true;
-            }
-        }
-        if filler_j > 0.0 {
-            let impulses =
-                physics::confined_segment_blast_impulses(&body.parts, point, filler_j, 1.0);
-            for (p, impulse) in body.parts.iter_mut().zip(impulses) {
-                if p.present {
-                    p.vel += impulse / p.part.mass_kg();
-                }
-            }
-        }
-        output.leg_loss = body.missing[7..].iter().any(|m| *m);
+        body.bleeding |= output.wounded;
+        body.dead |= output.fatal;
         output.fatal |= body.dead;
         output
+    }
+    /// Blood grains for a wound on a body this owner does not hold (a bailed tank crewman,
+    /// `enemy_crew`): the same grains, pool and cap as an infantryman's wound.
+    pub fn spray(&mut self, wound: Vec3, direction: Vec3, requested: usize) {
+        let count = requested.min(48).min(1024 - self.grains.len());
+        spray_grains(&mut self.grains, wound, direction.normalize_or_zero(), count);
     }
     pub fn update_draw(
         &mut self,
@@ -307,6 +233,103 @@ impl Casualties {
         r.set_dynamic_instanced_mats(self.blood, &grains);
         r.set_moving_instanced_mats(self.stains, &stains);
     }
+}
+fn spray_grains(grains: &mut Vec<Grain>, wound: Vec3, dir: Vec3, count: usize) {
+    for k in 0..count {
+        let u = (k as f32 * 2.399963).sin();
+        let v = (k as f32 * 2.399963).cos();
+        grains.push(Grain {
+            pos: wound,
+            vel: dir * 1.2 + Vec3::new(u, 0.5 + v.abs(), v) * 1.3,
+            age: 0.0,
+        });
+    }
+}
+/// One exterior contact (a round, or a blast's pressure when `blast_only`) resolved on a posed
+/// eleven-part body through `crew_damage::resolve_crew_damage`: the tissue outcome per part, the
+/// severed or destroyed parts, the momentum handed to the segments. Shared by the infantry
+/// (`Casualties::hit`) and the bailed tank crews (`enemy_crew`), so a man on foot is hurt by the
+/// same rule whoever he is. `blood(wound, cubes)` receives each wounded part's blood request.
+/// `Hit::fatal` here is this contact's own verdict; the caller folds in an earlier death.
+pub(super) fn tissue_contact(
+    parts: &mut [physics::CrewSegment; COUNT],
+    missing: &mut [bool; COUNT],
+    point: Vec3,
+    velocity: Vec3,
+    mass: f32,
+    filler_j: f32,
+    blast_only: bool,
+    mut blood: impl FnMut(Vec3, usize),
+) -> Hit {
+    let dir = velocity.normalize_or_zero();
+    let energy = 0.5 * mass * velocity.length_squared();
+    let contact = if blast_only {
+        None
+    } else {
+        // The round has already been stopped by the soldier's contact volume, which stands
+        // taller than this anatomy. When the swept line passes above or beside every
+        // segment, deposit into the nearest present part instead of consuming the round
+        // with no effect. This is a named approximation until the anatomy is posed at the
+        // visible body's full height.
+        first_contact(parts, point - dir * 0.7, point + dir * 2.0).or_else(|| {
+            let nearest = physics::nearest_body_part(parts, point, 1.0);
+            parts.iter().position(|p| p.present && p.part == nearest)
+        })
+    };
+    let mut output = Hit::default();
+    for p in 0..COUNT {
+        let part = parts[p].part;
+        // Contact work is deposited once, in the first solved anatomical volume.
+        // This tissue-work fraction is provisional; remainder exits rather than
+        // being repeatedly assigned to all eleven anatomical segments.
+        let kinetic = if contact == Some(p) {
+            energy * 0.35
+        } else {
+            0.0
+        };
+        let result = crew_damage::resolve_crew_damage(crew_damage::CrewDamageInput {
+            part,
+            fragment_energy_j: kinetic,
+            explosive_energy_j: filler_j,
+            blast_distance_m: parts[p].pos.distance(point),
+        });
+        if result.outcome == crew_damage::CrewTissueOutcome::None {
+            continue;
+        }
+        output.wounded = true;
+        let fatal = matches!(
+            part,
+            physics::CrewBodyPart::Head
+                | physics::CrewBodyPart::Torso
+                | physics::CrewBodyPart::Pelvis
+        ) && (result.total_work_j >= 12.0
+            || result.outcome >= crew_damage::CrewTissueOutcome::Detachment);
+        output.fatal |= fatal;
+        missing[p] |= result.detach_joint || result.hide_mesh_part;
+        parts[p].detached |= result.detach_joint;
+        parts[p].present &= !result.hide_mesh_part;
+        if kinetic > 0.0 {
+            physics::apply_fragment_impulse_to_part(parts, part, point, velocity, kinetic, 1.0);
+        }
+        let wound = if kinetic > 0.0 { point } else { parts[p].pos };
+        blood(wound, result.blood_cube_count);
+    }
+    for (parent, child) in [(3, 4), (5, 6), (7, 8), (9, 10)] {
+        if missing[parent] {
+            missing[child] = true;
+            parts[child].detached = true;
+        }
+    }
+    if filler_j > 0.0 {
+        let impulses = physics::confined_segment_blast_impulses(parts, point, filler_j, 1.0);
+        for (p, impulse) in parts.iter_mut().zip(impulses) {
+            if p.present {
+                p.vel += impulse / p.part.mass_kg();
+            }
+        }
+    }
+    output.leg_loss = missing[7..].iter().any(|m| *m);
+    output
 }
 pub(super) fn posed_segments(soldier: &Soldier) -> [physics::CrewSegment; COUNT] {
     let prone = soldier.is_prone_wounded();

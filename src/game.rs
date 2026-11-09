@@ -3574,6 +3574,8 @@ enum ProjectileContactKind {
     ExposedCrew(CouchCrewCasualty, crew_physics::CrewBodyPart),
     FieldPerson(crate::expedition::PersonId, crew_physics::CrewBodyPart),
     Infantry(usize),
+    /// A T-34 crewman out of his hatch (`enemy_crew::Aftermath::exposed`), by his index there.
+    BailedCrew(usize),
     Structure(usize),
     HardCover,
     Tree(usize),
@@ -19128,7 +19130,7 @@ impl Game {
         // Advance wreck fire clocks, tumbling turret-pop physics, and delayed cook-offs.
         self.sim_phase.seg("dressing_scars_portable");
         let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_wrecks"); self.update_wrecks(dt); } self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
-        self.enemy_crew.update(dt, &self.enemies, &self.wrecks, &self.hf, &self.occluders);
+        self.enemy_crew.update(dt, &self.enemies, &self.wrecks, &self.hf, &self.occluders, self.player.center());
         self.enemy_crew.draw(r);
         self.living_wounds.update_draw(dt,r);
         self.infantry_casualties.update_draw(dt,&self.soldiers,&self.hf,r);
@@ -26900,6 +26902,15 @@ impl Game {
                 .map_or(1.75, crate::infantry_combat::Combatant::body_height);
             consider(swept_infantry_contact(index, soldier, height, step.start, step.end));
         }
+        // The T-34 crews who got out are bodies in the world like the infantry (their posed segments).
+        let delta_bc = step.end - step.start;
+        for (index, parts) in self.enemy_crew.exposed() {
+            consider(parts.iter().filter(|p| p.present).filter_map(|p| crew_damage::swept_sphere_obb_fraction(step.start, step.end, 0.004,
+                crew_damage::CrewHitVolume::new(p.part, p.pos, p.rot, p.part.half_extents())))
+                .min_by(f32::total_cmp)
+                .map(|fraction| ProjectileContact { t_m: fraction * length, pos: step.start + delta_bc * fraction,
+                    kind: ProjectileContactKind::BailedCrew(index) }));
+        }
 
         let mut cover_contact = |key| {
             let (min,max,kind)=match key {
@@ -27305,6 +27316,12 @@ impl Game {
         let targets=self.soldiers.iter().enumerate().filter(|(_,s)|s.alive&&s.pos.distance(point)<radius)
             .filter(|(_,s)|self.los_clear(point+Vec3::Y*0.05,s.pos+Vec3::Y*0.8)).map(|(i,_)|i).collect::<Vec<_>>();
         for i in targets {self.infantry_contact(i,point,incoming,0.0,filler_j,true,weapon);}
+        // The bailed T-34 crews in the open take the same pressure where it reaches them.
+        let crew: Vec<usize> = self.enemy_crew.exposed()
+            .filter(|(_, parts)| parts[crew_physics::CrewBodyPart::Torso.index()].pos.distance(point) < radius)
+            .filter(|(_, parts)| self.los_clear(point + Vec3::Y * 0.05, parts[crew_physics::CrewBodyPart::Torso.index()].pos))
+            .map(|(i, _)| i).collect();
+        for i in crew { self.enemy_crew.hit(i, point, incoming, 0.0, filler_j, true, &mut self.infantry_casualties); }
     }
 
     fn apply_authoritative_he_blast(&mut self, projectile_id: u64, point: Vec3, incoming: Vec3,
@@ -27591,6 +27608,11 @@ impl Game {
                     "[absitzen] DIRECT SHELL HIT at {:.0} m",
                     projectile.distance_m
                 );
+            }
+            ProjectileContactKind::BailedCrew(index) => {
+                self.enemy_crew.hit(index, contact.pos, projectile.velocity, projectile.shell.mass_kg * projectile.mass_fraction,
+                    0.0, false, &mut self.infantry_casualties);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
             }
             ProjectileContactKind::Infantry(index) => {
                 // A direct cannon strike is lethal to an exposed body for AP and HE alike.

@@ -344,6 +344,55 @@ pub fn seated_segments(
     segments
 }
 
+/// A living man's whole-body pose over the same ball-joint anchors as the casualty solver:
+/// forward kinematics from the pelvis, no dynamics. `pelvis` is the pelvis centre in the root
+/// frame (metres at scale 1, boots at Y=0 when standing); `pelvis_rot` and `joints` are
+/// root-frame segment orientations, `joints` in the order torso, head, left upper arm, left
+/// forearm, right upper arm, right forearm, left thigh, left shin, right thigh, right shin.
+/// Every caller's angles are procedural keyframes (see `enemy_crew`), not authored animation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KinematicPose {
+    pub pelvis: Vec3,
+    pub pelvis_rot: Quat,
+    pub joints: [Quat; 10],
+}
+
+impl KinematicPose {
+    /// The relaxed standing source pose.
+    pub const STANDING: Self = Self {
+        pelvis: CrewBodyPart::Pelvis.rest_center(),
+        pelvis_rot: Quat::IDENTITY,
+        joints: [Quat::IDENTITY; 10],
+    };
+
+    /// Component-wise blend toward `other` (`t` in 0..1): positions linearly, orientations by
+    /// the shorter arc.
+    pub fn blend(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        Self {
+            pelvis: self.pelvis.lerp(other.pelvis, t),
+            pelvis_rot: self.pelvis_rot.slerp(other.pelvis_rot, t),
+            joints: std::array::from_fn(|i| self.joints[i].slerp(other.joints[i], t)),
+        }
+    }
+}
+
+pub fn kinematic_segments(
+    origin: Vec3,
+    rotation: Quat,
+    scale: f32,
+    pose: &KinematicPose,
+) -> [CrewSegment; CREW_BODY_PART_COUNT] {
+    let mut segments = rest_segments(origin, rotation, scale);
+    let pelvis = CrewBodyPart::Pelvis.index();
+    segments[pelvis].pos = origin + rotation * (pose.pelvis * scale);
+    segments[pelvis].rot = rotation * pose.pelvis_rot;
+    for (joint, local) in JOINTS.into_iter().zip(pose.joints) {
+        place_joint_child(&mut segments, joint, rotation * local, scale);
+    }
+    segments
+}
+
 /// Map one point onto the closest current anatomical OBB. This is used for the retained lethal
 /// fragment contact, rather than guessing a body part from damage severity or camera direction.
 pub fn nearest_body_part(
@@ -935,4 +984,30 @@ pub fn topple_acceleration(body_axis: Vec3, fallback_axis: Vec3, body_length: f3
     };
     let alpha = (1.5 * 9.8 / body_length.max(0.5)) * lean.max(0.035);
     axis * alpha
+}
+
+#[cfg(test)]
+mod kinematic_pose_tests {
+    use super::*;
+
+    #[test]
+    fn kinematic_pose_keeps_every_joint_closed_and_standing_matches_rest() {
+        let origin = Vec3::new(3.0, 1.0, -2.0);
+        let facing = Quat::from_rotation_y(0.7);
+        let standing = kinematic_segments(origin, facing, 1.0, &KinematicPose::STANDING);
+        let rest = rest_segments(origin, facing, 1.0);
+        for (a, b) in standing.iter().zip(rest.iter()) {
+            // The joint anchors and the mesh's rest centres agree to the anchors' own rounding.
+            assert!(a.pos.distance(b.pos) < 0.03, "{:?} {} m from rest", a.part, a.pos.distance(b.pos));
+        }
+        let mut bent = KinematicPose::STANDING;
+        bent.pelvis_rot = Quat::from_rotation_x(0.4);
+        for (i, q) in bent.joints.iter_mut().enumerate() {
+            *q = Quat::from_rotation_x(-0.3 * i as f32) * Quat::from_rotation_z(0.1 * i as f32);
+        }
+        let posed = kinematic_segments(Vec3::ZERO, Quat::IDENTITY, 1.0, &bent);
+        assert!(max_joint_error(&posed, 1.0) < 1.0e-4);
+        let half = KinematicPose::STANDING.blend(&bent, 0.5);
+        assert!(max_joint_error(&kinematic_segments(Vec3::ZERO, Quat::IDENTITY, 1.0, &half), 1.0) < 1.0e-4);
+    }
 }
