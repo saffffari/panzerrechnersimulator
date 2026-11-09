@@ -610,9 +610,18 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
 /// Writes the composite at the internal grid after a dozen frames and prints the strewn field's
 /// camera counts. `KESSEL_SCATTER_HIZ_LEGACY=1` reproduces the cull before 2026-11-08 (the sight
 /// picture's field tested against the surround pass's depth) for a before/after pair.
+/// `KESSEL_SHOT_TIGER=x,z,heading_deg` (as `screenshot`; 0 = +Z, 90 = +X) first sets the Tiger
+/// down there (disclosed in the log) and lets it settle, for the same view elsewhere on the route.
 pub fn sight_scatter_check(prefix: &str, seed: u64, ahead_m: f32) -> anyhow::Result<()> {
     if std::env::var_os("KESSEL_SCATTER_STATS").is_none() { std::env::set_var("KESSEL_SCATTER_STATS", "1"); }
     let (device, queue, mut r, mut g, _manifest) = build_course(seed)?;
+    if let Some(p) = std::env::var("KESSEL_SHOT_TIGER").ok().map(|v| v.split(',')
+        .filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()).filter(|p| p.len() == 3) {
+        g.debug_place_tiger(Vec2::new(p[0], p[1]), p[2].to_radians());
+        for _ in 0..90 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
+        println!("[sight-scatter] Tiger set down at ({:.1}, {:.1}) heading {:.1} deg (KESSEL_SHOT_TIGER), settled at {:?}",
+            p[0], p[1], p[2], g.player.pos);
+    }
     g.station = crate::game::Station::Gunner;
     let bow = glam::Vec3::new(g.player.heading.sin(), 0.0, g.player.heading.cos());
     let mut target = g.player.pos + bow * ahead_m;

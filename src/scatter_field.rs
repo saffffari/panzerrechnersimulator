@@ -216,6 +216,10 @@ struct Rule {
     companions: Vec<Companion>,
     lane_clear: bool,
     min_intensity: f32,
+    /// Keys this rule's random stream (with the seed, the cell and the source). The layer file may
+    /// state it (`stream`); otherwise it is the rule's position in the file, so adding or removing a
+    /// rule in a file that states its streams leaves every other rule's placements where they were.
+    stream: u32,
     name: String,
 }
 
@@ -507,6 +511,27 @@ fn parse_band(v: &serde_json::Value) -> Option<Band> {
     }
 }
 
+/// The layer file a workshop ships: this name, beside its manifest.
+pub const LAYER_FILE: &str = "scatter.v1.json";
+/// Review gate, not a shipping path: names another layer file to load in place of [`LAYER_FILE`]
+/// (a bare file name is looked up beside the manifest; anything with a directory is used as
+/// given), so a candidate field can be shot beside the live one before it replaces it. Unset or
+/// empty, the workshop's own file loads. The ground raster is read beside whichever file loads.
+pub const REVIEW_FILE_ENV: &str = "KESSEL_SCATTER_FILE";
+/// Measurement switch: the path of a CSV to write with one row per placed object (position,
+/// distance to the route centreline, source kind, rule, group, tier, companion). Placement is
+/// unchanged by it. `tools/worldgen/scatter_road_census.py` tabulates the file.
+pub const CENSUS_ENV: &str = "KESSEL_SCATTER_CENSUS";
+
+/// Which layer file loads for a manifest directory, given the review gate's value.
+fn layer_file(dir: &Path, review: Option<&std::ffi::OsStr>) -> PathBuf {
+    match review.filter(|v| !v.is_empty()).map(Path::new) {
+        Some(named) if named.parent().is_some_and(|p| !p.as_os_str().is_empty()) => named.to_owned(),
+        Some(named) => dir.join(named),
+        None => dir.join(LAYER_FILE),
+    }
+}
+
 impl Layers {
     /// The layer file beside a workshop manifest, if the workshop has one.
     pub fn beside_manifest(manifest_path: &Path) -> Option<Self> {
@@ -515,7 +540,16 @@ impl Layers {
             return None;
         }
         let dir = manifest_path.parent()?;
-        let path = dir.join("scatter.v1.json");
+        let candidate = std::env::var_os(REVIEW_FILE_ENV);
+        let path = layer_file(dir, candidate.as_deref());
+        if candidate.as_deref().is_some_and(|v| !v.is_empty()) {
+            // Never fall back to the live file here: a review still must show the file it names.
+            if !path.is_file() {
+                eprintln!("[scatter] REVIEW GATE {REVIEW_FILE_ENV}: {} is not a file; the strewn field stays off", path.display());
+                return None;
+            }
+            println!("[scatter] REVIEW GATE {REVIEW_FILE_ENV}: loading {} in place of {LAYER_FILE}", path.display());
+        }
         if !path.is_file() {
             return None;
         }
@@ -675,6 +709,7 @@ impl Layers {
                 companions,
                 lane_clear: r["lane_clear"].as_bool().unwrap_or(false),
                 min_intensity: j_f32(&r["min_intensity"], 0.0),
+                stream: r["stream"].as_u64().map_or(rules.len() as u32, |v| v as u32),
                 name: r["name"].as_str().unwrap_or("rule").to_owned(),
             });
         }
@@ -794,6 +829,20 @@ struct Ctx<'a> {
     roads: &'a SpatialHash,
     buildings: &'a [usize],
     half_extent: f32,
+    /// `CENSUS_ENV` is set: every placement is also recorded for the census file.
+    census: bool,
+}
+
+/// One placed object as the census file lists it.
+struct CensusRow {
+    pos: Vec2,
+    lane_m: f32,
+    kind: u8,
+    /// The rule's name; a companion carries its parent rule's name, then `+`, then its group.
+    rule: String,
+    group: usize,
+    tier: Tier,
+    companion: bool,
 }
 
 impl Ctx<'_> {
@@ -906,6 +955,7 @@ struct CellOut {
     loot: Vec<Vec2>,
     stats: Stats,
     group_counts: Vec<usize>,
+    census: Vec<CensusRow>,
 }
 
 struct Blocker {
@@ -1057,6 +1107,9 @@ fn place_one(
     out.stats.by_tier[tier as usize] += 1;
     out.stats.placed += 1;
     out.group_counts[group] += 1;
+    if ctx.census {
+        out.census.push(CensusRow { pos: p, lane_m: ctx.lane_distance(p), kind: s.kind, rule: rule.name.clone(), group, tier, companion });
+    }
     if companion {
         out.stats.companions += 1;
     }
@@ -1073,6 +1126,7 @@ fn generate_cell(ctx: &Ctx, cx: i32, cz: i32, cell_id: u32) -> CellOut {
         loot: Vec::new(),
         stats: Stats::default(),
         group_counts: vec![0; layers.groups.len()],
+        census: Vec::new(),
     };
     let cmin = Vec2::new(cx as f32 * CELL_M, cz as f32 * CELL_M);
     let cmax = cmin + Vec2::splat(CELL_M);
@@ -1082,7 +1136,7 @@ fn generate_cell(ctx: &Ctx, cx: i32, cz: i32, cell_id: u32) -> CellOut {
     candidates.dedup();
     for &si in &candidates {
         let s = &layers.sources[si as usize];
-        for (ri, rule) in layers.rules.iter().enumerate() {
+        for rule in &layers.rules {
             if rule.kind != s.kind {
                 continue;
             }
@@ -1102,7 +1156,7 @@ fn generate_cell(ctx: &Ctx, cx: i32, cz: i32, cell_id: u32) -> CellOut {
             }
             let area = (hi.x - lo.x) * (hi.y - lo.y);
             let expected = rule.density * s.intensity * area;
-            let mut rng = Rng::new(&[layers.seed, cx as u32, cz as u32, si, ri as u32]);
+            let mut rng = Rng::new(&[layers.seed, cx as u32, cz as u32, si, rule.stream]);
             let n = expected.floor() as u32 + u32::from(rng.f() < expected.fract());
             for _ in 0..n {
                 let p = Vec2::new(rng.range(lo.x, hi.x), rng.range(lo.y, hi.y));
@@ -1136,7 +1190,8 @@ fn generate_cell(ctx: &Ctx, cx: i32, cz: i32, cell_id: u32) -> CellOut {
                             companions: Vec::new(),
                             lane_clear: false,
                             min_intensity: 0.0,
-                            name: String::new(),
+                            stream: rule.stream,
+                            name: if ctx.census { format!("{}+{}", rule.name, layers.groups[c.group].name) } else { String::new() },
                         };
                         place_one(ctx, &mut out, &mut blockers, &mut rng, q, c.group, &crule, s, cell_id, true);
                     }
@@ -1170,7 +1225,9 @@ impl Layers {
             let c = Vec2::new((x as f32 + 0.5) * CELL_M, (z as f32 + 0.5) * CELL_M);
             c.x.abs() < half_extent + CELL_M && c.y.abs() < half_extent + CELL_M
         }).collect();
-        let ctx = Ctx { layers: &self, hf, sources: &sources, roads: &roads, buildings: &buildings, half_extent };
+        let census_path = std::env::var_os(CENSUS_ENV).filter(|v| !v.is_empty()).map(PathBuf::from);
+        let ctx = Ctx { layers: &self, hf, sources: &sources, roads: &roads, buildings: &buildings, half_extent, census: census_path.is_some() };
+        let mut census: Vec<CensusRow> = Vec::new();
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 32);
         let chunk = keys.len().div_ceil(threads).max(1);
         let outputs: Vec<Vec<(usize, CellOut)>> = std::thread::scope(|scope| {
@@ -1214,6 +1271,7 @@ impl Layers {
                         p
                     }));
                 }
+                census.extend(out.census);
                 cover_large.extend(cover_large_cell);
                 cover_medium.extend(out.cover_medium);
                 pushables.extend(out.pushables);
@@ -1311,6 +1369,23 @@ impl Layers {
             stats.rejected_slope, stats.rejected_class, stats.rejected_lane, stats.rejected_building, stats.rejected_keep,
             stats.rejected_overlap, stats.rejected_band, stats.rejected_map, stats.rejected_support
         );
+        if let Some(path) = census_path {
+            use std::io::Write;
+            let written = std::fs::File::create(&path).map(std::io::BufWriter::new).and_then(|mut file| {
+                writeln!(file, "x,z,lane_m,kind,rule,group,tier,companion")?;
+                for row in &census {
+                    // beyond the road index's reach (a cell and more from any segment) the distance is not known
+                    let lane = if row.lane_m.is_finite() { row.lane_m } else { -1.0 };
+                    writeln!(file, "{:.2},{:.2},{:.2},{},{},{},{},{}", row.pos.x, row.pos.y, lane, KINDS[row.kind as usize], row.rule,
+                        self.groups[row.group].name, ["small", "medium", "large"][row.tier as usize], row.companion as u8)?;
+                }
+                file.flush()
+            });
+            match written {
+                Ok(()) => println!("[scatter] census: {} rows of {} written to {}", census.len(), self.path.display(), path.display()),
+                Err(error) => eprintln!("[scatter] census {}: {error}", path.display()),
+            }
+        }
         let mut groups: Vec<&(String, usize)> = stats.by_group.iter().collect();
         groups.sort_by(|a, b| b.1.cmp(&a.1));
         println!(
@@ -1366,7 +1441,7 @@ mod tests {
         let hf = Heightfield {res:65, spacing:0.25, heights:vec![0.;65*65],
             min_h:0., max_h:0., openings:Default::default(), detail:None};
         let hash = SpatialHash::new(32.);
-        let ctx = Ctx {layers:&layers, hf:&hf, sources:&hash, roads:&hash, buildings:&[], half_extent:8.};
+        let ctx = Ctx {layers:&layers, hf:&hf, sources:&hash, roads:&hash, buildings:&[], half_extent:8., census:false};
         let authored_scale = 1.33713_f32;
         let packed_scale = f16_to_f32(f32_to_f16(authored_scale));
         assert_ne!(authored_scale, packed_scale, "fixture must exercise a quantization change");
@@ -1374,12 +1449,12 @@ mod tests {
             band:Band::Annulus {r0:[0.,0.], r1:[0.,1.], sector:None},
             orient:Orient::Along, jitter:0., scale:[authored_scale;2], slope_max:1.,
             side:None, classes:u8::MAX, companions:vec![], lane_clear:false,
-            min_intensity:0., name:"test".into()};
+            min_intensity:0., stream:0, name:"test".into()};
         let emitter = Source {kind:0, pos:Vec2::ZERO, heading:0.37, fwd:Vec2::Y,
             right:Vec2::X, hl:1., hw:1., radius:1., intensity:1., flight:0.,
             side:String::new(), reach:1.};
         let mut out = CellOut {placements:vec![], cover_large:vec![], cover_medium:vec![],
-            pushables:vec![], loot:vec![], stats:Stats::default(), group_counts:vec![0]};
+            pushables:vec![], loot:vec![], stats:Stats::default(), group_counts:vec![0], census:vec![]};
         assert!(place_one(&ctx, &mut out, &mut vec![], &mut Rng::new(&[17]),
             Vec2::ZERO, 0, &rule, &emitter, 0, false).is_some());
         let actual = out.placements[0];
@@ -1474,5 +1549,17 @@ mod tests {
         assert!(band_contains(&band, &s, Vec2::new(2.0, 0.0), Vec2::X));
         assert!(!band_contains(&band, &s, Vec2::new(-2.0, 0.0), Vec2::X));
         assert!(band_contains(&band, &s, Vec2::new(-2.0, 0.0), Vec2::NEG_X));
+    }
+
+    #[test]
+    fn the_workshop_file_loads_unless_the_review_gate_names_another() {
+        use std::ffi::OsStr;
+        let dir = Path::new("workshop");
+        // shipping: no gate, or an empty one, is the workshop's own file
+        assert_eq!(layer_file(dir, None), dir.join(LAYER_FILE));
+        assert_eq!(layer_file(dir, Some(OsStr::new(""))), dir.join(LAYER_FILE));
+        // review: a bare name sits beside the manifest, a path is used as given
+        assert_eq!(layer_file(dir, Some(OsStr::new("scatter.v1.candidate.json"))), dir.join("scatter.v1.candidate.json"));
+        assert_eq!(layer_file(dir, Some(OsStr::new("/tmp/review/scatter.json"))), Path::new("/tmp/review/scatter.json"));
     }
 }

@@ -37,6 +37,9 @@ from canyon_v2_wreckage import ASSETS as WRECK_ASSETS, Workshop  # noqa: E402
 VERSION = 1
 TOOL = 'tools/worldgen/scatter_layers.py'
 DEFAULT_SEED = 0x20261027
+LAYER_FILE = 'scatter.v1.json'
+# The rules' last revision (docs/SCATTER.md section 8): the road source's debris moved to its sources.
+REVISED = '2026-11-08'
 DEST = 'assets/worldgen/workshops/gaea-canyon-run-v2'
 WIND = (-0.60, 0.80)
 LANE_HALF_M = 12.0
@@ -212,10 +215,38 @@ def annulus(r0, r1, sector=None):
     return b
 
 
+# The engine keys a rule's random stream by its `stream` number (with the seed, the cell and the
+# source), so a rule keeps its placements when other rules are added, removed or reordered. The
+# first layer file (2026-10-27) had no stream numbers and the engine used the rule's position in the
+# file; these are those positions. A name stays here after its rule is retired, so its number is
+# never reused; a rule added later states its own number, from 100 up.
+STREAMS_V1 = (
+    'road.cases', 'road.kit', 'road.kit_on_road', 'road.cases_on_road', 'road.crates', 'road.snow', 'road.rubble',
+    'road.fragments', 'road.weapons', 'road.bodies_german', 'road.bodies_soviet',
+    'crater.clods', 'crater.shards', 'crater.snow', 'crater.kit', 'crater.bodies_german', 'crater.bodies_soviet',
+    'scorch.rubble', 'scorch.shards',
+    'wreck.fragments', 'wreck.kit', 'wreck.crates', 'wreck.bodies_german', 'wreck.bodies_soviet', 'wreck.snow',
+    'gun.cases_45', 'gun.cases_76', 'gun.cases_88', 'gun.boxes', 'gun.cases_small',
+    'tree.foliage', 'tree.rocks', 'tree.snow', 'obstacle.drifts', 'obstacle.snow',
+    'fighting.bodies_german', 'fighting.bodies_soviet', 'fighting.cases', 'fighting.weapons', 'fighting.kit',
+    'fighting.clods', 'fighting.shards', 'fighting.barricade',
+    'casualty.blood', 'casualty.kit', 'casualty.weapons', 'casualty.cases',
+    'building.rubble', 'building.clods', 'building.furniture', 'building.kit', 'building.snow')
+# Every ground class but the road ribbon (the raster's class 1: within 5.2 m of the centreline).
+OFF_ROAD = ['snow', 'rubble', 'scorch', 'mud', 'rock']
+
+
 def rule(source, group, density, band, orient='random', jitter=180.0, scale=(0.9, 1.1), slope_max=0.55, side=None,
-         classes=None, companions=None, lane_clear=False, min_intensity=0.0, name=None):
+         classes=None, companions=None, lane_clear=False, min_intensity=0.0, name=None, stream=None):
+    name = name or f'{source}.{group}'
+    if stream is None:
+        if name not in STREAMS_V1:
+            raise ValueError(f'rule {name!r} is not in STREAMS_V1: give it a stream number of its own (100 or above)')
+        stream = STREAMS_V1.index(name)
+    elif stream < 100:
+        raise ValueError(f'rule {name!r}: stream numbers under 100 belong to STREAMS_V1')
     r = dict(source=source, group=group, density=density, band=band, orient=orient, jitter_deg=jitter, scale=list(scale),
-             slope_max=slope_max)
+             slope_max=slope_max, stream=stream)
     if side:
         r['side'] = side
     if classes:
@@ -226,7 +257,7 @@ def rule(source, group, density, band, orient='random', jitter=180.0, scale=(0.9
         r['lane_clear'] = True
     if min_intensity:
         r['min_intensity'] = min_intensity
-    r['name'] = name or f'{source}.{group}'
+    r['name'] = name
     return r
 
 
@@ -237,17 +268,32 @@ GERMAN_GUN_COMPANIONS = None
 
 def rules():
     R = []
-    # ── Roads: the retreat's litter on the shoulders, cases where columns were strafed, kit thrown
-    # from vehicles; drifts and snow lumps on the verges; the dead who sat down beside the road.
-    R += [rule('road', 'cases_small', 1.2, rect([[1, 0], [1, 0]], [[0, 0], [0, 6]]), name='road.cases'),
-          rule('road', 'kit', 0.35, rect([[1, 0], [1, 0]], [[0, 0], [0, 9]]), name='road.kit'),
-          rule('road', 'kit', 0.04, rect([[1, 0], [1, 0]], [[-1, 0], [0, 0]]), name='road.kit_on_road'),
-          rule('road', 'cases_small', 0.3, rect([[1, 0], [1, 0]], [[-1, 0], [0, 0]]), name='road.cases_on_road'),
+    # ── Roads: what a retreating column leaves on the verges (dropped kit, thrown-away helmets,
+    # rifles and gas-mask canisters), snow lumps beside the ploughed ribbon, and a rare dropped item
+    # on the driven surface itself. A band's lateral bounds are metres from the CENTRELINE
+    # (k·half_width + c): k = 1 starts at the road's edge.
+    #
+    # Revision of 2026-11-08 ("too much debris on that main road ... it should be moved around to be
+    # nearby plausible sources"). The first layer wrote its shoulder bands as [[0, 0], [0, c]],
+    # which is the centreline out to c metres: the shoulder densities lay across the whole driven
+    # surface (2.0 pieces per m² of road along all 4.9 km, 95 % of it from these rules), and the
+    # two sparse "on the road" rules had an empty band and placed nothing. An open road is no source
+    # of fired cases, masonry or steel fragments, so those three rules are retired and their counts
+    # are carried by the sources that do shed them: fired cases at the fighting sites, the guns and
+    # the authored dead; rubble at the foot of the buildings' walls; plate, track and wheel
+    # fragments around the wrecks. Kit and weapons stay on the verges at about a quarter and a third
+    # of their old density, the rest goes to the wrecks and the fighting sites.
+    #
+    # road.crates and the two road.bodies rules are as first written and place nothing: their bands
+    # lie inside the 12 m lane the engine keeps clear of bodies and of every lane_clear rule. Moving
+    # them beyond the lane would add about a thousand dead and their kit along the route, which is a
+    # change to the story and not part of this revision.
+    along, verge, roadway = [[1, 0], [1, 0]], [[1, 0.6], [1, 7.0]], [[0, 0], [1, 0]]
+    R += [rule('road', 'kit', 0.12, rect(along, verge), name='road.kit'),
+          rule('road', 'kit', 0.004, rect(along, roadway), name='road.kit_on_road'),
           rule('road', 'crates', 0.05, rect([[1, 0], [1, 0]], [[0, 0.5], [0, 9]]), lane_clear=True, name='road.crates'),
           rule('road', 'snow', 0.12, rect([[1, 0], [1, 0]], [[0, 1], [0, 10]]), scale=(0.5, 1.1), classes=['snow'], name='road.snow'),
-          rule('road', 'rubble', 0.3, rect([[1, 0], [1, 0]], [[0, 0], [0, 7]]), name='road.rubble'),
-          rule('road', 'fragments', 0.05, rect([[1, 0], [1, 0]], [[0, 0], [0, 8]]), name='road.fragments'),
-          rule('road', 'weapons', 0.06, rect([[1, 0], [1, 0]], [[0, 0], [0, 9]]), name='road.weapons'),
+          rule('road', 'weapons', 0.03, rect(along, verge), name='road.weapons'),
           rule('road', 'bodies_german', 0.009, rect([[1, 0], [1, 0]], [[0, 1.5], [0, 9]]), orient='along', jitter=35,
                companions=BODY_COMPANIONS, lane_clear=True, name='road.bodies_german'),
           rule('road', 'bodies_soviet', 0.004, rect([[1, 0], [1, 0]], [[0, 1.5], [0, 9]]), orient='along', jitter=50,
@@ -265,8 +311,10 @@ def rules():
     R += [rule('scorch', 'rubble', 0.5, annulus([0, 0], [2, 0]), name='scorch.rubble'),
           rule('scorch', 'shards', 0.3, annulus([0, 0], [2.5, 0]), name='scorch.shards')]
     # ── Wrecks: what came off and out of them, the crew that bailed, drifts in their lee (obstacle).
-    R += [rule('wreck', 'fragments', 0.5, annulus([1, 0.3], [1, 7]), orient='radial', jitter=60, lane_clear=True, name='wreck.fragments'),
-          rule('wreck', 'kit', 0.6, annulus([1, 0.2], [1, 5]), lane_clear=True, name='wreck.kit'),
+    # 2026-11-08: fragments 0.5 -> 0.54 and kit 0.6 -> 0.8 carry what the road rules gave up (an
+    # abandoned lorry, cart or sledge is where a column's load is actually dumped).
+    R += [rule('wreck', 'fragments', 0.54, annulus([1, 0.3], [1, 7]), orient='radial', jitter=60, lane_clear=True, name='wreck.fragments'),
+          rule('wreck', 'kit', 0.8, annulus([1, 0.2], [1, 5]), lane_clear=True, name='wreck.kit'),
           rule('wreck', 'crates', 0.06, annulus([1, 0.4], [1, 5]), lane_clear=True, name='wreck.crates'),
           rule('wreck', 'bodies_german', 0.006, annulus([1, 0], [1, 6]), orient='radial', jitter=45, side='german',
                companions=BODY_COMPANIONS, lane_clear=True, name='wreck.bodies_german'),
@@ -278,10 +326,12 @@ def rules():
           rule('gun', 'cases_76', 2.0, annulus([1, 0.3], [1, 3.5], sector=[90, 60]), side='76mm', name='gun.cases_76'),
           rule('gun', 'cases_88', 1.5, annulus([1, 0.3], [1, 3.5], sector=[-90, 60]), side='88mm', name='gun.cases_88'),
           rule('gun', 'crates', 0.25, annulus([0, 1.5], [0, 7.0], sector=[180, 70]), lane_clear=True, name='gun.boxes'),
-          rule('gun', 'cases_small', 1.5, annulus([0, 0.5], [0, 8.0]), name='gun.cases_small')]
+          # 2026-11-08: 1.5 -> 1.75, a share of the cases the road rules gave up
+          rule('gun', 'cases_small', 1.75, annulus([0, 0.5], [0, 8.0]), name='gun.cases_small')]
     # ── Trees: boughs, dry grass through the snow, stones and lumps at the trunk.
+    # 2026-11-08: the stones keep off the road ribbon (a driven road has none lying on it).
     R += [rule('tree', 'foliage', 1.2, annulus([0, 0.3], [1.2, 0]), scale=(0.7, 1.3), name='tree.foliage'),
-          rule('tree', 'rocks', 0.35, annulus([0, 0], [1.5, 0]), scale=(0.6, 1.4), name='tree.rocks'),
+          rule('tree', 'rocks', 0.35, annulus([0, 0], [1.5, 0]), scale=(0.6, 1.4), classes=OFF_ROAD, name='tree.rocks'),
           rule('tree', 'snow', 0.12, annulus([0, 0], [1.5, 0]), scale=(0.5, 1.1), classes=['snow'], name='tree.snow')]
     # ── Obstacles: drifts and lumps form in the lee of anything that breaks the wind.
     R += [rule('obstacle', 'drifts', 0.12, rect([[1, 0], [1, 0]], [[1, 0.2], [1, 3.5]], mirror=False), orient='wind', jitter=12,
@@ -294,9 +344,12 @@ def rules():
                companions=BODY_COMPANIONS, lane_clear=True, name='fighting.bodies_german'),
           rule('fighting', 'bodies_soviet', 0.012, annulus([0, 0], [1, 0]), orient='flight', jitter=35, side='soviet',
                companions=BODY_COMPANIONS, lane_clear=True, name='fighting.bodies_soviet'),
-          rule('fighting', 'cases_small', 0.4, annulus([0, 0], [1.2, 0]), name='fighting.cases'),
-          rule('fighting', 'weapons', 0.08, annulus([0, 0], [1, 0]), name='fighting.weapons'),
-          rule('fighting', 'kit', 0.08, annulus([0, 0], [1, 0]), name='fighting.kit'),
+          # 2026-11-08: cases 0.4 -> 0.65, weapons 0.08 -> 0.10, kit 0.08 -> 0.16: the fired cases, the
+          # dropped weapons and half of the kit the road rules gave up lie where men fought and where
+          # units came apart.
+          rule('fighting', 'cases_small', 0.65, annulus([0, 0], [1.2, 0]), name='fighting.cases'),
+          rule('fighting', 'weapons', 0.10, annulus([0, 0], [1, 0]), name='fighting.weapons'),
+          rule('fighting', 'kit', 0.16, annulus([0, 0], [1, 0]), name='fighting.kit'),
           rule('fighting', 'clods', 0.15, annulus([0, 0], [1, 0]), name='fighting.clods'),
           rule('fighting', 'shards', 0.1, annulus([0, 0], [1, 0]), name='fighting.shards'),
           rule('fighting', 'barricade', 0.004, annulus([0, 0], [1, 0]), orient='flight', jitter=20, lane_clear=True, min_intensity=0.6,
@@ -304,14 +357,25 @@ def rules():
     # ── Authored bodies (the generator's and the wreckage layer's): blood and kit around each.
     R += [rule('casualty', 'blood', 1.5, annulus([0, 0.1], [0, 0.9]), name='casualty.blood'),
           rule('casualty', 'kit', 0.5, annulus([0, 0.3], [0, 1.6]), name='casualty.kit'),
-          rule('casualty', 'weapons', 0.25, annulus([0, 0.3], [0, 1.4]), name='casualty.weapons'),
-          rule('casualty', 'cases_small', 1.2, annulus([0, 0.2], [0, 1.5]), name='casualty.cases')]
+          # 2026-11-08: weapons 0.25 -> 0.32 and cases 1.2 -> 2.4, shares of what the road rules gave up
+          rule('casualty', 'weapons', 0.32, annulus([0, 0.3], [0, 1.4]), name='casualty.weapons'),
+          rule('casualty', 'cases_small', 2.4, annulus([0, 0.2], [0, 1.5]), name='casualty.cases')]
     # ── Buildings: the rubble apron of every ruin, household objects thrown out of it.
+    # 2026-11-08: the rubble the road rules gave up is heaped at the foot of the walls: a rectangle
+    # 2.5 m out from the oriented footprint (the engine keeps a building's own rules out of every
+    # footprint), where the apron's ring about the centre leaves a gap beside a long wall. It is the
+    # last rule of the block so that the apron's own heavy pieces are placed first and stay put.
     R += [rule('building', 'rubble', 1.0, annulus([0.9, 0], [1, 6]), orient='radial', jitter=70, name='building.rubble'),
           rule('building', 'clods', 0.3, annulus([0.9, 0], [1, 4]), name='building.clods'),
           rule('building', 'furniture', 0.05, annulus([1, 0.3], [1, 5]), lane_clear=True, name='building.furniture'),
           rule('building', 'kit', 0.2, annulus([0.9, 0], [1, 6]), name='building.kit'),
-          rule('building', 'snow', 0.1, annulus([1, 0], [1, 5]), scale=(0.5, 1.1), classes=['snow'], name='building.snow')]
+          rule('building', 'snow', 0.1, annulus([1, 0], [1, 5]), scale=(0.5, 1.1), classes=['snow'], name='building.snow'),
+          rule('building', 'rubble', 0.74, rect([[1, 2.5], [1, 2.5]], [[0, 0], [1, 2.5]]), orient='radial', jitter=70,
+               name='building.rubble_at_walls', stream=100)]
+    streams = collections.Counter(r['stream'] for r in R)
+    clash = [r['name'] for r in R if streams[r['stream']] > 1]
+    if clash:
+        raise ValueError(f'rules share a stream number: {clash}')
     return R
 
 
@@ -541,7 +605,11 @@ def estimate(sources, rules_):
                 continue
             if s.get('intensity', 1.0) < r.get('min_intensity', 0.0):
                 continue
-            n += r['density'] * s.get('intensity', 1.0) * band_area(r['band'], s)
+            area = band_area(r['band'], s)
+            if s['kind'] == 'building' and r['band']['shape'] == 'rect':
+                # the engine keeps a building's own rules out of its footprint (and 0.3 m about it)
+                area -= (2 * s['half_length'] + 0.6) * (2 * s['half_width'] + 0.6)
+            n += r['density'] * s.get('intensity', 1.0) * max(area, 0.0)
         rows.append((r['name'], n))
         total += n
     return rows, total
@@ -554,7 +622,14 @@ def main():
     parser.add_argument('--seed', type=lambda v: int(v, 0), default=DEFAULT_SEED)
     parser.add_argument('--density', type=float, default=1.0)
     parser.add_argument('--estimate', action='store_true')
+    parser.add_argument('--out', default=LAYER_FILE, metavar='NAME',
+                        help=f'file name to write in the workshop (default {LAYER_FILE}, the file the engine loads). Another '
+                             'name writes a candidate for review beside it (load it with KESSEL_SCATTER_FILE=NAME); a '
+                             'candidate reads the workshop\'s existing ground raster, which is checked and not rewritten')
+    parser.add_argument('--overwrite', action='store_true', help='replace an existing file of that name')
     args = parser.parse_args()
+    if Path(args.out).name != args.out or not args.out.endswith('.json'):
+        raise SystemExit('--out is a .json file name inside the workshop, not a path')
     root = args.root
     ws = Workshop(root, root / args.dest)
     sources, counts = derive_sources(ws)
@@ -574,8 +649,21 @@ def main():
         return
     raster, texel = ground_raster(ws, sources, root)
     dest = root / args.dest
-    raster.save(dest / 'scatter_ground.v1.png')
-    doc = dict(schema='kessel.scatter', version=VERSION, tool=TOOL, authored='2026-10-27', seed=args.seed, density=args.density,
+    target = dest / args.out
+    # The layer file is what the game, the editor and every frozen build of this workshop load. A
+    # change to how the field reads is shown as a candidate first and replaces the file on the
+    # owner's word, so nothing here replaces an existing file unless asked to.
+    if target.exists() and not args.overwrite:
+        raise SystemExit(f'{target} exists; pass --overwrite to replace it, or --out NAME to write a candidate beside it')
+    candidate = args.out != LAYER_FILE
+    raster_path = dest / 'scatter_ground.v1.png'
+    if candidate:
+        on_disk = np.asarray(Image.open(raster_path).convert('RGB')) if raster_path.is_file() else None
+        if on_disk is None or on_disk.shape != np.asarray(raster).shape or not (on_disk == np.asarray(raster)).all():
+            raise SystemExit(f'{raster_path} is not the raster these sources give; a candidate cannot share it')
+    else:
+        raster.save(raster_path)
+    doc = dict(schema='kessel.scatter', version=VERSION, tool=TOOL, authored='2026-10-27', revised=REVISED, seed=args.seed, density=args.density,
                wind=list(WIND), lane_half_m=LANE_HALF_M, road_half_m=ROAD_HALF_M,
                keep_clear=[dict(x=r3(ws.spawn[0]), z=r3(ws.spawn[1]), r=60.0, why='spawn'),
                            dict(x=r3(ws.goal[0]), z=r3(ws.goal[1]), r=40.0, why='goal')],
@@ -593,9 +681,10 @@ def main():
                                'docs/research/PHOTO_REFERENCE_ANALYSIS_20260928.md', 'docs/research/URBAN_INTRO_TABLEAUX_20260928.md']),
                expected=dict(total=round(total), rules={name: round(n) for name, n in rows}),
                source_counts=dict(counts), groups=grp, rules=rules_, sources=sources)
-    (dest / 'scatter.v1.json').write_text(json.dumps(doc, separators=(',', ':')) + '\n')
-    print(f'wrote {dest / "scatter.v1.json"} ({len(sources)} sources, {len(rules_)} rules, {sum(len(v) for v in grp.values())} group entries) '
-          f'and scatter_ground.v1.png ({GROUND_RES}^2 at {texel:.3f} m)')
+    target.write_text(json.dumps(doc, separators=(',', ':')) + '\n', newline='\n')
+    print(f'wrote {target} ({len(sources)} sources, {len(rules_)} rules, {sum(len(v) for v in grp.values())} group entries); '
+          + (f'candidate: reads the existing scatter_ground.v1.png, load it with KESSEL_SCATTER_FILE={args.out}' if candidate
+             else f'and scatter_ground.v1.png ({GROUND_RES}^2 at {texel:.3f} m)'))
 
 
 if __name__ == '__main__':
