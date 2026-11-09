@@ -5099,3 +5099,17 @@ Named remaining gaps: a light is classed as a lamp by its kind and size (the lig
 fixture flag); a lamp's shadow ray still skips 0.15-0.3 m before it, so armour within that of a
 lamp outside the compartment is skipped; without ray queries (the portable preset) a light without
 a cube is shadowed only by the screen's contact shadow, at surfaces and in the medium (as before).
+
+## Tiger rig: rear plate mechanisms and fastener objects, 2026-11-08 (`tools/tiger_production/rear_plate_rig.py`, `split_lib.py`, `fasteners.py`; `docs/TIGER_RIG_PLAN_20261108.md`)
+
+Rig data only; the game does not read it yet. Measured from the kit CAD: the jack crank's axis
+(normal of the arm) and centre (circle through the pinion's tooth tips), its 0.336 m throw, the
+latch's 126 degree opening and the crank's -10 to +12 degree swing while stowed (swept collision
+tests), every fastener's seat, direction, head shape and size (from the full CAD, before
+reduction). Named approximations: the handle strap, one closed ring in the kit, is cut by a plane
+into a fixed and a swinging jaw with a pin placed at its solid end; the starter port cover has no
+hinge and comes off whole; the starting shaft's clips do not open; a fastener is a head prism
+with no shank or thread, and a hex head's thread size is a guess from its across-flats by the
+DIN 931 table; round heads on the jack body and on plate 28A-J104 are called rivets by reading
+the part. Not verified: that cover 28A-B69 and shaft 28A-Z16 are the inertia starter's port and
+crank (the kit has a hole behind the cover and a square end on the shaft, and no crank throw).

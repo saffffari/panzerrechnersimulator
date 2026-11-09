@@ -4,6 +4,8 @@ Conventions
 - A mechanism is a controller empty in the RIG_CONTROLLERS collection named CTRL.<Name>. Its rest
   frame lives in delta_rotation_euler (built so local X is the hinge or slide axis); its own
   rotation_euler.x (hinge, radians) or location.x (slide, metres) is the joint value, 0 = closed/rest.
+  A hinge with the property `continuous` turns without limit (a crank). rig_kind 'stow' is a part
+  that comes off whole (make_stow); a control with `accepts` is a socket for a carried tool.
 - Limits and provenance are custom properties: rig_kind, min, max, unit, closed, source, and the
   gameplay notes interaction, damage, repair.
 - Limits are found by sweeping the joint and testing the moving parts against the static geometry
@@ -106,6 +108,8 @@ def make_joint(name, kind, pivot, axis, parts, parent=None, source='', size=0.12
             ctrl_col().objects.link(o)
     fr.empty_display_type = 'PLAIN_AXES'; fr.empty_display_size = size * 0.4; fr.hide_select = True
     bpy.context.view_layer.update()
+    # a joint that already exists may be given a new frame: what it carries stays where it is
+    carried = [(c, c.matrix_world.copy()) for c in e.children]
     fr.parent = parent
     fr.matrix_parent_inverse = parent.matrix_world.inverted() if parent else Matrix()
     fr.matrix_world = Matrix.Translation(Vector(pivot)) @ frame(axis).to_4x4()
@@ -119,6 +123,10 @@ def make_joint(name, kind, pivot, axis, parts, parent=None, source='', size=0.12
     e.lock_rotation = (False, True, True) if kind == 'hinge' else (True, True, True)
     e.lock_scale = (True, True, True)
     bpy.context.view_layer.update()
+    for c, mw in carried:
+        c.matrix_parent_inverse = e.matrix_world.inverted()
+        c.matrix_world = mw
+    bpy.context.view_layer.update()
     e['rig_kind'] = kind
     e['unit'] = 'deg' if kind == 'hinge' else 'm'
     e['closed'] = 0.0
@@ -126,6 +134,29 @@ def make_joint(name, kind, pivot, axis, parts, parent=None, source='', size=0.12
     for p in parts:
         if p is not None:
             reparent(p, e)
+    return e
+
+
+def make_stow(name, pivot, parts, parent=None, source='', released_by='', size=0.1):
+    """A part or tool that comes off the tank whole: FRAME.<name> marks its stowed seat, CTRL.<name>
+    under it carries the parts and is free on every channel (rig_kind 'stow'; identity = stowed).
+    `released_by` names the controls and fastener sets that have to be opened first."""
+    e = make_joint(name, 'slide', pivot, (1, 0, 0), parts, parent=parent, source=source, size=size)
+    e.empty_display_type = 'CUBE'
+    e.lock_location = (False, False, False)
+    e.lock_rotation = (False, False, False)
+    e['rig_kind'] = 'stow'
+    e['unit'] = 'free'
+    e['released_by'] = released_by
+    return e
+
+
+def make_socket(name, pivot, axis, accepts, parent=None, source='', size=0.08):
+    """Where a carried tool is put to work: a turning joint with no parts of its own (rig_kind
+    'hinge', continuous). The game parents the tool named in `accepts` to it while it is seated."""
+    e = make_joint(name, 'hinge', pivot, axis, [], parent=parent, source=source, size=size)
+    e['continuous'] = True
+    e['accepts'] = accepts
     return e
 
 

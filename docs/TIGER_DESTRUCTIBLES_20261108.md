@@ -5,6 +5,8 @@ assemblies, 31.1 million triangles) and `docs/fea/tiger_parts.csv` (kit number, 
 and FEA group of every part). Each row is a thing that can break in play and needs a repair
 process, a rig state, or a decision that it has none.
 
+How each row is to be rigged, and what is built: `docs/TIGER_RIG_PLAN_20261108.md`.
+
 How to read this:
 
 - **Kit parts** are kit numbers as they appear in the object names (`TG_RM5010-<number>_<NAME>`).
@@ -26,7 +28,7 @@ How to read this:
 | A3 | Road wheels, 16 stations x 3 | `0B17` x8, `0B18` x8 (ROLLOR x3, WASHER) | disc shattered, rubber tyre burnt or torn off | rough ride, slower, higher chance of throwing the track | jack the arm, unbolt and drop the wrecked outer wheel, run without it | none | per-wheel removal; a tyre-less variant; broken disc pieces |
 | A4 | Swing arms and torsion bars | `0B17/0B18` ROLLAR (arm) | arm bent, torsion bar snapped | the station sags, the track rides on the next wheels | chain the arm up clear of the track (concession) | none | arm rotation about the bar axis; sagged pose |
 | A5 | Drive sprockets | `0B19` x2 (ROLLAR x2, PIN, RING) | tooth ring cracked or teeth sheared | track slips or jumps under load | unbolt the tooth ring and turn it to unworn teeth (concession) | none | tooth ring separate from hub; rotation axis |
-| A6 | Idlers and track tensioners | `0B20` x2 (GUIDE x2, RING); adjuster in `0B24` (SCREW, TURN) | idler cracked, adjuster bent | slack track, thrown track | re-tension at the rear plate with the track wrench | none | idler crank arm travel; adjuster screw as a turned control |
+| A6 | Idlers and track tensioners | `0B20` x2 (GUIDE x2, RING); adjuster not yet found in the kit (the SCREW and TURN parts in `0B24` are other things) | idler cracked, adjuster bent | slack track, thrown track | re-tension at the rear plate with the track wrench | none | idler crank arm travel; adjuster screw as a turned control |
 | A7 | Final drives | `18-22`, `18-23` COVER, `29D56` DRIVER | housing cracked, gear stripped | no drive on that side at all | none in the field: tow (see F2) | none | housing separate; oil-leak anchor points |
 | A8 | Mudguards and track guards | PLATE parts along the hull sides, `0B16`/`0B26` **(confirm)** | bent into the track, torn off | scraping, a guard fouling the track | lever it clear or tear it off with the crowbar | none | per-panel bend and detach |
 
@@ -83,7 +85,7 @@ How to read this:
 | E6 | Gearbox | `21K49` BOX | selector fault, oil lost | stuck in one gear | emergency manual gear selection | powertrain model exists, fault none | selector lever, emergency levers as controls |
 | E7 | Steering unit | `21K51`, `21K54` BOX, `21K59` COVER | hydraulic oil lost | wheel steering dead | steer on the emergency brake levers; top up oil | none | steering wheel, the two emergency levers |
 | E8 | Driver's controls | WHELL x2, PEDAL x3, HAND x4 in `0B16`/`0C05` | linkage bent or shot through | a control goes dead | straighten the rod | none | each control with its travel |
-| E9 | Starting gear | electric starter, inertia starter and its hand crank through the rear plate **(confirm in `0B24`: TURN, SCREW)** | battery flat, starter burnt out | no electric start | two men on the crank at the rear | none | crank port cover, crank as a turned control (the owner's startup sequence) |
+| E9 | Starting gear | electric starter, inertia starter and its hand crank through the rear plate: port cover `28A-B69`, shaft `28A-Z16` (kit reading, not verified) | battery flat, starter burnt out | no electric start | two men on the crank at the rear | rigged; fault none | done 8 Nov: `CTRL.Starter_Port_Cover`, `CTRL.Starter_Crank`, `CTRL.Starter_Crank_Turn` (port cover `28A-B69`, shaft `28A-Z16`: my reading of the kit, not verified; the geared crank named TURN is the jack's) |
 | E10 | Fire extinguishers | fixed engine-bay system **(confirm)**, hand extinguisher `34B67` JAR | bottle spent or holed | the next fire burns | swap the hand bottle; none for the fixed system | fire and extinguish exist | bottle removable from its bracket |
 | E11 | Radio and aerial | `21K57` BOX, ANTENNA | set shocked, aerial shot off | no net | re-seat plugs and fuses; screw in a spare rod | `RadioShock` | aerial rod detachable; set face controls |
 
@@ -93,7 +95,7 @@ How to read this:
 |---|---|---|---|---|---|---|---|
 | F1 | Pioneer tools | AXE, SHOVEL x3, TOOL (crowbar, hammer, wire cutters **(confirm which)**) | shot off, burnt, left behind | every crowbar and hammer repair | take one from a wreck or the depot | toolbox and hammer exist | each tool a pickup with its bracket |
 | F2 | Tow cables and shackles | WIRE x3 (`35C45CM-L/R`, `36Z53`), HOOK x7, Wire Hook x4 | cut by fire, torn off | no towing, no self-recovery | splice or replace from another tank | recovery rig exists in part | cables as rope with end eyes (6.6 million triangles today: rebuild as a curve) |
-| F3 | Jack and jack block | `0B30` JACK Unit (5 parts) | shot off the rear plate | wheel and track jobs (A3, A4) | from a wreck or the depot | none | jack as a working screw control |
+| F3 | Jack and jack block | `0B30` JACK Unit (5 parts) | shot off the rear plate | wheel and track jobs (A3, A4) | from a wreck or the depot | rigged; fault none | done 8 Nov: `CTRL.Jack`, `CTRL.Jack_Crank`, `CTRL.Jack_Crank_Latch`; rack travel and holder clamps still to do |
 | F4 | Track tools | track wrench, pin drift, cable for pulling the run **(confirm)** | lost | A1, A6 | from a wreck | track cable exists | pickups |
 | F5 | Gun cleaning rods and spare barrel box | on the hull side **(confirm)** | shot away | MG barrel changes | none | none | removable |
 

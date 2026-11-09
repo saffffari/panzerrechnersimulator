@@ -1,0 +1,197 @@
+# Tiger gen2: how the breakable things are rigged (8 November 2026)
+
+The owner, 8 November: "lets go down the list of things that are going to need repair sequences
+and plan then implement how we are going to rig them. lot of screws on this model that will need
+to be properly integrated as screw objects". This is the plan for every row of
+`docs/TIGER_DESTRUCTIBLES_20261108.md`, and the record of what is built. The rear plate is done
+first, as he chose.
+
+File: `tiger_gen2_live.blend` (backup before this pass: `tiger_gen2_live.pre-rearplate-20261108.blend`).
+Tools: `tools/tiger_production/rig_lib.py`, `split_lib.py`, `fasteners.py`, `fastener_census.py`,
+`rear_plate_rig.py`.
+
+## The five building blocks
+
+Every repair in the game is a short run of hand actions. Each action maps to one of five things in
+the rig, so a repair sequence is a list of them in order.
+
+| Block | In Blender | What the game does with it |
+|---|---|---|
+| Hinge | `FRAME.<Name>` + `CTRL.<Name>`, `rig_kind` hinge, angle on local X, `min`/`max` | swing a part between limits; `continuous` marks a crank that goes right round |
+| Slide | same pair, `rig_kind` slide, metres on local X | push, pull, lift |
+| Stowed part | `rig_kind` stow, free on every channel, identity = on its seat, `released_by` | pick the whole thing up once its latches and fastener sets are open |
+| Socket | a hinge with no parts and `accepts` = a stowed part | where a carried tool is seated and worked (a crank in its port) |
+| Fastener | an object in `FASTENERS`: origin on the seat, local +Z the way it comes out, `fastener_kind`, `fastener_shape`, `fastener_size_m`, `fastener_removable`, `fastener_set` | undo one by one with the right tool; a part is free when its set is out |
+
+Rules that hold for all of them:
+
+- A control's zero is the kit pose, with what moves parented under the control. Limits come from a
+  swept collision test against the parts round it, and the control says what stopped it
+  (`limit_source`).
+- A kit part that holds two things which move apart is cut into two objects (`split_lib`). The kit
+  parts are fused solids, so each cut is closed again and the way it was closed is a named
+  approximation on the control.
+- Heads are read off the full CAD, not the reduced mesh, because a 1 mm reduction can turn an
+  11 mm round head into a hexagon. Six corners is a bolt, four a square head, anything else round.
+  Whether a round head is a rivet or a screw is decided per part and written down.
+- Each control carries the play notes `interaction`, `damage`, `repair`, and where one thing holds
+  another, `released_by`, `locked_by` or `requires`.
+
+## Built: the rear plate (rows B8, E9, F3)
+
+Stills: `captures/demo-20261101-tiger-rear-plate-rig-20261108-rest.png` and `-open.png`.
+
+What the kit turned out to hold:
+
+- The crank on the geared teardrop housing winds the **jack**. The housing (`28A-O39`) sits on the
+  toothed rack of the jack body (`28A-O38`); the arm with the pinion is `28A-O31`; the grip and the
+  strap round it were one part, `28A-O34`.
+- The engine's hand start is lower down. `28A-B69` is a domed cover with one hex head, on the
+  plate's centre line, and the plate has a round hole behind it. `28A-Z16` is a 0.72 m shaft with a
+  24 mm square end, in two clips beside it, low on the plate. I take these for the inertia starter's
+  port and the starting crank's shaft. **Not verified** against a drawing or a photograph, and the
+  kit has no crank throw for the shaft.
+
+| Control | Kind | Carries | Range | Held by |
+|---|---|---|---|---|
+| `CTRL.Jack` | stowed part | jack unit `0B30`, gear case, the crank | free | the crank strap; the two holder clamps |
+| `CTRL.Jack_Crank` | hinge, continuous | arm with pinion, grip | full turns off the tank; -10 to +12 degrees on the plate (throw 0.336 m, the plate is nearer) | `Jack_Crank_Latch` |
+| `CTRL.Jack_Crank_Latch` | hinge | the strap's front jaw | 0 to 126 degrees, stopped by the exhaust shroud | its catch loop |
+| `CTRL.Starter_Port_Cover` | stowed part | cover `28A-B69` | free | fastener set `starter_port_cover` (one bolt) |
+| `CTRL.Starter_Crank` | stowed part | shaft `28A-Z16` | free | its two clips |
+| `CTRL.Starter_Crank_Turn` | socket, continuous | nothing; accepts `Starter_Crank` | full turns | needs the cover off |
+
+Parts cut:
+
+- `28A-O34` into the grip (keeps the name), the strap's front jaw `28A-O34L` and its fixed rear
+  jaw `28A-O34R`. All three are closed, with no open or doubled edges.
+- `28A-Z16` into the shaft (keeps the name, carried straight through where the clips hid it) and
+  the two clips `28A-Z16C`.
+
+Fasteners made, 145 objects in 8 sets:
+
+| Set | On | Count | Kind | Head |
+|---|---|---|---|---|
+| `starter_port_cover` | `28A-B69` | 1 | bolt, comes out | hex, 15.7 mm across flats |
+| `jack_holder.000`, `.001` | `28A_HOLDER` x2 | 2 + 2 | bolt, comes out | hex, 14 mm |
+| `jack_gear_case_cover` | `28A-O39` | 5 | screw, comes out | round, 10.5 mm |
+| `jack_body` | `28A-O38` | 91 | rivet, fixed | round, 11 and 9 mm |
+| `rear_centre_plate` | `28A-J104` | 30 + 2 | rivet, fixed; bolt, comes out | round 12.3 mm; hex 24.5 mm |
+| `rear_plate_top_edge` | `30Z02` | 4 | bolt, comes out | hex, 35 mm |
+| `rear_plate_disc` | `30Z02` | 8 | screw, comes out | round, 34 mm |
+
+The jack body alone went from 3,290 triangles to 772 once its rivets were objects.
+
+Named approximations in this pass:
+
+1. The strap is one closed ring in the kit. It is cut by the plane through the grip's axis that
+   faces the plate; the front half swings on a pin put at the strap's solid end, and the catch
+   loop goes whole with it. The kit shows no pin, no bracket and no parting line right through.
+2. The port cover has no hinge in the kit, so it comes off whole.
+3. The shaft's clips stay closed and in one piece; the shaft is lifted out through them.
+4. A fastener is a plain prism for the head. There is no shank or thread. The thread size on hex
+   heads (`fastener_thread_guess`) is read from the across-flats by the DIN 931 table.
+5. "Rivet" for the round heads on the jack body and on plate `28A-J104` is my reading of those
+   parts. The two round discs on the rear plate, each with four screws, are not identified.
+
+Left open on the rear plate: the two holder clamps and the shaft clips as opening parts; the track
+tensioner adjusters (not yet found in the kit; the parts I named in row A6 were wrong); the gear
+case's ratio (pinion teeth can be counted from the full CAD); exhaust shrouds, hooks and the chain
+as stowed parts.
+
+## Planned: every other row
+
+"Cuts" are parts to split first. "Sets" are fastener sets to read from the CAD. Sequence is the
+repair as ordered rig actions.
+
+### Tracks and running gear
+
+| Row | Controls | Cuts and sets | Repair sequence in rig terms |
+|---|---|---|---|
+| A1 track runs | a guide curve per side; each link a stowed part on it; `Track_Pin` slide per joint | pins are already separate (`37N01`) | drive one pin out (slide), lift the broken link (stow), seat a spare, drive the pin in |
+| A2 spare links | each link stowed; bracket latch hinge | bracket from link | open the bracket, lift the link |
+| A3 road wheels | `Wheel_<station>_<n>` stowed; hub nuts as a set | wheel discs from hubs where fused; tyre ring from disc | jack the arm (A4 hinge), undo the hub set, pull the outer wheel |
+| A4 swing arms | `Arm_<station>` hinge about the torsion bar axis, limits from the bump stops | none expected | chain the arm up: hinge to its upper limit and hold |
+| A5 sprockets | `Sprocket_L/R` hinge, continuous; tooth ring stowed | tooth ring from hub; ring bolts as a set | undo the ring set, turn the ring, bolt up |
+| A6 idlers, tensioners | `Idler_L/R` hinge on the crank arm; `Tensioner_L/R` socket for the track wrench | find the adjusters first | cap off (stow), wrench in the socket, turns move the idler arm |
+| A7 final drives | housing covers stowed; bolt circle as a set | none | none in the field |
+| A8 guards | each panel stowed; a bend hinge at its root | panels where fused | lever clear (hinge) or tear off (stow) |
+
+### Hull
+
+| Row | Controls | Cuts and sets | Repair sequence in rig terms |
+|---|---|---|---|
+| B1 armour | none (FEA owns it) | plates must be watertight solids | none |
+| B2 driver's visor | `Visor_Shutter` slide; vision block stowed | block from its frame | pull the block inward, seat a spare |
+| B3 vision blocks | each block stowed inward; retaining clamp hinge | block from housing | open the clamp, pull, seat |
+| B4 hull hatches | done | lock arms as their own hinges | free the lock arm, swing the lid |
+| B5 hull MG | `Ball_MG` two-axis mount; gun stowed inward | gun from ball | release, pull the gun in, seat another |
+| B6 headlamp | lamp stowed; socket | lamp from its foot | lift off |
+| B7 engine deck | `Deck_Hatch` hinge; grille panels stowed; each lock a hinge | locks from lids; lid bolts as sets | open the locks, swing the hatch or lift a grille |
+| B8 rear plate | built, see above; exhaust shrouds and hooks still to do | shroud bolts as sets | lift fittings off |
+
+### Turret
+
+| Row | Controls | Cuts and sets | Repair sequence in rig terms |
+|---|---|---|---|
+| C1 turret ring | traverse hinge, continuous; ring bolts as a set | bolt heads along the ring | knock the fragment out; bolts out and in |
+| C2 powered traverse | `Traverse_Pedal` hinge | pedal from its box | rock the pedal; tap the coupling |
+| C3 hand gear | `Traverse_Handwheel`, `Elevation_Handwheel` hinges, continuous; elevation arc | wheels from gearboxes | turn; shear pin as a fastener |
+| C4 to C6 hatches | done | latch arms as their own hinges | as now |
+| C7 ventilator | fan hinge, continuous; cowl stowed | fan from housing | lift the cowl |
+| C8 basket | floor plate bend hinge; seats stowed with a fold hinge | seats from posts | lever the floor |
+| C9 stowage bin | `Bin_Lid` hinge; discharger tubes stowed | lid from bin | open, lift |
+
+### Armament
+
+| Row | Controls | Cuts and sets | Repair sequence in rig terms |
+|---|---|---|---|
+| D1 barrel | recoil slide; muzzle brake stowed | brake from tube | none |
+| D2 mantlet | mantlet on the elevation hinge, not on the recoil slide; mount bolts as a set | bolt heads on the mount | jack into battery (slide), fit the set |
+| D3 recoil gear | filler caps as fasteners; cylinders stowed | caps from cylinders | cap out, top up, cap in |
+| D4 breech | `Breech_Block` slide; `Breech_Lever` hinge; `Safety` hinge | block from ring | lever down, clear, lever up |
+| D5 cradle | elevation hinge; `Travel_Lock` hinge | lock from its bracket | free the lock |
+| D6 gunner's sight | sight stowed inward; clamp hinge | sight from its mount | open the clamp, pull, seat the spare |
+| D7 coax MG | gun stowed from its cradle; feed cover hinge | gun from cradle | lift out, seat another |
+| D8 AA MG | mount hinge on the ring; gun stowed | gun from mount | lift off |
+| D9 ammunition | each round stowed; rack clamp hinges | rounds from racks (already separate) | open the clamp, pull the round |
+
+### Engine and drivetrain
+
+| Row | Controls | Cuts and sets | Repair sequence in rig terms |
+|---|---|---|---|
+| E1 engine | a removal tree of stowed parts; fuel line and plug leads as sockets | carburettors, pipes, leads from the block | undo sets in order, lift |
+| E2 fuel tanks | filler caps as fasteners; tanks stowed | caps from tanks | cap out; bung in the hole |
+| E3 radiators | cores stowed upward; filler caps | cores from boxes | grille off (B7), lift the core |
+| E4 fans | fan hinges, continuous; drive coupling slide | fan from cover | slide the coupling out |
+| E5 air filters | bowls stowed; clamp hinges | bowl from body | open clamps, drop the bowl |
+| E6 gearbox | selector hinge; emergency levers hinges | levers from the box | work the emergency levers |
+| E7 steering | wheel hinge; two emergency lever hinges | wheel from column | pull the levers |
+| E8 driver's controls | one hinge or slide per pedal, lever and wheel, limits swept | each from its bracket | straighten: none in the rig |
+| E9 starting gear | built, see above | crank throw to be made | cover off, shaft in, turn |
+| E10 extinguishers | bottle stowed; bracket strap hinge | bottle from bracket | open the strap, swap |
+| E11 radio, aerial | aerial rod stowed in a socket; set knobs as hinges | rod from base | unscrew the rod, screw in a spare |
+
+### Tools and stowage
+
+| Row | Controls | Cuts and sets | Repair sequence in rig terms |
+|---|---|---|---|
+| F1 pioneer tools | each tool stowed; each bracket strap a hinge | tool from its brackets | open the straps, lift |
+| F2 tow cables | each cable a rope along its guide curve with an eye at each end; eyes are stowed parts with sockets on the shackles | rebuild the cables from the guides | lift an eye off its hook, carry it, seat it on a shackle |
+| F3 jack | built, see above; the rack still to move with the crank | rack from body, holder clamps | free the strap and clamps, carry, wind |
+| F4 track tools | stowed, with strap hinges | find them first | lift |
+| F5 cleaning rods | stowed, with strap hinges | find them first | lift |
+
+## Order of work
+
+1. Rear plate, done here except the items listed as open.
+2. Engine deck and its locks (B7), because every engine repair starts there.
+3. Tracks and wheels (A1 to A6), which also need the jack and the tensioner.
+4. Tow cables as ropes (F2), then pioneer tools (F1).
+5. Turret and gun controls (C2, C3, D2 to D7).
+6. Engine removal tree (E1 to E5), driver's controls (E6 to E8).
+7. A model-wide fastener census on the full CAD and a rivet-or-screw decision per part.
+
+The game reads none of this yet. The export has to carry the controls and the fastener objects
+(`tools/tiger_production/export_pivots.py` writes every non-mesh object with its properties today;
+fasteners are meshes and need their own table).
