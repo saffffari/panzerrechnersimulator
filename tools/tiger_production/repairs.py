@@ -1093,12 +1093,140 @@ def turret_ring_freed():
     return r.finish()
 
 
+# ------------------------------------------------------------- loading, firing, hatches from inside
+def split_rounds():
+    """Every full round (kit 23M03) into its brass case and its projectile, both under the round's
+    control, so a fired round can leave its case behind. The kit's colour split, carried into the
+    materials, is the parting line."""
+    import split_lib
+    objs = sorted([o for o in bpy.data.objects if o.type == 'MESH' and 'TG_RM5010-23M03-A-00_AMMO' in o.name], key=lambda o: o.name)
+    if not objs:
+        return {'skipped': 'no rounds'}
+    twins, rep = split_lib.split_shared(objs, split_lib.by_material('TG_brass_cartridge', 'TG_case_steel_lacquered'), '23M03-A-00C_CASE', '8.8 cm projectile', '8.8 cm cartridge case')
+    rep['rounds'] = len(objs)
+    return rep
+
+
+def reload_and_fire():
+    """D9 and the loader's drill: draw a round from the right side rack, turn it to the breech,
+    ram it home, the block rises; the gun fires and recoils, the block drops on run-out and the
+    case is thrown back into the case bin. The loader stands taller than the turret allows (no
+    stoop in the rig); recoil and block timing are not verified."""
+    D = bpy.data.objects
+    ctrl = 'CTRL.Round_062'
+    e = D[ctrl]
+    proj = next(c for c in e.children if c.type == 'MESH' and '_AMMO' in c.name)
+    case = next(c for c in e.children if c.type == 'MESH' and '_CASE' in c.name)
+    cw = np.array([case.matrix_world @ v.co for v in case.data.vertices]).mean(0)
+    pw = np.array([proj.matrix_world @ v.co for v in proj.data.vertices]).mean(0)
+    nose = Vector(pw - cw).normalized()                      # from the case to the projectile
+    allw = np.array([o.matrix_world @ v.co for o in (case, proj) for v in o.data.vertices])
+    length = float((allw @ np.array(nose)).max() - (allw @ np.array(nose)).min())
+    base_to_ctrl = float((np.array(e.matrix_world.translation) - allw[(allw @ np.array(nose)).argmin()]) @ np.array(nose))
+    bore = Vector((0.008, 0.0, 2.203))
+    breech_rear = 1.03
+    turn = nose.rotation_difference(Vector((0.0, -1.0, 0.0))).to_matrix().to_4x4()
+    rest = ra._unscaled(e.matrix_world)
+    def at(base_y):
+        """The control's world pose with the round on the bore, nose forward, its base at base_y."""
+        m = turn @ rest.to_3x3().to_4x4()
+        m.translation = Vector((bore.x, base_y - base_to_ctrl, bore.z))
+        return m
+    r = ra.Repair('reload_and_fire', row='D9', title='Round from the rack to the breech, fired, case ejected',
+                  note='the loader stands taller than the turret allows (no stoop); recoil, run-out and ejection timing not verified; %s is the round shown' % ctrl[5:])
+    r.stand((-0.55, 1.45, 1.14), -90.0)
+    grip_l = ra.hand_pose(e.matrix_world.inverted().to_3x3() @ (nose * 0.2), (0, 0, 1), (1, 0, 0))
+    grip_r = ra.hand_pose(e.matrix_world.inverted().to_3x3() @ (nose * -0.25), (0, 0, 1), (1, 0, 0))
+    with r.step('draw_round', seconds=1.3, player='draw a round from the side rack'):
+        r.hand('L', ctrl, grip=grip_l, a=0.0, b=1.0)
+        r.hand('R', ctrl, grip=grip_r, a=0.0, b=1.0)
+        out = e.matrix_world.copy()
+        out.translation = out.translation + Vector((0.32, 0.0, 0.06))
+        r.place(ctrl, out, a=0.3, b=1.0)
+        r.event('round_out_of_rack', at=0.4)
+    with r.step('to_the_breech', seconds=1.5, player='swing it round, nose to the breech'):
+        r.hand('L', ctrl, grip=grip_l, a=0.0, b=1.0)
+        r.hand('R', ctrl, grip=grip_r, a=0.0, b=1.0)
+        r.stand((-0.45, 1.75, 1.14), FWD, a=0.0, b=0.6)
+        r.place(ctrl, at(breech_rear + 0.75), a=0.0, b=1.0, arc=0.08)
+    with r.step('ram', seconds=0.7, requires='breech open', player='ram it home with the fist'):
+        r.hand('R', ctrl, grip=grip_r, a=0.0, b=0.9)
+        r.place(ctrl, at(breech_rear - 0.02), a=0.0, b=0.8)
+        r.event('round_chambered', at=0.8)
+    with r.step('block_rises', seconds=0.4, player='the block rises: loaded'):
+        r.joint('CTRL.Breech_Block', 0.22, a=0.0, b=0.6, start=0.0)
+        r.event('breech_closed', at=0.6)
+    with r.step('fire', seconds=0.9, player='the gun fires (the gunner\'s act): recoil and run-out'):
+        r.follow(ctrl, 'CTRL.Gun_Recoil', a=0.0, b=1.0, reach=0.0)
+        r.joint('CTRL.Gun_Recoil', 0.58, a=0.02, b=0.10, start=0.0)
+        r.joint('CTRL.Gun_Recoil', 0.0, a=0.18, b=0.9)
+        gone = ra._unscaled(proj.matrix_world)
+        r.place(proj.name, T(bore.x, -60.0, bore.z) @ turn @ gone.to_3x3().to_4x4(), a=0.0, b=0.06)
+        r.event('gun_fires', at=0.02)
+        r.event('in_battery', at=0.9)
+    with r.step('case_out', seconds=0.9, player='the block drops on run-out and throws the case back into the bin'):
+        r.joint('CTRL.Breech_Block', 0.0, a=0.0, b=0.2)
+        bin_pose = T(0.0, 1.45, 1.70) @ Matrix.Rotation(math.radians(35.0), 4, 'X') @ turn @ rest.to_3x3().to_4x4()
+        r.place(ctrl, bin_pose, a=0.15, b=0.9, arc=0.12)
+        r.event('breech_open', at=0.2)
+        r.event('case_in_bin', at=0.9)
+    with r.step('ready', kind='hold', seconds=0.6, player='the breech stands open for the next round'):
+        pass
+    return r.finish()
+
+
+def cupola_open_from_inside():
+    """C4. From the commander's seat: crank the cupola lid up, swing it aside, lower it to park."""
+    D = bpy.data.objects
+    c = D['CTRL.Cupola_Swing'].matrix_world.translation.copy()
+    r = ra.Repair('cupola_open_from_inside', row='C4', title='Cupola hatch opened from inside', note='starts closed (lift 0.045 m, swing 104.25 deg); ends open, the kit pose')
+    r.stand((0.87, 1.31, 1.14), FWD)
+    up = ra.hand_pose((0, 0, 0), (0, 0, 1), (0, -1, 0))
+    with r.step('closed', kind='hold', seconds=0.6, player='the lid is shut over the commander'):
+        r.joint('CTRL.Cupola_Lift', 0.045, a=0.0, b=0.0, start=0.045)
+        r.joint('CTRL.Cupola_Swing', 104.25, a=0.0, b=0.0, start=104.25)
+    with r.step('crank_up', seconds=1.2, player='crank the lid up clear of the rim'):
+        r.hand('R', 'CTRL.Cupola_Lift', grip=up, a=0.0, b=1.0)
+        r.joint('CTRL.Cupola_Lift', 0.08, a=0.2, b=1.0)
+        r.event('lid_raised', at=1.0)
+    with r.step('swing_aside', seconds=1.4, player='push the lid round to the side'):
+        r.hand('R', 'CTRL.Cupola_Swing', grip=up, a=0.0, b=1.0)
+        r.joint('CTRL.Cupola_Swing', 0.0, a=0.1, b=1.0)
+    with r.step('park', seconds=0.9, player='lower it to rest'):
+        r.hand('R', 'CTRL.Cupola_Lift', grip=up, a=0.0, b=1.0)
+        r.joint('CTRL.Cupola_Lift', 0.0, a=0.1, b=0.9)
+        r.event('hatch_open', at=0.9)
+    with r.step('head_out', kind='hold', seconds=0.8, player='the cupola is open'):
+        pass
+    return r.finish()
+
+
+def loader_hatch_open_from_inside():
+    """C5. From the loader's place: push the roof hatch up and forward on its hinge."""
+    D = bpy.data.objects
+    c = D['CTRL.Hatch_Loader'].matrix_world.translation.copy()
+    r = ra.Repair('loader_hatch_open_from_inside', row='C5', title='Loader\'s hatch opened from inside', note='the latch arm 13J87 is not rigged; the hatch swings to its 92 degree limit')
+    r.stand((c.x, c.y + 0.45, 1.14), FWD)
+    push = ra.hand_pose((0.0, 0.3, -0.03), (0, 0, 1), (0, -1, 0))
+    with r.step('unlatch', seconds=0.7, player='free the latch (latch arm not rigged)'):
+        r.hand('R', 'CTRL.Hatch_Loader', grip=push, a=0.0, b=1.0)
+        r.event('latch_free', at=0.7)
+    with r.step('push_up', seconds=1.5, player='push the lid up and forward'):
+        r.hand('R', 'CTRL.Hatch_Loader', grip=push, a=0.0, b=1.0)
+        r.hand('L', 'CTRL.Hatch_Loader', grip=ra.hand_pose((0.2, 0.3, -0.03), (0, 0, 1), (0, -1, 0)), a=0.0, b=1.0)
+        r.joint('CTRL.Hatch_Loader', float(D['CTRL.Hatch_Loader']['max']), a=0.1, b=1.0)
+        r.event('hatch_open', at=1.0)
+    with r.step('open', kind='hold', seconds=0.8, player='the hatch is open'):
+        pass
+    return r.finish()
+
+
 ALL = [starter_hand_crank, jack_off_the_plate, engine_hatch_open, fan_grille_off_L, fan_grille_off_R, deck_cap_FL,
        track_link_replace_L, track_link_replace_R, spare_link_off, road_wheel_off_L3, arm_chained_up_L3, sprocket_cap_off_L, track_tension_L,
        tool_off_hammer, tool_off_crowbar, tool_off_axe, tool_off_shovel, tool_off_wire_cutters, extinguisher_off, tow_cable_eyes_off_L,
        vision_block_swap_cupola, driver_visor_block_swap, hull_mg_out, headlamp_off, mudguard_off_rear_L, ventilator_cowl_off, gunner_sight_swap,
        coax_mg_out, aa_mg_off, round_from_rack, carburettor_off, air_filter_off, aerial_swap, bin_lid_open_L, breech_cleared, gun_back_into_battery,
-       hand_traverse, hand_elevate, turret_ring_freed]
+       hand_traverse, hand_elevate, turret_ring_freed, reload_and_fire, cupola_open_from_inside, loader_hatch_open_from_inside]
 
 
 def build_all(wipe=True, first=0, count=None):

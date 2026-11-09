@@ -454,8 +454,17 @@ def fit_frame(objs, info, cat, kit_mode):
     file): least squares between part volume centroids and the catalog's game-master centroids."""
     import numpy as np
     A, B = [], []
+    # A kit-named file (the gen2 rig at true size) is not keyed by game node: match its parts to the
+    # catalog by kit number, for the numbers that name exactly one catalog part and one object here.
+    by_num = {}
+    if kit_mode:
+        import collections
+        cat_n = collections.Counter(e.get('kit_number') for e in cat.values() if e.get('kit_number'))
+        obj_n = collections.Counter(info[o.name]['num'] for o in objs if o.name in info and info[o.name].get('num'))
+        by_num = {e['kit_number']: e for e in cat.values() if e.get('kit_number') and cat_n[e['kit_number']] == 1 and obj_n.get(e['kit_number']) == 1}
     for o in objs:
         i = info.get(o.name); e = cat.get(i['node']) if i else None
+        if e is None and i and by_num: e = by_num.get(i.get('num'))
         if not e or e.get('kit_match') != 'exact' or len(o.data.polygons) > 20000: continue
         vc = volume_centroid(o)
         if vc is None: continue

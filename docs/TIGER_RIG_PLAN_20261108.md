@@ -300,7 +300,12 @@ Sequences built so far:
 | `hand_traverse`, `hand_elevate` | C3 | 1.7 | 2 | one turn of the handwheel as a cycle, then laid |
 | `turret_ring_freed` | C1 | 2.4 | 2 | hammer blows at the ring gap, then the turret turns |
 
-39 sequences in all. The many three-step "out, held, in" sequences are honest minimums: both
+Added the same evening: `reload_and_fire` (D9: round from the right side rack, turned to the
+breech, rammed, block up, the gun fires and recoils, block down, case thrown into the bin; every
+full round is now split into case and projectile), `cupola_open_from_inside` (C4) and
+`loader_hatch_open_from_inside` (C5).
+
+42 sequences in all. The many three-step "out, held, in" sequences are honest minimums: both
 hands on the part, the part's real path out of its seat, and back. They do not show clamps or
 fixings that the kit does not model.
 
@@ -332,6 +337,72 @@ viewport or against a drawing.
 F1, F2 and F3 built, see above. Still open: the cables as real ropes with eyes that reach a tow
 point (needs the game's rope), posts and cable clamps that open, track tools and cleaning rods
 (not in the kit).
+
+## Materials, removals and game additions (8 November, evening)
+
+**Materials.** The 38-material library is in the rig file and applied by
+`tools/tiger_production/materials.py assign` with the grey scheme: armour and exterior fittings in
+Dunkelgrau RAL 7021, the crew space in Elfenbein, the engine bay in red oxide, plus tracks, tyres,
+brass cases, projectiles, wood, glass, gun steel and the rest (28 materials in use). The kit's
+yellow display colours are gone from the meshes; the file before this step is
+`tiger_gen2_live.pre-materials-20261108.blend`. Two things had to change to make it work on this
+file:
+
+- `materials.py` now finds the file's scale by kit number. Before, a kit-named file at true size
+  was read as raw kit units and everything was painted as exterior.
+- `tools/tiger_production/material_fix.py` repaints a face the air grid called interior if rays
+  from it leave the tank: 301 faces of 167,875 looked at.
+
+Fastener objects take the paint of the host face under them. RAL 7021 is the chip colour and is
+very dark (sRGB 47, 50, 52); the game's own grey swatch is lighter. The yellow scheme is one flag
+away (`--scheme yellow`).
+
+The ivory shards seen on the hull in the viewport were not materials: the 3D view's near clip was
+0.03 mm, which breaks depth sorting. It is now 2 cm.
+
+**To remove.** Collection `TO_REMOVE` holds 16 objects, 21,486 triangles: the gun basket's floor
+with its tubes, its leg casing and cylinder, post and toothed rail, the can rack and three cans on
+the floor, a mount, and the six floor bolts. Nothing is deleted; exclude the collection to see the
+tank without them. Still standing on where the floor was: the traverse drive `05U13`, the pedal,
+cover `06J09` and the eight seat parts.
+
+**Game additions.** Collection `GAME_ADDITIONS` holds what the July game master has and the kit
+does not, scaled to the kit's true size (game master = 1.112 x kit): the turret position indicator
+(needle as `CTRL.TPZ_Needle`, backing, its lamp), the dome lamp, ignition button, gun lever, round
+in the chamber, sight lens, port glasses, two commander viewpoints and the game's pivots. A hidden
+sub-collection holds game-master hatch parts that double the kit's own.
+
+## The player's body
+
+`tools/tiger_production/player_rig.py`. The game's crew figure (Panzertruppe by AdrielCZ,
+CC-BY-4.0, 39 bones, 564 triangles) stands on `PLAYER.Stand`, 1.72 m tall, and works with its hands
+on `HAND.L` and `HAND.R` in every sequence, by constraints alone:
+
+- shoulders are pulled toward the work only as far as needed to be within 0.5 m of it;
+- hips sink with them to a crouch and drift half way; the spine leans for the rest;
+- feet stay flat on the ground under the stand, knees bend forward, elbows stay down and back;
+- wrists take 70 % of the hand target's turn; the head looks toward the work.
+
+The first version had knees and elbows bending any way (the pole angles were picked on a straight
+limb) and a permanent hunch; the owner saw it and said so. The skeleton itself faces one way
+throughout. **This is reach posing, not character animation**: no finger poses, steps, weight
+shift, anticipation or follow-through. Where a step puts the stand too far from the work the arm
+ends short of its target.
+
+## Characters: plan
+
+The owner, 8 November: one base mesh for the player, the crew and the Soviet infantry, with
+colours and uniform changed, so one animation set serves all, plus perhaps a first-person set.
+
+- Base: the Panzertruppe figure above. It is already the game's crew and first-person arms, is
+  rigged, and has five faces. The Soviet figure in the game today is a different mesh with baked
+  poses only.
+- Variants: materials and a few swapped parts (cap, helmet, belt kit) on the same skeleton.
+- Animation: the constraint rig above gives blocking. Organic motion needs keyed or captured
+  animation retargeted onto this skeleton (Auto-Rig Pro is installed). A free library of captured
+  moves would have to be downloaded, which needs the owner's yes.
+- Not started: the crew seated at their stations, the infantry set (walk, run, crouch, prone, aim,
+  fire, reload, hit, fall), the first-person set.
 
 ## Order of work
 
