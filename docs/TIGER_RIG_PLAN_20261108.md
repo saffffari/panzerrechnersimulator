@@ -99,6 +99,87 @@ tensioner adjusters (not yet found in the kit; the parts I named in row A6 were 
 case's ratio (pinion teeth can be counted from the full CAD); exhaust shrouds, hooks and the chain
 as stowed parts.
 
+## Built: the engine deck (row B7)
+
+Specs: `tools/tiger_production/rig_specs.py` (`DECK`), built by `rig_build.py`. Sides: the tank's
+left is +X in the file, and `_L` names are the +X parts.
+
+| Control | Kind | Carries | Range | Held by |
+|---|---|---|---|---|
+| `CTRL.Deck_Hatch` | hinge | engine hatch `34Z03`, intake cover `34B24`, plate `34B18`, arms `34D28`, blocks `34F06` | 0 to 100 degrees; 35 with the turret at 12 o'clock, where the lid meets the turret bin | the two side bolts |
+| `CTRL.Deck_Hatch_Lock_L`, `_R` | slide | bolt `34F08` | 0 to 0.04 m | |
+| `CTRL.Deck_Hatch_Bar` | hinge | folding bar `34D11` at the hatch's rear edge | -38 to 44 degrees | |
+| `CTRL.Fan_Grille_L`, `_R` | stowed part | lattice grille `34F14` / `34F13` and its folding bar | free | two wing nuts each (`fan_grille_L`, `_R`) |
+| `CTRL.Fan_Grille_Bar_L`, `_R` | hinge | folding bar `34D11` | -2 to 90 degrees | |
+| `CTRL.Fan_Cover_L`, `_R` | stowed part | plate `34F11` / `34F12` under the lattice | free | the grille over it |
+| `CTRL.Deck_Cap_FL`, `FR`, `RL`, `RR` | stowed part, unscrews | filler cap `34D42` | free | its thread |
+
+The four wing nuts `35D15` are tagged as fasteners as they are (kit parts, turned by hand). The
+full-CAD census found no other removable heads on the deck parts: what it found are posts and
+hinge pins.
+
+Named approximations and unknowns:
+
+1. The hatch hinge is put on the front feet of the gooseneck arms, at the hatch's top face. This
+   follows the real vehicle (front hinge, lid opens toward the turret) and the kit's use of ARM
+   for hinge arms; no hinge barrel is modelled. Not checked on a drawing.
+2. The 100 degree open limit is chosen. The kit has no stay, and nothing stops the lid before 165
+   degrees with the turret out of the way.
+3. The side bolts have no keeper in the kit. Their 0.04 m travel is the distance that draws the
+   bolt end inside the hatch edge.
+4. What the folding bars are (lifting handles, clasps or stays) is not known. They are used as
+   lifting handles.
+5. Which edge the wing nuts clamp, and which fluid each cap covers, are not identified.
+
+Still open on the deck: the two louvred radiator grilles are part of the roof `33B01` and are not
+cut out; the round cover `34B23` behind the hatch is not identified.
+
+## Repair animations
+
+The owner, 8 November: "with each repair i want you to animate the repair within blender as a
+sequence of interactions performed by the player that we can bring into the game. tools and player
+manipulation should be included in the animations."
+
+How they are stored (`tools/tiger_production/repair_anim.py`, sequences in `repairs.py`):
+
+- One Action per repair, `REPAIR.<id>`, with a slot for every object that moves in it: rig
+  controls, fastener objects, tools, the two hand targets `HAND.L` and `HAND.R`, and the standing
+  point `PLAYER.Stand`.
+- A repair is a run of steps. Each step is a frame range with a pose marker `step:<name>`. What
+  the step means for the game is JSON on the action: what the player does, the tool, the fastener
+  set, what must be true first, and its kind.
+- Step kinds: `oneshot` plays once when triggered; `cycle` holds one stroke (one swing of a
+  spanner, one turn of a crank) and a count, and the game repeats it at the player's pace; `hold`
+  is a state the player stays in (lid open, bay open).
+- Every repair has its own block of frames on the scene's one timeline, 30 frames a second, with
+  scene markers `R:<id>` and `s:<step>`. Between blocks the tank is on its rest pose.
+  `repair_anim.focus('<id>')` sets the preview range to one repair.
+- `repair_anim.export(path)` samples every step: degrees or metres per frame for hinges and
+  slides, position and rotation in the tank's frame for everything else, plus the step table and
+  events (`ratchet`, `fastener_out`, `hatch_open`, ...). Written to
+  `assets/tanks/tiger/tiger_gen2_repairs.json` beside the rig file.
+
+What is and is not animated:
+
+- Parts, fasteners and tools move as the rig allows and are checked by numbers
+  (`repair_anim.check`): travel, and every part back on its seat at the end.
+- Hands are targets, a palm position and direction baked to follow what they hold. The game's
+  arms reach for them. There is no body animation: the standing point is where the feet are.
+- Tools the kit lacks are plain stand-ins: spanners sized to the head, and a crank handle for the
+  starting shaft.
+- Turns to free a fastener are a guess: one diameter of thread at the DIN coarse pitch of the
+  guessed size. Counts marked "not verified" in a step have no source.
+
+Sequences built so far:
+
+| Id | Row | Seconds | Steps | What it shows |
+|---|---|---|---|---|
+| `starter_hand_crank` | E9 | 16.8 | 14 | cover bolt out, cover off, shaft from clips into the port, handle on, wind, trip, all back |
+| `jack_off_the_plate` | F3 | 24.3 | 26 | strap open, four holder bolts out, jack to the ground, wind, back on, bolts in, strap shut |
+| `engine_hatch_open` | B7 | 8.8 | 8 | both bolts drawn, bar up, lid up to 35 degrees, held, down, bolts home |
+| `fan_grille_off_L`, `_R` | B7 | 18.2 | 17 | two wing nuts off, bar up, grille onto the hatch, plate out, bay open, all back |
+| `deck_cap_FL` | B7 | 5.4 | 5 | cap unscrewed, set down, filler open, cap back |
+
 ## Planned: every other row
 
 "Cuts" are parts to split first. "Sets" are fastener sets to read from the CAD. Sequence is the
@@ -127,7 +208,7 @@ repair as ordered rig actions.
 | B4 hull hatches | done | lock arms as their own hinges | free the lock arm, swing the lid |
 | B5 hull MG | `Ball_MG` two-axis mount; gun stowed inward | gun from ball | release, pull the gun in, seat another |
 | B6 headlamp | lamp stowed; socket | lamp from its foot | lift off |
-| B7 engine deck | `Deck_Hatch` hinge; grille panels stowed; each lock a hinge | locks from lids; lid bolts as sets | open the locks, swing the hatch or lift a grille |
+| B7 engine deck | built, see above; louvred radiator grilles still part of the roof | cut the louvre panels out of `33B01` | as animated |
 | B8 rear plate | built, see above; exhaust shrouds and hooks still to do | shroud bolts as sets | lift fittings off |
 
 ### Turret
@@ -184,8 +265,8 @@ repair as ordered rig actions.
 
 ## Order of work
 
-1. Rear plate, done here except the items listed as open.
-2. Engine deck and its locks (B7), because every engine repair starts there.
+1. Rear plate, done except the items listed as open.
+2. Engine deck and its locks (B7), done except the louvred grilles.
 3. Tracks and wheels (A1 to A6), which also need the jack and the tensioner.
 4. Tow cables as ropes (F2), then pioneer tools (F1).
 5. Turret and gun controls (C2, C3, D2 to D7).
