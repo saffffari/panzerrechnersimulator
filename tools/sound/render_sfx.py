@@ -31,6 +31,9 @@ KEY_FILE = Path.home() / ".config" / "elevenlabs" / "key"
 API = "https://api.elevenlabs.io"
 ROW = re.compile(r"^\| ([A-Z]{2}-\d{2}) \| (.*?) \| (.*?) \| (\d+) \| (\d+) \|(.*?)\|\s*$")
 DRY = "Close microphone, dry, no reverb, no echo, no music, no voices, single clean event."
+# The owner's own wording for takes heard from inside (his starred generations, 2026-11-09).
+INSIDE = ("Recorded inside the tank turret, tight stereo, resonant steel compartment, distinct low-frequency weight; "
+          "the impact itself is outside the armour. No music, no voices.")
 DRY_LOOP = "Close microphone, dry, no reverb, no echo, no music, no voices, steady and continuous."
 FORMATS = ["mp3_44100_192", "mp3_44100_128"]
 MODEL = "eleven_text_to_sound_v2"
@@ -67,7 +70,7 @@ def used(key, last=0):
 
 def generate(key, row, influence, state):
     body = {"text": row["text"], "duration_seconds": max(0.5, float(row["seconds"])), "prompt_influence": influence,
-            "model_id": MODEL}
+            "model_id": state.get("model", MODEL)}
     if row["loop"]:
         body["loop"] = True
     last = ""
@@ -96,8 +99,14 @@ def main():
     ap.add_argument("--influence", type=float, default=0.4)
     ap.add_argument("--budget", type=int, default=0)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--inside", action="store_true", help="a take heard from inside the turret instead of the dry source; files <ID>_wNN.mp3")
+    ap.add_argument("--model", default=MODEL)
     args = ap.parse_args()
     todo = rows()
+    if args.inside:
+        for r in todo:
+            r["text"] = r["text"].replace(" " + DRY, "").replace(" " + DRY_LOOP, "") + " " + INSIDE
+            r["seconds"] = max(r["seconds"], 3)
     if args.groups:
         order = args.groups.split(",")
         todo = sorted([r for r in todo if r["id"][:2] in order], key=lambda r: (order.index(r["id"][:2]), r["id"]))
@@ -117,9 +126,9 @@ def main():
     log_path = out / "prompts.json"
     log = json.loads(log_path.read_text()) if log_path.exists() else {}
     start = spent_at = used(key)
-    state, done, failed = {}, 0, 0
+    state, done, failed = {"model": args.model}, 0, 0
     for r, t in jobs:
-        path = out / f"{r['id']}_{t:02d}.mp3"
+        path = out / f"{r['id']}_{'w' if args.inside else ''}{t:02d}.mp3"
         if path.exists():
             continue
         if args.budget and spent_at - start >= args.budget:
@@ -136,7 +145,7 @@ def main():
         path.write_bytes(data)
         now = used(key, spent_at) if (args.budget and done % 10 == 9) else spent_at
         log[path.name] = {"id": r["id"], "name": r["name"], "text": r["text"], "seconds": r["seconds"], "loop": r["loop"],
-                          "influence": args.influence}
+                          "influence": args.influence, "model": args.model}
         log_path.write_text(json.dumps(log, ensure_ascii=False, indent=1) + "\n")
         print(f"{path.name}: {r['seconds']} s  ({r['name']})")
         spent_at, done = now, done + 1
