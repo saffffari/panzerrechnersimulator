@@ -18,12 +18,17 @@ import fasteners  # noqa: E402
 
 args = sys.argv[sys.argv.index('--') + 1:]
 out_path, keys = args[0], args[1:]
-out, seen = {}, set()
+out, seen, seen_kit = {}, set(), set()
 for o in bpy.data.objects:
     if o.type != 'MESH' or o.data.name in seen:
         continue
     if 'ALL' not in keys and not any(k in o.name for k in keys):
         continue
+    kit = o.name.split('_îAÔO')[0]
+    if 'ALL' in keys:
+        if kit in seen_kit:      # the same kit part many times over (track links, wheels): read once
+            continue
+        seen_kit.add(kit)
     if '_WIRE_' in o.name:
         continue
     seen.add(o.data.name)

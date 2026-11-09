@@ -184,6 +184,38 @@ at the end away from the wire loop (named approximation). The 1.79 m bar `32O06`
 crowbar. A tow cable does not bend in the rig: the game's rope starts from the guide curve. Track
 tools and cleaning rods (F4, F5) are not in the kit; the drift and track wrench are stand-ins.
 
+## Built: turret, gun, hull fittings, engine bay (rows A8, B2 to B6, C1 to C9, D1 to D9, E1 to E5, E11)
+
+Script: `tools/tiger_production/turret_hull_rig.py`. **Most parts in this group were read from
+their kit names, boxes and a few fitted axes, not looked at one by one.** Each control says so in
+its `source`. Treat the identifications here as first readings.
+
+The kit has no turret assembly: its parts hang in ten sibling assemblies. The rig now has the
+chain `Turret_Traverse` (upright axis through the ring gear's fitted circle, radius 1.039 m),
+`Gun_Elevation` under it, `Gun_Recoil` under that, with `Breech_Block` and `Breech_Lever` on the
+recoiling mass. The mantlet rides the elevation and not the recoil, which is what row D2 asks for.
+
+| Control | Kind | Range | Note |
+|---|---|---|---|
+| `CTRL.Turret_Traverse` | hinge, continuous | all round | carries the ten turret assemblies |
+| `CTRL.Gun_Elevation` | hinge | -8 to +15 degrees | the vehicle's limits from memory, not verified. In the kit the sweep stops at -2 and +5, so the trunnion axis (put through bar `01A33`) or the kit's clearances are off |
+| `CTRL.Gun_Recoil` | slide | 0 to 0.58 m | nominal recoil from memory, not verified; the kit's barrel collar meets bar `01A33` at 0.21 m |
+| `CTRL.Breech_Block` | slide | 0 to 0.22 m | the kit pose is the block dropped (open); +0.22 m centres it in the ring |
+| `CTRL.Breech_Lever` | hinge | -18 to 56 degrees | arm `02J66`, taken for the lever |
+| `CTRL.Traverse_Handwheel_Commander`, `CTRL.Elevation_Handwheel` | hinge, continuous | | the two handwheels `05J55`; each names what it drives |
+| `CTRL.Traverse_Gear_Gunner`, `CTRL.Traverse_Pedal` | stowed part; hinge -10 to 10 | | gunner's gear `10J49` (wheel not separate); pedal travel chosen |
+| `CTRL.Bin_Lid_L/R` | hinge | 0 to 50 degrees | hinged along the forward edge (a reading) |
+| 34 single stowed parts | stowed part | | muzzle cover, gunner's sight, coaxial MG, cupola MG, ventilator cowl, recoil cylinders, side viewers, bow MG, headlamp, driver's visor block, four mudguards, engine, two carburettors, two air filter bowls, two fuel tanks, two radiators, gearbox, steering unit, radio, aerial |
+| `CTRL.Vision_Block_*` | stowed part, 10 | | seven cupola blocks and three hatch and roof blocks |
+| `CTRL.Seat_1` to `_8` | stowed part | | which crewman's each is, is not identified |
+| `CTRL.Round_001` to `_090` | stowed part | | every 8.8 cm round, with its long axis |
+
+Not rigged in this group, and why: the driver's controls, gearbox selector and steering wheel (E6
+to E8: the lever and pedal parts are not identified); the visor shutter (B2); the bow MG's ball
+(B5); fan blades as turning parts (E4: fused into their housings); radiators cannot be lifted out
+in an animation while the louvred grilles are still part of the roof (E3); the fixed extinguisher
+system (E10, not found); fuel leaks and bungs (E2, no rig motion).
+
 ## Repair animations
 
 The owner, 8 November: "with each repair i want you to animate the repair within blender as a
@@ -238,6 +270,27 @@ Sequences built so far:
 | `tool_off_hammer`, `_crowbar`, `_axe`, `_shovel`, `_wire_cutters` | F1 | 5.7 to 7.2 | 5 to 7 | clamps open, tool lifted and held, back in, clamps shut |
 | `extinguisher_off` | E10 | 3.6 | 3 | bottle off its bracket, held, back |
 | `tow_cable_eyes_off_L` | F2 | 3.8 | 3 | both eyes lifted off their posts and put back (rigid cable) |
+| `vision_block_swap_cupola`, `driver_visor_block_swap` | B3, B2 | 4.0 | 3 | block pulled inward, slot empty, spare seated |
+| `hull_mg_out`, `coax_mg_out`, `aa_mg_off` | B5, D7, D8 | 4.0 to 4.8 | 3 | gun drawn out, held, put back |
+| `headlamp_off`, `mudguard_off_rear_L`, `ventilator_cowl_off` | B6, A8, C7 | 4.0 to 4.8 | 3 | part off, held, back |
+| `gunner_sight_swap` | D6 | 4.8 | 3 | telescope drawn rearward, mount empty, spare seated |
+| `round_from_rack` | D9 | 4.4 | 3 | a round drawn from a side rack and put back |
+| `carburettor_off`, `air_filter_off` | E1, E5 | 5.2 | 3 | engine hatch held open, part lifted out of the bay and back |
+| `aerial_swap` | E11 | 4.2 | 4 | rod unscrewed, lifted out, spare screwed in |
+| `bin_lid_open_L` | C9 | 3.0 | 3 | lid lifted, held, shut |
+| `breech_cleared` | D4 | 4.5 | 5 | block up and stuck, lever heaved, block drops, chamber cleared, closed |
+| `gun_back_into_battery` | D2 | 4.2 | 4 | gun 0.5 m back, heaved forward with the crowbar, home, mount bolts |
+| `hand_traverse`, `hand_elevate` | C3 | 1.7 | 2 | one turn of the handwheel as a cycle, then laid |
+| `turret_ring_freed` | C1 | 2.4 | 2 | hammer blows at the ring gap, then the turret turns |
+
+39 sequences in all. The many three-step "out, held, in" sequences are honest minimums: both
+hands on the part, the part's real path out of its seat, and back. They do not show clamps or
+fixings that the kit does not model.
+
+For the game there are two files beside the rig file: `tiger_gen2_repairs.json` (the sampled
+sequences) and `tiger_gen2_rig.json` (`tools/tiger_production/rig_export.py`: every control with
+its frame, axis, limits, notes and parts; every fastener with its seat, direction, set and head;
+the track and cable guide curves).
 
 ## Planned: every other row
 
@@ -250,60 +303,12 @@ Built, see above, rows A1 to A7. Still open: the sprocket's tooth ring as its ow
 tyre-less wheel variant and broken disc pieces (A3), the adjuster cap cut from the rear plate (A6),
 mudguards and track guards (A8, with the hull rows).
 
-### Hull
+### Hull, turret, armament, engine and drivetrain
 
-| Row | Controls | Cuts and sets | Repair sequence in rig terms |
-|---|---|---|---|
-| B1 armour | none (FEA owns it) | plates must be watertight solids | none |
-| B2 driver's visor | `Visor_Shutter` slide; vision block stowed | block from its frame | pull the block inward, seat a spare |
-| B3 vision blocks | each block stowed inward; retaining clamp hinge | block from housing | open the clamp, pull, seat |
-| B4 hull hatches | done | lock arms as their own hinges | free the lock arm, swing the lid |
-| B5 hull MG | `Ball_MG` two-axis mount; gun stowed inward | gun from ball | release, pull the gun in, seat another |
-| B6 headlamp | lamp stowed; socket | lamp from its foot | lift off |
-| B7 engine deck | built, see above; louvred radiator grilles still part of the roof | cut the louvre panels out of `33B01` | as animated |
-| B8 rear plate | built, see above; exhaust shrouds and hooks still to do | shroud bolts as sets | lift fittings off |
-
-### Turret
-
-| Row | Controls | Cuts and sets | Repair sequence in rig terms |
-|---|---|---|---|
-| C1 turret ring | traverse hinge, continuous; ring bolts as a set | bolt heads along the ring | knock the fragment out; bolts out and in |
-| C2 powered traverse | `Traverse_Pedal` hinge | pedal from its box | rock the pedal; tap the coupling |
-| C3 hand gear | `Traverse_Handwheel`, `Elevation_Handwheel` hinges, continuous; elevation arc | wheels from gearboxes | turn; shear pin as a fastener |
-| C4 to C6 hatches | done | latch arms as their own hinges | as now |
-| C7 ventilator | fan hinge, continuous; cowl stowed | fan from housing | lift the cowl |
-| C8 basket | floor plate bend hinge; seats stowed with a fold hinge | seats from posts | lever the floor |
-| C9 stowage bin | `Bin_Lid` hinge; discharger tubes stowed | lid from bin | open, lift |
-
-### Armament
-
-| Row | Controls | Cuts and sets | Repair sequence in rig terms |
-|---|---|---|---|
-| D1 barrel | recoil slide; muzzle brake stowed | brake from tube | none |
-| D2 mantlet | mantlet on the elevation hinge, not on the recoil slide; mount bolts as a set | bolt heads on the mount | jack into battery (slide), fit the set |
-| D3 recoil gear | filler caps as fasteners; cylinders stowed | caps from cylinders | cap out, top up, cap in |
-| D4 breech | `Breech_Block` slide; `Breech_Lever` hinge; `Safety` hinge | block from ring | lever down, clear, lever up |
-| D5 cradle | elevation hinge; `Travel_Lock` hinge | lock from its bracket | free the lock |
-| D6 gunner's sight | sight stowed inward; clamp hinge | sight from its mount | open the clamp, pull, seat the spare |
-| D7 coax MG | gun stowed from its cradle; feed cover hinge | gun from cradle | lift out, seat another |
-| D8 AA MG | mount hinge on the ring; gun stowed | gun from mount | lift off |
-| D9 ammunition | each round stowed; rack clamp hinges | rounds from racks (already separate) | open the clamp, pull the round |
-
-### Engine and drivetrain
-
-| Row | Controls | Cuts and sets | Repair sequence in rig terms |
-|---|---|---|---|
-| E1 engine | a removal tree of stowed parts; fuel line and plug leads as sockets | carburettors, pipes, leads from the block | undo sets in order, lift |
-| E2 fuel tanks | filler caps as fasteners; tanks stowed | caps from tanks | cap out; bung in the hole |
-| E3 radiators | cores stowed upward; filler caps | cores from boxes | grille off (B7), lift the core |
-| E4 fans | fan hinges, continuous; drive coupling slide | fan from cover | slide the coupling out |
-| E5 air filters | bowls stowed; clamp hinges | bowl from body | open clamps, drop the bowl |
-| E6 gearbox | selector hinge; emergency levers hinges | levers from the box | work the emergency levers |
-| E7 steering | wheel hinge; two emergency lever hinges | wheel from column | pull the levers |
-| E8 driver's controls | one hinge or slide per pedal, lever and wheel, limits swept | each from its bracket | straighten: none in the rig |
-| E9 starting gear | built, see above | crank throw to be made | cover off, shaft in, turn |
-| E10 extinguishers | bottle stowed; bracket strap hinge | bottle from bracket | open the strap, swap |
-| E11 radio, aerial | aerial rod stowed in a socket; set knobs as hinges | rod from base | unscrew the rod, screw in a spare |
+Built as first readings, see above. Still open: everything listed there as not rigged; the engine
+as a removal tree with its lines and mounts (E1); ring bolts as a fastener set (C1); mount bolts
+(D2); a parting of each MG into gun and barrel (B5, D7); checking each identification in the
+viewport or against a drawing.
 
 ### Tools and stowage
 
@@ -312,6 +317,9 @@ point (needs the game's rope), posts and cable clamps that open, track tools and
 (not in the kit).
 
 ## Order of work
+
+Every row now has a first rig and, where there is a hand job, a sequence. What follows is the order
+for the open items.
 
 1. Rear plate, done except the items listed as open.
 2. Engine deck and its locks (B7), done except the louvred grilles.

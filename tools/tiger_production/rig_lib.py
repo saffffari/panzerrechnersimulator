@@ -207,7 +207,8 @@ def sweep(e, lo, hi, step=1.0, radius=0.6, ignore=()):
     set_joint(e, 0.0)
     pivot = e.matrix_world.translation
     reach = max((Vector(c) - pivot).length for o in mov for c in [o.matrix_world @ Vector(b) for b in o.bound_box])
-    stat = [o for o in near_parts(pivot, reach + radius, exclude=set(mov) | set(ignore))]
+    stat = [o for o in near_parts(pivot, reach + radius, exclude=set(mov) | set(ignore))
+            if not o.name.startswith(('FASTENER.', 'HAND.', 'PLAYER.', 'TOOL.'))]   # stand-in boxes are not obstacles
     stat_t = {o.name: bvh(o) for o in stat}
     mov_t = [bvh(o) for o in mov]
     rest = {n for n, t in stat_t.items() if any(t.overlap(m) for m in mov_t)}

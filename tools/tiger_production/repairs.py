@@ -812,9 +812,293 @@ def tow_cable_eyes_off_L():
     return _tow_cable_lift('L')
 
 
+# ------------------------------------------------------- turret, gun, hull fittings, engine bay
+def _draw_out(rid, row, title, ctrl, stand, yaw, draw, note='', verb='draw it out', back='seat it again', seconds=1.6, grip_l=(0.0, 0.08, 0.0), grip_r=(0.0, -0.08, 0.0),
+              state=None, hold_text='it is out', spare=False):
+    """A part that comes out whole: both hands on it, drawn along `draw` (a world vector, metres),
+    held, and seated again (the same part stands for a spare when `spare`). `state` lists
+    (control, value) pairs that hold from the first frame, for what has to be open already."""
+    D = bpy.data.objects
+    r = ra.Repair(rid, row=row, title=title, note=note)
+    r.stand(stand, yaw)
+    home = D['FRAME.' + ctrl[5:]].matrix_world.copy()
+    out = D[ctrl].matrix_world.copy()
+    out.translation = out.translation + Vector(draw)
+    with r.step('out', seconds=seconds, player=verb):
+        for c, v in (state or []):
+            r.joint(c, v, a=0.0, b=0.0, start=v)
+        two_hands(r, ctrl, grip_l, grip_r, a=0.0, b=1.0, palm_l=(0, -1, 0), palm_r=(0, 1, 0), fingers=(0, 0, 1))
+        r.place(ctrl, out, a=0.3, b=1.0)
+        r.event('part_out', at=0.5)
+    with r.step('held', kind='hold', seconds=0.8, player=hold_text):
+        two_hands(r, ctrl, grip_l, grip_r, a=0.0, b=1.0, palm_l=(0, -1, 0), palm_r=(0, 1, 0), fingers=(0, 0, 1))
+    with r.step('in', seconds=seconds, player=('seat the spare' if spare else back)):
+        two_hands(r, ctrl, grip_l, grip_r, a=0.0, b=1.0, palm_l=(0, -1, 0), palm_r=(0, 1, 0), fingers=(0, 0, 1))
+        r.follow(ctrl, 'FRAME.' + ctrl[5:], offset=Matrix.Identity(4), a=0.9, b=1.0, reach=seconds * 0.8)
+        r.event('part_seated', at=1.0)
+    return r.finish()
+
+
+def _at(ctrl):
+    return bpy.data.objects[ctrl].matrix_world.translation.copy()
+
+
+def vision_block_swap_cupola():
+    c = _at('CTRL.Vision_Block_Cupola_1')
+    centre = Vector((0.87, 1.31, c.z))
+    inward = (centre - c).normalized() * 0.16 + Vector((0, 0, -0.12))
+    return _draw_out('vision_block_swap_cupola', 'B3', 'Cupola vision block pulled and a spare seated', 'CTRL.Vision_Block_Cupola_1', (0.87, 1.31, 1.05), 0.0, inward,
+                     note='the block\'s clamp is not in the kit; the same block stands for the spare', verb='pull the cracked block inward and down', spare=True, hold_text='the slot is empty')
+
+
+def driver_visor_block_swap():
+    c = _at('CTRL.Driver_Visor_Glass')
+    return _draw_out('driver_visor_block_swap', 'B2', 'Driver\'s visor block pulled and a spare seated', 'CTRL.Driver_Visor_Glass', (c.x, c.y + 0.7, 0.95), FWD, (0, 0.2, -0.1),
+                     note='the visor shutter is not rigged; the same block stands for the spare', verb='pull the block inward', spare=True, hold_text='the slot is empty')
+
+
+def hull_mg_out():
+    c = _at('CTRL.Hull_MG')
+    return _draw_out('hull_mg_out', 'B5', 'Bow MG drawn in and put back', 'CTRL.Hull_MG', (c.x, c.y + 1.2, 0.95), FWD, (0, 0.55, 0.0),
+                     note='the ball mount does not turn in the rig', verb='draw the gun inward out of the ball', hold_text='the gun is out: change the barrel or swap the gun',
+                     grip_l=(0.06, 0.2, 0.0), grip_r=(-0.06, 0.2, 0.0))
+
+
+def headlamp_off():
+    c = _at('CTRL.Headlamp')
+    return _draw_out('headlamp_off', 'B6', 'Headlamp lifted off its foot and back', 'CTRL.Headlamp', (c.x, c.y - 0.9, 0.0), 0.0, (0, -0.1, 0.25),
+                     verb='lift the lamp off its foot', hold_text='the lamp is off')
+
+
+def mudguard_off_rear_L():
+    c = _at('CTRL.Mudguard_Rear_L')
+    return _draw_out('mudguard_off_rear_L', 'A8', 'Rear mudguard torn clear and hung back', 'CTRL.Mudguard_Rear_L', (c.x + 0.2, c.y + 1.0, 0.0), FWD, (0.15, 0.5, -0.2),
+                     note='its fixings are not read from the kit; in the field it is levered off with the crowbar', verb='wrench the bent guard clear of the track', hold_text='the track runs free',
+                     grip_l=(0.25, 0.0, 0.0), grip_r=(-0.25, 0.0, 0.0), seconds=2.0)
+
+
+def ventilator_cowl_off():
+    c = _at('CTRL.Ventilator_Cowl')
+    return _draw_out('ventilator_cowl_off', 'C7', 'Ventilator cowl lifted off the turret roof and back', 'CTRL.Ventilator_Cowl', (c.x - 0.6, c.y + 0.3, c.z - 0.1), -90.0, (-0.3, 0.2, 0.25),
+                     note='the fan under it is not in the rig', verb='lift the crushed cowl off', hold_text='the vent is clear')
+
+
+def gunner_sight_swap():
+    c = _at('CTRL.Gunner_Sight')
+    return _draw_out('gunner_sight_swap', 'D6', 'Gunner\'s telescope drawn and the spare seated', 'CTRL.Gunner_Sight', (c.x + 0.1, c.y + 1.1, 1.05), FWD, (0, 0.6, -0.05),
+                     note='its clamp is not in the kit; the same telescope stands for the spare', verb='draw the smashed telescope rearward out of its mount', spare=True, hold_text='the mount is empty',
+                     grip_l=(0.05, 0.3, 0.0), grip_r=(-0.05, 0.3, 0.0), seconds=2.0)
+
+
+def coax_mg_out():
+    c = _at('CTRL.Coax_MG')
+    return _draw_out('coax_mg_out', 'D7', 'Coaxial MG lifted out of its cradle and back', 'CTRL.Coax_MG', (c.x - 0.1, c.y + 1.0, 1.05), FWD, (0.0, 0.45, 0.12),
+                     verb='lift the gun out of its cradle', hold_text='the gun is out: change the barrel or swap the gun', grip_l=(0.06, 0.3, 0.0), grip_r=(-0.06, 0.3, 0.0), seconds=2.0)
+
+
+def aa_mg_off():
+    c = _at('CTRL.AA_MG')
+    return _draw_out('aa_mg_off', 'D8', 'Cupola MG lifted off its mount and back', 'CTRL.AA_MG', (0.87, 1.31, 1.75), FWD, (0.0, 0.3, 0.25),
+                     note='the mount does not swing in the rig', verb='lift the gun off the cupola mount', hold_text='the spare gun is in hand', grip_l=(0.05, 0.2, 0.0), grip_r=(-0.05, 0.2, 0.0))
+
+
+def round_from_rack():
+    D = bpy.data.objects
+    rounds = [o for o in D if o.name.startswith('CTRL.Round_')]
+    e = max(rounds, key=lambda o: abs(o.matrix_world.translation.x) - 0.2 * abs(o.matrix_world.translation.y - 1.0))
+    c = e.matrix_world.translation.copy()
+    side = 1.0 if c.x > 0 else -1.0
+    return _draw_out('round_from_rack', 'D9', 'A round drawn from a side rack and put back', e.name, (c.x - side * 0.75, c.y, 1.05), -90.0 * side, (-side * 0.45, 0.0, 0.05),
+                     note='rack clamps are not in the kit; %s is the round shown' % e.name[5:], verb='draw the round out of its rack', hold_text='the round is in hand',
+                     grip_l=(0.0, 0.25, 0.0), grip_r=(0.0, -0.25, 0.0), seconds=1.8)
+
+
+def carburettor_off():
+    c = _at('CTRL.Carburettor_1')
+    return _draw_out('carburettor_off', 'E1', 'Carburettor lifted off the engine and back', 'CTRL.Carburettor_1', (0.0, 3.75, DECK_Z), FWD, (0.0, 0.25, 0.5),
+                     note='the engine hatch is held open at 35 degrees (see engine_hatch_open); the carburettor\'s fixings and lines are not modelled',
+                     verb='reach into the bay and lift the carburettor off', hold_text='the carburettor is out', state=[('CTRL.Deck_Hatch', 35.0), ('CTRL.Deck_Hatch_Lock_L', 0.04), ('CTRL.Deck_Hatch_Lock_R', 0.04)], seconds=2.2)
+
+
+def air_filter_off():
+    return _draw_out('air_filter_off', 'E5', 'Air filter bowl lifted out and back', 'CTRL.Air_Filter_A', (0.0, 3.75, DECK_Z), FWD, (0.0, 0.3, 0.55),
+                     note='the engine hatch is held open at 35 degrees; the bowl\'s clamps are not modelled', verb='lift the filter bowl out to clean it', hold_text='the bowl is out',
+                     state=[('CTRL.Deck_Hatch', 35.0), ('CTRL.Deck_Hatch_Lock_L', 0.04), ('CTRL.Deck_Hatch_Lock_R', 0.04)], seconds=2.2)
+
+
+def aerial_swap():
+    """E11. Unscrew the aerial rod from its base, lift it out, screw a spare in."""
+    D = bpy.data.objects
+    ctrl = 'CTRL.Aerial'
+    c = D[ctrl].matrix_world.translation.copy()
+    r = ra.Repair('aerial_swap', row='E11', title='Aerial rod unscrewed and a spare screwed in', note='turns not verified; the same rod stands for the spare')
+    r.stand((c.x + (0.6 if c.x < 0 else -0.6), c.y, DECK_Z), 90.0 if c.x < 0 else -90.0)
+    palm = ra.hand_pose((0.0, 0.0, 0.0), (1, 0, 0), (0, 0, 1))
+    with r.step('unscrew', kind='cycle', seconds=0.7, repeats=8, input='stroke', player='half a turn anticlockwise (count not verified)'):
+        r.hand('R', ctrl, grip=palm, a=0.0, b=0.85)
+        r.spin_lift(ctrl, 0.5, 0.001, a=0.1, b=0.8)
+    with r.step('rod_out', seconds=1.4, player='lift the broken rod out'):
+        r.spin_lift(ctrl, 3.5, 0.007, a=0.0, b=0.3)
+        r.hand('R', ctrl, grip=palm, a=0.0, b=1.0)
+        out = D['FRAME.Aerial'].matrix_world.copy()
+        out.translation = out.translation + Vector((0, 0, 0.25))
+        r.place(ctrl, out, a=0.35, b=1.0)
+        r.event('aerial_out', at=0.4)
+    with r.step('spare_in', seconds=1.4, player='set the spare rod on the thread'):
+        r.hand('R', ctrl, grip=palm, a=0.0, b=1.0)
+        up = D['FRAME.Aerial'].matrix_world.copy()
+        up.translation = up.translation + Vector((0, 0, 0.008))
+        r.place(ctrl, up, a=0.1, b=0.9)
+    with r.step('screw_in', kind='cycle', seconds=0.7, repeats=8, input='stroke', player='half a turn clockwise'):
+        r.hand('R', ctrl, grip=palm, a=0.0, b=0.85)
+        r.place(ctrl, D['FRAME.Aerial'].matrix_world.copy(), a=0.1, b=0.8)
+        r.event('aerial_tight', at=0.8)
+    return r.finish()
+
+
+def bin_lid_open_L():
+    """C9. Lift a turret bin lid and shut it."""
+    D = bpy.data.objects
+    ctrl = 'CTRL.Bin_Lid_L'
+    c = D[ctrl].matrix_world.translation.copy()
+    r = ra.Repair('bin_lid_open_L', row='C9', title='Turret bin lid lifted and shut', note='hinge side is a reading: the kit shows no hinge barrel')
+    r.stand((c.x, c.y + 1.1, DECK_Z), FWD)
+    grip = ra.hand_pose((0.0, 0.4, 0.02), (0, 0, 1), (0, -1, 0))
+    with r.step('lift', seconds=1.2, player='lift the lid by its rear edge'):
+        r.hand('R', ctrl, grip=grip, a=0.0, b=1.0)
+        r.joint(ctrl, float(D[ctrl]['max']), a=0.25, b=1.0)
+        r.event('bin_open', at=1.0)
+    with r.step('open', kind='hold', seconds=0.8, player='the bin is open'):
+        r.hand('R', ctrl, grip=grip, a=0.0, b=1.0)
+    with r.step('shut', seconds=1.0, player='let it down'):
+        r.hand('R', ctrl, grip=grip, a=0.0, b=1.0)
+        r.joint(ctrl, 0.0, a=0.0, b=0.9)
+    return r.finish()
+
+
+def breech_cleared():
+    """D4. A jammed breech: work the lever, the block drops, clear it, close. The kit pose has the
+    block down (open), so the sequence starts by showing it closed."""
+    D = bpy.data.objects
+    c = D['CTRL.Breech_Block'].matrix_world.translation.copy()
+    r = ra.Repair('breech_cleared', row='D4', title='Jammed breech cleared with the lever',
+                  note='lever 02J66 is a reading of the kit; the block\'s closed height (+0.22 m) is where it centres in the ring')
+    r.stand((c.x - 0.6, c.y + 0.5, 1.05), -90.0)
+    lever = ra.hand_pose((0.0, 0.28, 0.0), (0, 0, -1), (0, 1, 0))
+    with r.step('closed', kind='hold', seconds=0.8, player='the block is up and will not drop'):
+        r.joint('CTRL.Breech_Block', 0.22, a=0.0, b=0.0, start=0.22)
+        r.hand('R', 'CTRL.Breech_Lever', grip=lever, a=0.3, b=1.0)
+    with r.step('lever', kind='cycle', seconds=0.9, repeats=3, input='stroke', player='heave on the breech lever (count not verified)'):
+        r.hand('R', 'CTRL.Breech_Lever', grip=lever, a=0.0, b=1.0)
+        r.joint('CTRL.Breech_Lever', 40.0, a=0.1, b=0.5)
+        r.joint('CTRL.Breech_Lever', 0.0, a=0.6, b=0.95)
+        r.event('breech_lever', at=0.5)
+    with r.step('block_drops', seconds=0.8, player='the block drops: the breech is open'):
+        r.hand('R', 'CTRL.Breech_Lever', grip=lever, a=0.0, b=1.0)
+        r.joint('CTRL.Breech_Lever', 50.0, a=0.0, b=0.4)
+        r.joint('CTRL.Breech_Block', 0.0, a=0.3, b=0.7, start=0.22)
+        r.event('breech_open', at=0.7)
+    with r.step('clear', seconds=1.2, player='clear the chamber by hand'):
+        r.hand('L', 'CTRL.Breech_Block', grip=ra.hand_pose((0.0, -0.1, 0.25), (0, -1, 0), (0, 0, 1)), a=0.1, b=0.9)
+        r.event('chamber_clear', at=0.6)
+    with r.step('close', seconds=0.8, player='let the lever back: the block rises'):
+        r.hand('R', 'CTRL.Breech_Lever', grip=lever, a=0.0, b=1.0)
+        r.joint('CTRL.Breech_Lever', 0.0, a=0.0, b=0.6)
+        r.joint('CTRL.Breech_Block', 0.22, a=0.3, b=0.8)
+        r.event('breech_closed', at=0.8)
+    return r.finish()
+
+
+def gun_back_into_battery():
+    """D2. Mount bolts sheared, the gun stuck back: lever it forward into battery with the crowbar
+    (concession; the manual's method is the jack). Mount bolts are not identified in the kit."""
+    tools = ra.kit_tools()
+    bar = tools['crowbar']
+    D = bpy.data.objects
+    c = D['CTRL.Gun_Recoil'].matrix_world.translation.copy()
+    r = ra.Repair('gun_back_into_battery', row='D2', title='Gun levered back into battery',
+                  note='starts with the gun 0.5 m back; mount bolts not identified in the kit; heaves not verified')
+    r.stand((c.x - 0.55, c.y + 1.2, 1.05), FWD)
+    r.bring(bar)
+    with r.step('stuck_back', kind='hold', seconds=0.8, player='the gun stands back out of battery'):
+        r.joint('CTRL.Gun_Recoil', 0.5, a=0.0, b=0.0, start=0.5)
+    with r.step('heave', kind='cycle', seconds=1.2, repeats=17, input='stroke', tool=bar, player='one heave on the bar behind the breech'):
+        r.joint('CTRL.Gun_Recoil', 0.47, a=0.4, b=0.8, start=0.5)
+        r.hand('L', bar, a=0.0, b=1.0)
+        r.event('heave', at=0.5)
+    with r.step('in_battery', seconds=1.0, tool=bar, player='the gun is home'):
+        r.joint('CTRL.Gun_Recoil', 0.0, a=0.0, b=0.7)
+        r.event('in_battery', at=0.7)
+    with r.step('mount_bolts', seconds=1.2, player='fit the spare mount bolts (not identified in the kit)'):
+        r.event('mount_bolts_in', at=0.8)
+    return r.finish()
+
+
+def hand_traverse():
+    """C3. Hand traverse on the commander's handwheel. Degrees of turret per turn are not verified."""
+    D = bpy.data.objects
+    w = 'CTRL.Traverse_Handwheel_Commander'
+    c = D[w].matrix_world.translation.copy()
+    r = ra.Repair('hand_traverse', row='C3', title='Hand traverse by the commander\'s handwheel', note='0.5 degree of turret per turn is a placeholder, not verified')
+    r.stand((0.87, 1.31, 1.05), FWD)
+    level = ra.hand_pose((0, 0, 0), palm_to=(0, 1, 0), fingers=(0, 0, 1))
+    with r.step('turn', kind='cycle', seconds=0.9, repeats=20, input='turn', player='one turn of the handwheel'):
+        r.turn(w, 360.0)
+        r.turn('CTRL.Turret_Traverse', 0.5)
+        r.hand('R', w, grip=T(0.0, 0.0, 0.09), a=0.0, b=1.0, orient=level)
+        r.event('traverse_click', at=0.5)
+    with r.step('laid', seconds=0.8, player='the turret has come round'):
+        r.turn('CTRL.Turret_Traverse', 9.5, a=0.0, b=0.8)
+    return r.finish()
+
+
+def hand_elevate():
+    """C3. Elevation by the handwheel. Degrees of gun per turn are not verified."""
+    D = bpy.data.objects
+    w = 'CTRL.Elevation_Handwheel'
+    c = D[w].matrix_world.translation.copy()
+    r = ra.Repair('hand_elevate', row='C3', title='Gun elevated by the handwheel', note='0.5 degree of gun per turn is a placeholder, not verified')
+    r.stand((c.x + 0.25, c.y + 0.6, 1.05), FWD)
+    level = ra.hand_pose((0, 0, 0), palm_to=(-1, 0, 0), fingers=(0, 0, 1))
+    with r.step('turn', kind='cycle', seconds=0.9, repeats=10, input='turn', player='one turn of the elevation handwheel'):
+        r.turn(w, 360.0)
+        r.joint('CTRL.Gun_Elevation', 0.5, a=0.0, b=1.0, start=0.0)
+        r.hand('R', w, grip=T(0.0, 0.0, 0.09), a=0.0, b=1.0, orient=level)
+    with r.step('laid', seconds=0.8, player='the gun is laid'):
+        r.joint('CTRL.Gun_Elevation', 5.0, a=0.0, b=0.8)
+    return r.finish()
+
+
+def turret_ring_freed():
+    """C1. A fragment wedged in the ring gap: knock it out with the hammer from outside, then the
+    turret traverses again. The fragment is not modelled."""
+    tools = ra.kit_tools()
+    hammer = tools['hammer']
+    r = ra.Repair('turret_ring_freed', row='C1', title='Fragment knocked out of the turret ring', note='fragment not modelled; blows not verified')
+    ring = Vector((0.0002, 1.0124, 1.8352))
+    spot = ring + Vector((0.9, -0.52, 0.03))
+    r.stand((1.35, -0.2, DECK_Z), 110.0)
+    r.bring(hammer)
+    strike = hammer_pose(hammer, spot, (-0.5, 0.85, -0.15), (0.6, -0.3, 0.7))
+    back = swing_back(hammer, strike, (-0.5, 0.85, -0.15))
+    with r.step('blow', kind='cycle', seconds=0.8, repeats=6, input='strike', tool=hammer, player='one blow at the ring gap'):
+        r.place(hammer, back, a=0.0, b=0.4)
+        r.place(hammer, strike, a=0.42, b=0.58)
+        r.place(hammer, back, a=0.62, b=1.0)
+        r.hand('R', hammer, a=0.0, b=1.0, hold=True)
+        r.event('hammer_strike', at=0.58)
+    with r.step('free', seconds=1.6, player='the fragment is out: the turret turns'):
+        r.turn('CTRL.Turret_Traverse', 12.0, a=0.2, b=1.0)
+        r.event('ring_free', at=0.2)
+    return r.finish()
+
+
 ALL = [starter_hand_crank, jack_off_the_plate, engine_hatch_open, fan_grille_off_L, fan_grille_off_R, deck_cap_FL,
        track_link_replace_L, track_link_replace_R, spare_link_off, road_wheel_off_L3, arm_chained_up_L3, sprocket_cap_off_L, track_tension_L,
-       tool_off_hammer, tool_off_crowbar, tool_off_axe, tool_off_shovel, tool_off_wire_cutters, extinguisher_off, tow_cable_eyes_off_L]
+       tool_off_hammer, tool_off_crowbar, tool_off_axe, tool_off_shovel, tool_off_wire_cutters, extinguisher_off, tow_cable_eyes_off_L,
+       vision_block_swap_cupola, driver_visor_block_swap, hull_mg_out, headlamp_off, mudguard_off_rear_L, ventilator_cowl_off, gunner_sight_swap,
+       coax_mg_out, aa_mg_off, round_from_rack, carburettor_off, air_filter_off, aerial_swap, bin_lid_open_L, breech_cleared, gun_back_into_battery,
+       hand_traverse, hand_elevate, turret_ring_freed]
 
 
 def build_all(wipe=True, first=0, count=None):
