@@ -204,6 +204,10 @@ pub struct Soldier {
     animator: SovietAnimator,
     pub tick: u32,          // per-soldier deterministic hash counter
     pub alarm_signal: bool, // set the frame it enters Alarmed; game.rs consumes it to cascade
+    /// Lying flat by choice (the infantry swarm: the Tiger's gun is coming round). Shares the
+    /// prone wounded man's eye, contact volumes and drawn rotation; never set with the swarm off.
+    #[serde(default)]
+    pub gone_to_ground: bool,
     pub body_slot: usize,
     pub rifle_slot: usize,
 }
@@ -241,6 +245,7 @@ impl Soldier {
             animator: SovietAnimator::new(seed),
             tick: seed.wrapping_mul(2654435761),
             alarm_signal: false,
+            gone_to_ground: false,
             body_slot,
             rifle_slot,
         }
@@ -258,8 +263,10 @@ impl Soldier {
     }
 
     pub(crate) fn is_prone_wounded(&self)->bool {self.wounded_motion<0.2}
+    /// Lying flat, wounded or by choice: the eye, the contact volumes and the drawn body follow.
+    pub(crate) fn is_prone(&self)->bool {self.is_prone_wounded()||(self.gone_to_ground&&self.alive)}
     pub(crate) fn anatomical_eye(&self)->Vec3 {
-        if self.is_prone_wounded() {self.pos+crate::infantry_combat::prone_head_offset(self.yaw)}
+        if self.is_prone() {self.pos+crate::infantry_combat::prone_head_offset(self.yaw)}
         else{self.pos+Vec3::Y*EYE_H}
     }
     pub(crate) fn set_wounded_motion(&mut self,scale:f32){self.wounded_motion=self.wounded_motion.min(scale.clamp(0.05,1.0));}
@@ -346,6 +353,7 @@ impl Soldier {
         self.motion_speed_m_s = 0.0;
         self.animator.revive();
         self.alarm_signal = false;
+        self.gone_to_ground = false;
     }
 
     /// One terminal path for pistol, MG and scripted soft-target hits.
@@ -361,6 +369,7 @@ impl Soldier {
         self.motion_speed_m_s = 0.0;
         self.animator.trigger_death();
         self.alarm_signal = false;
+        self.gone_to_ground = false;
         true
     }
 

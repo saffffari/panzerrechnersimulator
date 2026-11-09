@@ -71,6 +71,11 @@ impl SimPhases {
         self.ms[phase as usize] += since.elapsed().as_secs_f64() * 1000.0;
     }
 
+    /// Milliseconds accumulated in `phase` since the last take (a bench reads the difference).
+    pub fn ms(&self, phase: Phase) -> f64 {
+        self.ms[phase as usize]
+    }
+
     pub fn count_update(&mut self) {
         self.updates += 1;
     }

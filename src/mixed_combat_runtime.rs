@@ -312,8 +312,8 @@ impl Game {
                 fresh.cooldown = 0.5;
                 *actor = fresh;
             }
-            actor.anatomical_prone=soldier.is_prone_wounded();
-            actor.perception_point=if soldier.is_prone_wounded(){Some(soldier.anatomical_eye())}else{None};
+            actor.anatomical_prone=soldier.is_prone();
+            actor.perception_point=if soldier.is_prone(){Some(soldier.anatomical_eye())}else{None};
             actor.pos = soldier.pos;
             actor.yaw = soldier.yaw;
             // Loading is transactional: absent derivative geometry cannot grant an invisible
@@ -367,6 +367,7 @@ impl Game {
             self.mixed_combat.decision_clock = 0.2;
         } // same 5 Hz policy cadence as training
 
+        self.swarm_think(dt);
         self.mixed_sync_actors();
         let cover = self.mixed_cover(None);
         let sight_world=self.world_cover(self.mixed_vehicle_cover_with_player(None,false));
@@ -378,6 +379,7 @@ impl Game {
         let squad_members: Vec<_> = self.mixed_combat.actors.iter().map(|a| infantry_squad::Member {
             pos:a.pos, alive:a.alive(), yaw:a.yaw, contact:if a.memory_s>=4.7 {a.last_seen} else {None},
         }).collect();
+        let _pre_probe = crate::sim_phase::Probe::new("mixed_pre_loop");
         let squad_orders=infantry_squad::orders(&self.mixed_combat.squads,&squad_members,
             |a,b|self.optical_los_clear(a,b));
         let now=self.enemy_report_audit.clock_s;
@@ -407,12 +409,18 @@ impl Game {
                 && self.los_clear(from+Vec3::Y*0.8,goal+Vec3::Y*0.8)
         });
         self.mixed_combat.tactics=tactics;
+        drop(_pre_probe);
         let mut shots = Vec::new();
         let return_fire = self.enemy_return_fire_allowed();
         for i in 0..self.mixed_combat.actors.len() {
             if !self.mixed_combat.actors[i].alive() {
                 continue;
             }
+            // The infantry swarm (swarm_runtime.rs): men it moves itself are skipped here; far,
+            // quiet men are stepped less often with the summed time. Off, this is a no-op.
+            let swarm_order = self.swarm_order(i);
+            if swarm_order.skip { continue; }
+            let Some(dt) = self.swarm_step_dt(i, dt) else { continue; };
             if self.soldiers[i].is_fleeing() {
                 let before = self.soldiers[i].pos;
                 self.soldiers[i].advance_flee(&self.hf, dt);
@@ -440,14 +448,17 @@ impl Game {
             let within_sight=self.mixed_combat.actors[i].eye().distance(self.player.center())
                 <=crate::infantry_combat::INFANTRY_SENSOR_RANGE+PLAYER_HULL_REACH_M;
             if self.mode==Mode::Tank && within_sight {
-                if let Some(point)=self.small_arm_player_aim_point(self.mixed_combat.actors[i].eye()) {
+                let _probe = crate::sim_phase::Probe::new("mixed_tiger_aim_point");
+                let eye=self.mixed_combat.actors[i].eye();
+                let point=if self.swarm.enabled { self.swarm_cached_aim_point(i,eye,dt) } else { self.small_arm_player_aim_point(eye) };
+                if let Some(point)=point {
                     let mut target=Combatant::new(PLAYER_ACTOR_ID,Team::German,point,0.0);
                     target.perception_point=Some(point);
                     candidates.push(target);
                 }
             }
-            let seen = sensed_actors(&self.mixed_combat.actors[i], &candidates,
-                |from, to| self.optical_los_clear(from, to));
+            let seen = { let _probe = crate::sim_phase::Probe::new("mixed_sensed_actors"); sensed_actors(&self.mixed_combat.actors[i], &candidates,
+                |from, to| self.optical_los_clear(from, to)) };
             let squad_order=squad_orders[i];
             let maneuver=tactical[i].goal;
             let investigate=heard[i].filter(|point| {
@@ -467,6 +478,7 @@ impl Game {
                 objective
             };
             let actor = &mut self.mixed_combat.actors[i];
+            let _observe_probe = crate::sim_phase::Probe::new("mixed_observe_act");
             let obs = combat::observe(actor, &seen, &small_arms_runtime::PlayerSightCover {
                 world:&sight_world,movement:&cover,source:&self.cabin_fire,models:&player_models,
             }, heading_for, dt);
@@ -517,10 +529,29 @@ impl Game {
             // Practice retains physical target bodies, but NPCs neither pursue nor discharge.
             // Gate before apply_action consumes ammunition or creates shot/pose/audio events.
             let action = infantry_aim::visible_target_motor(actor, &obs, self.mixed_combat.actions[i], dt);
-            let action = permitted_infantry_action(action, return_fire);
+            let mut action = permitted_infantry_action(action, return_fire);
+            if swarm_order.hold || swarm_order.rush.is_some() {
+                // Holding (prone or in cover) or bounding: the swarm owns translation.
+                action.forward = 0.0;
+                action.strafe = 0.0;
+                if swarm_order.rush.is_some() { action.fire = false; action.aim = false; }
+            }
             let before = actor.pos;
             let shot =
                 combat::apply_action(actor, &obs, action, &cover, dt, self.mixed_combat.tick);
+            if let Some(goal) = swarm_order.rush {
+                // A bound at a run toward the chosen ground; stopped by what blocks the body.
+                let want = Vec3::new(goal.x - before.x, 0.0, goal.z - before.z);
+                if want.length() > 0.3 {
+                    let dir = want.normalize();
+                    let step = before + dir * crate::infantry_swarm::RUSH_SPEED_M_S * dt;
+                    if !combat::CoverSet::occupies(&cover, step, 0.25, before.y, before.y + actor.body_height()) {
+                        actor.pos = step;
+                        actor.velocity = dir * crate::infantry_swarm::RUSH_SPEED_M_S;
+                        actor.yaw = dir.x.atan2(-dir.z);
+                    }
+                }
+            }
             // The movement gate stops a step that would enter cover. On the way to a post the
             // doctrine steps round what blocks the straight line (a gate pier, a wall's end, a
             // wreck): the first free heading turned 15° at a time from the wanted one, on the side
@@ -584,6 +615,7 @@ impl Game {
             self.schedule_sound_from(crate::audio::Sfx::RifleShot, shot.origin);
         }
         self.mixed_combat.tick = self.mixed_combat.tick.wrapping_add(1);
+        self.swarm_act(dt, r);
         self.drive_infantry_visuals(dt, r);
         self.check_foot_death();
     }

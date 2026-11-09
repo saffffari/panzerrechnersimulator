@@ -176,6 +176,8 @@ mod mechanic_readout;
 mod infantry_squad;
 #[path = "mixed_combat_runtime.rs"]
 mod mixed_combat_runtime;
+#[path = "swarm_runtime.rs"]
+mod swarm_runtime;
 #[path = "p08.rs"]
 mod p08;
 #[path = "cupola_pistol.rs"]
@@ -3621,7 +3623,7 @@ fn swept_infantry_contact(
     end: Vec3,
 ) -> Option<ProjectileContact> {
     if !soldier.alive || !body_height.is_finite() || body_height <= 0.0 { return None; }
-    if soldier.is_prone_wounded() {
+    if soldier.is_prone() {
         let delta=end-start;let length=delta.length();if length<=1e-6{return None;}
         return infantry_casualties::posed_segments(soldier).iter().filter_map(|p| {
             crew_damage::swept_sphere_obb_fraction(start,end,0.004,
@@ -10640,6 +10642,8 @@ pub struct Game {
     /// Soviet ownership boundary; Canyon allocates a larger garrison without changing other maps.
     soviet_soldier_count: usize,
     mixed_combat: mixed_combat_runtime::MixedCombatRuntime,
+    /// The infantry swarm's minds, thrown weapons, bottle fires and boarders (swarm_runtime.rs).
+    swarm: Box<swarm_runtime::SwarmRuntime>,
     /// One exact, ray-visible fixed-capacity instance pool per authored Soviet pose. `None` means
     /// the complete set failed validation and every soldier uses the procedural body+rifle pair.
     soviet_pose_batches: Option<[usize; SOVIET_POSE_COUNT]>,
@@ -12978,7 +12982,12 @@ impl Game {
         // exact mode hides both and uses the shared moving pose pools.
         let canyon_map = manifest.as_ref().and_then(|m| m.edits())
             .is_some_and(|edits| edits.get("canyon_course").is_some());
-        let soviet_soldier_count = if canyon_map { CANYON_SOLDIERS } else { N_SOLDIERS };
+        // The infantry swarm (src/infantry_swarm.rs): on by default for the two playtest courses;
+        // KESSEL_INFANTRY_SWARM=0 fields today's garrison exactly.
+        let swarm_on = canyon_map && crate::infantry_swarm::enabled_for(manifest.as_ref().and_then(|m| m.edits())
+            .and_then(|edits| edits["canyon_course"]["variant"].as_str()));
+        let soviet_soldier_count = if swarm_on { crate::infantry_swarm::SWARM_SOLDIERS }
+            else if canyon_map { CANYON_SOLDIERS } else { N_SOLDIERS };
         let soldier0 = scene.len();
         let soviet_body = soviet_infantry_mesh([78, 82, 70]);
         for _ in 0..soviet_soldier_count {
@@ -13012,6 +13021,8 @@ impl Game {
             ));
             s
         });
+        // The swarm's thrown grenades and bottles in flight (plain unlit bodies, hidden at rest).
+        let swarm_thrown_slots = if swarm_on { swarm_runtime::push_thrown_meshes(&mut scene) } else { Vec::new() };
 
         // FX meshes (positioned/scaled per frame). Round FX are pushed HOTTER — saturated
         // orange/red bodies feeding the emissive shader's source-hue mix (the intensities are bumped
@@ -14611,6 +14622,10 @@ impl Game {
         for s in inf_flash {
             renderer.set_visible(s, false);
         }
+        for &s in &swarm_thrown_slots {
+            renderer.mark_temporal_dynamic(s);
+            renderer.set_visible(s, false);
+        }
 
         // KESSEL_CREWKO=<seconds> forces the crew-KO screen effect PINNED at that phase, for a
         // headless screenshot of the red splatter (~0.3 s) / hand-wipe (~1.8 s). Off in normal play.
@@ -15079,6 +15094,7 @@ impl Game {
             soldiers,
             soviet_soldier_count,
             mixed_combat,
+            swarm: Box::new(swarm_runtime::SwarmRuntime::new(swarm_on && !isolated_population, swarm_thrown_slots)),
             soviet_pose_batches,
             german_pose_batches,
             cover,
@@ -23120,6 +23136,7 @@ impl Game {
                     // Seeing an enemy fall does not rout a man; only his own side's loss does.
                     if (i<self.soviet_soldier_count)!=soviet {continue;}
                     if i!=index&&self.soldiers[i].alive&&self.soldiers[i].pos.distance(origin)<12.0
+                        &&!self.swarm_holds_nerve(i)
                         &&self.los_clear(origin+Vec3::Y*0.9,self.soldiers[i].pos+Vec3::Y*1.2) {
                         self.soldiers[i].begin_flee_from(origin);
                     }
@@ -23511,6 +23528,13 @@ impl Game {
                 r.set_visible(soldier.rifle_slot, false);
                 if self.infantry_casualties.overrides(index){continue;}
                 let pose = soldier.advance_animation(dt);
+                if soldier.gone_to_ground && soldier.alive {
+                    // Gone to ground (the infantry swarm): the shared aiming frame laid flat with the
+                    // prone wounded man's rotation and lift, the same body his contact volumes use.
+                    pose_mats[crate::soviet_animation::SovietPose::Aim00.index()].push(Mat4::from_rotation_translation(
+                        crate::infantry_combat::prone_rotation(soldier.yaw), soldier.pos + Vec3::Y * 0.18));
+                    continue;
+                }
                 let rotation = Quat::from_rotation_arc(Vec3::Z, soldier.forward());
                 pose_mats[pose.index()]
                     .push(Mat4::from_rotation_translation(rotation, soldier.pos));

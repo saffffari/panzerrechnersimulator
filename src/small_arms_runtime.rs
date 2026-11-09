@@ -125,6 +125,11 @@ impl Game {
         bodies
     }
 
+    /// The same contact against bodies the caller already gathered (one burst's many fragments).
+    pub(super) fn small_arm_exposed_crew_contact_with(&self,bodies:&[CouchCrewBody],start:Vec3,end:Vec3)->Option<ProjectileContact> {
+        exposed_crew_contact(self.player.hull_model(),bodies,start,end)
+    }
+
     pub(super) fn small_arm_exposed_crew_contact(&self,start:Vec3,end:Vec3)->Option<ProjectileContact> {
         exposed_crew_contact(self.player.hull_model(),&self.small_arm_crew_bodies(),start,end)
     }

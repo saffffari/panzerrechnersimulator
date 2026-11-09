@@ -775,7 +775,7 @@ impl CabinFire {
     fn sweep_inverse_except(&self, from:Vec3,to:Vec3,inverse:&[Mat4;FRAMES],excluded:&[usize])->Option<Contact> {
         let mut best: Option<Contact> = None;
         for frame in 0..FRAMES {
-            if !self.frame_enabled[frame]||excluded.contains(&frame) { continue; }
+            if !self.frame_enabled[frame]||self.grids[frame].triangles.is_empty()||excluded.contains(&frame) { continue; }
             let a = inverse[frame].transform_point3(from);
             let b = inverse[frame].transform_point3(to);
             if let Some((fraction, normal)) = self.grids[frame].sweep(a, b) {
@@ -833,17 +833,21 @@ impl CabinFire {
         endpoints: &[Vec3],
         models: &[Mat4; FRAMES],
     ) -> Vec<bool> {
-        let inverse = models.map(|model| model.inverse());
+        // Only enabled frames with source triangles can occlude (the grids are fixed at build):
+        // their inverses and the origin in their frames are taken once per call, not per path.
+        // Identical answers; the 2026-11-09 swarm bench spent 10 ms an update here on 80 frames.
+        let live: Vec<(usize, Mat4, Vec3)> = (0..FRAMES)
+            .filter(|&frame| self.frame_enabled[frame] && !self.grids[frame].triangles.is_empty())
+            .map(|frame| { let inv = models[frame].inverse(); (frame, inv, inv.transform_point3(origin)) })
+            .collect();
         endpoints
             .iter()
             .map(|&point| {
                 origin.is_finite()
                     && point.is_finite()
-                    && !(0..FRAMES).any(|frame| {
-                        if !self.frame_enabled[frame] { return false; }
-                        let from = inverse[frame].transform_point3(origin);
-                        let to = inverse[frame].transform_point3(point);
-                        self.grids[frame].occluded(from,to)
+                    && !live.iter().any(|(frame, inv, from)| {
+                        let to = inv.transform_point3(point);
+                        self.grids[*frame].occluded(*from,to)
                     })
             })
             .collect()
@@ -998,6 +1002,27 @@ impl CabinFire {
         };
         self.ammo_scan_clock = 0.0;
         true
+    }
+    /// `seed_from_segment`, returning the new patch's identity (the infantry swarm keeps its
+    /// bottle fires by identity: `exterior_fire`).
+    pub fn seed_from_segment_identity(&mut self, from: Vec3, to: Vec3, models: &[Mat4; FRAMES],
+        strength: f32) -> Option<u32> {
+        let before: Vec<u32> = self.patches.iter().map(|p| p.identity).collect();
+        if !self.seed_from_segment(from, to, models, strength) { return None; }
+        self.patches.iter().zip(before).find(|(p, old)| p.identity != *old).map(|(p, _)| p.identity)
+    }
+    /// Put out the patch with this identity at once (its petrol spent, or a fixed extinguisher's
+    /// discharge); the slot is freed. True if it was burning.
+    pub fn quench(&mut self, identity: u32) -> bool {
+        let Some(p) = self.patches.iter_mut().find(|p| p.identity == identity && p.anchor.is_some()) else { return false; };
+        let was = p.intensity > 0.0;
+        *p = Patch::default();
+        self.ammo_scan_clock = 0.0;
+        was
+    }
+    /// The highest patch intensity now (the fire's strength).
+    pub fn strongest(&self) -> f32 {
+        self.patches.iter().map(|p| p.intensity).fold(0.0_f32, f32::max)
     }
     pub fn patch_surface(&self, k: usize, models: &[Mat4; FRAMES]) -> Option<FireSurface> {
         let patch = self.patches.get(k)?;

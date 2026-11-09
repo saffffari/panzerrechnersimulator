@@ -332,7 +332,7 @@ pub(super) fn tissue_contact(
     output
 }
 pub(super) fn posed_segments(soldier: &Soldier) -> [physics::CrewSegment; COUNT] {
-    let prone = soldier.is_prone_wounded();
+    let prone = soldier.is_prone();
     let rotation = if prone {
         crate::infantry_combat::prone_rotation(soldier.yaw)
     } else {

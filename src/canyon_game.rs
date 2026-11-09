@@ -209,8 +209,16 @@ impl Game {
                 .filter(|(_,post)|post.at.distance(center)>320.0).collect();
             farther.sort_by(|a,b|a.1.at.distance(center).total_cmp(&b.1.at.distance(center)));
             candidates.extend(farther);
-            let deployed = candidates.iter().find_map(|(_,post)| {
-                if group_centers.iter().any(|p|p.distance(post.at)<35.0) { return None; }
+            // The infantry swarm fields many more groups than the course has posts: a post may hold
+            // several groups, each on its own ground round it (rings of 22 m), 20 m apart.
+            let swarm = self.swarm.enabled;
+            let spacing = if swarm { 20.0 } else { 35.0 };
+            let rings: &[(f32, f32)] = if swarm {
+                &[(0.0, 0.0), (22.0, 0.0), (22.0, 1.047), (22.0, 2.094), (22.0, 3.142), (22.0, 4.189), (22.0, 5.236)]
+            } else { &[(0.0, 0.0)] };
+            let deployed = candidates.iter().flat_map(|(_,post)| rings.iter().map(move |&(r,a)| crate::canyon::Post {
+                at: post.at + Vec2::new(a.cos(), a.sin()) * r, heading: post.heading })).find_map(|post| {
+                if group_centers.iter().any(|p|p.distance(post.at)<spacing) { return None; }
                 let origin = Vec3::new(post.at.x,self.hf.height_at(post.at.x,post.at.y)+1.5,post.at.y);
                 let points=infantry_squad::deployment(post.at,post.heading,members.len(),|at| {
                     let y=self.hf.height_at(at.x,at.y);
@@ -220,9 +228,23 @@ impl Game {
                         && !combat_body_occupied(&cover,p)
                         && self.los_clear(origin,p+Vec3::Y*1.5)
                 })?;
-                Some((**post,points))
-            }).ok_or_else(||anyhow::anyhow!("no clear ground for Canyon infantry group {group}"))?;
-            let (post, points)=deployed;
+                Some((post,points))
+            });
+            if deployed.is_none() && !swarm {
+                anyhow::bail!("no clear ground for Canyon infantry group {group}");
+            }
+            let Some((post, points)) = deployed else {
+                // Swarm only: a group with no clear ground is not fielded (benched far off, dead).
+                for &i in members {
+                    let soldier = &mut self.soldiers[i];
+                    soldier.escort_enemy = None;
+                    soldier.activate_escort([Vec3::new(-4000.0 - i as f32 * 3.0, 0.0, -4000.0); 4], &self.hf);
+                    soldier.kill();
+                }
+                self.swarm.record_not_fielded(members.len());
+                eprintln!("[swarm] infantry group {group} ({} men) has no clear ground: not fielded", members.len());
+                continue;
+            };
             for (&i,at) in members.iter().zip(points) {
                 let p = Vec3::new(at.x, self.hf.height_at(at.x, at.y), at.y);
                 let soldier = &mut self.soldiers[i];

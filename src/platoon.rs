@@ -709,6 +709,7 @@ impl Game {
         let leader_fwd = xz(self.player.forward()).normalize_or_zero();
         let leader_heading = self.player.heading;
         let mut fired: Vec<(usize, Option<usize>, Vec3, Vec3, f32)> = Vec::new();
+        let mut swarm_mg: Vec<usize> = Vec::new();
         // Training input slot 9: living fraction of the whole enemy roster.
         let living_frac = self.enemies.iter().filter(|e| e.alive).count() as f32 / self.enemies.len().max(1) as f32;
 
@@ -986,13 +987,21 @@ impl Game {
                     }
                 }
             } else if w.standing == Standing::Follow || matches!(w.standing, Standing::Flank { .. }) {
+                // The infantry swarm: men on the leader's hull draw the wingman's coaxial MG.
+                if let Some(boarder) = self.swarm_boarder_target_for(index) {
+                    if self.allies[index].tank.ai_aim(boarder, dt) && w.can_shoot() && !w.weapons_hold {
+                        swarm_mg.push(index);
+                    }
+                } else {
                 // Nothing to see: carry the gun forward along the hull.
                 let ally = &mut self.allies[index].tank;
                 let ahead = ally.center() + ally.forward() * 300.0;
                 ally.ai_aim(ahead, dt);
+                }
             }
         }
 
+        for index in swarm_mg { self.swarm_wingman_mg(index, dt); }
         for (index, tidx, muzzle, direction, distance) in fired {
             self.ally_shot_tick = self.ally_shot_tick.wrapping_add(1);
             let seed = self.ally_shot_tick ^ 0xA117_0001 ^ (index as u32) << 20;

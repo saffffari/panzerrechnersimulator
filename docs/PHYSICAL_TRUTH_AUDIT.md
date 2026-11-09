@@ -5135,3 +5135,56 @@ cook-off's plume unchanged). Named approximation for cost: the shadow marches to
 and the lamps, and the shade pass's far segments, take each smoke support's envelope times its
 breakup's measured mean (0.6) instead of its noise; the froxel's own sample keeps the full field. A
 support thinner than 0.001 /m is skipped.
+
+## Infantry swarm, 2026-11-09 (`src/infantry_swarm.rs`, `infantry_boarding.rs`, `thrown_weapons.rs`, `exterior_fire.rs`, `swarm_runtime.rs`; `docs/INFANTRY_SWARM_PLAN_20261109.md`)
+
+On for the two playtest courses unless `KESSEL_INFANTRY_SWARM=0`. Named approximations and
+estimates:
+- **Update cadence.** A Soviet rifleman over 180 m from the Tiger and the man on foot with no
+  contact is stepped every 4th update (over 400 m every 8th) with the summed time; he walks in
+  place in the frames between. The Tiger aim point each man perceives is re-sampled every 0.2 s
+  and carried in the hull's frame between samples (sensor cadence, not a changed rule).
+- **Reading the Tiger.** A look every 0.25 s within 300 m (estimate) on a clear line to the
+  turret top; the traverse rate is his own two looks' difference, extrapolated at most 1.5 s.
+  Danger arcs: gun and coax half-width 11.5 degrees (half the TZF 9b's 23 degree field, published),
+  bow MG 24 degrees (ball traverse about 15 plus half the KZF 2 field about 9; estimates); a swing
+  reaching him within 2 s grounds him (reaction estimate). A rush is 3.6 m/s, at most 18 m (estimates).
+  Cover is a blocked line from the gun's muzzle to the man's chest (terrain, static and structure
+  occluders, trees), sampled at twelve candidate points.
+- **Going to ground** uses the prone wounded man's rotation, eye and contact volumes; the drawn
+  body is the authored aim frame laid flat (no prone frame exists in the library).
+- **Throws.** Drag-free point mass (drag about 2 % of weight); release speed up to 18 m/s
+  (estimate within the published 35-40 m RGD-33 range); aim error 6 % of range (estimate); bounce
+  restitution/retention 0.35/0.7 on steel and 0.12/0.45 on ground (estimates); rest below 0.6 m/s.
+  Fuses hashed inside the published 3.2-3.8 s (RGD-33) and 3.2-4.2 s (F-1); fillers 85 g and 60 g
+  TNT (published). A bottle breaks above 4 m/s (estimate); one broken on the ground leaves no fire.
+  No throwing pose: a thrower is drawn in the aim frame.
+- **Bursts.** Men round it: the existing exterior blast law (`he_blast_damage`, cube-root radius).
+  Crew: 48 fragment rays (RGD-33 1.2 g at 1,100 m/s, F-1 2.5 g at 900 m/s; orders of magnitude,
+  speed falling as exp(-d/12 m), estimate) swept against the source armour and lids and the
+  crew's hit volumes, plus the burst's pressure where the source path is open, through the
+  existing `crew_damage` route; one wound per crewman per burst (the part with the most work).
+  Not modelled: damage to the Tiger's armour, tracks or vision blocks from an outside burst; a
+  burst inside striking the rounds or heating the compartment's gas.
+- **Petrol fire.** Three existing surface-fire patches within 0.35 m of the impact (estimate).
+  Heat into the crew air: crew-air patches 1, engine bay `FIREWALL_SHARE` (existing), an outside
+  patch over a cooling intake (the radiator and fan envelopes' footprints) 0.8 x the firewall share,
+  any other outside patch 0.03 (estimates); outside means the patch's normal, followed 3 m, leaves
+  the source geometry. Plate patches burn the bottle's 0.37 kg of petrol at 0.055 kg/m²s
+  (Babrauskas' pool value) and go out; intake patches are taken as fed by the bay's own fuel and
+  oil and burn until put out; 20 s of intake fire lights a patch on the first source surface below
+  the louvres (estimate). The Tiger's fixed engine-bay extinguisher (attested system; delay 6 s and
+  a single charge are estimates) quenches the bay's patches once. Swarm on, this heat path replaces
+  `game_cookoff`'s two-way rule for every patch.
+- **Boarding.** A deck graph of places (climb places, deck, engine deck, hatches, the driver's
+  visor) in the hull and turret frames; feet set on the source surface swept under the place.
+  Climb 2.4 s, deck walk 0.9 m/s, hammer 4 s a hatch (estimates). Grip 0.42 g sustained 0.3 s, or a
+  0.9 g upward jolt (estimates), from the hull centre's measured acceleration plus the yaw terms.
+  The barrel's sweep is tested against a 0.25 m column per man at five interpolated positions a
+  step. Landing by speed: under 6 m/s a stumble, to 12 an injury, above it fatal (estimates). A
+  man in an aperture stands 1.05 m below its rim and holds the lid open; he never moves through the
+  cabin. Six men within 30 m, the Tiger under 2.5 m/s, at most ten aboard (estimates).
+- **Wingman MG** (platoon mode): the coax laid on the nearest man on the leader's deck and fired
+  on the existing MG cycle through the ordinary projectile path; friendly fire is physical.
+- **Sounds.** Named events from `docs/SOUND_PROMPTS_20261109.md`; a take file, if present, plays
+  at the bullet-on-steel level (provisional; no level table entry yet).

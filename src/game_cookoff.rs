@@ -276,10 +276,16 @@ impl Game {
         // Flames in the crew compartments' air heat it fully; a fire behind the firewall (the engine
         // bay's petrol and oil) at `FIREWALL_SHARE` of its release, the steel bulkhead conducting
         // and radiating it (authored; the bulkhead's temperature is not solved).
-        let fire_w: f32 = patches.iter().map(|(p, power)| {
-            let share = if game_fea::in_crew_air(ArmorPart::Hull, hull_inverse.transform_point3(*p)) { 1.0 } else { FIREWALL_SHARE };
-            share * power * PATCH_HEAT_W
-        }).sum();
+        let fire_w: f32 = if self.swarm.enabled {
+            // The infantry swarm's petrol fires burn on the outside: each patch's heat by its place
+            // (`exterior_fire`: crew air, engine bay, an outside intake, outside plate).
+            self.swarm_fire_w(PATCH_HEAT_W, FIREWALL_SHARE)
+        } else {
+            patches.iter().map(|(p, power)| {
+                let share = if game_fea::in_crew_air(ArmorPart::Hull, hull_inverse.transform_point3(*p)) { 1.0 } else { FIREWALL_SHARE };
+                share * power * PATCH_HEAT_W
+            }).sum()
+        };
         // Each round's flux from the flames in sight of it, re-measured every FLUX_INTERVAL_S.
         self.cookoff.flux_clock_s -= dt;
         let ids_changed = self.cookoff.flux.len() != rounds.len()

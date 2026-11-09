@@ -112,6 +112,7 @@ mod sky_review;
 mod canyon;
 mod canyon_attempt;
 mod playtest_smoke;
+mod swarm_bench;
 mod t34_canyon_training;
 mod t34_generation_film;
 mod mission;
@@ -163,6 +164,11 @@ mod leaf_optics;
 mod meadow_film;
 mod infantry;
 mod infantry_combat;
+mod infantry_swarm;
+mod infantry_boarding;
+mod thrown_weapons;
+mod exterior_fire;
+mod swarm_sound;
 mod interior_rig;
 mod lamp_mounts;
 mod lan;
@@ -17843,6 +17849,12 @@ fn main() -> anyhow::Result<()> {
         // GPU: a playtest menu mission's first minute, headless (KESSEL_CANYON_MANIFEST).
         return playtest_smoke::run(&capture_arg(&args, 2, "playtest_smoke"),
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60.0),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(29));
+    }
+    if args.len() >= 2 && args[1] == "swarm-bench" {
+        // GPU: what the infantry cost per frame on a playtest course (KESSEL_CANYON_MANIFEST).
+        return swarm_bench::run(&capture_arg(&args, 2, "swarm_bench"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30.0),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(29));
     }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {
