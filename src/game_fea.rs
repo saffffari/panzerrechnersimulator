@@ -282,6 +282,38 @@ impl InteriorDamage {
 /// enough for the solve to finish on a worker on this machine; the scar meanwhile shows the
 /// empirical geometry, and both consumers switch together at the commit).
 pub(super) const FEA_STOP_COMMIT_S: f32 = 0.25;
+/// Game time after a perforation at which its solved consequences (scar, fragments, crew, modules)
+/// commit (`PendingPenetration`): above the plate and round solves' measured 230-330 ms on the
+/// owner's machine, so the update does not wait for them there (named latency).
+pub(super) const FEA_PENETRATION_COMMIT_S: f32 = 0.35;
+
+/// A perforation of the player's Tiger whose plate lattice and round solve run on workers. The
+/// strike is seen and heard at once; its solved consequences commit at a fixed game time after it
+/// (`FEA_PENETRATION_COMMIT_S`), deterministically: an update that reaches that time before the
+/// solves finish waits for them (logged). Points and directions are kept in the struck part's
+/// frame, so the consequences land where the steel is then.
+#[derive(Debug)]
+pub(super) struct PendingPenetration {
+    pub(super) commit_at_s: f32,
+    pub(super) projectile_id: u64,
+    pub(super) seed: u32,
+    pub(super) armor: VehicleArmorContact,
+    pub(super) event: crate::ballistics::ImpactEvent,
+    /// The strike point, the round's direction, its origin and the face's normal, part-local.
+    pub(super) impact_local: Vec3,
+    pub(super) dir_local: Vec3,
+    pub(super) origin_local: Vec3,
+    pub(super) normal_local: Vec3,
+    pub(super) arc: Arc,
+    pub(super) sound: Option<crate::acoustics::ImpactParams>,
+    /// The renderer clock at the strike (the scar's heat ages from it).
+    pub(super) struck_time_s: f32,
+    line: chain::ShotLine,
+    chain: chain::ChainResult,
+    plate: Option<std::thread::JoinHandle<LatticeOutcome>>,
+    shot: Option<std::thread::JoinHandle<Option<ShotStrike>>>,
+    started: std::time::Instant,
+}
 
 #[derive(Debug, Default)]
 pub(super) struct FeaRuntime {
@@ -291,6 +323,8 @@ pub(super) struct FeaRuntime {
     /// A stopped round's solve started this strike, waiting to be queued with its scar.
     pub(super) started: Option<(PlateJob, std::thread::JoinHandle<LatticeOutcome>)>,
     pub(super) pending: Vec<PendingPlate>,
+    /// Perforations whose plate and round solves run on workers (`PendingPenetration`).
+    pub(super) penetrations: Vec<PendingPenetration>,
     /// The hot-fragment pool slot of a steel chip in the crewman's hand.
     pub(super) carried_fragment: Option<usize>,
     next_id: u64,
@@ -1048,6 +1082,109 @@ impl Game {
         self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice, shot });
     }
 
+    /// Start a kinetic perforation's solves on workers (`PendingPenetration`); the chain runs now.
+    /// Returns whether the chain's round burst inside (for the strike's sound), or `None` when
+    /// the strike has no chain (HE, HEAT) and resolves at once as before.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fea_begin_penetration(&mut self, projectile_id: u64, seed: u32, armor: &VehicleArmorContact,
+        event: &crate::ballistics::ImpactEvent, impact_world: Vec3, dir_world: Vec3, origin_world: Vec3,
+        arc: Arc, now_s: f32) -> Option<bool> {
+        let (line, chain_result) = self.fea_run_chain(impact_world, dir_world, event)?;
+        let shot_event = *event;
+        let shot_seed = seed ^ 0x5407_5407;
+        let shot = Some(std::thread::spawn(move || ShotStrike::solve(&shot_event, shot_seed)));
+        let hull_inv = self.player.hull_model().inverse();
+        let normal_hull = hull_inv.transform_vector3(armor.world_normal).normalize_or_zero();
+        let local_seed = crate::armor_damage::position_seed(armor.local_point) ^ seed.rotate_left(13);
+        let plate = lattice_problem(event, &line, &chain_result, normal_hull, local_seed)
+            .map(|(impact, axes)| PlateJob { impact, origin: line.entry, axes }.spawn());
+        let part = self.part_model(armor.part).inverse();
+        let burst = chain_result.burst;
+        self.fea.current = None;
+        self.fea.penetrations.push(PendingPenetration {
+            commit_at_s: now_s + FEA_PENETRATION_COMMIT_S, projectile_id, seed, armor: *armor, event: *event,
+            impact_local: part.transform_point3(impact_world), dir_local: part.transform_vector3(dir_world).normalize_or_zero(),
+            origin_local: part.transform_point3(origin_world),
+            normal_local: part.transform_vector3(armor.world_normal).normalize_or_zero(), arc, sound: None, struck_time_s: 0.0,
+            line, chain: chain_result, plate, shot, started: std::time::Instant::now() });
+        Some(burst)
+    }
+
+    /// Commit every perforation whose time has come (`PendingPenetration`): its measured scar, the
+    /// exterior strike, and the fragments, crew and modules behind the plate, as the strike would
+    /// have done at once. Called at the start of each update.
+    pub(super) fn commit_fea_penetrations(&mut self) {
+        if self.fea.penetrations.is_empty() {
+            return;
+        }
+        let _probe = crate::sim_phase::Probe::new("commit_fea_penetrations");
+        let now = self.armor_clock_s;
+        let mut index = 0;
+        while index < self.fea.penetrations.len() {
+            if self.fea.penetrations[index].commit_at_s > now {
+                index += 1;
+                continue;
+            }
+            let mut p = self.fea.penetrations.remove(index);
+            let (impact_world, dir_world, origin_world) = self.fea_finish_penetration(&mut p);
+            let mut armor = p.armor;
+            armor.world_normal = self.part_model(armor.part).transform_vector3(p.normal_local).normalize_or_zero();
+            if !self.god {
+                let scar = self.record_vehicle_scar(&armor, &p.event, dir_world, p.struck_time_s);
+                println!("[armor] {:?} {:?} at {:?} mm: radius {} mm, loss {} mm, depth {:.1} mm, aperture {} mm",
+                    scar.facing, scar.kind, scar.local_mm, scar.radius_mm, scar.loss_mm, scar.depth_m() * 1000.0, scar.aperture_mm);
+                self.apply_exterior_strike(armor, &p.event, true, p.seed, dir_world);
+            }
+            let context = self.resolve_player_penetration(p.arc, origin_world, impact_world, dir_world, armor.part,
+                armor.local_point, p.projectile_id, p.seed, p.event);
+            if let Some(params) = p.sound {
+                self.last_player_damage_sound = Some((params, context));
+            }
+        }
+    }
+
+    /// The struck part's model (hull or turret) as it stands now.
+    pub(super) fn part_model(&self, part: ArmorPart) -> Mat4 {
+        match part {
+            ArmorPart::Hull => self.player.hull_model(),
+            ArmorPart::Turret => self.player.turret_model(),
+        }
+    }
+
+    /// Join a due perforation's solves (waiting if they are not done: logged) and make them the
+    /// strike being resolved (`fea.current`), as `fea_solve_impact` would have. Returns the strike
+    /// point, direction and origin (world, where the part is now).
+    pub(super) fn fea_finish_penetration(&mut self, p: &mut PendingPenetration) -> (Vec3, Vec3, Vec3) {
+        let part = self.part_model(p.armor.part);
+        let impact_world = part.transform_point3(p.impact_local);
+        let dir_world = part.transform_vector3(p.dir_local).normalize_or_zero();
+        let origin_world = part.transform_point3(p.origin_local);
+        let waited = std::time::Instant::now();
+        let finished = p.plate.as_ref().is_none_or(|h| h.is_finished()) && p.shot.as_ref().is_none_or(|h| h.is_finished());
+        let lattice = p.plate.take().and_then(|h| h.join().ok());
+        let shot = p.shot.take().and_then(|h| h.join().ok().flatten());
+        if !finished {
+            println!("[fea] the update waited {:.0} ms for a perforation's solves (pending rule)",
+                waited.elapsed().as_secs_f32() * 1000.0);
+        }
+        if let Some(outcome) = &lattice {
+            let g = outcome.geometry;
+            println!("[fea] lattice {} particles, {:.1} mm cells, {} steps, {:.0} ms on a worker, committed {:.0} ms after the strike: aperture {:.0} mm, petals {}, plug {}, lip {:.0} mm, bulge {:.0} mm, rim {:.0} K, energy closure {:.2} %",
+                outcome.particles, outcome.cell_mm, outcome.steps, outcome.wall_ms, p.started.elapsed().as_secs_f32() * 1000.0,
+                g.aperture_mm, g.petals, g.plug, g.lip_mm, g.bulge_mm, g.rim_kelvin, outcome.ledger.closure() * 100.0);
+        }
+        let chain_result = match &shot {
+            Some(s) => {
+                println!("[fea] the round's own solve: {:.2} of {:.2} kg flies on, {} pieces, {} through the plate as shrapnel, {:.0} ms",
+                    s.residual_kg, s.mass_kg, s.pieces, s.shrapnel.len(), s.wall_ms);
+                self.fea_run_chain_with(impact_world, dir_world, &p.event, s.residual_fraction()).map_or(p.chain.clone(), |(_, r)| r)
+            }
+            None => p.chain.clone(),
+        };
+        self.fea.current = Some(ImpactSolve { projectile_id: p.projectile_id, line: p.line, chain: chain_result, lattice, shot });
+        (impact_world, dir_world, origin_world)
+    }
+
     /// The measured terminal geometry and solved rim cooling for the strike being resolved, if
     /// the lattice solved it.
     pub(super) fn fea_measured_scar(&self) -> Option<(crate::armor_damage::MeasuredScar, Option<crate::armor_damage::RimCurve>)> {
@@ -1603,6 +1740,46 @@ mod true_scale_tests {
             solved += 1;
         }
         assert!(solved >= 2, "the cases must reach the lattice ({solved})");
+    }
+
+    /// The strike frame's cost before and after the perforation's solves left the main thread:
+    /// the chain (still on it) against the plate lattice and the round's own solve (now on
+    /// workers). `cargo test --release -- --ignored strike_frame_cost --nocapture`.
+    #[test]
+    #[ignore]
+    fn strike_frame_cost() {
+        use crate::ballistics::{ArmorScheme, Facing};
+        for (label, facing, shell, range) in [
+            ("76 mm BR-350B on the hull front (stopped)", Facing::HullFront, &crate::ballistics::BR_350B, 500.0f32),
+            ("88 mm PzGr 39 through the hull side", Facing::HullSide, &crate::ballistics::PZGR_39, 500.0),
+        ] {
+            let plate = ArmorScheme::TigerI.plate(facing);
+            let event = crate::ballistics::resolve(shell, range, plate, 0.0, 7);
+            let cos = event.impact_angle_deg.to_radians().cos().clamp(0.05, 1.0);
+            let path = event.plate.thickness_mm * 0.001 / cos;
+            let line = chain::ShotLine { entry: Vec3::new(0.0, 1.2, 2.0), dir: Vec3::NEG_Z, plate_path_m: path,
+                far_wall: None, max_s: 12.0 };
+            let t = std::time::Instant::now();
+            let state = chain::VehicleState { articulation: components::Articulation::rest(Vec3::ZERO), fuel_fill: 0.5,
+                gravity_hull: Vec3::NEG_Y, live_rounds: &[] };
+            let layers = chain::build_layers(&line, components::tiger_components(), &state);
+            let result = chain::run(&event, &layers, 1.2);
+            let chain_ms = t.elapsed().as_secs_f64() * 1000.0;
+            let lattice_ms = lattice_problem(&event, &line, &result, Vec3::Z, 1).map_or(0.0, |(impact, axes)| {
+                let t = std::time::Instant::now();
+                PlateJob { impact, origin: line.entry, axes }.solve();
+                t.elapsed().as_secs_f64() * 1000.0
+            });
+            let t = std::time::Instant::now();
+            let shot = ShotStrike::solve(&event, 9);
+            let shot_ms = if shot.is_some() { t.elapsed().as_secs_f64() * 1000.0 } else { 0.0 };
+            let penetrated = event.terminal == crate::ballistics::Terminal::Penetration;
+            // Before: a perforation solved its lattice and the round's own solve on the main
+            // thread; a stopped round already solved its lattice on a worker.
+            let before = chain_ms + if penetrated { lattice_ms.max(shot_ms) } else { 0.0 };
+            println!("[strike-cost] {label}: {:?}; chain {chain_ms:.2} ms (main thread), lattice {lattice_ms:.0} ms, round {shot_ms:.0} ms (workers); strike frame before {before:.0} ms, after {chain_ms:.2} ms",
+                event.terminal);
+        }
     }
 }
 

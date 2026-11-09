@@ -2777,12 +2777,12 @@ fn blood_grain_mesh(color: [u8; 3]) -> CpuMesh {
 
 /// Blood's look (2026-11-03, the owner: "an opaque dark red, make sure it's shiny though and a bit
 /// metallic", then "more red and brighter, but use the metallic knob to make it really dark like
-/// almost black"): an opaque, saturated red base, glossy, and mostly metallic, so it reads nearly
-/// black except where it catches a reflection. An owner-directed presentation choice: blood is a
+/// almost black"), then "too metallic and too red/bright": an opaque dark red base, glossy,
+/// a little metallic. An owner-directed presentation choice: blood is a
 /// dielectric, and its metallic response is not a measured property (ledger).
-pub(super) const BLOOD_METALLIC: f32 = 0.86;
+pub(super) const BLOOD_METALLIC: f32 = 0.35;
 pub(super) const BLOOD_ROUGHNESS: f32 = 0.12;
-pub(super) const WET_BLOOD: [[u8; 3]; 4] = [[178, 14, 12], [196, 20, 14], [160, 10, 10], [186, 16, 12]];
+pub(super) const WET_BLOOD: [[u8; 3]; 4] = [[112, 16, 13], [122, 20, 15], [100, 13, 11], [116, 18, 14]];
 
 fn blood_material(mesh: &mut CpuMesh) {
     mesh.metallic_factor = BLOOD_METALLIC;
@@ -3343,6 +3343,16 @@ impl ProjectileShooter {
 
 fn full_mass_fraction() -> f32 {
     1.0
+}
+
+/// The arc a struck face looks along.
+fn facing_arc(facing: crate::ballistics::Facing) -> Arc {
+    use crate::ballistics::Facing as F;
+    match facing {
+        F::HullFront | F::TurretFront => Arc::Front,
+        F::HullRear | F::TurretRear => Arc::Rear,
+        F::HullSide | F::TurretSide => Arc::Side,
+    }
 }
 
 /// The Tiger's gun mantlet: its node in the gun's baked mesh (gun frame).
@@ -17717,6 +17727,7 @@ impl Game {
         self.armor_clock_s = r.time;
         // Deferred plate solves of rounds the Tiger's armour stopped commit at a fixed game time.
         self.fea_commit_pending();
+        self.commit_fea_penetrations();
         // The gun's muzzle for the renderer's effect backends, every update (the FX pass that
         // also sets it does not run on every path).
         r.muzzle_hint = Some(self.player.muzzle());
@@ -27804,8 +27815,17 @@ impl Game {
                 }
                 // The layered model: the chain behind the plate and the voxel lattice of the struck
                 // plate, consumed by the scar, the consequences and the fragments below (`game_fea`).
-                self.fea_solve_impact(projectile.id, projectile.seed, &armor, &event, impact_pos, travel_world);
-                if !self.god {
+                // A kinetic perforation's plate and round solves run on workers; its solved
+                // consequences commit `FEA_PENETRATION_COMMIT_S` later (`commit_fea_penetrations`).
+                // The strike itself is seen and heard now.
+                let deferred_burst = if penetrated {
+                    self.fea_begin_penetration(projectile.id, projectile.seed, &armor, &event, impact_pos,
+                        travel_world, projectile.origin, facing_arc(armor.facing), self.armor_clock_s)
+                } else { None };
+                if deferred_burst.is_none() {
+                    self.fea_solve_impact(projectile.id, projectile.seed, &armor, &event, impact_pos, travel_world);
+                }
+                if !self.god && deferred_burst.is_none() {
                     let scar = self.record_vehicle_scar(&armor, &event, travel_world, r.time);
                     println!(
                         "[armor] {:?} {:?} at {:?} mm: radius {} mm, loss {} mm, depth {:.1} mm, aperture {} mm",
@@ -27870,7 +27890,9 @@ impl Game {
                         crate::ballistics::Facing::HullSide
                         | crate::ballistics::Facing::TurretSide => Arc::Side,
                     };
-                let context = if penetrated {
+                let context = if let Some(burst) = deferred_burst {
+                    crate::acoustics::DamageSoundContext { internal_detonation: burst, ..Default::default() }
+                } else if penetrated {
                     self.resolve_player_penetration(
                         arc,
                         projectile.origin,
@@ -27886,6 +27908,12 @@ impl Game {
                     crate::acoustics::DamageSoundContext::default()
                 };
                 self.last_player_damage_sound = Some((params, context));
+                if deferred_burst.is_some() {
+                    if let Some(pending) = self.fea.penetrations.last_mut() {
+                        pending.sound = Some(params);
+                        pending.struck_time_s = r.time;
+                    }
+                }
                 if matches!(self.mode, Mode::Foot) {
                     // Dismounted, a strike on the parked Tiger is an exterior impact heard at range
                     // through the ordinary propagation queue. It must not concuss a crewman who is
@@ -38776,8 +38804,8 @@ mod tests {
         assert_eq!(mesh.max, Vec3::splat(0.5));
         // The owner's look: glossy and mostly metallic over a saturated red, so nearly black.
         assert_eq!(mesh.metallic_factor, BLOOD_METALLIC);
-        assert!(BLOOD_METALLIC > 0.8 && mesh.roughness_factor <= 0.15, "glossy, nearly black blood");
-        assert!(WET_BLOOD.iter().all(|c| c[0] > 150 && c[0] > 8 * c[1].max(c[2])), "a bright, saturated red base");
+        assert!(BLOOD_METALLIC < 0.5 && mesh.roughness_factor <= 0.15, "glossy dark blood, a little metallic");
+        assert!(WET_BLOOD.iter().all(|c| c[0] < 140 && c[0] > 5 * c[1].max(c[2])), "a dark red base");
     }
 
     #[test]

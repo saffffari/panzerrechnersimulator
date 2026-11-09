@@ -182,6 +182,46 @@ fn rm_gas_density(p: vec3<f32>) -> f32 {
 }
 // Puff extinction in /m (the simulation's density × 5.2, the shared smoke coefficient) and its
 // single-scattering albedo.
+const RM_PUFF_MIN_EXTINCTION: f32 = 0.001;
+// The mean of a billow's breakup profile, smoothstep(0.15, 0.75, 0.75 n + 0.25 n') over the value
+// noise (src/smoke_cost.rs measures it).
+const RM_BILLOW_MEAN: f32 = 0.6;
+// The supports' extinction for the shadow marches (toward the key body and the lamps) and the shade
+// pass's far segments: each billow's envelope times its breakup's mean, without its noise, and the
+// muzzle plumes without theirs (2026-11-03, the owner: smoke must run in real time). The froxel's
+// own sample keeps the full field; the light reaching it sees the cloud's mean optical depth, not
+// its fine breakup (named approximation).
+fn rm_puff_extinction_mean(p: vec3<f32>) -> f32 {
+    var tau = 0.0;
+    for (var i = 0u; i < 12u; i += 1u) {
+        let dir = rm_puff_dir(i);
+        if (dir.w <= 0.0) { continue; }
+        let pos = rm_puff_pos(i);
+        let shape = rm_puff_shape(i);
+        if (shape.x > 0.0) {
+            if (shape.y * 5.2 < RM_PUFF_MIN_EXTINCTION) { continue; }
+            if (distance(p, pos.xyz) > shape.x + length(dir.xyz)) { continue; }
+            let axis_length = length(dir.xyz);
+            let axis = dir.xyz / max(axis_length, 0.000001);
+            let stretch = 1.0 + axis_length / max(shape.x, 0.02);
+            let delta = p - pos.xyz;
+            let q = (delta - axis * dot(delta, axis) * (1.0 - 1.0 / stretch)) / max(shape.x, 0.02);
+            let radius = length(q);
+            if (radius >= 1.0) { continue; }
+            tau += shape.y * (1.0 - smoothstep(0.12, 1.0, radius)) * RM_BILLOW_MEAN * 5.2;
+        } else {
+            let age = pos.w;
+            if (age < 0.0 || age >= 1.0) { continue; }
+            let center = pos.xyz + dir.xyz * (0.55 * age) + vec3(0.0, 3.4 * age, 0.0);
+            let radius = length(p - center) / (0.5 + 1.8 * age);
+            if (radius >= 1.0) { continue; }
+            let envelope = smoothstep(0.0, 0.04, age) * (1.0 - smoothstep(0.30, 0.85, age));
+            tau += (1.0 - smoothstep(0.15, 1.0, radius)) * envelope * clamp(dir.w, 0.0, 1.0) * 5.2;
+        }
+    }
+    tau += rm_gas_density(p) * 5.2;
+    return min(tau, 0.6);
+}
 fn rm_puff_extinction(p: vec3<f32>) -> vec2<f32> {
     var tau = 0.0;
     var albedo_sum = 0.0;
@@ -191,6 +231,9 @@ fn rm_puff_extinction(p: vec3<f32>) -> vec2<f32> {
         let shape = rm_puff_shape(i);
         var d = 0.0;
         if (shape.x > 0.0) {
+            // A support too thin to see is skipped (its density times the shared coefficient below
+            // a thousandth per metre): a fraction of the smoke is cheaper, never dearer.
+            if (shape.y * 5.2 < RM_PUFF_MIN_EXTINCTION) { continue; }
             if (distance(p, rm_puff_pos(i).xyz) > shape.x + length(dir.xyz)) { continue; }
             d = rm_billow_density(p, i);
         } else {
@@ -252,7 +295,7 @@ fn rm_extinction_at(p: vec3<f32>) -> f32 {
     let inside = rm_cabin_domain(p) >= 0;
     var world = 0.0;
     if (!inside) { world = rm_world_density(p); }
-    return world + rm_cabin_density(p, inside) + select(0.0, fr.soot.x, inside) + rm_puff_extinction(p).x + select(rm_low_density(p), 0.0, inside);
+    return world + rm_cabin_density(p, inside) + select(0.0, fr.soot.x, inside) + rm_puff_extinction_mean(p) + select(rm_low_density(p), 0.0, inside);
 }
 // Extinction without the low cloud banks: the froxel pass's key-beam march, whose banks are
 // already in rm_sun_visibility (marched to the bank's far side, not cut at the march's reach).
@@ -260,7 +303,7 @@ fn rm_extinction_local_at(p: vec3<f32>) -> f32 {
     let inside = rm_cabin_domain(p) >= 0;
     var world = 0.0;
     if (!inside) { world = rm_world_density(p); }
-    return world + rm_cabin_density(p, inside) + select(0.0, fr.soot.x, inside) + rm_puff_extinction(p).x;
+    return world + rm_cabin_density(p, inside) + select(0.0, fr.soot.x, inside) + rm_puff_extinction_mean(p);
 }
 // Optical depth from `origin` toward the key body over `length_m` without the banks.
 fn rm_march_tau_local(origin: vec3<f32>, dir: vec3<f32>, length_m: f32, steps: u32, jitter: f32) -> f32 {

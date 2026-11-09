@@ -8417,6 +8417,7 @@ impl Renderer {
         age: f32,
         strength: f32,
     ) {
+        if SMOKE_OFF.load(std::sync::atomic::Ordering::Relaxed) { return; }
         if let Some(p) = self.smoke_puffs.get_mut(slot) {
             *p = PuffGpu {
                 pos: pos.to_array(),
@@ -8430,6 +8431,7 @@ impl Renderer {
 
     /// Add a soft participating-medium support; bounded shared pool, no opaque particles.
     pub fn add_smoke_volume(&mut self, center: glam::Vec3, radius: f32, density: f32, phase: f32, albedo: f32) {
+        if SMOKE_OFF.load(std::sync::atomic::Ordering::Relaxed) { return; }
         if let Some(p) = self.smoke_puffs.iter_mut().find(|p|p.strength<=0.0) {
             *p=PuffGpu {pos:center.to_array(),age:0.0,dir:[0.0;3],strength:1.0,shape:[radius.max(0.02),density.max(0.0),phase,albedo.clamp(0.0,1.0)]};
         }
@@ -8438,6 +8440,7 @@ impl Renderer {
     /// Source-connected support for a sustained plume. A density/Jacobian pair preserves
     /// the existing sphere's integrated optical mass; transient muzzle spheres stay unchanged.
     pub fn add_smoke_sweep(&mut self,start:glam::Vec3,end:glam::Vec3,radius:f32,density:f32,phase:f32,albedo:f32) {
+        if SMOKE_OFF.load(std::sync::atomic::Ordering::Relaxed) { return; }
         let support=smoke_support::from_sphere(start,end,radius,density);
         if let Some(p)=self.smoke_puffs.iter_mut().find(|p|p.strength<=0.0) {
             *p=PuffGpu {pos:support.center.to_array(),age:0.0,dir:support.half_axis.to_array(),strength:1.0,
@@ -14417,3 +14420,7 @@ mod atmosphere_tests {
         }
     }
 }
+
+/// Review-only (`fea-range`, owner 2026-11-03: "disable smoke"): no smoke support is drawn while set.
+/// Never set by a play path.
+pub static SMOKE_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
