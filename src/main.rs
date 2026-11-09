@@ -44,6 +44,8 @@
 mod simulation_uploads;
 mod session_log;
 mod sim_phase;
+mod fx_plumes;
+mod fx_lab;
 mod canyon_autopilot;
 mod drive_bench;
 mod suspension;
@@ -1125,13 +1127,21 @@ fn run_gfxbench(
     // the owner's playtest did ("fps tanks when i hit first t34 and never recovers", 2 November
     // 2026); the summary then splits the frames before and after it and prints the simulation's
     // phase costs after it.
-    let bench_kill: Option<u32> = std::env::var("KESSEL_BENCH_KILL").ok().and_then(|v| v.trim().parse().ok());
+    // `KESSEL_BENCH_KILL=F1,F2,...`: one catastrophic kill at each listed timed frame (the
+    // nearest living enemy each time), so costs that stack with kills show per segment.
+    let bench_kills: Vec<u32> = std::env::var("KESSEL_BENCH_KILL").ok()
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect()).unwrap_or_default();
+    // `KESSEL_BENCH_SETTLE=FRAME`: restart the phase counters there instead (default five
+    // seconds after the last kill), e.g. once every thrown turret has come to rest.
+    let settle_at: Option<u32> = std::env::var("KESSEL_BENCH_SETTLE").ok().and_then(|v| v.trim().parse().ok())
+        .or_else(|| bench_kills.last().map(|at| at + 300));
     let mut kill_split: Option<usize> = None;
+    let mut kill_marks: Vec<usize> = Vec::new();
     for i in 0..(frames + WARMUP) {
         // Five seconds after the kill the phase counters restart, so the end-of-run phases are
         // the settled state's, not the detonation's and the thrown turret's.
-        if bench_kill.is_some_and(|at| i == WARMUP + at + 300) { let _ = g.sim_phase.take(); }
-        if bench_kill.is_some_and(|at| i == WARMUP + at) {
+        if settle_at.is_some_and(|at| i == WARMUP + at) { let _ = g.sim_phase.take(); }
+        if bench_kills.iter().any(|&at| i == WARMUP + at) {
             let eye = g.player.pos;
             let target = g.enemies.iter().enumerate().filter(|(_, e)| e.alive)
                 .min_by(|a, b| a.1.pos.distance(eye).total_cmp(&b.1.pos.distance(eye))).map(|(idx, e)| (idx, e.pos));
@@ -1139,8 +1149,9 @@ fn run_gfxbench(
                 let side = Vec3::new(-g.player.forward().z, 0.0, g.player.forward().x).normalize_or_zero();
                 let killed = g.debug_catastrophic_kill(idx, pos + Vec3::Y * 1.2 + side * 1.4, side);
                 println!("[gfxbench] kill at timed frame {}: enemy {idx} at {:.0} m, {}", i - WARMUP, pos.distance(eye), if killed { "catastrophic" } else { "not alive" });
-                let _ = g.sim_phase.take();
-                kill_split = Some(times.len());
+                let before = g.sim_phase.take();
+                if kill_split.is_none() { println!("[gfxbench] simulation phases before the first kill (ms): {before}"); kill_split = Some(times.len()); }
+                kill_marks.push(times.len());
             } else {
                 println!("[gfxbench] kill at timed frame {}: no living enemy", i - WARMUP);
             }
@@ -1276,7 +1287,19 @@ fn run_gfxbench(
             let series: Vec<String> = simulation_times[split..].chunks(60)
                 .map(|w| format!("{:.1}", w.iter().sum::<f64>() / w.len() as f64)).collect();
             println!("[gfxbench] simulation after the kill, per second (ms mean): {}", series.join(" "));
-            println!("[gfxbench] simulation phases from five seconds after the kill (ms): {}", g.sim_phase.take());
+            let gpu_series: Vec<String> = times[split..].chunks(60)
+                .map(|w| format!("{:.1}", w.iter().sum::<f32>() / w.len() as f32)).collect();
+            println!("[gfxbench] gpu frame after the kill, per second (ms mean): {}", gpu_series.join(" "));
+            // Per kill segment: the settled frames from five seconds after each kill to the next.
+            let mut bounds = kill_marks.clone(); bounds.push(times.len());
+            println!("[gfxbench] segment 0 kills: gpu frame {:.2} ms, simulation {:.2} ms (mean of {} frames)",
+                mean(&times[..split]), meanf(&simulation_times[..split]), split);
+            for k in 0..kill_marks.len() {
+                let (a, b) = ((bounds[k] + 300).min(bounds[k + 1]), bounds[k + 1]);
+                println!("[gfxbench] segment {} kills (settled): gpu frame {:.2} ms, simulation {:.2} ms (mean of {} frames)",
+                    k + 1, mean(&times[a..b]), meanf(&simulation_times[a..b]), b - a);
+            }
+            println!("[gfxbench] simulation phases from the settle frame (ms): {}", g.sim_phase.take());
             for (i, e) in g.enemies.iter().enumerate() {
                 println!("[gfxbench] enemy {i}: alive {}, overturned {}, speed {:.2} m/s, {:.0} m off, height {:.2} over ground, roll {:.2} pitch {:.2}",
                     e.alive, e.overturned(), e.speed, e.pos.distance(g.player.pos), e.pos.y - g.hf.height_at(e.pos.x, e.pos.z), e.roll, e.pitch);
@@ -1284,6 +1307,13 @@ fn run_gfxbench(
             for (i, settled, speed, quiet) in g.debug_thrown_turrets() {
                 println!("[gfxbench] thrown turret of wreck {i}: settled {settled}, speed {speed:.3} m/s, quiet {quiet:.2} s");
             }
+        }
+        if let Some(at) = settle_at.filter(|&at| (at as usize) < times.len()) {
+            let a = at as usize;
+            let gpu = times[a..].iter().sum::<f32>() / (times.len() - a) as f32;
+            let sim = simulation_times[a..].iter().sum::<f64>() / (times.len() - a) as f64;
+            println!("[gfxbench] from the settle frame {at}: gpu frame {gpu:.2} ms, simulation {sim:.2} ms (mean of {} frames)", times.len() - a);
+            if kill_split.is_none() { println!("[gfxbench] simulation phases from the settle frame (ms): {}", g.sim_phase.take()); }
         }
         times.sort_by(f32::total_cmp);
         let n = times.len();
@@ -17700,6 +17730,10 @@ fn main() -> anyhow::Result<()> {
     }
     if args.get(1).is_some_and(|s| s == "raymarch-showcase") {
         return raymarch_showcase::run(&capture_arg(&args, 2, "raymarch_showcase"));
+    }
+    if args.get(1).is_some_and(|s| s == "fx-lab") {
+        let scene = args.get(3).map(String::as_str).unwrap_or("wreck");
+        return fx_lab::run(&capture_arg(&args, 2, "fx-lab"), scene);
     }
     if args.get(1).is_some_and(|s| s == "wreck-fire-review") {
         return wreck_fire_review::run(&capture_arg(&args, 2, "wreck_fire_review"));

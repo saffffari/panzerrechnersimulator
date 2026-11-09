@@ -938,6 +938,9 @@ impl Game {
             // plume are not weapon impact smoke and keep theirs.
             let keep=if matches!(b.kind,BurstKind::Muzzle|BurstKind::FullCookoff(_)) {1.0} else {gpu_weapon::weapon_smoke_scale(b.age)};
             if keep<=0.0 {continue;}
+            // The rebuilt effects draw a detonation's and a cook-off's cloud as one fireball volume
+            // (crate::fx_plumes, from the renderer's detonation events).
+            if crate::fx_plumes::enabled() && matches!(b.kind,BurstKind::Blast|BurstKind::CookoffFireball(_)|BurstKind::FullCookoff(_)) {continue;}
             // A cook-off's fireball smokes as a blast at its (bounded) size on this path.
             if let BurstKind::CookoffFireball(scale)=b.kind { b.kind=BurstKind::Blast; b.radius=(2.9*scale).min(9.0); }
             if let BurstKind::PenetrationSmoke(normal)=b.kind {

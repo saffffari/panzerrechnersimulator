@@ -2795,6 +2795,11 @@ pub struct Renderer {
     meadow: Option<renderer_meadow::MeadowGpu>,
     /// Firefly lanterns lit this frame: world position and lane intensity (`meadow_fauna.rs`).
     pub fireflies: Vec<[f32; 4]>,
+    /// Fire, smoke and explosion volumes for this frame (crate::fx_plumes; the game's wreck
+    /// columns; the raymarch backend adds its detonations' fireballs and bursts).
+    pub fx_plumes: Vec<crate::fx_plumes::Plume>,
+    /// The fires' embers for this frame (crate::fx_plumes::embers), one native pixel each.
+    pub fx_embers: Vec<crate::fx_plumes::Ember>,
     /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
     /// backend cuts, displaces and shades them (renderer_scars.rs).
     mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
@@ -6249,6 +6254,8 @@ impl Renderer {
             scatter_field: None,
             meadow: None,
             fireflies: Vec::new(),
+            fx_plumes: Vec::new(),
+            fx_embers: Vec::new(),
             mesh_scars: std::collections::HashMap::new(),
             actor_mesh_clones: Vec::new(),
             raster_optics: shader_backend.then(|| {

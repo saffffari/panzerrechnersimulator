@@ -6593,6 +6593,30 @@ fn wreck_kind_index(kind: EnemyKind) -> usize {
 
 /// Root the emitter footprint on the contacted plane. Wall flames climb the wall while
 /// leaning slightly into the compartment; individual cells remain unrotated cubes.
+/// The rebuilt effects' thinning of the cabin fire's grains (see `drive_fire_presentation`).
+const FX_INTERIOR_THIN: usize = 6;
+/// How often a burning wreck's flame roots are re-read off its burning surfaces (s).
+const FX_ROOT_PERIOD_S: f32 = 1.0;
+
+/// Up to three flame roots from a wreck's burning surface patches: the strongest patches, at
+/// least 0.6 m apart, relative to the strongest (the column's base). No patch: one deck root.
+fn fx_roots_from_patches(patches: &[wreck_surface_fire::Patch], fallback: Vec3) -> (Vec3, [(Vec3, f32); 3]) {
+    let mut sorted: Vec<_> = patches.iter().filter(|p| p.strength > 0.02).collect();
+    sorted.sort_by(|a, b| b.strength.total_cmp(&a.strength));
+    let mut roots = [(Vec3::ZERO, 0.0f32); 3];
+    let Some(first) = sorted.first() else { return (fallback, [(Vec3::ZERO, 0.8), (Vec3::new(0.5, 0.0, 0.3), 0.5), (Vec3::ZERO, 0.0)]); };
+    let base = first.position;
+    let mut n = 0;
+    for patch in &sorted {
+        if n == 3 { break; }
+        let offset = patch.position - base;
+        if roots[..n].iter().any(|(o, _)| o.distance(offset) < 0.6) { continue; }
+        roots[n] = (offset, (0.45 + 0.45 * patch.strength.clamp(0.0, 1.0)).min(0.9));
+        n += 1;
+    }
+    (base, roots)
+}
+
 fn fire_surface_offset(offset: Vec3, normal: Vec3, tangent: Vec3, bitangent: Vec3) -> Vec3 {
     let up_on_surface = (Vec3::Y - normal * normal.y).normalize_or_zero();
     let rise = (normal * (0.30 + 0.70 * normal.y.abs()) + up_on_surface * 0.90).normalize_or_zero();
@@ -10334,6 +10358,9 @@ pub struct Game {
     defer_presentation_rebuild: bool,
     /// Counts updates for the fire presentation's cadence (`FIRE_PRESENTATION_PERIOD`).
     fire_presentation_phase: u32,
+    /// Per burning wreck: the fire clock at which its flame roots were last read off its burning
+    /// surface patches, and those roots (crate::fx_plumes; refreshed every `FX_ROOT_PERIOD_S`).
+    fx_fire_roots: std::collections::HashMap<usize, (f32, Vec3, [(Vec3, f32); 3])>,
     cabin_fire: surface_fire::CabinFire,
     projectile_player_armor:surface_fire::CabinFire,
     projectile_enemy_armor:surface_fire::CabinFire,
@@ -14907,6 +14934,7 @@ impl Game {
             defer_rtt_to_render: false,
             defer_presentation_rebuild: false,
             fire_presentation_phase: 0,
+            fx_fire_roots: std::collections::HashMap::new(),
             cabin_fire,
             projectile_player_armor,
             projectile_enemy_armor,
@@ -20717,7 +20745,11 @@ impl Game {
         for b in self.blasts.iter().filter(|b| transients && b.t > 0.0) {
             let f = (b.t / b.dur.max(0.01)).clamp(0.0, 1.0);
             let legacy_reach = b.scale * (2.2 + 1.4 * (1.0 - f));
-            let envelope = b.hot * (0.18 + 0.82 * f);
+            // The rebuilt effects (crate::fx_plumes): the flash follows the fireball's own fast
+            // cooling (its light falls as f^5 over the blast's life: half in the first eighth)
+            // rather than holding 18-100 % for the whole of it, which lit the fog white for most
+            // of a second after a cook-off and drove the eye's adaptation dark for seconds after.
+            let envelope = if crate::fx_plumes::enabled() { b.hot * f.powi(5) } else { b.hot * (0.18 + 0.82 * f) };
             r.observer_flash_source |= envelope>0.0;
             lights.push(PointLight {
                 pos: b.pos,
@@ -34017,8 +34049,12 @@ impl Game {
         let patches: Vec<_> = { let _p = crate::sim_phase::Probe::new("fire_patch_surfaces"); (0..N_INT_FIRE_SPOTS).filter_map(|k| {
             self.cabin_fire.patch_surface(k, &models).filter(|p| p.intensity > 0.02).map(|p| (k, p))
         }).collect() };
-        let per_patch = (MAX_INTERIOR_FLAME_CUBES / patches.len().max(1)).min(FLAME_CUBES_PER_INTERIOR_SPOT);
-        let smoke_per_patch = interior_soot_budget(patches.len());
+        // The rebuilt effects (crate::fx_plumes) draw the cabin fire with `FX_INTERIOR_THIN` times
+        // fewer grains, each sqrt(that) times wider: the same covered area, light and merged
+        // parcels from a fraction of the generation, clearance sweeps and upload.
+        let (thin, widen) = if crate::fx_plumes::enabled() { (FX_INTERIOR_THIN, (FX_INTERIOR_THIN as f32).sqrt()) } else { (1, 1.0) };
+        let per_patch = (MAX_INTERIOR_FLAME_CUBES / patches.len().max(1)).min(FLAME_CUBES_PER_INTERIOR_SPOT) / thin;
+        let smoke_per_patch = interior_soot_budget(patches.len()) / thin;
         for (k, patch) in patches {
             let fire_origin = patch.position;
             let strength = patch.intensity.clamp(0.0, 1.0);
@@ -34036,6 +34072,7 @@ impl Game {
             let mut source_cells = Vec::with_capacity(n_flame);
             for grain in 0..n_flame {
                 let mut sample = flame_parcel_sample(seed, grain, fx_time, strength, false);
+                sample.size *= widen;
                 sample.particle_id[1]=patch.identity;
                 sample.offset = fire_surface_offset(sample.offset, patch.normal, patch.tangent, patch.bitangent);
                 source_cells.push(sample);
@@ -34051,6 +34088,7 @@ impl Game {
                 as usize).min(smoke_per_patch);
             let samples: Vec<_> = (0..n_smoke).map(|grain| {
                     let mut sample=smoke_voxel_sample(seed ^ 0xa3c5_9ac3, grain, fx_time, strength, false, Vec2::ZERO);
+                    sample.size *= widen;
                     sample.particle_id[1]=patch.identity;
                     sample
                 }).collect();
@@ -34076,7 +34114,30 @@ impl Game {
         let listener = self.player.center();
         let mut world_sources: Vec<(f32, Vec3, f32, u32)> = Vec::new();
         let mut surface_patches = std::collections::HashMap::new();
+        let fx = crate::fx_plumes::enabled();
+        let mut fx_fires: std::collections::HashMap<u32, crate::fx_plumes::Fire> = std::collections::HashMap::new();
         for i in 0..self.wrecks.len() {
+            if fx && self.enemy_active[i] && !self.enemies[i].alive && self.wrecks[i].burning {
+                // One column per wreck, its flames rooted on the strongest burning surfaces,
+                // re-read once a second (the surfaces move only with a thrown turret).
+                let fire_t = self.wrecks[i].fire_t;
+                let stale = self.fx_fire_roots.get(&i).is_none_or(|(t, ..)| (fire_t - t).abs() >= FX_ROOT_PERIOD_S);
+                if stale {
+                    let patches = { let _p = crate::sim_phase::Probe::new("fire_wreck_patches"); self.wreck_surface_patches(i) };
+                    let enemy = &self.enemies[i];
+                    let fallback = self.wreck_deck_anchors[wreck_kind_index(enemy.kind)].map(|p| enemy.hull_model().transform_point3(p))
+                        .or(self.wrecks[i].fire_entry_world).unwrap_or(enemy.center());
+                    let (base, roots) = fx_roots_from_patches(&patches, fallback);
+                    self.fx_fire_roots.insert(i, (fire_t, base, roots));
+                }
+                let (_, _, roots) = self.fx_fire_roots[&i];
+                let base = self.fx_fire_roots[&i].1;
+                let seed = 0x7100_0000 ^ i as u32;
+                let fire = crate::fx_plumes::Fire { base, roots, strength: self.wrecks[i].fire_strength(), age: fire_t, seed };
+                fx_fires.insert(seed, fire);
+                world_sources.push((base.distance_squared(listener), base, fire.strength, seed));
+                continue;
+            }
             if self.enemy_active[i] && !self.enemies[i].alive && self.wrecks[i].burning {
                 let wreck_patches = { let _p = crate::sim_phase::Probe::new("fire_wreck_patches"); self.wreck_surface_patches(i) };
                 surface_patches.insert(0x7100_0000 ^ i as u32, wreck_patches);
@@ -34155,9 +34216,38 @@ impl Game {
         world_sources.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.3.cmp(&b.3)));
         world_sources.truncate(MAX_WORLD_FIRE_SOURCES);
 
+        if fx && particles { r.fx_plumes.clear(); r.fx_embers.clear(); }
+        let focal_px = r.ih as f32 * 0.5 / (r.camera.fov_y * 0.5).tan();
+        let mut ember_budget = crate::fx_plumes::MAX_EMBERS;
         for (source_index, (_, pos, strength, seed)) in world_sources.into_iter().enumerate() {
             let stove=stoves.contains(&seed);
             let wind=r.weather_wind_world;
+            if fx && !stove {
+                // The rebuilt fire (crate::fx_plumes): one analytic flame-and-smoke column, its
+                // light, and a bounded share of embers; no grains, no supports.
+                if !particles { continue; }
+                let fire = fx_fires.get(&seed).copied().unwrap_or_else(|| crate::fx_plumes::Fire {
+                    base: pos, roots: [(Vec3::ZERO, 0.75), (Vec3::new(0.55, 0.0, 0.25), 0.5), (Vec3::new(-0.5, 0.0, -0.3), 0.45)],
+                    strength, age: if seed == 0x7400_0000 { (self.stealth.t - self.player_surface_fire_started).max(0.0) } else { 600.0 },
+                    seed,
+                });
+                let eye = r.camera.pos;
+                r.fx_plumes.push(crate::fx_plumes::wreck_plume(&fire, wind, eye, focal_px));
+                if let Some((at, intensity, colour, radius)) = crate::fx_plumes::flame_light(&fire) {
+                    let flick = 0.85 + 0.15 * (fx_time * 11.3 + seed as f32 * 0.37).sin() * (fx_time * 7.1).cos();
+                    self.world_fire_lights[source_index] = Some(PointLight { pos: at, source_radius: radius,
+                        color: Vec3::from_array(colour), radiant_intensity: intensity * flick });
+                }
+                let d = fire.base.distance(eye);
+                if d < crate::fx_plumes::EMBER_REACH_M && ember_budget > 0 {
+                    // Nearest fire first; a far fire throws a token handful.
+                    let want = ((1.0 - d / crate::fx_plumes::EMBER_REACH_M).powi(2) * 360.0) as usize;
+                    let n = want.min(ember_budget);
+                    crate::fx_plumes::embers(&fire, wind, fx_time, n, &mut r.fx_embers);
+                    ember_budget -= n;
+                }
+                continue;
+            }
             let source_cells = if stove || !particles { Vec::new() }
                 else if let Some(patches)=surface_patches.get(&seed) {
                     surface_wreck_fire_cells(seed,fx_time,strength,pos,patches,wind)
@@ -34760,6 +34850,31 @@ impl Game {
         self.wrecks[idx].fuel_remaining=1.0;
         self.wrecks[idx].ignition_load = 0.75;
         self.wrecks[idx].cookoff_t = None;
+        Some(idx)
+    }
+
+    /// Headless-only (`fx-lab`): the `nth` living T-34 placed at `(x, z)` and either set burning
+    /// (the staged wreck fire of `debug_stage_burning_t34`, `age_s` seconds into its burn) or
+    /// killed catastrophically (its ammunition, the turret thrown) through the ordinary routes.
+    pub fn debug_stage_fx_wreck(&mut self, nth: usize, x: f32, z: f32, heading: f32, catastrophic: bool, age_s: f32) -> Option<usize> {
+        let idx = self.enemies.iter().enumerate()
+            .filter(|(_, e)| e.alive && matches!(e.kind, crate::tank::EnemyKind::T34)).nth(nth)?.0;
+        self.debug_place_enemy(idx, x, z, heading);
+        self.enemy_active[idx] = true;
+        if catastrophic {
+            let pos = self.enemies[idx].pos;
+            let side = Vec3::new(heading.cos(), 0.0, -heading.sin());
+            self.debug_catastrophic_kill(idx, pos + Vec3::Y * 1.2 + side * 1.4, side);
+        } else {
+            self.destroy_enemy(idx);
+            let w = &mut self.wrecks[idx];
+            w.kind = WreckKind::Burn;
+            w.burning = true;
+            w.fuel_remaining = 1.0;
+            w.ignition_load = 0.75;
+            w.cookoff_t = None;
+            w.fire_t = age_s;
+        }
         Some(idx)
     }
 
