@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Linux launcher for the 2026-11-01 demo: the Windows-side work (expedition, camp, workshop, fuel
-# service, halftrack, crew panel; branch claude/windows-wip-20261101) on the raymarch renderer.
+# service, halftrack, crew panel; branch main) on the raymarch renderer.
 # A port of tools/launch_windows.ps1's profile: assets from the Windows checkout on /windows,
 # saves/caches/config kept under artifacts/runtime so nothing touches ~/.config or ~/.local.
 #
@@ -113,7 +113,7 @@ for f in assets/tanks/tiger/baked/tiger_hull.glb assets/worldgen/workshops/gaea-
          assets/worldgen/expedition/the_march_v1/manifest.v1.json catalog/maps/canyon_v2_survey_20260930.png; do
     [[ -s "$ASSET_ROOT/$f" ]] || { printf 'missing asset: %s/%s\n' "$ASSET_ROOT" "$f" >&2; exit 1; }
 done
-BUILD_ID=$(set +o pipefail; strings "$BINARY" | grep -oE 'claude/windows-wip-20261101 [0-9a-f]+ \([^)]*\)' | head -1)
+BUILD_ID=$(set +o pipefail; strings "$BINARY" | grep -oE '(main|claude/windows-wip-20261101) [0-9a-f]+ \([^)]*\)' | head -1)
 printf 'binary: %s\nbuild:  %s\nassets: %s\n' "$BINARY" "${BUILD_ID:-unknown}" "$ASSET_ROOT"
 if (( CHECK )); then exit 0; fi
 
