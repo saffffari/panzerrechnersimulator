@@ -156,7 +156,7 @@ fn fs(in: VsOut) -> ReflectOut {
     let fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - max(dot(n, v), 0.0), 5.0);
     // Roughness jitters the reflected direction (a cheap cone); a rough lobe takes up to the
     // sample budget's rays (fr.samples.x), a sharp one a single ray.
-    let lobe = select(1u, clamp(u32(round(fr.samples.x)), 1u, 3u), roughness > 0.15);
+    let lobe = select(1u, clamp(u32(round(fr.samples.x)), 1u, 8u), roughness > 0.15);
     var fresh = vec3(0.0);
     let in_cabin = rm_cabin_domain(fr.cam_pos.xyz + rel + n * 0.03) >= 0;
     let cabin_sky = select(1.0, rm_cabin_sky_visibility(fr.cam_pos.xyz + rel, n), in_cabin);

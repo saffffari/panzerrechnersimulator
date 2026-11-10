@@ -5263,3 +5263,28 @@ place's own traced early reflections and decay (the cabin's, a canyon wall's). B
 cost: play record `demo-20261109-212702`, head out of the cupola on the move, 10 to 11 ms of
 every simulation update. The parametric tail is an estimate, not a solution of the room; it has
 not been compared by ear against the traced result since this change.
+
+## Cheap falls for trees and spent cases (9 November 2026, owner-directed)
+
+The owner, of the solved collisions: "lets just remove those and do them in a negligible compute
+cost way. they didn't work really."
+
+- **Trees.** A released tree hinges about its base toward the push and lies along the line from
+  the ground at its base to the ground one tree-length away (`trees::hinge_fall`); it takes
+  about sqrt(height) seconds, the angle growing as the square of time. It is a prescribed
+  motion, not a rigid-body solution: no roll, slide or bounce; on broken ground the crown can
+  hang over or sink into the relief between those two points (unmeasured); a fallen tree is not
+  moved again when the ground under it changes. The solver (`tree_ground_support.rs`) is kept in
+  the source with its tests and is no longer called.
+- **Spent 8.8 cm cases.** Still dropped through the contact solver, but a case aboard is put to
+  rest once it stays within 5 cm of one place for 0.25 s (was 1 cm for 1 s), and a resting case
+  aboard is never solved again when the turret traverses or the tank tilts: it rides the turret
+  where it stopped. A case can therefore rest on a slope it would roll down.
+
+## Port daylight gain switch (10 November 2026, owner-requested, default off)
+
+`KESSEL_PORT_LIGHT=N` multiplies each pane's transmittance in the aperture records the raymarch
+shade and volume passes read, so the daylight the vision blocks and periscopes pass into the
+compartment (surfaces and shafts) is N times the measured figure. At 1 (the default) nothing
+changes. Above 1 it has no physical basis; the honest levers are the eye's adaptation and the
+glass's real transmittance. The ports' pictures (the relayed exterior views) do not use it.

@@ -9074,9 +9074,14 @@ const BRASS_TILT_WAKE_DEG: f32 = 2.0;
 const BRASS_SOLVES_PER_UPDATE: usize = 3;
 /// A case aboard that stays within BRASS_STILL_M of one place in the turret frame, its long axis
 /// within BRASS_STILL_AXIS_RAD, for BRASS_STILL_S of solved time is asleep, however it rocks.
-const BRASS_STILL_M: f32 = 0.01;
-const BRASS_STILL_AXIS_RAD: f32 = 0.10;
-const BRASS_STILL_S: f32 = 1.0;
+/// From 9 November 2026 (owner-directed, cheap brass): 5 cm for a quarter second, so a case
+/// stops where it lands instead of being solved while it rolls (was 1 cm for 1 s).
+const BRASS_STILL_M: f32 = 0.05;
+const BRASS_STILL_AXIS_RAD: f32 = 0.35;
+const BRASS_STILL_S: f32 = 0.25;
+/// One wake signature for every case aboard: once asleep it rides the turret and is not solved
+/// again when the turret traverses, the gun moves or the tank tilts (until it is picked up).
+const BRASS_ABOARD_SIGNATURE: u64 = 0xB8A5_5A80_A8D0_0001;
 const N_LAMP: usize = 4; // interior annunciator lamps (fire / breech / repair / station)
 
 /// The posted crew STATION the one player is manning. Maps 1:1 onto `CrewRole` for the damage gates.
@@ -33603,11 +33608,9 @@ impl Game {
             && self.lever_open >= LEVER_OPEN && self.carried_casing.is_none())
             .then(|| self.casings.iter().position(|case| !case.active)).flatten();
         let models = self.fire_surface_models();
-        let source = self.cabin_fire.source_contacts(&models);
         let world_signature = shell_collision::scene_signature(&models);
         // Brass aboard is solved in the turret's co-moving frame (below), so it wakes on what
         // moves in that frame: the articulation, not the vehicle's travel over the ground.
-        let aboard_signature = self.brass_vehicle_frame_signature();
         let mut budget = shell_collision::DropBudget::default();
         let mut contacts = Vec::new();
         // Brass lying in the tank rides with it. Solved as world bodies against a hull that
@@ -33706,9 +33709,7 @@ impl Game {
                             &mut c.angular_vel);
                     }
                 }
-                let signature = if c.aboard {
-                    aboard_signature ^ (c.tilt_epoch as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                } else { world_signature };
+                let signature = if c.aboard { BRASS_ABOARD_SIGNATURE } else { world_signature };
                 if c.drop_rest.needs_solve(signature) {
                     let in_flight = if c.drop_rest.sleeping { 0.0 } else { 1.0 };
                     wanting.push((k, signature, in_flight + c.solve_debt_s));
@@ -33728,7 +33729,10 @@ impl Game {
             let c = &mut self.casings[k];
             c.solve_debt_s = (c.solve_debt_s + dt.max(0.0)).min(1.0);
         }
+        // The collision surfaces are gathered only when a case is actually in motion.
+        let source = (solving > 0).then(|| self.cabin_fire.source_contacts(&models));
         for &(k, signature, _) in &wanting[..solving] {
+            let Some(source) = source.as_ref() else { break };
             let slot = self.slots.casing[k];
             let c = &mut self.casings[k];
             let aboard = c.aboard;
@@ -33740,7 +33744,7 @@ impl Game {
                 half: Vec3::new(SPENT_CASE_RADIUS, SPENT_CASE_RADIUS, SPENT_CASE_HALF_LENGTH),
                 mass: 7.0,
             };
-            let report = body.advance_dropped(step_dt, &source, signature, &mut c.drop_rest, &mut budget, 0.30);
+            let report = body.advance_dropped(step_dt, source, signature, &mut c.drop_rest, &mut budget, 0.30);
             c.pos = body.position;
             c.vel = body.velocity;
             c.rotation = body.rotation;

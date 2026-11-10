@@ -1119,6 +1119,17 @@ fn ember_offset(seed: u32, k: u32) -> Vec3 {
     Vec3::new(h(1), h(2), h(3))
 }
 
+/// `KESSEL_PORT_LIGHT=N` (default 1, up to 64) multiplies the daylight the player's panes pass
+/// into the crew compartment: the surfaces' aperture term and the air's shafts both read it.
+/// Above 1 it is a gain with no physical basis (a pane cannot pass more light than falls on it),
+/// offered at the owner's request (10 November 2026: "is there a way we can boost that brightness
+/// significantly"); named in docs/PHYSICAL_TRUTH_AUDIT.md. The ports' own pictures are unchanged.
+fn port_light_gain() -> f32 {
+    static GAIN: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *GAIN.get_or_init(|| std::env::var("KESSEL_PORT_LIGHT").ok().and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map_or(1.0, |v| v.clamp(0.0, 64.0)))
+}
+
 impl Backend {
     /// Capture primary albedo without lighting or display exposure, for material diagnostics.
     pub(super) fn debug_albedo_png(&self, device: &wgpu::Device, queue: &wgpu::Queue,
@@ -2018,7 +2029,7 @@ impl Backend {
                 let mid_half = m.model.transform_vector3(quad[3]);
                 if long_half.cross(mid_half).length() < 1.0e-7 { continue; }
                 // The slab for the transmittance: the piece's shortest extent (a pane's glass).
-                let tint = pane_transmittance(2.0 * short_half, grime);
+                let tint = pane_transmittance(2.0 * short_half, grime) * port_light_gain();
                 if debug {
                     println!("[raymarch] aperture {n}: mesh {index} centre {:.3?} shortest axis {:.2?} half-extents {:.3} x {:.3} x {:.4} m tint {:.2?}",
                         c, short_axis, long_half.length(), mid_half.length(), short_half, tint);

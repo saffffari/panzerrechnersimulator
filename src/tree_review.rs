@@ -37,14 +37,12 @@ impl Trees {
                 "height_m":t.height,"trunk_radius_m":t.trunk_r,"big":t.big,
                 "state":state,"fall_elapsed_s":elapsed,"push_work_j":t.push_work,"trunk_diameter_m":2.0*t.trunk_r,
                 "estimated_release_work_j_per_kg":release_work_per_mass(2.0*t.trunk_r,t.height,t.push_work),
-                "fall_terminal_rule":"released rigid source versus terrain; stable source support and low velocity",
+                "fall_terminal_rule":"prescribed hinge about the base onto the base-to-tip ground line (trees::hinge_fall); not a rigid-body solution",
                 "motion":self.released.get(&index).map(|m|serde_json::json!({
                     "velocity_m_s":m.motion.velocity.to_array(),"angular_velocity_rad_s":m.motion.angular_velocity.to_array(),
                     "initial_source_clearance_m":m.initial_clearance_m,
                     "maximum_source_contact_correction_m":m.maximum_contact_correction_m,
                     "mass_model":"uniform thin-shell source; whole canopy rigid"})),
-                "source_surface_sample_gap_bound_m":self.support[t.batch].sample_gap_m
-                    *t.base.to_scale_rotation_translation().0.abs().max_element(),
                 "authored_model":t.base.to_cols_array(),
                 "current_model":self.batches[t.batch].1[t.inst].to_cols_array()})
         }).collect::<Vec<_>>())
