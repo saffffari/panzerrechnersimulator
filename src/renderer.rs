@@ -1358,7 +1358,7 @@ mod environment_probe;
 #[path = "raster_optics.rs"] mod raster_optics;
 #[path = "raster_ssao.rs"] mod raster_ssao;
 #[path = "renderer_aa.rs"] mod renderer_aa;
-pub use raster_optics::{glass_scratch_switch, Eyepiece, RasterOpticSpec, RelayStop, MAX_RELAY_STOPS,
+pub use raster_optics::{glass_cabin_sky_switch, glass_scratch_switch, Eyepiece, RasterOpticSpec, RelayStop, MAX_RELAY_STOPS,
     STOP_LENS, STOP_MIRROR, STOP_PANE, STOP_WINDOW};
 #[cfg(test)]
 pub use raster_optics::relay_trace;

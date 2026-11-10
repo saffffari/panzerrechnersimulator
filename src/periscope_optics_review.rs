@@ -25,7 +25,18 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     for night in [false, true] {
         let light = if night { "night_lamps" } else { "day" };
         if std::env::var("KESSEL_PERISCOPE_VIEWS").is_ok_and(|o| !o.contains(light)) { continue; }
-        let (mut r, mut g) = game::Game::build_act(&device, &queue, night, &world::act(0))?;
+        // `KESSEL_PERISCOPE_CANYON=1`: the Canyon v2 course the demo launcher plays
+        // (`KESSEL_CANYON_MANIFEST`), built as start_canyon builds it, instead of the arena.
+        let canyon = std::env::var_os("KESSEL_PERISCOPE_CANYON").is_some();
+        let (mut r, mut g) = if canyon {
+            let path = std::env::var_os(crate::canyon::MANIFEST_ENV).map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(crate::canyon::V2_MANIFEST));
+            anyhow::ensure!(crate::act_manifest::select_runtime_manifest(Some(path))? == Some(1),
+                "the canyon course is an Act One map");
+            let (r, mut g) = game::Game::build_playtest_act(&device, &queue, night, &world::act(1))?;
+            g.enable_canyon_course()?;
+            (r, g)
+        } else { game::Game::build_act(&device, &queue, night, &world::act(0))? };
         g.mute_audio();
         g.debug_banish_enemies();
         g.set_cabin_lights(night);
@@ -172,11 +183,21 @@ fn focus_check(g: &mut game::Game, r: &mut crate::renderer::Renderer, device: &w
 
 /// KESSEL_PERISCOPE_FLICKER=N: N consecutive played frames (native grid) from the commander's seat
 /// facing the front block with the engine idling, then N driving, then N zoomed into the block,
+/// then N zoomed in while pulling away, then N zoomed in at speed after five seconds at full
+/// throttle (`_held_fast`). `KESSEL_PERISCOPE_CANYON=1` runs it all on the Canyon v2 course.
 /// for a frame-to-frame comparison of the block (`{prefix}_flicker_{seat,drive,held}_NNN.png`).
 fn flicker_frames(g: &mut game::Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device,
     queue: &wgpu::Queue, prefix: &str, n: usize) -> anyhow::Result<()> {
     let dt = 1.0 / 60.0;
-    for (tag, drive, click) in [("seat", 0.0, false), ("drive", 0.5, false), ("held", 0.0, true)] {
+    for (tag, drive, click) in [("seat", 0.0, false), ("drive", 0.5, false), ("held", 0.0, true),
+        ("held_drive", 1.0, false), ("held_fast", 1.0, false)] {
+        if tag == "held_fast" {
+            // Zoomed in at speed: out of the block, five seconds at full throttle, back in.
+            g.update(&TankInput { aim: true, drive, ..Default::default() }, dt, r);
+            for _ in 0..300 { g.update(&TankInput { drive, ..Default::default() }, dt, r); }
+            g.update(&TankInput { aim: true, drive, ..Default::default() }, dt, r);
+            for _ in 0..30 { g.update(&TankInput { drive, ..Default::default() }, dt, r); }
+        }
         if click {
             g.update(&TankInput { aim: true, ..Default::default() }, dt, r);
             for _ in 0..60 { g.update(&TankInput::default(), dt, r); }
@@ -189,9 +210,11 @@ fn flicker_frames(g: &mut game::Game, r: &mut crate::renderer::Renderer, device:
             let port0 = work["ports"].as_array().and_then(|p| p.iter().find(|v| v["port"] == 0)).cloned();
             let ports: Vec<String> = work["ports"].as_array().map_or(Vec::new(), |p| p.iter()
                 .map(|v| format!("{}{}", v["port"], if v["refresh"] == true { "" } else { "s" })).collect());
-            println!("[periscope-optics] flicker {tag} {i:03}: camera {:?} port0 age {} ports [{}]",
-                r.camera.pos.to_array(),
-                port0.as_ref().map_or(serde_json::Value::Null, |p| p["capture_age_frames"].clone()), ports.join(" "));
+            println!("[periscope-optics] flicker {tag} {i:03}: speed {:.1} m/s camera {:?} port0 age {} extent {} fov {} ports [{}]",
+                g.player.speed, r.camera.pos.to_array(),
+                port0.as_ref().map_or(serde_json::Value::Null, |p| p["capture_age_frames"].clone()),
+                port0.as_ref().map_or(serde_json::Value::Null, |p| p["native_extent"].clone()),
+                port0.as_ref().map_or(serde_json::Value::Null, |p| p["capture_fov_y_deg"].clone()), ports.join(" "));
         }
     }
     Ok(())

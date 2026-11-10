@@ -102,6 +102,18 @@ fn march_reflection(rel: vec3<f32>, dir: vec3<f32>, jitter: f32) -> Hit {
     return Hit(vec3(0.0), 0.0);
 }
 
+// The sky an off-screen surface of the crew compartment takes in a pane's reflection. Named
+// approximation (2026-11-10): none. The compartment's cover map answers with one compare on 19 cm
+// texels laid in the world, and as the tank drove its answer flipped frame to frame, flickering
+// every vision block's reflection from the seat (one-frame pops while driving: 776 a frame with the
+// map, 292 without; 268 with no glass at all). Lost: sky through an open hatch lighting a reflected,
+// off-screen cabin surface. Surfaces the frame shows keep their own lit radiance.
+// GLASS_CABIN_SKY (KESSEL_GLASS_CABIN_SKY=1, review) asks the cover map as before.
+fn pane_cabin_sky(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (GLASS_CABIN_SKY) { return rm_cabin_sky_visibility(world, n); }
+    return 0.0;
+}
+
 // A screen-space miss traced through the scene (as rm_reflect.wgsl does): a hit the frame shows
 // takes the lit frame there, one it does not is a grey surface (0.3) facing the ray lit by sun and
 // sky, a clear ray the sky.
@@ -114,7 +126,7 @@ fn pane_offscreen(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<f32>) 
         // map opens the pane to it, as rm_reflect.wgsl's misses do. Before 2026-11-09 it took the
         // whole sky: the pale band of "reflection" under the driver's visor slit by day.
         let world = fr.cam_pos.xyz + origin_rel;
-        if (rm_cabin_domain(world) >= 0) { return sky * rm_cabin_sky_visibility(world, n); }
+        if (rm_cabin_domain(world) >= 0) { return sky * pane_cabin_sky(world, n); }
         return sky;
     }
     let hit_rel = origin_rel + dir * t;
@@ -129,7 +141,7 @@ fn pane_offscreen(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<f32>) 
     // from inside it, as the cabin's own surfaces do. The lifted open-ground test reaches above
     // the roof and lit that unseen cabin wall with the whole sky, a grey veil over the block's
     // dark housing (2026-11-09).
-    let sky_open = select(rm_sky_visibility(hit, 0.1), rm_cabin_sky_visibility(hit, -dir), pc.extra.w > 0.5);
+    let sky_open = select(rm_sky_visibility(hit, 0.1), pane_cabin_sky(hit, -dir), pc.extra.w > 0.5);
     var radiance = rm_sky_hemisphere(-dir) * sky_open;
     if (fr.sun_radiance.w > 0.5) {
         radiance += fr.sun_radiance.rgb * max(dot(-dir, fr.sun_dir.xyz), 0.0) * rm_sun_visibility(hit, 0.1) / RM_PI;

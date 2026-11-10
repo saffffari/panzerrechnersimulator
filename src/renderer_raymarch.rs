@@ -972,7 +972,11 @@ fn rm_canopy_transmittance(origin: vec3<f32>, dir: vec3<f32>, tmax: f32) -> f32 
 
 fn rm_source_text(name: &str) -> String {
     let text = rm_source_text_unswitched(name);
-    if name == "glass_scratches.wgsl" { crate::renderer::glass_scratch_switch() + &text } else { text }
+    match name {
+        "glass_scratches.wgsl" => crate::renderer::glass_scratch_switch() + &text,
+        "rm_glass.wgsl" => crate::renderer::glass_cabin_sky_switch() + &text,
+        _ => text,
+    }
 }
 
 fn rm_source_text_unswitched(name: &str) -> String {

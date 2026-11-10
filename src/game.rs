@@ -19178,9 +19178,17 @@ impl Game {
 
         // Crush shudder: while the tracks grind a wall the whole eye judders — a low-frequency
         // heave + a pitch buzz, deterministic (phase oscillator, no rand), spiking on the give.
+        // An eye held at a vision port is braced against the block (as the gunner's at his browpad):
+        // a camera-only shake or sway would carry it through the 25 mm to the glass and out of
+        // register with the block, so the relayed field, the housing's edge and the whole exterior
+        // jumped frame to frame while driving (2026-11-10, owner: "zooming in while moving lots of
+        // crazy artifacts"). The block itself rides the sprung turret with the eye on it.
+        // `KESSEL_PORT_SWAY=1` keeps the sway at a port, for comparison.
+        let braced_at_port = self.cupola_focus.index.is_some()
+            && std::env::var("KESSEL_PORT_SWAY").as_deref() != Ok("1");
         if self.crush_rumble > 0.0 {
             self.crush_phase += dt;
-            let k = self.crush_rumble;
+            let k = if braced_at_port { 0.0 } else { self.crush_rumble };
             r.camera.pos.y += (self.crush_phase * 61.0).sin() * 0.035 * k;
             r.camera.pitch += (self.crush_phase * 47.0).sin() * 0.0045 * k;
             self.crush_rumble = (self.crush_rumble - dt * 2.2).max(0.0);
@@ -19189,7 +19197,7 @@ impl Game {
         // head lags the seat's acceleration on his neck (`suspension::HeadSway`): the slow squat
         // on starting off, the lurch forward when the hull stops, the lean in a turn. The gunner's
         // eye is at the sight's browpad and stays on it.
-        if matches!(self.mode, Mode::Tank) && !matches!(self.station, Station::Gunner) {
+        if matches!(self.mode, Mode::Tank) && !matches!(self.station, Station::Gunner) && !braced_at_port {
             let hull = self.player.hull_model();
             let eye = hull.inverse().transform_point3(r.camera.pos);
             let ride = &self.player.ride;

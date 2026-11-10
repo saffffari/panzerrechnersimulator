@@ -452,6 +452,11 @@ struct WeatherLayouts {
 pub fn glass_scratch_switch() -> String {
     format!("const GLASS_SCRATCHES: bool = {};\n", std::env::var("KESSEL_GLASS_SCRATCHES").as_deref() == Ok("1"))
 }
+/// `rm_glass.wgsl`'s review switch: `KESSEL_GLASS_CABIN_SKY=1` lets an off-screen cabin surface in a
+/// pane's reflection take sky by the compartment's cover map (off since 2026-11-10: it flickered).
+pub fn glass_cabin_sky_switch() -> String {
+    format!("const GLASS_CABIN_SKY: bool = {};\n", std::env::var("KESSEL_GLASS_CABIN_SKY").as_deref() == Ok("1"))
+}
 
 /// The pane program: the shared wiped-glass groove field, then the relay itself.
 fn panel_shader_source() -> String {
