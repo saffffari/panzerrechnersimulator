@@ -4417,7 +4417,7 @@ mod tests {
         }
         assert_eq!(smoke_setters, vec!["game_fea_range.rs".to_string()]);
         let game = std::fs::read_to_string("src/game.rs").unwrap();
-        assert!(game.contains("let practical_gain = power * game_fea_range::review_lamp_gain();"));
+        assert!(game.contains("let practical_gain = power * game_fea_range::review_lamp_gain() * rig::cabin_lights_setting();"));
         // The tissue's section (inside cells drawn at a camera cut) is set by the range alone.
         let needle = ["set_review", "_section(Some"].concat();
         let mut section_setters = Vec::new();

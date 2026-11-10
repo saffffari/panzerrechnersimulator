@@ -20929,7 +20929,9 @@ impl Game {
             // its light is zero.
             let power = if self.cabin_lights { 1.0 } else { 0.0 };
             // `game_fea_range::review_lamp_gain` is 1 outside the review range's LAMP POWER knob.
-            let practical_gain = power * game_fea_range::review_lamp_gain();
+            let practical_gain = power * game_fea_range::review_lamp_gain() * rig::cabin_lights_setting();
+            let indicator_scale = rig::indicator_scale();
+            let indicator_size = Mat4::from_scale(Vec3::splat(indicator_scale));
             let hm = self.player.hull_model();
             let tm = self.player.turret_model();
             let gm = self.player.visual_gun_model();
@@ -20986,8 +20988,8 @@ impl Game {
             for (i, emissive) in self.annunciator_emissives().into_iter().enumerate() {
                 let (mount, along) = mounts::ANNUNCIATORS[i];
                 let lamp = Self::drive_finite_lamp(r, self.slots.annun[i],
-                    tm * mount.lamp(rig::ANNUNCIATOR_FIXTURES[i].half_size_m, along),
-                    rig::ANNUNCIATOR_FIXTURES[i].sample(emissive * practical_gain));
+                    tm * mount.lamp(rig::ANNUNCIATOR_FIXTURES[i].half_size_m, along) * indicator_size,
+                    rig::ANNUNCIATOR_FIXTURES[i].sample(emissive * practical_gain).scaled(indicator_scale));
                 plinth(r, 1 + i, mount, along, true);
                 shadowed_cabin_lights.push(lamp);
                 emitting_meshes.push(Some(self.slots.annun[i]));
@@ -21002,9 +21004,9 @@ impl Game {
                 plinth(r, 5 + side, mount, 0.0, true);
                 for (k,&slot) in lamps.iter().enumerate() {
                     if k==state {
-                        let model = gm * mount.lamp(rig::BREECH_FIXTURES[k].half_size_m, 0.0);
+                        let model = gm * mount.lamp(rig::BREECH_FIXTURES[k].half_size_m, 0.0) * indicator_size;
                         let lamp=Self::drive_finite_lamp(r,slot,model,
-                            rig::BREECH_FIXTURES[k].sample(practical_gain));
+                            rig::BREECH_FIXTURES[k].sample(practical_gain).scaled(indicator_scale));
                         if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
                         shadowed_cabin_lights.push(lamp);
                         emitting_meshes.push(Some(slot));

@@ -14336,6 +14336,7 @@ impl WindowState {
         if gpu_sampling { self.renderer.begin_gpu_profile_frame(); }
         // The live RTT tile and the presented view are two cameras on the same machine. Bracket
         // them as one frame so whichever renders first populates the single shared shadow map.
+        self.renderer.set_display_size(self.config.width, self.config.height);
         self.renderer
             .begin_coop_shadow_frame(self.game.player.center());
         let shadow_ready = self.game.refresh_rtt_periscopes(&mut self.renderer);

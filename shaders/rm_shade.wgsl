@@ -97,7 +97,11 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32, mo
         var horizon = 0.0;
         var horizon_near = 0.0;
         for (var s = 1u; s <= 8u; s += 1u) {
-            let t = pow((f32(s) - 0.5 + jitter * 0.5) / 8.0, 1.6);
+            // The jitter spans the whole step, so over frames every distance along the slice is
+            // sampled. Spanning half of it left fixed gaps between the eight distances, and a
+            // bright object entered a pixel's gather only at those distances: rings of bounce
+            // round it that the history could not average away (10 November 2026).
+            let t = pow((f32(s) - 1.0 + jitter) / 8.0, 1.6);
             let p = pixel + vec2<i32>(step * radius_px * t);
             if (any(p < vec2(0)) || any(p >= dims)) { break; }
             let sample = pixel_relative(p);

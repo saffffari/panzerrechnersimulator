@@ -3162,6 +3162,8 @@ pub struct Renderer {
     /// True while the eyepiece composite's exterior sight picture is prepared and drawn (its
     /// pass A): every receiver in it lies outside the compartment's air.
     sight_exterior_pass: bool,
+    /// The window surface's size in pixels (`set_display_size`), for the pixel-perfect blit.
+    display_px: Option<[u32; 2]>,
     /// The scene TLAS, rebuilt every frame from mesh/instance transforms (wgpu 27 has no refit;
     /// full rebuild is the only mode and is ~0.1–0.3 ms at this instance count). Created lazily
     /// on the first frame — instanced batches arrive after Renderer::new.
@@ -6536,6 +6538,7 @@ impl Renderer {
             rt_skip: false,
             optic_hide_pass: false,
             sight_exterior_pass: false,
+            display_px: None,
             rt_tlas: None,
             rt_tlas_cap: 0,
             rt_split,
@@ -8553,6 +8556,29 @@ impl Renderer {
         self.coop_shadow.set_reuse(reuse)
     }
 
+    pub fn set_display_size(&mut self, width: u32, height: u32) {
+        self.display_px = Some([width, height]);
+    }
+
+    /// `KESSEL_PIXEL_PERFECT=1`: a blit that would fill the whole display is drawn at the largest
+    /// whole multiple of the internal grid that fits, centred, with black bars round it, so every
+    /// internal pixel is the same square of display pixels (848x480 on 5120x2880: six times, 16
+    /// pixel bars left and right). Splitscreen cells and the menu's own rectangles are unchanged.
+    fn pixel_perfect_rect(&self, rect: Option<&BlitRect>) -> Option<BlitRect> {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var("KESSEL_PIXEL_PERFECT").as_deref() == Ok("1")) { return None; }
+        let [dw, dh] = self.display_px?;
+        if let Some(r) = rect {
+            let whole = r.dst_px[0] == 0.0 && r.dst_px[1] == 0.0 && r.dst_px[2] == dw as f32 && r.dst_px[3] == dh as f32;
+            if !whole || r.src_uv != [0.0, 0.0, 1.0, 1.0] { return None; }
+        }
+        let scale = (dw / self.iw.max(1)).min(dh / self.ih.max(1)).max(1);
+        let (w, h) = (self.iw * scale, self.ih * scale);
+        if w > dw || h > dh { return None; }
+        Some(BlitRect { src_uv: [0.0, 0.0, 1.0, 1.0],
+            dst_px: [((dw - w) / 2) as f32, ((dh - h) / 2) as f32, w as f32, h as f32], clear: true })
+    }
+
     /// Bracket the eyepiece composite's exterior sight pass (see `sight_exterior_pass`).
     /// KESSEL_SIGHT_PASS_CUBES=1 keeps the pass as it was before 9 November 2026 (the cabin
     /// lamps' shadow cubes drawn in it too), for comparison.
@@ -9859,6 +9885,8 @@ impl Renderer {
             let pipe = fullscreen_pipe(device, &self.blit_shader, &self.blit_layout, format);
             self.blit_pipes.insert(format, pipe);
         }
+        let fitted = self.pixel_perfect_rect(rect);
+        let rect = fitted.as_ref().or(rect);
         let pipe = &self.blit_pipes[&format];
         let clear = rect.map_or(true, |r| r.clear);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
