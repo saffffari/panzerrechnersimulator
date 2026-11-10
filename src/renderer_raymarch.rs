@@ -3080,8 +3080,12 @@ impl Backend {
                 // (`weapon_vfx::cookoff_fireball`); every other blast carries none.
                 else if event_kind == EVENT_DETONATION && burst.parameters[1] > 0.0 { burst.parameters[1].clamp(1.0, 24.0) }
                 else { 1.0 };
+            // An event starts its sequel at most 50 ms before the first frame that sees it: after a
+            // stalled frame (a catch-up batch of updates) its flash and sparks would otherwise be
+            // over before they were ever drawn.
+            let seen_late = if crate::fx_plumes::enabled() { burst.origin_age[3].clamp(0.0, 0.05) } else { burst.origin_age[3].max(0.0) };
             self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, ground_snow, strength,
-                born: now - burst.origin_age[3].max(0.0) });
+                born: now - seen_late });
         }
         // The gun's own report: its flash light (tens of W/sr against lamps of 1e-4) appears at
         // the muzzle; the muzzle smoke supports persist without an age and the flash is flame
@@ -3414,11 +3418,11 @@ impl Backend {
                     if crate::fx_plumes::enabled() {
                         if e.kind == EVENT_ARMOUR && t < 2.2 {
                             let u = t / 2.2;
-                            for k in 0..3u32 {
-                                let side = Vec3::new(h(20 + k) - 0.5, h(30 + k) - 0.5, h(40 + k) - 0.5) * 0.6;
-                                let center = o - e.normal * (0.25 + 0.35 * u + 0.2 * k as f32) + side - Vec3::Y * (0.3 * u);
-                                let radius = 0.25 + 0.45 * u.sqrt();
-                                push(center, radius, [0.62, 0.58, 0.52], PARCEL_SMOKE, 0.0, (1.0 - u).powf(1.4) * 0.5 / radius, h(50 + k) * 100.0, 0.0);
+                            for k in 0..5u32 {
+                                let side = Vec3::new(h(20 + k) - 0.5, h(30 + k) - 0.5, h(40 + k) - 0.5) * 0.8;
+                                let center = o - e.normal * (0.2 + 0.4 * u + 0.18 * k as f32) + side - Vec3::Y * (0.35 * u);
+                                let radius = 0.22 + 0.5 * u.sqrt();
+                                push(center, radius, [0.62, 0.58, 0.52], PARCEL_SMOKE, 0.0, (1.0 - u).powf(1.4) * 0.9 / radius, h(50 + k) * 100.0, 0.0);
                             }
                         }
                         continue;

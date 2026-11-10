@@ -17816,6 +17816,8 @@ impl Game {
         self.defer_presentation_rebuild=previous_presentation;
         self.defer_rtt_to_render=previous_rtt;
         if deferred && advanced && !previous_presentation {
+            for flash in &mut self.armour_flashes { flash.age_s += step; }
+            self.armour_flashes.retain(|f| f.age_s < FLASH_TAU_S * 12.0);
             // A fatal substep can stop the loop before its planned final iteration. Publish the
             // last completed state here rather than running or discarding another physics step.
             if let Some(grass)=self.grass.as_mut() {grass.present(r);}
@@ -32530,8 +32532,14 @@ impl Game {
         let _probe = crate::sim_phase::Probe::new("update_fx");
         self.drive_fea_effects(dt, r);
         self.last_frame_dt = dt;
-        for flash in &mut self.armour_flashes { flash.age_s += dt.max(0.0); }
-        self.armour_flashes.retain(|f| f.age_s < FLASH_TAU_S * 12.0);
+        // A behind-armour flash ages only on presented updates: inside a catch-up batch (a
+        // stalled frame's five 50 ms updates) it would have died before any frame showed it (the
+        // owner, 9 November: "no bright flash of light ... when you're hit"); the batch ages it
+        // once, by its last step (`update_realtime`).
+        if !self.defer_presentation_rebuild {
+            for flash in &mut self.armour_flashes { flash.age_s += dt.max(0.0); }
+            self.armour_flashes.retain(|f| f.age_s < FLASH_TAU_S * 12.0);
+        }
         self.hide_claimed_field_people(r);
         // Persistent casualty physics advances once with the host simulation, never once per split
         // viewport. Every camera therefore sees the same directional throw and final body pose.
