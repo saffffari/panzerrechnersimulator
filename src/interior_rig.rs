@@ -187,7 +187,10 @@ mod lighting_tests {
     #[test]
     fn named_cabin_fixtures_emit_the_same_power_on_both_backends() {
         // No backend scales a fixture's power: game.rs drives the lights by the switch alone.
-        assert!(include_str!("game.rs").contains("let practical_gain = power;"));
+        // The lamps' power is the fixture's, times the review range's LAMP POWER factor (and its
+        // `KESSEL_LAMP_GAIN` environment twin), which is 1 in every play path
+        // (`game_fea_range::review_lamp_gain`; test `the_lamp_power_is_one_unless_the_range_sets_it`).
+        assert!(include_str!("game.rs").contains("let practical_gain = power * game_fea_range::review_lamp_gain();"));
         assert!(!include_str!("game.rs").contains("cabin_practical_gain"));
     }
 
