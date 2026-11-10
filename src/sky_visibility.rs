@@ -365,6 +365,19 @@ struct StaticScene {
     menu_mode: Option<bool>,
     meshes: std::collections::HashMap<usize, MeshSource>,
     batches: std::collections::HashMap<usize, BatchSource>,
+    /// What changed since the last `[sky-visibility] static changes` line (one every two seconds
+    /// while anything changes): observations with a change, and how often each mesh slot and
+    /// each batch changed or left the region.
+    report: StaticChangeReport,
+}
+#[derive(Default)]
+struct StaticChangeReport {
+    since: Option<std::time::Instant>,
+    observations: u32,
+    changed_observations: u32,
+    meshes: std::collections::HashMap<usize, u32>,
+    batches: std::collections::HashMap<usize, u32>,
+    left: u32,
 }
 /// Every tile whose depth samples one of the changed boxes can write (all of them for `None`).
 fn dirty_tiles(tiles: &[TileProjection; TILES], changed: Option<&[(glam::Vec3, glam::Vec3)]>) -> [bool; TILES] {
@@ -711,8 +724,10 @@ impl SkyVisibility {
                 old => { changed.extend(old.map(|old| (old.lo, old.hi))); changed.push((now.lo, now.hi)); }
             }
         }
+        let mesh_changes = changed.len();
         scene.meshes.retain(|i, old| seen.contains(i) || { changed.push((old.lo, old.hi)); false });
         let mut seen = std::collections::HashSet::new();
+        let mut changed_batches: Vec<usize> = Vec::new();
         for (index, b) in Self::static_batches(renderer, prepared) {
             if !seen.insert(index) { continue; }
             let mats = &b.cpu_mats[..(b.inst_count as usize).min(b.cpu_mats.len())];
@@ -722,10 +737,35 @@ impl SkyVisibility {
             let now = BatchSource { prototype: b.prototype, mats: mats.to_vec(), hidden: b.hidden.clone(),
                 boxes: mats.iter().map(|m| transform_aabb(*m, prototype.local_min, prototype.local_max)).collect() };
             let old = scene.batches.remove(&index);
+            if old.is_some() { changed_batches.push(index); }
             changed_instances(old.as_ref(), Some(&now), &mut changed);
             scene.batches.insert(index, now);
         }
+        let before = scene.batches.len();
         scene.batches.retain(|i, old| seen.contains(i) || { changed_instances(Some(old), None, &mut changed); false });
+        let left = (before - scene.batches.len()) as u32;
+        // The record of what keeps the static atlas from being reused (see `StaticChangeReport`).
+        let report = &mut scene.report;
+        report.observations += 1;
+        if !changed.is_empty() && !redraw_all { report.changed_observations += 1; }
+        if mesh_changes > 0 { *report.meshes.entry(usize::MAX).or_default() += 1; }
+        for index in changed_batches { *report.batches.entry(index).or_default() += 1; }
+        report.left += left;
+        let since = *report.since.get_or_insert_with(std::time::Instant::now);
+        if since.elapsed().as_secs_f32() >= 2.0 {
+            if report.changed_observations > 0 {
+                let mut top: Vec<(usize, u32)> = report.batches.iter().map(|(i, n)| (*i, *n)).collect();
+                top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                let named: Vec<String> = top.iter().take(6).map(|(index, n)| {
+                    let b = &renderer.inst_batches[*index];
+                    format!("batch {index} x{n} (flags {:.0}, {} instances, prototype {})", b.flags, b.inst_count, b.prototype)
+                }).collect();
+                println!("[sky-visibility] static changes: {} of {} observations in {:.1} s; retained meshes changed in {}; {} batches changed, {} left the region; most often: {}",
+                    report.changed_observations, report.observations, since.elapsed().as_secs_f32(),
+                    report.meshes.get(&usize::MAX).copied().unwrap_or(0), report.batches.len(), report.left, named.join("; "));
+            }
+            *report = StaticChangeReport::default();
+        }
         (!redraw_all).then_some(changed)
     }
 
