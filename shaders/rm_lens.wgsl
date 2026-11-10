@@ -76,9 +76,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         var blur = vec3(0.0);
         let rad = fr.res.zw * (1.0 + 2.5 * soft);
         let c = base / vec2(aspect, 1.0) + vec2(0.5);
-        blur += sample_lit(c + vec2(rad.x, 0.0)); blur += sample_lit(c - vec2(rad.x, 0.0));
-        blur += sample_lit(c + vec2(0.0, rad.y)); blur += sample_lit(c - vec2(0.0, rad.y));
-        colour = mix(colour, blur * 0.25, soft);
+        // Eight taps round a circle (four on the axes drew every bright point as a cross).
+        for (var k = 0u; k < 8u; k += 1u) {
+            let a = f32(k) * 0.785398 + 0.3927;
+            blur += sample_lit(c + vec2(cos(a), sin(a)) * rad);
+        }
+        colour = mix(colour, blur * 0.125, soft);
     }
     // The outer glass, which the eye sees a few centimetres away while focused at infinity: it
     // lies at the eye's offset from the axis (moving against the image as the hull jolts),
@@ -89,9 +92,13 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let ghost_uv = vec2(0.5) - (glass * 0.92) / vec2(aspect, 1.0);
     var ghost = vec3(0.0);
     let spread = fr.res.zw * 6.0;
-    ghost += sample_lit(ghost_uv + vec2(spread.x, 0.0)); ghost += sample_lit(ghost_uv - vec2(spread.x, 0.0));
-    ghost += sample_lit(ghost_uv + vec2(0.0, spread.y)); ghost += sample_lit(ghost_uv - vec2(0.0, spread.y));
-    colour += ghost * 0.25 * 0.005 * vec3(0.85, 0.80, 1.05);
+    // A defocused disc (eight taps on a circle): four axial taps drew a bright point's ghost as a
+    // faint cross (the owner's "star things" on the optics).
+    for (var k = 0u; k < 8u; k += 1u) {
+        let a = f32(k) * 0.785398 + 0.3927;
+        ghost += sample_lit(ghost_uv + vec2(cos(a), sin(a)) * spread);
+    }
+    colour += ghost * 0.125 * 0.005 * vec3(0.85, 0.80, 1.05);
     // Fine wiping marks scatter 3 % of the local field light where they lie.
     let marks = wipe_marks(glass);
     if (marks > 0.0) {

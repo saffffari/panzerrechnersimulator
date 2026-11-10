@@ -826,6 +826,14 @@ pub fn flat_radiance(luminance_cd_m2: f64) -> [f64; 3] {
 
 /// Constants for `shaders/exposure.wgsl`, generated here so both presets and the GPU share one
 /// definition.
+/// `KESSEL_EXPOSURE=shared` (docs/EXPOSURE_SCHEME_20261110.md): every outside view adapts to the
+/// outside world's own level, the cabin within four stops below it, a flash dims an optic briefly,
+/// the cabin lamps follow the day. Off by default.
+pub fn shared_exposure() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KESSEL_EXPOSURE").as_deref() == Ok("shared"))
+}
+
 pub fn wgsl_constants() -> String {
     let mut out = String::from("// Generated from src/observer.rs (observer::wgsl_constants).\n");
     let mut push = |name: &str, value: f64| {
@@ -989,6 +997,7 @@ fn obs_local_rod_weight(photopic: f32, scotopic: f32, field_m: f32) -> f32 {
     // `KESSEL_EYE=gentle` (docs/FX_OVERHAUL_20261109.md): a narrower adaptation swing for review;
     // the default eye is unchanged.
     out.push_str(&format!("const OBS_GENTLE: bool = {};\n", std::env::var("KESSEL_EYE").as_deref() == Ok("gentle")));
+    out.push_str(&format!("const OBS_SHARED: bool = {};\n", shared_exposure()));
     out
 }
 

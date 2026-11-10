@@ -1228,7 +1228,11 @@ struct ExposureClockUniform {
     mode: f32,
     /// The rate of the eye's slow pigment processes over real time (`Renderer::pigment_rate`).
     pigment_rate: f32,
-    _pad: [f32; 3],
+    /// `KESSEL_EXPOSURE=shared`: the outside world's adaptation level (cd/m^2), 0 otherwise.
+    outside_cd_m2: f32,
+    /// The optic's transmission the view looks through (the TZF, the binoculars), 1 otherwise.
+    optic_transmission: f32,
+    _pad: f32,
 }
 
 /// The WGSL clock is twelve scalar lanes (48 bytes). Keep this assertion beside the host
@@ -5595,7 +5599,9 @@ impl Renderer {
                 point_veil: [0.0;2],
                 mode: 0.0,
                 pigment_rate: 1.0,
-                _pad: [0.0; 3],
+                outside_cd_m2: 0.0,
+                optic_transmission: 1.0,
+                _pad: 0.0,
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -8773,7 +8779,10 @@ impl Renderer {
                 point_veil: [0.0;2],
                 mode: self.eye_mode(),
                 pigment_rate: self.pigment_rate(),
-                _pad: [0.0; 3],
+                outside_cd_m2: if crate::observer::shared_exposure() { self.outside_luminance().unwrap_or(0.0) } else { 0.0 },
+                // The TZF 9's and the binoculars' light loss (estimates: about half, and 0.6).
+                optic_transmission: if (self.optic_mask - 1.0).abs() < 0.5 { 0.5 } else if (self.optic_mask - 3.0).abs() < 0.5 { 0.6 } else { 1.0 },
+                _pad: 0.0,
             }),
         );
 

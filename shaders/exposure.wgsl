@@ -44,8 +44,10 @@ struct ExposureClock {
     // The rate of the slow pigment processes over real time: the sky clock's rate with the day
     // cycle on (Renderer::pigment_rate), 1 otherwise. Named in docs/PHYSICAL_TRUTH_AUDIT.md.
     pigment_rate: f32,
-    pad0: f32,
-    pad1: f32,
+    // KESSEL_EXPOSURE=shared (docs/EXPOSURE_SCHEME_20261110.md): the outside world's adaptation
+    // level (cd/m^2; 0 without the switch) and the optic's transmission the view looks through.
+    outside_cd_m2: f32,
+    optic_transmission: f32,
     pad2: f32,
 };
 @group(0) @binding(2) var<uniform> clock: ExposureClock;
@@ -145,14 +147,22 @@ fn current_pupil() -> f32 {
     return state[4] * (1.0 - OBS_PUPIL_SLOW_SHARE) + state[5] * OBS_PUPIL_SLOW_SHARE;
 }
 
+// A flash's afterimage on top of an adaptation: with the shared exposure it may lift it by at most
+// 0.3 log units (it dims an optic, never blacks it out) and is gone within about a second.
+fn flash_on(adapted: f32) -> f32 {
+    let after = flash_afterimage(state[10], state[11]);
+    if (OBS_SHARED) { return adapted + min(after * select(0.0, 1.0, state[11] < 1.2), adapted); }
+    return adapted + after;
+}
+
 fn cone_adaptation() -> f32 {
     let bleached = cone_equivalent_background_log(-0.72 + OBS_CONE_BLEACH_LOG * state[6]);
-    return pow(10.0, max(state[8], bleached)) + flash_afterimage(state[10], state[11]);
+    return flash_on(pow(10.0, max(state[8], bleached)));
 }
 
 fn rod_adaptation() -> f32 {
     let bleached = rod_equivalent_background_log(-2.86 + OBS_ROD_BLEACH_LOG * state[7]);
-    return pow(10.0, max(state[9], bleached)) + flash_afterimage(state[10], state[11]);
+    return flash_on(pow(10.0, max(state[9], bleached)));
 }
 
 fn relax(value: f32, goal: f32, tau: f32, dt: f32) -> f32 {
@@ -435,6 +445,18 @@ fn finish_meter(li: u32, sum: MeterSum) {
             lp = clamp_luminance(pow(10.0, log10(lp) + shift));
             ls = clamp_luminance(pow(10.0, log10(ls) + shift));
         }
+    }
+    // KESSEL_EXPOSURE=shared: every outside view (head out, the sight, the binoculars) adapts to
+    // the outside world's own level, half the optic's light loss showing; the cabin eye adapts to
+    // the cabin no further than 1.2 log units (four stops) below it. A fire or a flash in one view
+    // does not move the outside level.
+    if (OBS_SHARED && clock.outside_cd_m2 > 0.0) {
+        let ratio_s = log10(ls) - log10(lp);
+        let outside = log10(clock.outside_cd_m2);
+        var lg = outside - 0.5 * log10(max(clock.optic_transmission, 0.05));
+        if (inside && !optic) { lg = max(log10(lp), outside - 1.2); }
+        lp = clamp_luminance(pow(10.0, lg));
+        ls = clamp_luminance(pow(10.0, lg + ratio_s));
     }
     let field = clamp_luminance(field_p);
     let coverage = s.w / max(w.x, 1.0);
