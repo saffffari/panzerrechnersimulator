@@ -75,6 +75,12 @@ const LOCAL_UTC_OFFSET_H: f64 = 3.0;
 static REVIEW_LAMP_GAIN_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3F80_0000);
 
 pub(super) fn review_lamp_gain() -> f32 {
+    // `KESSEL_LAMP_GAIN=x`: the same review factor from the environment (dynamic-range sheets);
+    // unset everywhere else.
+    static ENV: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    if let Some(gain) = *ENV.get_or_init(|| std::env::var("KESSEL_LAMP_GAIN").ok().and_then(|v| v.parse().ok()).filter(|g: &f32| g.is_finite() && *g >= 1.0)) {
+        return gain;
+    }
     f32::from_bits(REVIEW_LAMP_GAIN_BITS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
