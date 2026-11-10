@@ -5,6 +5,20 @@
 use super::*;
 
 pub(super) const HOME:Vec3=Vec3::new(-0.54,crate::interior_rig::FLOOR_STAND_Y,0.08);
+// Stall guards (the owner, 9 November 2026: "loader sometimes just stops loading until i pick up
+// shell"). The hand and posture tests below could hold a phase for good: a round that passed the
+// reach test from afar and failed it where he stood, or hands that would not follow a carry.
+// **Named simplifications:** after these times (loader's own seconds) the phase goes on without
+// the test, so his hands may not sit on the cartridge for that stretch; nothing is created,
+// duplicated or moved through the breech's far side that the tests would not also have allowed.
+/// Walking to a chosen round without arriving: give that slot up for `SKIP_S` and choose again;
+/// with no round passing the reach test at all for this long, take the nearest round on any rack.
+const FETCH_STALL_S:f32=4.0;
+const SKIP_S:f32=30.0;
+/// Standing at a round without the grasp posture: take it anyway.
+const REACH_STALL_S:f32=2.5;
+/// Hands not following the case or the cartridge: carry on without them.
+const CARRY_STALL_S:f32=1.5;
 #[derive(Clone,Copy,Debug,PartialEq,Eq, serde::Serialize,serde::Deserialize)]
 enum Phase {Idle,Open,Extract,Fetch,Reach,Carry,Ram,Close}
 #[derive(Clone,Debug, serde::Serialize,serde::Deserialize)]
@@ -160,6 +174,13 @@ impl Game {
         let parent=if frame==crate::interior_rig::Frame::Hull {self.player.hull_model()}else{self.player.turret_model()};
         parent*Mat4::from_rotation_translation(Quat::from_array(q),p)
     }
+    /// The stall guard of the hand-following phases: `followed` clears it; otherwise it counts the
+    /// step and reports whether `CARRY_STALL_S` has passed (the phase then goes on without them).
+    fn loader_stalled(&mut self,h:f32,followed:bool)->bool {
+        if followed {self.crew_solo.loader_stall_s=0.0;return false;}
+        self.crew_solo.loader_stall_s+=h;
+        self.crew_solo.loader_stall_s>CARRY_STALL_S
+    }
     pub(in crate::game) fn crew_loader_physical_step(&mut self,dt:f32)->bool {
         if !self.singleplayer_crew_active || !self.crew_arm_animation.standing_available() {return false;}
         // Presentation/save restoration at zero time must not clear gait, change phase, claim
@@ -180,6 +201,9 @@ impl Game {
         work.owner=actor;
         let perf=self.crew_solo.man(CrewRole::Loader).performance().max(0.15);
         let h=work.begin_step(dt,perf).expect("positive finite loader step");
+        if let Some((_,left))=&mut self.crew_solo.loader_skip {*left-=h;}
+        if self.crew_solo.loader_skip.is_some_and(|(_,left)|left<=0.0) {self.crew_solo.loader_skip=None;}
+        let skipped=self.crew_solo.loader_skip.map(|(slot,_)|slot);
         let hm=self.player.hull_model();let tm=self.player.turret_model();let inv=tm.inverse();
         if work.phase==Phase::Idle {
             work.crouch=(work.crouch-h*0.5).max(0.0);work.lean=(work.lean-h*0.5).max(0.0);work.hand_swap=false;
@@ -205,7 +229,8 @@ impl Game {
             Phase::Extract=>{
                 let proposed_pull=(work.age/0.8).min(1.0);
                 let case=spent_case_model(self.player.visual_gun_model(),proposed_pull);
-                let contacts=self.loader_follow_grip(&mut work,grips(case,true),h);
+                let followed=self.loader_follow_grip(&mut work,grips(case,true),h);
+                let contacts=followed||self.loader_stalled(h,followed);
                 if contacts {self.casing_pull=proposed_pull;}else{work.age=(work.age-h).max(0.0);}
                 if contacts&&self.casing_pull>=1.0&&self.can_spawn_casing() {
                     self.eject_casing();self.breech=Breech::Empty;self.casing_pull=0.0;
@@ -248,7 +273,8 @@ impl Game {
                     let armour_about=self.enemies.iter().enumerate().any(|(i,e)|e.alive
                         &&self.enemy_active.get(i).copied().unwrap_or(false)&&e.center().distance(tiger)<=ARMOUR_ABOUT_M);
                     let armour_contact=armour_about||(self.crew_solo.fire_at_will&&self.crew_solo.gunner_target.is_some());
-                    let candidate=crate::interior_rig::SHELL_SLOTS.iter().enumerate().filter(|(i,_)|!self.slot_taken[*i])
+                    let unsuitable=|slot:usize|armour_contact&&self.slot_nature_he[slot];
+                    let candidate=crate::interior_rig::SHELL_SLOTS.iter().enumerate().filter(|(i,_)|!self.slot_taken[*i]&&Some(*i)!=skipped)
                         .filter_map(|(i,_)|{
                             let model=self.loader_rack_model(i);let p=inv.transform_point3(model.w_axis.truncate());
                             let desired=Vec3::new(p.x+0.45,HOME.y,p.z-0.12);
@@ -258,10 +284,7 @@ impl Game {
                             let reachable=p.x<0.0&&Vec2::new(goal.x-p.x,goal.z-p.z).length()<0.62&&p.y>HOME.y+0.35
                                 &&self.crew_loader_contact_posture(goal,yaw,target).is_some();
                             reachable.then_some((i,goal,model,p.distance(work.origin)))
-                        }).min_by(|a,b| {
-                            let unsuitable=|slot:usize|armour_contact&&self.slot_nature_he[slot];
-                            unsuitable(a.0).cmp(&unsuitable(b.0)).then_with(||a.3.total_cmp(&b.3))
-                        });
+                        }).min_by(|a,b|unsuitable(a.0).cmp(&unsuitable(b.0)).then_with(||a.3.total_cmp(&b.3)));
                     if let Some((slot,goal,model,_))=candidate {
                         let delta=(goal-work.origin).clamp_length_max(0.55*h);
                         work.origin=clamp_interior_walk(work.origin,work.origin+delta);
@@ -270,6 +293,15 @@ impl Game {
                         let posture=self.crew_loader_contact_posture(work.origin,work.yaw,target);
                         if let Some((crouch,lean,swapped))=posture {work.crouch=crouch;work.lean=lean;work.hand_swap=swapped;}
                         if posture.is_some()&&work.origin.distance(goal)<0.015 {work.selected=Some(slot);work.set_world_model(hm,model);work.transition(Phase::Reach);}
+                        else if work.age>FETCH_STALL_S {self.crew_solo.loader_skip=Some((slot,SKIP_S));work.age=0.0;}
+                    }else if work.age>FETCH_STALL_S {
+                        // No round passes the reach test from here: the nearest on any rack.
+                        let any=crate::interior_rig::SHELL_SLOTS.iter().enumerate().filter(|(i,_)|!self.slot_taken[*i])
+                            .map(|(i,_)|(i,inv.transform_point3(self.loader_rack_model(i).w_axis.truncate()).distance(work.origin)))
+                            .min_by(|a,b|unsuitable(a.0).cmp(&unsuitable(b.0)).then_with(||a.1.total_cmp(&b.1)));
+                        if let Some((slot,_))=any {
+                            work.selected=Some(slot);work.set_world_model(hm,self.loader_rack_model(slot));work.transition(Phase::Reach);
+                        }
                     }
                 }
             },
@@ -277,8 +309,9 @@ impl Game {
                 if let Some(slot)=work.selected {
                     work.set_world_model(hm,self.loader_rack_model(slot));
                     if self.slot_taken[slot] {work.selected=None;work.model_hull=None;work.transition(Phase::Fetch);}
-                    else if work.age>=0.55&&self.crew_loader_contact_posture(work.origin,work.yaw,grips(work.world_model(hm).unwrap(),false)).is_some() {
-                        self.slot_taken[slot]=true;work.held=true;work.transition(Phase::Carry);
+                    else if (work.age>=0.55&&self.crew_loader_contact_posture(work.origin,work.yaw,grips(work.world_model(hm).unwrap(),false)).is_some())
+                        ||work.age>=REACH_STALL_S {
+                        self.slot_taken[slot]=true;work.held=true;self.crew_solo.loader_stall_s=0.0;work.transition(Phase::Carry);
                     }
                 }
             },
@@ -291,7 +324,8 @@ impl Game {
                     }else {
                         self.lever_open=1.0;blend(ready,seated,work.age/1.4)
                     };
-                    let contacts=self.loader_follow_grip(&mut work,grips(proposed,false),h);
+                    let followed=self.loader_follow_grip(&mut work,grips(proposed,false),h);
+                    let contacts=followed||self.loader_stalled(h,followed);
                     work.posture_proposal(hm,proposed,contacts,h);
                     if work.phase==Phase::Carry {
                         if work.age>=1.4&&contacts {work.transition(Phase::Ram);}
