@@ -24,6 +24,11 @@ the game"); `KESSEL_FX_LEGACY=1` restores the previous effects. What the live co
 | Budgets | 8 world fires (unchanged), 48 volumes, 4,096 fire embers, 12,288 grain embers, nearest first. The cabin fire's grains six times fewer and sqrt(6) wider (same covered area and light). |
 | Burn curve | Flames to 35 % and smoke thinning and greying over 90-420 s (authored settle; the game's fuel model still decides whether anything burns). |
 | Relayed views | The raster vision-block relays draw the shared smoke supports only; wreck columns are not in them (open gap). |
+| Flame roots, colour | Roots are the wreck's burning surface patches (their positions and normals); the flame shape over them is prescribed. The flame colour is an **authored display ramp**, its brightness the Planck photopic weight **compressed to its square root** (named, not radiometric). |
+| Ammunition flash | The blast light capped at 1,500 renderer units (an estimate of a propellant fireball's intensity) with the new effects. |
+| Eye (`KESSEL_EYE=gentle`) | Review variant, **off by default**: the adaptation follows a slow field average and a third of each change within +-0.5 log units; a flash's afterimage a quarter. Not a fitted observer model. |
+| Pressure front | Drawn on the raymarch backend as lifted snow behind the front and a condensation shell above about 8 kPa (authored shapes on the Kingery-Bulmash overpressure); **its refraction is not drawn on this backend**. |
+| Strike flash and puff | A prescribed flash-and-puff volume per cannon strike event; not a modelled plate-flash. |
 
 Gate: `cargo run --release -- fx-lab PREFIX SCENE` for `wreck`, `cookoff`, `impact`, `fog`, `three`,
 with and without `KESSEL_FX_LEGACY=1`; the kill bench (`gfxbench` with `KESSEL_BENCH_KILL=60,120,180`).
