@@ -986,6 +986,9 @@ fn obs_local_rod_weight(photopic: f32, scotopic: f32, field_m: f32) -> f32 {
     return (1.0 - local) / (1.0 - field);
 }
 "#);
+    // `KESSEL_EYE=gentle` (docs/FX_OVERHAUL_20261109.md): a narrower adaptation swing for review;
+    // the default eye is unchanged.
+    out.push_str(&format!("const OBS_GENTLE: bool = {};\n", std::env::var("KESSEL_EYE").as_deref() == Ok("gentle")));
     out
 }
 

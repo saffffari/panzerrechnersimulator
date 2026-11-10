@@ -79,6 +79,10 @@ const EMBERS_PER_GRAIN: usize = 20;
 /// reads as points with a faint body behind them (the owner, 2026-11-02: the parcels, merged
 /// per 4 px volume cell, drew as "diffuse glowing cubes" over the embers).
 const FIRE_EMBER_SHARE: f32 = 0.6;
+/// With the rebuilt effects (crate::fx_plumes): embers per remaining flame grain (the cabin fire's)
+/// and their shared ceiling; the grain's light is the same, carried by fewer points.
+const FX_EMBERS_PER_GRAIN: usize = 2;
+const FX_GRAIN_EMBERS: usize = 12_288;
 const SKY_COVER_RES: u32 = 512;
 const SKY_COVER_HALF_M: f32 = 48.0;
 const POINT_SHADOWS: usize = 2;
@@ -497,6 +501,8 @@ pub struct Stats {
     pub parcels: usize,
     pub cell_items: usize,
     pub merged_grains: usize,
+    /// Fire, smoke and explosion volumes drawn (crate::fx_plumes).
+    pub plumes: usize,
     pub embers: usize,
     pub lights: usize,
     pub light_cell_items: usize,
@@ -561,6 +567,18 @@ impl Temporal {
         }
     }
 }
+
+/// The fire, smoke and explosion volumes' pass (crate::fx_plumes, shaders/rm_plumes.wgsl).
+struct PlumePass {
+    pipe: wgpu::RenderPipeline,
+    buf: wgpu::Buffer,
+    roots: wgpu::Buffer,
+    bind: wgpu::BindGroup,
+    noise: wgpu::Texture,
+    noise_pending: Option<Vec<u8>>,
+    list: Vec<crate::fx_plumes::Plume>,
+}
+const PLUME_NOISE: u32 = 64;
 
 struct Binds {
     depth: wgpu::BindGroup,
@@ -720,6 +738,7 @@ pub(super) struct Backend {
     point_layer_pipe: wgpu::RenderPipeline,
     sparks_pipe: wgpu::RenderPipeline,
     tracers_pipe: wgpu::RenderPipeline,
+    plumes: PlumePass,
     binds: Option<Binds>,
     /// `KESSEL_GLASS_GRIME`: a fixed glass grime load in place of the game's.
     glass_grime: Option<f32>,
@@ -867,6 +886,15 @@ fn rm_source(name: &str) -> String {
         let c = crate::meadow_fauna::firefly_lanes().0;
         return format!("const RM_FIREFLY_LANES: vec3<f32> = vec3({:?}, {:?}, {:?});\n{text}", c[0], c[1], c[2]);
     }
+    if name == "rm_plumes.wgsl" {
+        // The fire volumes take the surfaces' own fog chain: rm_shade.wgsl's far banks, air
+        // segments and `fog_to`, lifted out whole (crate::fx_plumes).
+        let shade = rm_source_text("rm_shade.wgsl");
+        let start = shade.find("struct RmLowFar").expect("rm_shade far-bank block");
+        let end = shade.find("struct ShadeOut").expect("rm_shade fog block end");
+        return format!("@group(0) @binding(1) var depth_tex: texture_depth_2d;\n@group(0) @binding(2) var integrated: texture_3d<f32>;\n\
+            @group(0) @binding(3) var linear_samp: sampler;\n{}\n{}\n{text}", crate::fx_plumes::shader_prefix(), &shade[start..end]);
+    }
     if name == "rm_reflect.wgsl" {
         let (rho, tau) = crate::leaf_optics::lanes(crate::leaf_optics::SPRING_GRASS);
         let r: Vec<f32> = (0..3).map(|i| crate::leaf_optics::km_infinite_reflectance(rho[i] as f64, tau[i] as f64) as f32).collect();
@@ -957,6 +985,7 @@ fn rm_source_text(name: &str) -> String {
         "rm_reflect.wgsl" => include_str!("../shaders/rm_reflect.wgsl"),
         "rm_lens.wgsl" => include_str!("../shaders/rm_lens.wgsl"),
         "rm_points.wgsl" => include_str!("../shaders/rm_points.wgsl"),
+        "rm_plumes.wgsl" => include_str!("../shaders/rm_plumes.wgsl"),
         "rm_sparks.wgsl" => include_str!("../shaders/rm_sparks.wgsl"),
         "rm_glass.wgsl" => include_str!("../shaders/rm_glass.wgsl"),
         "glass_scratches.wgsl" => include_str!("../shaders/glass_scratches.wgsl"),
@@ -1669,6 +1698,48 @@ impl Backend {
                 write_mask: wgpu::ColorWrites::ALL })], compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
+        let plumes = {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("rm-plumes-bgl"), entries: &[readonly_storage(0, S::VERTEX_FRAGMENT), tex3d(1, S::FRAGMENT), sampler_filtering(2, S::FRAGMENT),
+                    readonly_storage(3, S::FRAGMENT)],
+            });
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rm-plumes"), size: (crate::fx_plumes::MAX_PLUMES * std::mem::size_of::<crate::fx_plumes::Plume>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            });
+            let roots = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rm-plume-roots"), size: (crate::fx_plumes::MAX_ROOTS * 32) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            });
+            let noise = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("rm-plume-noise"),
+                size: wgpu::Extent3d { width: PLUME_NOISE, height: PLUME_NOISE, depth_or_array_layers: PLUME_NOISE },
+                mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D3, format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+            });
+            let repeat = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("rm-plume-noise"), address_mode_u: wgpu::AddressMode::Repeat, address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat, mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("rm-plumes"), layout: &bgl, entries: &[entry(0, buf.as_entire_binding()),
+                    entry(1, wgpu::BindingResource::TextureView(&noise.create_view(&Default::default()))),
+                    entry(2, wgpu::BindingResource::Sampler(&repeat)), entry(3, roots.as_entire_binding())],
+            });
+            let shader = rm_shader(device, "rm-plumes", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_rt_stub.wgsl", "rm_plumes.wgsl"]);
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("rm-plumes-pl"), bind_group_layouts: &[&points_bgl, &visibility_bgl, &bgl], push_constant_ranges: &[],
+            });
+            let pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("rm-plumes"), layout: Some(&layout),
+                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+                primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Front), ..Default::default() }, depth_stencil: None, multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs"), targets: std::slice::from_ref(&premultiplied), compilation_options: Default::default() }),
+                multiview: None, cache: None,
+            });
+            PlumePass { pipe, buf, roots, bind, noise, noise_pending: Some(crate::fx_plumes::noise_volume(PLUME_NOISE as usize)), list: Vec::new() }
+        };
         let sparks_shader = rm_shader(device, "rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]);
         const WEAPON_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4, 4 => Uint32x4];
         let weapon_pipeline = |label: &str, entry: &str| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1696,7 +1767,7 @@ impl Backend {
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
-            points_pipe, no_canopy, point_layer_pipe, sparks_pipe, tracers_pipe,
+            points_pipe, no_canopy, point_layer_pipe, sparks_pipe, tracers_pipe, plumes,
             binds: None, history_valid: false,
             glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             vsm: None,
@@ -2002,6 +2073,11 @@ impl Backend {
             if let Some(field) = crate::vehicle_surface::ready() { self.install_vehicle_surface(device, queue, &field); }
         }
         let started = std::time::Instant::now();
+        if let Some(voxels) = self.plumes.noise_pending.take() {
+            queue.write_texture(self.plumes.noise.as_image_copy(), &voxels,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(PLUME_NOISE), rows_per_image: Some(PLUME_NOISE) },
+                wgpu::Extent3d { width: PLUME_NOISE, height: PLUME_NOISE, depth_or_array_layers: PLUME_NOISE });
+        }
         if let Some(voxels) = self.explosion_pending.take() {
             let side = crate::explosion_volumes::SLOT;
             queue.write_texture(self.explosion_atlas._tex.as_image_copy(), &voxels,
@@ -2252,6 +2328,7 @@ impl Backend {
         self.wind = Vec3::new(wind.x, 0.0, wind.y);
         self.track_events(r);
         self.collect_parcels(r, rel_vp, eye, vz, ln_range);
+        self.collect_plumes(r, queue, eye);
         // Armor wounds of every visible vehicle, in world space for this frame.
         {
             let bands = scars::SkyBands { zenith: zenith.as_vec3(), horizon: horizon.as_vec3(), ground: ground.as_vec3() };
@@ -2668,7 +2745,7 @@ impl Backend {
         self.stats.merged_grains = 0;
         if self.debug_skip & 16 != 0 { build_csr(&self.pairs, &mut self.cell_start, &mut self.cell_items); return; }
         #[derive(Default)]
-        struct Cell { sum: Vec3, count: u32, size: f32 }
+        struct Cell { sum: Vec3, count: u32, size: f32, fine: bool }
         let mut merged: HashMap<(i32, i32, i32, u32), Cell> = HashMap::new();
         let mut cell_kinds: Vec<(u32, f32, [f32; 3], f32)> = Vec::new();
         for (batch_index, b) in r.inst_batches.iter().enumerate() {
@@ -2681,8 +2758,21 @@ impl Backend {
             cell_kinds.push((batch_index as u32, kind, color, b.emissive));
             let ember = kind == PARCEL_FIRE;
             // The grain's intensity shared over its embers: the same light, as more, sharper points.
-            let packed = pack_ember(color, b.emissive * 6.0 * (2.0 * FIRE_EMBER_SHARE) / EMBERS_PER_GRAIN as f32);
+            // The rebuilt effects (crate::fx_plumes) keep a grain's light over `FX_EMBERS_PER_GRAIN`
+            // brighter embers, within one shared `FX_GRAIN_EMBERS` budget.
+            let per_grain = if crate::fx_plumes::enabled() { FX_EMBERS_PER_GRAIN } else { EMBERS_PER_GRAIN };
+            let ember_cap = if crate::fx_plumes::enabled() { FX_GRAIN_EMBERS } else { MAX_EMBERS };
+            let packed = pack_ember(color, b.emissive * 6.0 * (2.0 * FIRE_EMBER_SHARE) / per_grain as f32);
             let ids = r.fine_vfx.particle_ids.get(&batch_index);
+            // A cigarette's smoke and ash (cigarette_vfx, identity 0xc196_0001): millimetre
+            // grains a hand's breadth from the eye. With the rebuilt effects they merge into
+            // centimetre cells with no coverage floor (a thin wisp), not the fire's 8-45 cm cells
+            // (each wisp grain became a smoke ball across the view).
+            // The same for the weapon pages' soot (weapon_vfx, identities 0x5746_xxxx: a gun's
+            // propellant smoke, a strike's dust): their millimetre grains drew a metres-long white
+            // stream down a machine gun's line of fire.
+            let fine = crate::fx_plumes::enabled() && kind == PARCEL_SOOT
+                && ids.and_then(|v| v.first()).is_some_and(|id| id[0] == 0xc196_0001 || id[0] >> 16 == 0x5746);
             for (i, mat) in b.cpu_mats.iter().take(b.inst_count as usize).enumerate() {
                 if b.is_hidden(i as u32) { continue; }
                 let c = mat.w_axis.truncate();
@@ -2690,20 +2780,21 @@ impl Backend {
                 let size = (mat.x_axis.length() + mat.y_axis.length() + mat.z_axis.length()) / 3.0;
                 let d = (c - eye).length();
                 if d > VOL_FAR_M + size { continue; }
-                if ember && d < EMBER_REACH_M && self.embers.len() + EMBERS_PER_GRAIN <= MAX_EMBERS {
+                if ember && d < EMBER_REACH_M && self.embers.len() + per_grain <= ember_cap {
                     let seed = ids.and_then(|ids| ids.get(i)).map_or(i as u32, |id| id[0] ^ id[1].rotate_left(9) ^ id[2].rotate_left(18) ^ id[3].rotate_left(27));
-                    for k in 0..EMBERS_PER_GRAIN as u32 {
+                    for k in 0..per_grain as u32 {
                         let p = mat.transform_point3(ember_offset(seed, k));
                         self.embers.push(Ember { pos: p.to_array(), packed });
                     }
                 }
                 // Merge cell: a few grains deep, scaled with distance so far fires stay compact.
-                let cs = (size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0);
+                let cs = if fine { (size * 3.0).clamp(0.008, 0.03) } else { (size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0) };
                 let key = ((c.x / cs).floor() as i32, (c.y / cs).floor() as i32, (c.z / cs).floor() as i32, batch_index as u32);
                 let cell = merged.entry(key).or_default();
                 cell.sum += c;
                 cell.count += 1;
                 cell.size = cell.size.max(size);
+                cell.fine |= fine;
                 self.stats.merged_grains += 1;
             }
         }
@@ -2721,10 +2812,11 @@ impl Backend {
             let Some(&(_, kind, mut color, emissive)) = cell_kinds.iter().find(|k| k.0 == key.3) else { continue };
             let center = cell.sum / cell.count as f32;
             let d = (center - eye).length();
-            let cs = (cell.size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0);
+            let cs = if cell.fine { (cell.size * 3.0).clamp(0.008, 0.03) } else { (cell.size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0) };
             let radius = (cs * 1.35).max(cell.size * 1.5);
             // Fraction of the cell's cross-section the grains actually cover.
-            let coverage = ((cell.count as f32 * cell.size * cell.size) / (radius * radius)).clamp(0.08, 1.0);
+            let coverage = ((cell.count as f32 * cell.size * cell.size) / (radius * radius)).clamp(if cell.fine { 0.0 } else { 0.08 }, 1.0)
+                * if cell.fine { 0.6 } else { 1.0 };
             // Energy: looking through the cell must give the grains' own radiance times the
             // fraction of the cross-section they cover, so emission per metre is that over the
             // cell's diameter (the tongue shaping in rm_volume.wgsl redistributes, not adds).
@@ -2764,6 +2856,9 @@ impl Backend {
             // the mesh's size it glowed as a ball near a metre across with a wide halo at night
             // (2026-10-28).
             let radius = if m.small_arms_flash { half.max_element().clamp(0.03, 0.10) } else { half.max_element().clamp(0.05, 6.0) };
+            // A kill's or cook-off's blast mesh: its detonation event's fireball volume draws it.
+            if crate::fx_plumes::enabled() && !m.small_arms_flash && radius > 1.0
+                && !r.muzzle_hint.is_some_and(|(p, _)| (center - p).length() < 2.5) { continue; }
             let x = m.emissive;
             let color = Vec3::from_array(crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(x)));
             // The gun's own flash mesh becomes a forward lobe along the bore, not a ball. Never a
@@ -2866,6 +2961,13 @@ impl Backend {
             }
         }
         build_csr(&self.pairs, &mut self.cell_start, &mut self.cell_items);
+        // The rebuilt fires' embers (crate::fx_plumes::embers), already budgeted by the game.
+        if self.debug_skip & 2 == 0 {
+            for e in &r.fx_embers {
+                if self.embers.len() >= MAX_EMBERS { break; }
+                self.embers.push(Ember { pos: e.pos.to_array(), packed: pack_ember(e.colour, e.intensity) });
+            }
+        }
         // Firefly lanterns (meadow_fauna.rs): one-pixel emitters through the froxel medium like
         // the embers, each carrying its own radiant intensity (kind 3, rm_points.wgsl).
         if self.debug_skip & 2 == 0 {
@@ -2879,6 +2981,59 @@ impl Backend {
         self.stats.parcels = self.parcels.len();
         self.stats.cell_items = self.cell_items.len();
         self.stats.embers = self.embers.len();
+    }
+
+    /// The fire, smoke and explosion volumes (crate::fx_plumes): the game's wreck columns plus,
+    /// for every live detonation event, its fireball (a cook-off's, with its stem) or its burst on
+    /// the ground; the nearest `MAX_PLUMES`, far to near, uploaded.
+    fn collect_plumes(&mut self, r: &Renderer, queue: &wgpu::Queue, eye: Vec3) {
+        let _probe = crate::sim_phase::Probe::new("render_collect_plumes");
+        self.plumes.list.clear();
+        if !crate::fx_plumes::enabled() { return; }
+        self.plumes.list.extend_from_slice(&r.fx_plumes);
+        let focal_px = r.ih as f32 * 0.5 / (r.camera.fov_y * 0.5).tan();
+        let wind = glam::Vec2::new(self.wind.x, self.wind.z);
+        for e in &self.events {
+            if self.debug_skip & 2048 != 0 { continue; }
+            let age = r.time - e.born;
+            // A tank round on armour: its flash and puff (a perforation's venting smoke).
+            if matches!(e.kind, EVENT_ARMOUR | EVENT_PENETRATION) {
+                self.plumes.list.extend(crate::fx_plumes::strike_flash(e.origin, e.normal, e.strength.max(0.6),
+                    e.kind == EVENT_PENETRATION, age, wind, e.seed, eye, focal_px));
+                continue;
+            }
+            if e.kind != EVENT_DETONATION { continue; }
+            let plume = if e.strength > 1.0 {
+                crate::fx_plumes::fireball(e.origin, e.strength * 0.45, age, wind, e.seed, e.strength > 4.0, eye, focal_px)
+            } else if let Some(gy) = e.ground_y {
+                crate::fx_plumes::burst(Vec3::new(e.origin.x, gy, e.origin.z), 2.4, e.ground_snow, age, wind, e.seed, eye, focal_px)
+            } else {
+                crate::fx_plumes::fireball(e.origin, 0.6, age, wind, e.seed, false, eye, focal_px)
+            };
+            if std::env::var_os("KESSEL_FX_DEBUG").is_some() {
+                println!("[fx] event strength {:.2} ground {:?} age {age:.3} -> {:?}", e.strength, e.ground_y, plume.map(|p| (p.a, p.c, p.e, p.f)));
+            }
+            self.plumes.list.extend(plume);
+        }
+        // Blast pressure fronts (crate::pressure_front, the game's): the snow each sweeps up and
+        // its condensation shell (the refraction is not drawn here).
+        if self.debug_skip & 2048 == 0 {
+            let c = crate::pressure_front::speed_of_sound_m_s();
+            for front in r.pressure_fronts.active(r.time) {
+                let radius = (r.time - front.emitted_at) * c;
+                let ground = self.events.iter().filter(|e| e.origin.distance(front.origin) < 4.0).find_map(|e| e.ground_y)
+                    .unwrap_or(front.origin.y - 0.5);
+                self.plumes.list.extend(crate::fx_plumes::shock(front.origin, ground, radius, front.max_radius,
+                    front.tnt_kg, front.id as u32, eye, focal_px));
+            }
+        }
+        crate::fx_plumes::sort_far_to_near(&mut self.plumes.list, eye, crate::fx_plumes::MAX_PLUMES);
+        if !self.plumes.list.is_empty() {
+            queue.write_buffer(&self.plumes.buf, 0, bytemuck::cast_slice(&self.plumes.list));
+            let roots = &r.fx_roots[..r.fx_roots.len().min(crate::fx_plumes::MAX_ROOTS * 2)];
+            if !roots.is_empty() { queue.write_buffer(&self.plumes.roots, 0, bytemuck::cast_slice(roots)); }
+        }
+        self.stats.plumes = self.plumes.list.len();
     }
 
     /// Register this frame's new detonations, muzzle reports and heavy armour strikes from the
@@ -2953,6 +3108,8 @@ impl Backend {
             if self.parcels.len() >= MAX_PARCELS - 32 { break; }
             let t = now - e.born;
             if t < 0.0 { continue; }
+            // The rebuilt effects draw a detonation as a fireball or burst volume (collect_plumes).
+            if e.kind == EVENT_DETONATION && crate::fx_plumes::enabled() { continue; }
             let seed = e.seed;
             let h = |k: u32| random(seed ^ k.wrapping_mul(0x9E37_79B9));
             let o = e.origin;
@@ -3250,6 +3407,22 @@ impl Backend {
                     }
                 }
                 _ => {
+                    // The rebuilt effects: the strike's flash and puff are a volume
+                    // (`collect_plumes`); inside the struck hull the blow shakes the dust and
+                    // flaking paint off the plate's inner face, a pale haze a hand's breadth to a
+                    // metre in, settling over two seconds.
+                    if crate::fx_plumes::enabled() {
+                        if e.kind == EVENT_ARMOUR && t < 2.2 {
+                            let u = t / 2.2;
+                            for k in 0..3u32 {
+                                let side = Vec3::new(h(20 + k) - 0.5, h(30 + k) - 0.5, h(40 + k) - 0.5) * 0.6;
+                                let center = o - e.normal * (0.25 + 0.35 * u + 0.2 * k as f32) + side - Vec3::Y * (0.3 * u);
+                                let radius = 0.25 + 0.45 * u.sqrt();
+                                push(center, radius, [0.62, 0.58, 0.52], PARCEL_SMOKE, 0.0, (1.0 - u).powf(1.4) * 0.5 / radius, h(50 + k) * 100.0, 0.0);
+                            }
+                        }
+                        continue;
+                    }
                     // Armour strike: a small puff of paint smoke and dust off the plate.
                     if t < 1.4 {
                         let u = t / 1.4;
@@ -3798,6 +3971,21 @@ impl Backend {
                 work.scene_mesh_draws += 1;
             }
         }
+        // 6c. Fire, smoke and explosion volumes (crate::fx_plumes), far to near, over the lit frame.
+        if !self.plumes.list.is_empty() && self.debug_skip & 16 == 0 {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-plumes"),
+                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load))],
+                depth_stencil_attachment: None,
+                timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-plumes")), occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.plumes.pipe);
+            pass.set_bind_group(0, &binds.points, &[]);
+            pass.set_bind_group(1, &binds.visibility, &[]);
+            pass.set_bind_group(2, &self.plumes.bind, &[]);
+            pass.draw(0..36, 0..self.plumes.list.len() as u32);
+            work.scene_instanced_draws += 1;
+        }
         // 7. One-pixel snow, dust and embers, then ballistic emitters, in HDR before bloom/crush.
         let particles = if self.debug_skip & 4 != 0 { 0 } else { r.pixel_particle_count.get() };
         let embers = if self.debug_skip & 2 != 0 { 0 } else { self.embers.len() as u32 };
@@ -4130,6 +4318,7 @@ mod shader_tests {
             ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),
             ("rm-points", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_points.wgsl"]),
             ("rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]),
+            ("rm-plumes", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_rt_stub.wgsl", "rm_plumes.wgsl"]),
         ];
         for (label, parts) in common { validate(label, &rm_assemble(parts)); }
         validate("rm-aperture", &rm_assemble(&["rm_common.wgsl", "rm_rt_g1.wgsl", "rm_aperture.wgsl"]));

@@ -209,7 +209,7 @@ fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: 
         select(OBS_ROD_TAU_DOWN, rise_tau(OBS_ROD_TAU_UP, rod_rise, inside, m_target), rod_target > state[9]), dt);
     state[10] = state[10] * exp(-dt / OBS_FLASH_MEMORY_TAU);
     if (flashing) {
-        state[10] += coverage * bright * area * dt;
+        state[10] += coverage * bright * area * dt * select(1.0, 0.25, OBS_GENTLE);
         state[11] = 0.0;
     } else {
         state[11] = min(state[11] + dt, 1.0e6);
@@ -422,6 +422,16 @@ fn finish_meter(li: u32, sum: MeterSum) {
         lp = clamp_luminance(pow(10.0, state[22] + OBS_INSIDE_RESPONSE * (log10(metered_p) - state[22])));
         ls = clamp_luminance(pow(10.0, state[23] + OBS_INSIDE_RESPONSE * (log10(metered_s) - state[23])));
     }
+    // KESSEL_EYE=gentle: outdoors the eye follows a slow log average of the field (lane 32, 8 s)
+    // and only a third of the change about it, within 0.5 log units (about 1.7 stops) either
+    // way; a flash then leaves a quarter of its afterimage (the default eye: OBS_GENTLE false).
+    if (OBS_GENTLE && !inside && state[1] >= 0.0) {
+        let base = state[32];
+        let ratio_s = log10(metered_s) - log10(metered_p);
+        let lg = base + clamp(0.35 * (log10(metered_p) - base), -0.5, 0.5);
+        lp = clamp_luminance(pow(10.0, lg));
+        ls = clamp_luminance(pow(10.0, lg + ratio_s));
+    }
     let field = clamp_luminance(field_p);
     let coverage = s.w / max(w.x, 1.0);
     let bright = select(0.0, p.w / max(s.w, 1.0), s.w > 0.0);
@@ -453,6 +463,7 @@ fn finish_meter(li: u32, sum: MeterSum) {
     if (fresh || state[30] > 0.5 || (clock.time_s < state[31] && state[1] >= 0.0)) {
         state[22] = log10(metered_p);
         state[23] = log10(metered_s);
+        state[32] = log10(metered_p);
         let pupil = pupil_diameter(lp, monocular);
         let area = pupil_area(pupil);
         state[4] = pupil;
@@ -477,6 +488,7 @@ fn finish_meter(li: u32, sum: MeterSum) {
     state[1] = clock.time_s;
     let follow = 1.0 - exp(-dt / OBS_INSIDE_REFERENCE_TAU);
     state[22] += (log10(metered_p) - state[22]) * follow;
+    state[32] += (log10(metered_p) - state[32]) * (1.0 - exp(-dt / 8.0));
     state[23] += (log10(metered_s) - state[23]) * follow;
     if (dt > 0.0) {
         let steps = u32(ceil(dt / OBS_MAX_STEP));

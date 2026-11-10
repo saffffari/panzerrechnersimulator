@@ -280,6 +280,12 @@ impl Game {
                             None, Some(recorded.map(|m| m.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect()).unwrap_or(sound)));
                     }
                 }
+                // A glancing hit's whine, a raking burst's hail (bullet_strike_audio.rs).
+                {
+                    let key = match armor.vehicle { ProjectileVehicle::Enemy(i) => i as u32, _ => u32::MAX };
+                    let cosine = (-projectile.velocity.normalize_or_zero()).dot(armor.world_normal).abs();
+                    self.bullet_strike_layers(key, contact.pos, cosine, projectile.seed);
+                }
                 // All small-arms profiles are inert against tank armor: no AP resolution, HP chip,
                 // spall, or cabin fire. Roof/belly blocking below needs no invented plate values.
                 // The strike still marks the steel: a splash crater and stripped paint that never

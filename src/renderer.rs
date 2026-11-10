@@ -1070,7 +1070,7 @@ const DEFAULT_CAMERA_EXPOSURE: f32 = 320.0;
 /// change follows the eye's own time course in `observer.rs` / `exposure.wgsl`.
 const UNINITIALIZED_EXPOSURE_TIME: f32 = -1.0;
 /// Floats in one view's eye state (`exposure.wgsl` documents the lanes).
-const EYE_STATE_LANES: usize = 32;
+const EYE_STATE_LANES: usize = 34;
 
 fn uninitialized_exposure_state() -> [f32; EYE_STATE_LANES] {
     let mut state = [0.0; EYE_STATE_LANES];
@@ -2795,6 +2795,13 @@ pub struct Renderer {
     meadow: Option<renderer_meadow::MeadowGpu>,
     /// Firefly lanterns lit this frame: world position and lane intensity (`meadow_fauna.rs`).
     pub fireflies: Vec<[f32; 4]>,
+    /// Fire, smoke and explosion volumes for this frame (crate::fx_plumes; the game's wreck
+    /// columns; the raymarch backend adds its detonations' fireballs and bursts).
+    pub fx_plumes: Vec<crate::fx_plumes::Plume>,
+    /// The fires' embers for this frame (crate::fx_plumes::embers), one native pixel each.
+    pub fx_embers: Vec<crate::fx_plumes::Ember>,
+    /// The fires' flame roots (crate::fx_plumes::Root, two lanes each), indexed by the plumes.
+    pub fx_roots: Vec<[f32; 4]>,
     /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
     /// backend cuts, displaces and shades them (renderer_scars.rs).
     mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
@@ -6249,6 +6256,9 @@ impl Renderer {
             scatter_field: None,
             meadow: None,
             fireflies: Vec::new(),
+            fx_plumes: Vec::new(),
+            fx_embers: Vec::new(),
+            fx_roots: Vec::new(),
             mesh_scars: std::collections::HashMap::new(),
             actor_mesh_clones: Vec::new(),
             raster_optics: shader_backend.then(|| {
@@ -12219,7 +12229,7 @@ impl Renderer {
                     "observer_elapsed_s":(frame+1) as f32/60.0,"scene_time_s":self.time,
                     "camera":self.camera.pos.to_array(),"camera_forward":self.camera.forward().to_array(),
                     "interior_light":self.interior_light,"shared_shadow_scope":self.coop_shadow.view_proj.is_some(),
-                    "eye":p.eye,"hdr_mean_cd_m2":p.mean_cd_m2,"hdr_log_mean_cd_m2":p.log_mean_cd_m2,
+                    "eye":p.eye.to_vec(),"hdr_mean_cd_m2":p.mean_cd_m2,"hdr_log_mean_cd_m2":p.log_mean_cd_m2,
                     "stable_observations":self.title_eye_convergence.stable_observations,
                     "settled":self.title_backdrop_settled}));
             }

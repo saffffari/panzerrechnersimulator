@@ -8,6 +8,31 @@ Updated: 2026-11-03 (the radio sets' and driver's Braun-style panels: eleven fin
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
+## Fire, smoke and explosion volumes rebuilt, 2026-11-09 (`src/fx_plumes.rs`, `shaders/rm_plumes.wgsl`, `docs/FX_OVERHAUL_20261109.md`)
+
+Owner-directed rebuild ("no rules ... the best looking effects possible that will actually run in
+the game"); `KESSEL_FX_LEGACY=1` restores the previous effects. What the live code computes:
+
+| Item | Status |
+|---|---|
+| Burning wrecks, hulks, dead allies, the player's fires | One analytic volume each: flame roots read off the wreck's burning surface patches (once a second), a prescribed buoyant column (35-120 m, wind lean, soot diluting as (r0/r)^1.3). Prescribed shapes and 3D value noise, **not a solved fluid**. |
+| Flame | Absorption 1.4 /m with Planck emission at a noisy temperature field (Kirchhoff), photopic weight from the Planck spectrum; 1,500 K soot at 1.4 renderer units (about 7e4 cd/m^2), an estimate. |
+| Smoke lighting | Single scattering of the key beam (cloud shadow included) through a **two-step march of the smooth envelope** (no noise), the sky through the same toward the zenith, the ground's upwelling light unoccluded, and the flame as **one point source** at its centroid. **The plume casts no shadow on the scene.** |
+| Fog in front of a plume | `fog_to` at the plume's transmittance-weighted depth (named approximation; a thick plume spanning a fog gradient takes one depth). |
+| Fireballs, shell bursts | Prescribed growth, rise, cooling (1,650 K peak, fast decay) and settling envelopes from the detonation event's age; authored, not a detonation model. Replace the baked explosion volumes and the froxel event parcels for detonations. |
+| Blast light (`spawn_blast_light`) | Falls as f^5 over its life instead of holding 18-100 %: presentation timing of a modelled emitter, not a measured flash curve. |
+| Budgets | 8 world fires (unchanged), 48 volumes, 4,096 fire embers, 12,288 grain embers, nearest first. The cabin fire's grains six times fewer and sqrt(6) wider (same covered area and light). |
+| Burn curve | Flames to 35 % and smoke thinning and greying over 90-420 s (authored settle; the game's fuel model still decides whether anything burns). |
+| Relayed views | The raster vision-block relays draw the shared smoke supports only; wreck columns are not in them (open gap). |
+| Flame roots, colour | Roots are the wreck's burning surface patches (their positions and normals); the flame shape over them is prescribed. The flame colour is an **authored display ramp**, its brightness the Planck photopic weight **compressed to its square root** (named, not radiometric). |
+| Ammunition flash | The blast light capped at 1,500 renderer units (an estimate of a propellant fireball's intensity) with the new effects. |
+| Eye (`KESSEL_EYE=gentle`) | Review variant, **off by default**: the adaptation follows a slow field average and a third of each change within +-0.5 log units; a flash's afterimage a quarter. Not a fitted observer model. |
+| Pressure front | Drawn on the raymarch backend as lifted snow behind the front and a condensation shell above about 8 kPa (authored shapes on the Kingery-Bulmash overpressure); **its refraction is not drawn on this backend**. |
+| Strike flash and puff | A prescribed flash-and-puff volume per cannon strike event; not a modelled plate-flash. |
+
+Gate: `cargo run --release -- fx-lab PREFIX SCENE` for `wreck`, `cookoff`, `impact`, `fog`, `three`,
+with and without `KESSEL_FX_LEGACY=1`; the kill bench (`gfxbench` with `KESSEL_BENCH_KILL=60,120,180`).
+
 ## The radio sets' and the driver's panels, 2026-11-03 (`src/cabin_panels.rs`, `cabin-panels`)
 
 - **What it is:** the owner's design (a 1960s Braun audio set): brushed-silver fronts, black knobs,
