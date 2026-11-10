@@ -104,3 +104,44 @@ ww2today.com (excerpt, Miasoedovo); pen-and-sword.co.uk and perlego.com (publish
 aircraft-navalship.com (Heimdal edition notes); warhistory.org (503 with Army Group Don);
 erenow.org *Tigers in Normandy* and rafoverlord.blogspot.com (Goodwood); en.wikipedia.org
 (503rd Heavy Panzer Battalion); kunikovsreviews.blogspot.com (review).
+
+## Owner's direction, 10 November 2026
+
+"lets focus on this 3. Goodwood, 18 July 1944: digging out as the starting point but lets build
+the narrative around normandy and the landings. massive scale but also needs to have small
+moments. gun should still work after repair. crew is buried. just you. guys at the beach need
+armor asap."
+
+What that fixes:
+
+- **Start:** episode 3, the dig-out at Manneville on 18 July 1944. The player is alone; the crew
+  is buried. The opening is the bombardment's aftermath: find them, dig, refit, re-zero.
+- **The gun works after the repair.** The sources have the sights out of true and about one round
+  in three hitting; here the boresight repair restores the gun fully (an adaptation, the owner's).
+- **Frame:** Normandy and the landings, at large scale, with small moments between.
+
+What has to be settled before it is written (first principle of CLAUDE.md; marks as above):
+
+- **C** The landings were on 6 June 1944. Goodwood was 18 July, six weeks later, when the
+  beachhead was some 15 km deep at Caen.
+- **C** s.Pz.Abt. 503 reached Normandy in early July. No Tiger unit was near the beaches on 6 June;
+  the armour that counter-attacked toward the coast that day was 21. Panzer-Division's Panzer IVs.
+  The first Tigers in Normandy (s.SS-Pz.Abt. 101) arrived 12 to 13 June.
+- So "guys at the beach need armor asap" cannot be the literal situation of 18 July, and one
+  crew cannot have been at both without the story saying it has moved the dates.
+
+Three ways to keep the owner's shape:
+
+1. **Told straight, "the beach" becomes the line.** After the dig-out, the men who need armour at
+   once are the infantry and gun line south of the bombed zone as the British armoured divisions
+   come through (Cagny, Bourguébus ridge, the same morning). The landings are the frame through
+   written material and what lies on the road north: six weeks of wreckage. Nothing moved.
+2. **Two times, declared.** A prologue on 6 June from another man's position (a 21. Panzer crewman
+   or an infantryman at the coast, written material and a short playable scene), then 18 July in
+   the Tiger. The link is a person or a letter, and the game says the dates.
+3. **"After" him, dates compressed.** A commander modelled on him, the bombardment placed in the
+   landings' first days and the drive to the coast invented. Most dramatic, least true; the
+   credits would have to say so.
+
+Either way it needs a Normandy map (bocage, the Manneville stud park, the ridge), which does not
+exist, and it comes after the duel mode, the laptop and Mac work, and the bug list.
