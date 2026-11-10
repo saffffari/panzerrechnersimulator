@@ -6623,6 +6623,9 @@ fn wreck_kind_index(kind: EnemyKind) -> usize {
 const FX_BLAST_LIGHT_MAX: f32 = 1500.0;
 /// The rebuilt effects' thinning of the cabin fire's grains (see `drive_fire_presentation`).
 const FX_INTERIOR_THIN: usize = 6;
+/// The outside level at which the cabin lamps burn at their fixture power under the shared
+/// exposure: a dull overcast day's snow (cd/m^2, estimate).
+const CABIN_LAMP_REFERENCE_CD_M2: f32 = 3000.0;
 /// How long a knocked-out, unburning hull smoulders (s).
 const FX_SMOULDER_S: f32 = 300.0;
 /// How often a burning wreck's flame roots are re-read off its burning surfaces (s).
@@ -10450,6 +10453,9 @@ pub struct Game {
     /// Per burning wreck: the fire clock at which its flame roots were last read off its burning
     /// surface patches, and those roots (crate::fx_plumes; refreshed every `FX_ROOT_PERIOD_S`).
     fx_fire_roots: std::collections::HashMap<usize, FxRoots>,
+    /// `KESSEL_EXPOSURE=shared` (docs/EXPOSURE_SCHEME_20261110.md): the cabin lamps' share of
+    /// their fixture power, following the outside level over a minute (NaN until first sampled).
+    cabin_lamp_daylight: f32,
     /// Per struck vehicle: the burst raking it (`bullet_strike_audio`).
     bullet_bursts: std::collections::HashMap<u32, bullet_strike_audio::BurstTrack>,
     cabin_fire: surface_fire::CabinFire,
@@ -15037,6 +15043,7 @@ impl Game {
             fire_presentation_phase: 0,
             fx_fire_roots: std::collections::HashMap::new(),
             bullet_bursts: std::collections::HashMap::new(),
+            cabin_lamp_daylight: f32::NAN,
             cabin_fire,
             projectile_player_armor,
             projectile_enemy_armor,
@@ -20935,7 +20942,8 @@ impl Game {
             use crate::lamp_mounts::{self as mounts, MountFrame};
             // The cabin lights' switch (`set_cabin_lights`): off, every lamp is an unlit cube and
             // its light is zero.
-            let power = if self.cabin_lights { 1.0 } else { 0.0 };
+            // `KESSEL_EXPOSURE=shared`: the lamps' power follows the day (`cabin_lamp_daylight`).
+            let power = if self.cabin_lights { if crate::observer::shared_exposure() { self.cabin_lamp_daylight.max(0.0) } else { 1.0 } } else { 0.0 };
             // `game_fea_range::review_lamp_gain` is 1 outside the review range's LAMP POWER knob.
             let practical_gain = power * game_fea_range::review_lamp_gain() * rig::cabin_lights_setting();
             let indicator_scale = rig::indicator_scale();
@@ -32672,6 +32680,18 @@ impl Game {
 
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("update_fx");
+        // The lamps follow the day (the owner's proposal, docs/EXPOSURE_SCHEME_20261110.md): their
+        // power is the square root of the outside level against a dull overcast day's snow
+        // (3,000 cd/m^2), 15-120 % of the fixture's, reached over a minute: dimmer at night,
+        // brighter by day, the inside/outside contrast inside what one exposure shows.
+        if crate::observer::shared_exposure() {
+            if let Some(outside) = r.outside_luminance() {
+                let target = (outside / CABIN_LAMP_REFERENCE_CD_M2).sqrt().clamp(0.15, 1.2);
+                self.cabin_lamp_daylight = if self.cabin_lamp_daylight.is_finite() {
+                    self.cabin_lamp_daylight + (target - self.cabin_lamp_daylight) * (1.0 - (-dt.max(0.0) / 60.0).exp())
+                } else { target };
+            }
+        }
         self.drive_fea_effects(dt, r);
         self.last_frame_dt = dt;
         // A behind-armour flash ages only on presented updates: inside a catch-up batch (a

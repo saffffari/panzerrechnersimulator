@@ -1091,6 +1091,7 @@ fn run_gfxbench(
     let bench_station = std::env::var("KESSEL_BENCH_STATION").ok();
     if let Some(station) = bench_station.as_deref() {
         g.station = match station { "loader" => game::Station::Loader, "commander" => game::Station::Commander,
+            "radioman" => game::Station::Radioman,
             "driver" => game::Station::Driver, "gunner" => game::Station::Gunner,
             _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
     }
@@ -1146,6 +1147,13 @@ fn run_gfxbench(
         .or_else(|| bench_kills.last().map(|at| at + 300));
     let mut kill_split: Option<usize> = None;
     let mut kill_marks: Vec<usize> = Vec::new();
+    // `KESSEL_BENCH_MG=START,FRAMES`: the station's machine gun held for FRAMES timed frames from
+    // START. `KESSEL_BENCH_STILLS=F1,F2,...`: a PNG of each of those timed frames (`OUT_fN.png`).
+    let bench_mg: Option<(u32, u32)> = std::env::var("KESSEL_BENCH_MG").ok().and_then(|v| {
+        let p: Vec<u32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        (p.len() == 2).then(|| (p[0], p[1])) });
+    let bench_stills: Vec<u32> = std::env::var("KESSEL_BENCH_STILLS").ok()
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect()).unwrap_or_default();
     for i in 0..(frames + WARMUP) {
         // Five seconds after the kill the phase counters restart, so the end-of-run phases are
         // the settled state's, not the detonation's and the thrown turret's.
@@ -1181,7 +1189,9 @@ fn run_gfxbench(
             g.debug_ground_strike(point, incoming, 6.2, 76.2, &r);
         }
         let simulation_started = std::time::Instant::now();
-        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+        let mg_held = bench_mg.is_some_and(|(start, n)| i >= WARMUP + start && i < WARMUP + start + n);
+        let input = if mg_held { TankInput { mg_coax: true, coax: true, ..Default::default() } } else { TankInput::default() };
+        g.update(&input, 1.0 / 60.0, &mut r);
         let simulation_ms = simulation_started.elapsed().as_secs_f64() * 1000.0;
         // Deterministic orbit: 22 m ring, 9 m up, one full sweep over the timed frames —
         // exercises city, terrain, tanks and the FX pools from every bearing.
@@ -1227,6 +1237,16 @@ fn run_gfxbench(
         } else { device.poll(wgpu::PollType::wait_indefinitely()).ok(); }
         let frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
         let live_ms = live_started.elapsed().as_secs_f64() * 1000.0;
+        if i >= WARMUP && bench_stills.contains(&(i - WARMUP)) {
+            // The still is rendered again from the same state (the eye has already adapted to it).
+            let path = format!("{}_f{}.png", out.trim_end_matches(".png"), i - WARMUP);
+            let (w, h) = (r.iw, r.ih);
+            if bench_station.as_deref() == Some("gunner") {
+                raymarch_showcase::eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, w, h)))?;
+            } else {
+                r.render_to_png(&device, &queue, &path, w, h)?;
+            }
+        }
         if live_frame { r.camera.zfar = saved_far; r.end_coop_shadow_frame(); }
         let gpu_frame = if pipelined { Vec::new() } else { r.read_gpu_profile_frame(&device, &queue)? };
         if i >= WARMUP && !pipelined {

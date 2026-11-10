@@ -778,6 +778,9 @@ pub(super) struct Backend {
     probe_pending: Cell<bool>,
     optic_active: bool,
     pub stats: Stats,
+    /// The outside world's adaptation level: the luminance of the ground under this frame's sky
+    /// (cd/m^2; docs/EXPOSURE_SCHEME_20261110.md), for the shared outside eye and the lamps.
+    pub(super) outside_cd_m2: f32,
     encode_ms: Cell<f32>,
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
@@ -1804,6 +1807,7 @@ impl Backend {
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
             light_pairs: Vec::new(), light_cell_start: vec![0; CELL_COUNT + 1], light_cell_items: Vec::new(),
             weapon_draws: Vec::new(), tracer_range: (0, 0), panes: Vec::new(), events: Vec::with_capacity(MAX_EVENTS), wind: Vec3::ZERO,
+            outside_cd_m2: 1000.0,
             probe: std::env::var("KESSEL_RM_PROBE").ok().and_then(|v| {
                 let mut it = v.split(',').filter_map(|p| p.trim().parse::<u32>().ok());
                 Some((it.next()?, it.next()?))
@@ -2313,6 +2317,8 @@ impl Backend {
         // spring (mood 1); falling snow whitens either.
         let ground_albedo = (0.80 - 0.50 * r.atmosphere_mood.clamp(0.0, 1.0) as f64).max(0.30 + 0.45 * r.precipitation.clamp(0.0, 1.0) as f64);
         let ground = (horizon * 0.6 + zenith * 0.4) * ground_albedo + sun_radiance * (sun_dir.y.max(0.0) as f64) * ground_albedo / std::f64::consts::PI;
+        let w = crate::observer::PHOTOPIC_WEIGHTS;
+        self.outside_cd_m2 = ((ground.x * w[0] + ground.y * w[1] + ground.z * w[2]) as f32).max(1.0e-5);
 
         // Visibility views. A later view of the same displayed frame (the gunner's eyepiece
         // composite: its interior pass after the optic pass; split-screen views 2..N) samples the
@@ -4233,6 +4239,9 @@ impl Renderer {
         atmosphere
     }
 
+    /// The outside world's adaptation level this frame (cd/m^2): the ground's luminance under the
+    /// sky (docs/EXPOSURE_SCHEME_20261110.md). None without the raymarch backend.
+    pub fn outside_luminance(&self) -> Option<f32> { self.raymarch.as_ref().map(|rm| rm.outside_cd_m2) }
     pub fn raymarch_stats(&self) -> Option<Stats> { self.raymarch.as_ref().map(|rm| rm.stats) }
     pub fn scatter_stats(&self) -> Option<super::renderer_scatter::ScatterStats> { self.scatter_field.as_ref().map(|s| s.stats()) }
     /// A heavy strewn piece gave way to the hull: move its instance by `delta` at the next upload.
