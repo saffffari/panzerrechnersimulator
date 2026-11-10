@@ -216,6 +216,10 @@ Receipts: `fx-overhaul-20261109-fxlab-<scene>-<old|new>.json`.
 7. **The cupola's relayed vision blocks** (raster relays) show no wreck smoke column now; they drew
    the three old smoke supports. The gunner's sight and every raymarched view draw the new volumes.
 
+Note on the `mg` scene's `onto-tiger` clip: the dense white plume crossing it is the Tiger's own
+cold-engine exhaust (`exhaust_plume.rs`: a cold Maybach at idle in winter, thinning over its
+420 s warm-up), not the machine guns; the camera stands behind the Tiger's rear plate.
+
 ## Follow-ups
 
 - The player's own cabin and engine-bay fire: move it to the same volumes (the remaining 2-4 ms in
