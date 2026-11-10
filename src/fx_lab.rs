@@ -423,7 +423,44 @@ pub fn run(prefix: &str, scene: &str) -> anyhow::Result<()> {
                     "hp_after": lab.g.enemies[idx].hp}));
             }
         }
-        other => anyhow::bail!("unknown fx-lab scene {other} (wreck, cookoff, impact, fog, three, mg, shock, sight)"),
+        "selfhit" => {
+            // Hits on the Tiger seen from its own seats, the game's own station cameras (no
+            // observer camera): a 76 mm BR-350B stopped by the glacis, seen from the commander's,
+            // the driver's and the loader's places, then an 85 mm BR-365 through the hull side
+            // seen from the commander's. Real rounds started a few metres short of the plate with
+            // the speed and age of a shot from 500 m (front) and 300 m (side).
+            use crate::game::Station;
+            lab.g.enable_singleplayer_crew();
+            lab.g.set_cabin_lights(true);
+            let hull = lab.g.player.hull_model();
+            let front = hull.transform_point3(Vec3::new(0.3, 1.15, 2.9));
+            let front_dir = hull.transform_vector3(Vec3::new(0.05, -0.05, -1.0)).normalize();
+            let side = hull.transform_point3(Vec3::new(-1.75, 1.3, -0.4));
+            let side_dir = hull.transform_vector3(Vec3::new(1.0, -0.03, 0.1)).normalize();
+            let shots: [(&str, Station, &'static crate::ballistics::ShellSpec, Vec3, Vec3, f32); 4] = [
+                ("bounce-commander", Station::Commander, &crate::ballistics::BR_350B, front, front_dir, 500.0),
+                ("bounce-driver", Station::Driver, &crate::ballistics::BR_350B, front, front_dir, 500.0),
+                ("bounce-loader", Station::Loader, &crate::ballistics::BR_350B, front, front_dir, 500.0),
+                ("penetration-commander", Station::Commander, &crate::ballistics::BR_365, side, side_dir, 300.0)];
+            for (k, (name, station, shell, at, dir, range)) in shots.into_iter().enumerate() {
+                lab.g.jump_station(station);
+                lab.step(90);
+                let mut film = Film::new(&clip(&lab, name), w, h)?;
+                for _ in 0..10 { lab.step(2); let rgba = lab.rgba()?; film.frame(&rgba)?; }
+                lab.g.debug_launch_round(shell, false, at, dir, range, 31 + k as u32);
+                for f in 0..120u32 {
+                    // The frame after the strike as the game runs it after a stalled update: one
+                    // 0.25 s frame, a catch-up batch of five updates before anything is drawn.
+                    // (A perforation's flash comes at the plate solve's commit, 0.35 s on: frame 21.)
+                    if f == 1 || f == 21 { lab.g.update_realtime(&TankInput::default(), 0.25, &mut lab.r); } else { lab.step(1); }
+                    let rgba = lab.rgba()?;
+                    film.frame(&rgba)?;
+                    if [1u32, 2, 4, 21, 22, 24, 40, 90].contains(&f) { lab.still(scene, &format!("{name}-f{f}"))?; }
+                }
+                film.finish()?;
+            }
+        }
+        other => anyhow::bail!("unknown fx-lab scene {other} (wreck, cookoff, impact, fog, three, mg, shock, sight, selfhit)"),
     }
     let receipt = serde_json::json!({"schema": "panzer.fx-lab.v1", "scene": scene, "variant": variant,
         "manifest": manifest, "adapter": adapter.get_info().name, "internal_resolution": [w, h],

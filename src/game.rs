@@ -17814,8 +17814,11 @@ impl Game {
         if let Some(audio)=&self.audio {audio.finish_simulation_audio_frame();}
         self.defer_presentation_rebuild=previous_presentation;
         self.defer_rtt_to_render=previous_rtt;
-        if deferred && advanced && !previous_presentation {
+        if deferred && advanced && !previous_presentation && crate::fx_plumes::enabled() {
             for flash in &mut self.armour_flashes { flash.age_s += step; }
+            self.armour_flashes.retain(|f| f.age_s < FLASH_TAU_S * 12.0);
+        }
+        if deferred && advanced && !previous_presentation {
             self.armour_flashes.retain(|f| f.age_s < FLASH_TAU_S * 12.0);
             // A fatal substep can stop the loop before its planned final iteration. Publish the
             // last completed state here rather than running or discarding another physics step.
@@ -32517,7 +32520,7 @@ impl Game {
         // stalled frame's five 50 ms updates) it would have died before any frame showed it (the
         // owner, 9 November: "no bright flash of light ... when you're hit"); the batch ages it
         // once, by its last step (`update_realtime`).
-        if !self.defer_presentation_rebuild {
+        if !self.defer_presentation_rebuild || !crate::fx_plumes::enabled() {
             for flash in &mut self.armour_flashes { flash.age_s += dt.max(0.0); }
             self.armour_flashes.retain(|f| f.age_s < FLASH_TAU_S * 12.0);
         }
