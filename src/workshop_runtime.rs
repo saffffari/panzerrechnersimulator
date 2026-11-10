@@ -455,8 +455,9 @@ impl Game {
     fn workshop_mount_target(&self,eye:Vec3,look:Vec3,compatible:Option<PartKind>)->Option<usize> {
         let hm=self.player.hull_model();let tm=self.player.turret_model();let gm=self.sight_model();
         (0..MOUNT_COUNT).filter(|&i|compatible.is_none_or(|kind|kind.fits_mount(i)))
-            .filter(|&i|!state::running_track_mount(i)||(self.track_repair_phase==TrackRepairPhase::FitLink
-                &&self.broken_repair_track().is_some_and(|(kind,_)|i==if kind==ModuleKind::LeftTrack {16}else{17})))
+            // The track's break is the roadside ritual's alone (`Game::update_foot`): the workshop
+            // no longer takes the click there for a physical spare link.
+            .filter(|&i|!state::running_track_mount(i))
             .filter_map(|i|{let point=self.workshop.mount_point(i,hm,tm,gm);
                 (equipment::repair_in_reach(eye,look,point,0.10)&&self.workshop_clear_to(eye,point))
                     .then_some((i,eye.distance_squared(point)))})
@@ -468,6 +469,13 @@ impl Game {
         let down=input.trigger||input.fire2||input.mg_coax;
         let pressed=down&&!self.workshop.primary_down;self.workshop.primary_down=down;
         if !down {self.workshop.primary_guard=false;}
+        // A vision block's retainer let go of part-way springs back. Left part-released, the block
+        // read unusable and its port stayed blank with no way to see why (the owner, 10 November
+        // 2026: "if i click on a periscope it goes blank and never comes back"). Mounts 0..=7 are
+        // the seven cupola blocks and the driver's.
+        if !down {for socket in &mut self.workshop.state.mounts[..8] {
+            if socket.tested&&socket.fastening>0.0&&socket.fastening<1.0 {socket.fastening=1.0;}
+        }}
         let previous_tool=self.workshop.tool_mount.take();
         if self.route_rack_inspection(down,pressed,dt,r) {
             input.fire=false;input.fire2=false;input.trigger=false;input.mg_coax=false;input.coax=false;
@@ -509,7 +517,9 @@ impl Game {
                 else if occupied.is_some()&&!state.tested {Some(Operation::Test)} else {None};
             if let Some(operation)=operation {
                 owns=true;
-                let requires_tool=matches!(mount,8..=14)&&matches!(operation,Operation::Release|Operation::Secure);
+                // The vision blocks' retainers (0..=7) need the toolbox too, so a click on a port
+                // while looking through it cannot start taking it out.
+                let requires_tool=matches!(mount,0..=14)&&matches!(operation,Operation::Release|Operation::Secure);
                 let cooling_ready=self.workshop.cooling_service_ready(mount,self.engine_on);
                 let carrier_ready=mount<24||self.workshop.engine.carrier_ready(mount,&self.workshop.state);
                 self.hover_label=Some(if !carrier_ready {"CARRIER - REMOVE BOTH ADJACENT SHOES, THEN WING RETAINER"}
@@ -612,8 +622,12 @@ impl Game {
     pub(super) fn verify_workshop_track(&mut self,kind:ModuleKind)->bool {
         if self.expedition_runtime.is_none() {return true;}
         let mount=if kind==ModuleKind::LeftTrack {16}else if kind==ModuleKind::RightTrack {17}else{return false;};
-        if self.track_repair_phase!=TrackRepairPhase::HammerPin||self.track_hits<4
-            ||!self.workshop.state.part_at(mount).is_some_and(|p|p.kind==PartKind::TrackLink&&p.condition>=0.999) {return false;}
+        if self.track_repair_phase!=TrackRepairPhase::HammerPin||self.track_hits<4 {return false;}
+        // The link fitted by the roadside ritual came off the bow plate: whatever the camp's
+        // parts ledger holds at this mount is made whole with it.
+        for part in &mut self.workshop.state.parts {
+            if matches!(part.location,PartLocation::Mount{mount:at} if at==mount) {part.condition=1.0;}
+        }
         self.workshop.state.mounts[mount].fastening=1.0;
         self.workshop.state.mounts[mount].tested=true;true
     }

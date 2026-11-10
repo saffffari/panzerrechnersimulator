@@ -572,6 +572,7 @@ impl Temporal {
 struct PlumePass {
     pipe: wgpu::RenderPipeline,
     buf: wgpu::Buffer,
+    roots: wgpu::Buffer,
     bind: wgpu::BindGroup,
     noise: wgpu::Texture,
     noise_pending: Option<Vec<u8>>,
@@ -777,6 +778,9 @@ pub(super) struct Backend {
     probe_pending: Cell<bool>,
     optic_active: bool,
     pub stats: Stats,
+    /// The outside world's adaptation level: the luminance of the ground under this frame's sky
+    /// (cd/m^2; docs/EXPOSURE_SCHEME_20261110.md), for the shared outside eye and the lamps.
+    pub(super) outside_cd_m2: f32,
     encode_ms: Cell<f32>,
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
@@ -1121,6 +1125,32 @@ fn ember_offset(seed: u32, k: u32) -> Vec3 {
         (x >> 8) as f32 / 16777216.0 - 0.5
     };
     Vec3::new(h(1), h(2), h(3))
+}
+
+/// `KESSEL_PORT_LIGHT=N` (default 1, up to 64) multiplies the daylight the player's panes pass
+/// into the crew compartment: the surfaces' aperture term and the air's shafts both read it.
+/// Above 1 it is a gain with no physical basis (a pane cannot pass more light than falls on it),
+/// offered at the owner's request (10 November 2026: "is there a way we can boost that brightness
+/// significantly"); named in docs/PHYSICAL_TRUTH_AUDIT.md. The ports' own pictures are unchanged.
+/// `KESSEL_PANE_GLOW=F` (0 to 1): the share of the sky's radiance each open pane also sends
+/// into the compartment in every direction, as frosted glass would (1: a perfect diffuser).
+/// Measured 10 November 2026: clear panes light only what lies inside their narrow field
+/// mirrored into the cabin (the far side of the cupola, a strip of wall), 0.03 % of the lamps'
+/// light on an ordinary wall, so the cabin took no daylight and a 64-fold gain changed nothing.
+/// A real block scatters a few per cent (dust, scratches, prism edges); beyond that this is a
+/// look, owner-requested ("they are what bring light inside the interior"). Named in
+/// docs/PHYSICAL_TRUTH_AUDIT.md. rm_shade.wgsl and rm_volume.wgsl read it (fr.worn_count.w).
+fn pane_glow() -> f32 {
+    static GLOW: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *GLOW.get_or_init(|| std::env::var("KESSEL_PANE_GLOW").ok().and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map_or(PANE_GLOW_DEFAULT, |v| v.clamp(0.0, 1.0)))
+}
+const PANE_GLOW_DEFAULT: f32 = 0.0;
+
+fn port_light_gain() -> f32 {
+    static GAIN: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *GAIN.get_or_init(|| std::env::var("KESSEL_PORT_LIGHT").ok().and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map_or(1.0, |v| v.clamp(0.0, 64.0)))
 }
 
 impl Backend {
@@ -1704,10 +1734,15 @@ impl Backend {
         });
         let plumes = {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("rm-plumes-bgl"), entries: &[readonly_storage(0, S::VERTEX_FRAGMENT), tex3d(1, S::FRAGMENT), sampler_filtering(2, S::FRAGMENT)],
+                label: Some("rm-plumes-bgl"), entries: &[readonly_storage(0, S::VERTEX_FRAGMENT), tex3d(1, S::FRAGMENT), sampler_filtering(2, S::FRAGMENT),
+                    readonly_storage(3, S::FRAGMENT)],
             });
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rm-plumes"), size: (crate::fx_plumes::MAX_PLUMES * std::mem::size_of::<crate::fx_plumes::Plume>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            });
+            let roots = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rm-plume-roots"), size: (crate::fx_plumes::MAX_ROOTS * 32) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
             });
             let noise = device.create_texture(&wgpu::TextureDescriptor {
@@ -1724,7 +1759,7 @@ impl Backend {
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("rm-plumes"), layout: &bgl, entries: &[entry(0, buf.as_entire_binding()),
                     entry(1, wgpu::BindingResource::TextureView(&noise.create_view(&Default::default()))),
-                    entry(2, wgpu::BindingResource::Sampler(&repeat))],
+                    entry(2, wgpu::BindingResource::Sampler(&repeat)), entry(3, roots.as_entire_binding())],
             });
             let shader = rm_shader(device, "rm-plumes", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_rt_stub.wgsl", "rm_plumes.wgsl"]);
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1737,7 +1772,7 @@ impl Backend {
                 fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs"), targets: std::slice::from_ref(&premultiplied), compilation_options: Default::default() }),
                 multiview: None, cache: None,
             });
-            PlumePass { pipe, buf, bind, noise, noise_pending: Some(crate::fx_plumes::noise_volume(PLUME_NOISE as usize)), list: Vec::new() }
+            PlumePass { pipe, buf, roots, bind, noise, noise_pending: Some(crate::fx_plumes::noise_volume(PLUME_NOISE as usize)), list: Vec::new() }
         };
         let sparks_shader = rm_shader(device, "rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]);
         const WEAPON_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4, 4 => Uint32x4];
@@ -1777,6 +1812,7 @@ impl Backend {
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
             light_pairs: Vec::new(), light_cell_start: vec![0; CELL_COUNT + 1], light_cell_items: Vec::new(),
             weapon_draws: Vec::new(), tracer_range: (0, 0), panes: Vec::new(), events: Vec::with_capacity(MAX_EVENTS), wind: Vec3::ZERO,
+            outside_cd_m2: 1000.0,
             probe: std::env::var("KESSEL_RM_PROBE").ok().and_then(|v| {
                 let mut it = v.split(',').filter_map(|p| p.trim().parse::<u32>().ok());
                 Some((it.next()?, it.next()?))
@@ -2017,7 +2053,7 @@ impl Backend {
                 let mid_half = m.model.transform_vector3(quad[3]);
                 if long_half.cross(mid_half).length() < 1.0e-7 { continue; }
                 // The slab for the transmittance: the piece's shortest extent (a pane's glass).
-                let tint = pane_transmittance(2.0 * short_half, grime);
+                let tint = pane_transmittance(2.0 * short_half, grime) * port_light_gain();
                 if debug {
                     println!("[raymarch] aperture {n}: mesh {index} centre {:.3?} shortest axis {:.2?} half-extents {:.3} x {:.3} x {:.4} m tint {:.2?}",
                         c, short_axis, long_half.length(), mid_half.length(), short_half, tint);
@@ -2286,6 +2322,8 @@ impl Backend {
         // spring (mood 1); falling snow whitens either.
         let ground_albedo = (0.80 - 0.50 * r.atmosphere_mood.clamp(0.0, 1.0) as f64).max(0.30 + 0.45 * r.precipitation.clamp(0.0, 1.0) as f64);
         let ground = (horizon * 0.6 + zenith * 0.4) * ground_albedo + sun_radiance * (sun_dir.y.max(0.0) as f64) * ground_albedo / std::f64::consts::PI;
+        let w = crate::observer::PHOTOPIC_WEIGHTS;
+        self.outside_cd_m2 = ((ground.x * w[0] + ground.y * w[1] + ground.z * w[2]) as f32).max(1.0e-5);
 
         // Visibility views. A later view of the same displayed frame (the gunner's eyepiece
         // composite: its interior pass after the optic pass; split-screen views 2..N) samples the
@@ -2482,7 +2520,7 @@ impl Backend {
             cabin_air,
             cabin_motion,
             worn_count: [if self.debug_skip & 65536 != 0 { 0.0 } else { r.worn_vehicles.len() as f32 }, aperture_count as f32,
-                if self.debug_skip & SKIP_BEAM_TRACE != 0 { 1.0 } else { 0.0 }, 0.0],
+                if self.debug_skip & SKIP_BEAM_TRACE != 0 { 1.0 } else { 0.0 }, pane_glow()],
             worn: std::array::from_fn(|i| r.worn_vehicles.get(i).copied().unwrap_or([[0.0; 4]; 2])),
             apertures,
             section: r.film_section().unwrap_or([0.0; 4]),
@@ -2684,12 +2722,20 @@ impl Backend {
             }
         }
         // Depth faces for the two strongest lights near the eye.
+        // The gun sight's exterior pass shows no receiver in the compartment's air, and the
+        // shade and volume passes give a compartment light to no receiver outside that air
+        // (rm_shade.wgsl, rm_volume.wgsl: `rm_cabin_domain(lights[index].a.xyz) >= 0`). A cube
+        // for a cabin lamp there was twelve depth passes a frame that nothing sampled; the
+        // interior pass that follows ranks and draws its own.
+        let unseen_cabin_light = |p: Vec3| r.sight_exterior_pass && r.cabin_medium.as_ref()
+            .is_some_and(|medium| medium.contains_world(&r.cabin_medium_uniform, p));
         let mut ranked: Vec<(f32, usize)> = self.lights.iter().enumerate().filter_map(|(i, l)| {
-            let d2 = (Vec3::from_array([l.a[0], l.a[1], l.a[2]]) - eye).length_squared();
+            let at = Vec3::from_array([l.a[0], l.a[1], l.a[2]]);
+            let d2 = (at - eye).length_squared();
             let power = l.b[3] * l.b[..3].iter().cloned().fold(0.0, f32::max);
             // Firefly lanterns (kind 3) take no shadow cube: six scene depth faces for a source of
             // micro-candela (named in the ledger).
-            (d2 < 45.0 * 45.0 && power > 0.0 && l.c[2] != 3.0).then(|| (power / (d2 + 0.25), i))
+            (d2 < 45.0 * 45.0 && power > 0.0 && l.c[2] != 3.0 && !unseen_cabin_light(at)).then(|| (power / (d2 + 0.25), i))
         }).collect();
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
         self.shadowed = [None; POINT_SHADOWS];
@@ -2744,7 +2790,7 @@ impl Backend {
         self.stats.merged_grains = 0;
         if self.debug_skip & 16 != 0 { build_csr(&self.pairs, &mut self.cell_start, &mut self.cell_items); return; }
         #[derive(Default)]
-        struct Cell { sum: Vec3, count: u32, size: f32 }
+        struct Cell { sum: Vec3, count: u32, size: f32, fine: bool }
         let mut merged: HashMap<(i32, i32, i32, u32), Cell> = HashMap::new();
         let mut cell_kinds: Vec<(u32, f32, [f32; 3], f32)> = Vec::new();
         for (batch_index, b) in r.inst_batches.iter().enumerate() {
@@ -2763,6 +2809,15 @@ impl Backend {
             let ember_cap = if crate::fx_plumes::enabled() { FX_GRAIN_EMBERS } else { MAX_EMBERS };
             let packed = pack_ember(color, b.emissive * 6.0 * (2.0 * FIRE_EMBER_SHARE) / per_grain as f32);
             let ids = r.fine_vfx.particle_ids.get(&batch_index);
+            // A cigarette's smoke and ash (cigarette_vfx, identity 0xc196_0001): millimetre
+            // grains a hand's breadth from the eye. With the rebuilt effects they merge into
+            // centimetre cells with no coverage floor (a thin wisp), not the fire's 8-45 cm cells
+            // (each wisp grain became a smoke ball across the view).
+            // The same for the weapon pages' soot (weapon_vfx, identities 0x5746_xxxx: a gun's
+            // propellant smoke, a strike's dust): their millimetre grains drew a metres-long white
+            // stream down a machine gun's line of fire.
+            let fine = crate::fx_plumes::enabled() && kind == PARCEL_SOOT
+                && ids.and_then(|v| v.first()).is_some_and(|id| id[0] == 0xc196_0001 || id[0] >> 16 == 0x5746);
             for (i, mat) in b.cpu_mats.iter().take(b.inst_count as usize).enumerate() {
                 if b.is_hidden(i as u32) { continue; }
                 let c = mat.w_axis.truncate();
@@ -2778,12 +2833,13 @@ impl Backend {
                     }
                 }
                 // Merge cell: a few grains deep, scaled with distance so far fires stay compact.
-                let cs = (size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0);
+                let cs = if fine { (size * 3.0).clamp(0.008, 0.03) } else { (size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0) };
                 let key = ((c.x / cs).floor() as i32, (c.y / cs).floor() as i32, (c.z / cs).floor() as i32, batch_index as u32);
                 let cell = merged.entry(key).or_default();
                 cell.sum += c;
                 cell.count += 1;
                 cell.size = cell.size.max(size);
+                cell.fine |= fine;
                 self.stats.merged_grains += 1;
             }
         }
@@ -2801,10 +2857,11 @@ impl Backend {
             let Some(&(_, kind, mut color, emissive)) = cell_kinds.iter().find(|k| k.0 == key.3) else { continue };
             let center = cell.sum / cell.count as f32;
             let d = (center - eye).length();
-            let cs = (cell.size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0);
+            let cs = if cell.fine { (cell.size * 3.0).clamp(0.008, 0.03) } else { (cell.size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0) };
             let radius = (cs * 1.35).max(cell.size * 1.5);
             // Fraction of the cell's cross-section the grains actually cover.
-            let coverage = ((cell.count as f32 * cell.size * cell.size) / (radius * radius)).clamp(0.08, 1.0);
+            let coverage = ((cell.count as f32 * cell.size * cell.size) / (radius * radius)).clamp(if cell.fine { 0.0 } else { 0.08 }, 1.0)
+                * if cell.fine { 0.6 } else { 1.0 };
             // Energy: looking through the cell must give the grains' own radiance times the
             // fraction of the cross-section they cover, so emission per metre is that over the
             // cell's diameter (the tongue shaping in rm_volume.wgsl redistributes, not adds).
@@ -2982,8 +3039,15 @@ impl Backend {
         let focal_px = r.ih as f32 * 0.5 / (r.camera.fov_y * 0.5).tan();
         let wind = glam::Vec2::new(self.wind.x, self.wind.z);
         for e in &self.events {
-            if e.kind != EVENT_DETONATION || self.debug_skip & 2048 != 0 { continue; }
+            if self.debug_skip & 2048 != 0 { continue; }
             let age = r.time - e.born;
+            // A tank round on armour: its flash and puff (a perforation's venting smoke).
+            if matches!(e.kind, EVENT_ARMOUR | EVENT_PENETRATION) {
+                self.plumes.list.extend(crate::fx_plumes::strike_flash(e.origin, e.normal, e.strength.max(0.6),
+                    e.kind == EVENT_PENETRATION, age, wind, e.seed, eye, focal_px));
+                continue;
+            }
+            if e.kind != EVENT_DETONATION { continue; }
             let plume = if e.strength > 1.0 {
                 crate::fx_plumes::fireball(e.origin, e.strength * 0.45, age, wind, e.seed, e.strength > 4.0, eye, focal_px)
             } else if let Some(gy) = e.ground_y {
@@ -2996,9 +3060,23 @@ impl Backend {
             }
             self.plumes.list.extend(plume);
         }
+        // Blast pressure fronts (crate::pressure_front, the game's): the snow each sweeps up and
+        // its condensation shell (the refraction is not drawn here).
+        if self.debug_skip & 2048 == 0 {
+            let c = crate::pressure_front::speed_of_sound_m_s();
+            for front in r.pressure_fronts.active(r.time) {
+                let radius = (r.time - front.emitted_at) * c;
+                let ground = self.events.iter().filter(|e| e.origin.distance(front.origin) < 4.0).find_map(|e| e.ground_y)
+                    .unwrap_or(front.origin.y - 0.5);
+                self.plumes.list.extend(crate::fx_plumes::shock(front.origin, ground, radius, front.max_radius,
+                    front.tnt_kg, front.id as u32, eye, focal_px));
+            }
+        }
         crate::fx_plumes::sort_far_to_near(&mut self.plumes.list, eye, crate::fx_plumes::MAX_PLUMES);
         if !self.plumes.list.is_empty() {
             queue.write_buffer(&self.plumes.buf, 0, bytemuck::cast_slice(&self.plumes.list));
+            let roots = &r.fx_roots[..r.fx_roots.len().min(crate::fx_plumes::MAX_ROOTS * 2)];
+            if !roots.is_empty() { queue.write_buffer(&self.plumes.roots, 0, bytemuck::cast_slice(roots)); }
         }
         self.stats.plumes = self.plumes.list.len();
     }
@@ -3047,8 +3125,12 @@ impl Backend {
                 // (`weapon_vfx::cookoff_fireball`); every other blast carries none.
                 else if event_kind == EVENT_DETONATION && burst.parameters[1] > 0.0 { burst.parameters[1].clamp(1.0, 24.0) }
                 else { 1.0 };
+            // An event starts its sequel at most 50 ms before the first frame that sees it: after a
+            // stalled frame (a catch-up batch of updates) its flash and sparks would otherwise be
+            // over before they were ever drawn.
+            let seen_late = if crate::fx_plumes::enabled() { burst.origin_age[3].clamp(0.0, 0.05) } else { burst.origin_age[3].max(0.0) };
             self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, ground_snow, strength,
-                born: now - burst.origin_age[3].max(0.0) });
+                born: now - seen_late });
         }
         // The gun's own report: its flash light (tens of W/sr against lamps of 1e-4) appears at
         // the muzzle; the muzzle smoke supports persist without an age and the flash is flame
@@ -3374,6 +3456,22 @@ impl Backend {
                     }
                 }
                 _ => {
+                    // The rebuilt effects: the strike's flash and puff are a volume
+                    // (`collect_plumes`); inside the struck hull the blow shakes the dust and
+                    // flaking paint off the plate's inner face, a pale haze a hand's breadth to a
+                    // metre in, settling over two seconds.
+                    if crate::fx_plumes::enabled() {
+                        if e.kind == EVENT_ARMOUR && t < 2.2 {
+                            let u = t / 2.2;
+                            for k in 0..5u32 {
+                                let side = Vec3::new(h(20 + k) - 0.5, h(30 + k) - 0.5, h(40 + k) - 0.5) * 0.8;
+                                let center = o - e.normal * (0.2 + 0.4 * u + 0.18 * k as f32) + side - Vec3::Y * (0.35 * u);
+                                let radius = 0.22 + 0.5 * u.sqrt();
+                                push(center, radius, [0.62, 0.58, 0.52], PARCEL_SMOKE, 0.0, (1.0 - u).powf(1.4) * 0.9 / radius, h(50 + k) * 100.0, 0.0);
+                            }
+                        }
+                        continue;
+                    }
                     // Armour strike: a small puff of paint smoke and dust off the plate.
                     if t < 1.4 {
                         let u = t / 1.4;
@@ -3550,7 +3648,7 @@ impl Backend {
             pass.set_vertex_buffer(0, p.vbuf.slice(..));
             pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
             pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            if shadow { work.shadow_instanced_draws += 1; } else { work.scene_instanced_draws += 1; }
+            if shadow { work.shadow_instanced_draws += 1; super::count_shadow_draws(if view_index > 2.5 { 10 } else { 6 }, 1); } else { work.scene_instanced_draws += 1; }
             pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
         }
         pass.set_pipeline(mesh_pipe);
@@ -3610,7 +3708,7 @@ impl Backend {
             pass.set_index_buffer(m.rigid_index_buffer().slice(..), wgpu::IndexFormat::Uint32);
             for range in m.primary_index_ranges(vp) {
                 if range.is_empty() { continue; }
-                if shadow { work.shadow_mesh_draws += 1; } else { work.scene_mesh_draws += 1; }
+                if shadow { work.shadow_mesh_draws += 1; super::count_shadow_draws(if view_index > 2.5 { 9 } else { 5 }, 1); } else { work.scene_mesh_draws += 1; }
                 pass.draw_indexed(range, 0, 0..1);
             }
         }
@@ -3626,7 +3724,7 @@ impl Backend {
             pass.set_bind_group(1, material.tex_bind.as_ref(), &[]);
             let slot = if shadow { view_index as usize } else { crate::terrain_lod::GBUFFER_SLOT };
             if terrain.lod.draw(pass, slot) > 0 {
-                if shadow { work.shadow_mesh_draws += 1; } else { work.scene_mesh_draws += 1; }
+                if shadow { work.shadow_mesh_draws += 1; super::count_shadow_draws(if view_index > 2.5 { 9 } else { 5 }, 1); } else { work.scene_mesh_draws += 1; }
             }
         }
     }
@@ -4146,6 +4244,9 @@ impl Renderer {
         atmosphere
     }
 
+    /// The outside world's adaptation level this frame (cd/m^2): the ground's luminance under the
+    /// sky (docs/EXPOSURE_SCHEME_20261110.md). None without the raymarch backend.
+    pub fn outside_luminance(&self) -> Option<f32> { self.raymarch.as_ref().map(|rm| rm.outside_cd_m2) }
     pub fn raymarch_stats(&self) -> Option<Stats> { self.raymarch.as_ref().map(|rm| rm.stats) }
     pub fn scatter_stats(&self) -> Option<super::renderer_scatter::ScatterStats> { self.scatter_field.as_ref().map(|s| s.stats()) }
     /// A heavy strewn piece gave way to the hull: move its instance by `delta` at the next upload.
@@ -4197,6 +4298,11 @@ mod shader_tests {
             assert!(!source.contains("clamp(4.0 * lights[index].a.w, 0.15, 0.3)"), "{name} keeps its own housing stop");
         }
         let this = include_str!("renderer_raymarch.rs");
+        // The sight's exterior pass drops the cabin lamps' cubes only because both light loops
+        // give a compartment light to no receiver outside the compartment.
+        assert!(rm_source("rm_shade.wgsl").contains("if (!receiver_in_cabin && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }"));
+        assert!(rm_source("rm_volume.wgsl").contains("if (cabin_domain < 0 && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }"));
+        assert!(this.contains("&& !unseen_cabin_light(at)).then(|| (power / (d2 + 0.25), i))"));
         assert!(this.contains("if shadow && ((m.emissive_own && m.emissive > 0.0) || housing(m)) { continue; }"));
         assert!(this.contains("&& (light_in_cabin || (m.vsm_frame == 0 && m.vehicle_finish == [0.0; 4] && !m.painted_steel));"));
     }
@@ -4508,9 +4614,11 @@ mod film_section_tests {
             }
         }
         openers.sort();
-        assert_eq!(openers, vec!["game_fea_film.rs".to_string(), "game_fea_range.rs".to_string()],
-            "only the film harness and the review range (`fea-range`) open a section");
-        // The windowed cutaway is the death replay's alone (a presentation view of a replay).
+        // The death replay's first shot is a section on the plane of the shot since the owner's
+        // re-cut of 9 November 2026: a presentation view after the run has ended, never live play.
+        assert_eq!(openers, vec!["death_replay.rs".to_string(), "game_fea_film.rs".to_string(), "game_fea_range.rs".to_string()],
+            "only the death replay, the film harness and the review range (`fea-range`) open a section");
+        // The windowed cutaway was the death replay's alone; its section shot replaced it.
         let mut cutaways = Vec::new();
         let needle = [".set_replay_cutaway", "(Some"].concat();
         for entry in std::fs::read_dir("src").unwrap() {
@@ -4519,7 +4627,7 @@ mod film_section_tests {
                 cutaways.push(path.file_name().unwrap().to_string_lossy().into_owned());
             }
         }
-        assert_eq!(cutaways, vec!["death_replay.rs".to_string()], "only the death replay opens a cutaway");
+        assert_eq!(cutaways, Vec::<String>::new(), "nothing opens a windowed cutaway now");
     }
 }
 

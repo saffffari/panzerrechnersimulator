@@ -656,9 +656,9 @@ fn t34_cookoff_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str
 /// The penetration death as the player sees it (see the clip list, 19). Disclosed: a 122 mm BR-471
 /// is launched at the commander's chest through the turret side on his side, 500 m, the player at
 /// his post, the racks emptied (so no cook-off). After the death, the death's shots at their phases
-/// as the app plays them (`main::penetration_shot`): black, the impact shot with the armour cut away
-/// (`Game::render_replay_impact`), the interior (`Game::render_replay`), the aerial shot
-/// (`Game::render_replay_exterior`); silent, as in the app.
+/// as the app plays them (`main::penetration_shot`): black, the section on the plane of the shot
+/// (`Game::render_replay_impact`), the interior from the turret's rear centre
+/// (`Game::render_replay`); silent, as in the app.
 fn penetration_death_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix: &str, name: &str,
     idle_input: &dyn Fn(u32) -> TankInput) -> anyhow::Result<serde_json::Value> {
     let stills = std::env::var("KESSEL_FEA_FILM_STILLS").as_deref() == Ok("1");
@@ -709,11 +709,12 @@ fn penetration_death_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix
         }
         let banner = ctx.banner.clone();
         let mut elapsed = 0.0f32;
-        // The replay's shots: impact, interior, aerial, each at its phases; a still at the given ones.
+        // The replay's shots: where the round came from, the section, then the interior, each at
+        // its phases; a still at the given ones.
         for (shot, seconds, label, moments) in [
-            (0u8, crate::IMPACT_SECONDS, "the impact: the round arrives, the armour cut away round its line", &[(0.12f32, "impact_incoming"), (0.24, "impact_strike"), (0.42, "impact_cut_opening"), (0.52, "impact_cut_half"), (0.68, "impact_cut_open"), (0.95, "impact_end")][..]),
-            (1, crate::REPLAY_DUR, "the interior, from the turret's rear corner", &[(0.2, "interior_early"), (0.5, "interior_mid"), (0.9, "interior_late")][..]),
-            (2, crate::DEATH_EXTERIOR_SECONDS, "where the round came from", &[(0.5, "exterior")][..]),
+            (2u8, crate::DEATH_EXTERIOR_SECONDS, "where the round came from", &[(0.5f32, "exterior")][..]),
+            (0u8, crate::IMPACT_SECONDS, "the section on the plane of the shot: the round through the armour", &[(0.12, "section_incoming"), (0.24, "section_in_plate"), (0.36, "section_through"), (0.52, "section_fragments"), (0.68, "section_fragments_later"), (0.95, "section_end")][..]),
+            (1, crate::REPLAY_DUR, "the interior, from the turret's rear centre looking forward", &[(0.2, "interior_early"), (0.5, "interior_mid"), (0.9, "interior_late")][..]),
         ] {
             if let Some(clip) = film.as_mut() { clip.mark(label, "slow motion, silent"); }
             let frames = (seconds * FPS as f32).round() as u32;
@@ -723,7 +724,7 @@ fn penetration_death_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix
                 let moment = moments.iter().find(|(at, tag)| phase >= *at && !written.contains(tag)).map(|(_, tag)| *tag);
                 if film.is_none() && moment.is_none() { continue; }
                 match shot {
-                    0 => g.render_replay_impact(phase, r),
+                    0 => { g.end_replay_exterior(r); g.render_replay_impact(phase, r); }
                     1 => { g.end_replay_cutaway(r); g.render_replay(phase, r); }
                     _ => { g.end_replay_exterior(r); g.render_replay_exterior(phase, r); }
                 }

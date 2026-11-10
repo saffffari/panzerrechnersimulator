@@ -16,6 +16,11 @@
 #   tools/launch_demo_20261101.sh --bridge        the spring bridge test map (v2): take the town's bridge, hold it through two
 #                                                 counterattacks, destroy every tank; camp and half-track west of the town;
 #                                                 16:00 on the crew's clock. --bridge-lite: the render-test density
+#   tools/launch_demo_20261101.sh --kursk         the Kursk ridge test map (kursk-miasoedovo-v1, July 1943): halt on the reverse
+#                                                 slope, look into the wooded valley from the forward crest, come back, hold the
+#                                                 ridge through three attacks, destroy every tank; camp and half-track behind the
+#                                                 ridge; 12:00 on the crew's clock (early afternoon by the sun). With --platoon:
+#                                                 two AI Tigers under command
 #   tools/launch_demo_20261101.sh --berlin        Berlin, 30 April 1945: the Reichstag, Koenigsplatz, the Moltke Bridge and the
 #                                                 Brandenburg Gate (docs/BERLIN_REICHSTAG_1945.md), 17:30
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
@@ -26,6 +31,10 @@
 #   tools/launch_demo_20261101.sh --cabin-look pastel  the pastel palette itself inside the hull under the tinted look
 #   tools/launch_demo_20261101.sh --one-man       the player alone in the Tiger: the other four seats unmanned, he works
 #                                                 every post (KESSEL_ONE_MAN=1; singleplayer only)
+#   tools/launch_demo_20261101.sh --gen2          the gen2 Tiger's hull, turret and gun drawn as the player's tank: a first,
+#                                                 rough fit (src/tiger_gen2.rs says what is still the present Tiger's)
+#   tools/launch_demo_20261101.sh --env KESSEL_EYE=gentle   any review switch for the game (repeatable). Setting a
+#                                                 KESSEL_* variable in front of the launcher does nothing: they are cleared
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
 #   tools/launch_demo_20261101.sh --canyon --t34s 5 --no-guns
 #                                                 a 1v5: five T-34s at the first-encounter knot (the deep platoons benched,
@@ -50,12 +59,14 @@ RUNTIME="$ROOT/artifacts/runtime"
 # levels) on the 1024x576 grid, exactly 5x on the 5120x2880 panel. Agents: do not change these
 # defaults without asking the owner to confirm first; --look/--res still choose others per run.
 REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
-FULL_MENU=0 BERLIN=0 BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+FULL_MENU=0 BERLIN=0 BRIDGE=0 KURSK=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+EXTRA_ENV=()
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
         --bridge) MODE=canyon; COURSE=spring-bridge-v2; BRIDGE=1 ;;
         --bridge-lite) MODE=canyon; COURSE=spring-bridge-lite-v2; BRIDGE=1 ;;
+        --kursk) MODE=canyon; COURSE=kursk-miasoedovo-v1; KURSK=1 ;;
         --berlin) MODE=canyon; COURSE=berlin-reichstag-v1; BERLIN=1 ;;
         --expedition) MODE=expedition ;;
         --menu) MODE=menu ;;
@@ -63,6 +74,8 @@ while (( $# )); do
         --windowed) WINDOWED=1 ;;
         --platoon) PLATOON=1 ;;
         --one-man) ONE_MAN=1 ;;
+        --gen2) EXTRA_ENV+=(KESSEL_TIGER=gen2) ;;
+        --env) EXTRA_ENV+=("$2"); shift ;;   # NAME=VALUE for the game; inherited KESSEL_* are cleared below
         --res) RES=$2; RES_SET=1; shift ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;   # standard (default) | deltap-tinted | deltap | pastel ...
         --cabin-look) CABIN_LOOK=$2; shift ;;   # pastel: the palette itself inside the hull (tinted look)
@@ -83,6 +96,9 @@ while (( $# )); do
 done
 # The bridge map is a bright May afternoon unless --sky-start says otherwise.
 if (( BRIDGE )) && (( ! SKY_SET )); then SKY_START=16:00; fi
+# The Kursk ridge: the map's authored hour, 11:00 UT on 7 July 1943. The crew's clock is UT+1 and
+# the sky is Act One's site (44.5 E), so 12:00 on it is about 14:00 by the sun.
+if (( KURSK )) && (( ! SKY_SET )); then SKY_START=12:00; fi
 # Berlin, 30 April 1945: the late afternoon of the Reichstag's storming (the map's authored hour).
 if (( BERLIN )) && (( ! SKY_SET )); then SKY_START=17:30; fi
 if [[ -n "$LOOK" && $RES_SET == 0 ]]; then RES=1024x576; fi   # deltaP's grid: 5x on the 5120x2880 panel
@@ -123,6 +139,9 @@ PY
 
 # Drop inherited experiment flags so a stale shell cannot change the profile.
 for v in $(env | grep -o '^KESSEL_[A-Z0-9_]*'); do unset "$v"; done
+# The switches asked for on this command line (--gen2, --env NAME=VALUE): a KESSEL_* variable set
+# in front of the launcher is cleared by the line above and never reaches the game.
+for kv in ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"}; do export "$kv"; done
 export XDG_STATE_HOME="$RUNTIME/state" XDG_CACHE_HOME="$RUNTIME/cache" XDG_CONFIG_HOME="$RUNTIME/config"
 export KESSEL_ASSET_ROOT="$ASSET_ROOT"
 export KESSEL_CANYON_MANIFEST="$ASSET_ROOT/assets/worldgen/workshops/${COURSE:-gaea-canyon-run-v2}/manifest.v1.json"

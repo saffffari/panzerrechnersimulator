@@ -122,7 +122,9 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
                 g.configure_crew_render_view(lan::LanRole::Gunner,true,&mut r);
                 r.set_active_view(0);
                 let local_body_visibility = g.hide_first_person_for_optic(&mut r);
+                r.set_sight_exterior_pass(true);
                 r.render_optic_snapshot(&device,&queue);
+                r.set_sight_exterior_pass(false);
                 for (slot, visible) in local_body_visibility {r.set_visible(slot,visible);}
                 let (eye,forward,fov)=g.gunner_interior_camera();
                 r.camera.pos=eye;r.camera.set_forward(forward);r.camera.fov_y=fov;
@@ -202,6 +204,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     let (batches,instances)=r.instanced_stats(); let timing=cpu_profile_stats(&totals);
     let tlas=r.tlas_demand(); let (overflow_frames,missing_now)=r.tlas_overflow_stats();
     let (blases,tlas_slots)=r.rt_stats(); let (lights_offered,lights_admitted)=r.light_budget_stats();
+    println!("[winter-bench] probes, ms per simulation update (one update a frame here; includes warm-up): {}", g.sim_phase.take());
     let report=serde_json::json!({"schema":"panzer.winter-benchmark/v2","scenario":mode,
         "variant":if unbounded {"no_shared_shadow_or_protected_clipping"} else {"shipping"},
         "adapter":info.name,"backend":format!("{:?}",info.backend),"manifest":path,

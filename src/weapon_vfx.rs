@@ -391,6 +391,13 @@ impl Effects {
                         BurstKind::HotRim{normal,heat},weapon);self.stamp_newest(at,Some(anchor));
                 }
             },
+            // A stopped round: with the rebuilt effects its spray presents as an armour strike
+            // (sparks off the face, no smoke venting from an unholed plate, no puffs inside the
+            // hull; the old record's weight made the renderer read it as a perforation).
+            Terminal::Bounce if crate::fx_plumes::enabled()=>{
+                self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,normal,0.24,1.0,BurstKind::Ricochet{normal,energy_j:deposited*0.02},weapon);
+                self.stamp_newest(at,None);
+            },
             Terminal::Bounce=>{
                 self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,normal,0.02,0.45,
                     BurstKind::BulletArmor{normal,energy_j:deposited*0.006,cosine:(-incident.dot(normal)).clamp(0.0,1.0)},weapon);
@@ -1047,7 +1054,9 @@ mod tests {
             fx.armor_terminal(7,0.0,point,incoming,normal,event,anchor,
                 (terminal==Terminal::Ricochet).then_some(Vec3::new(100.0,200.0,0.0)));fx.prepare(0.02,point);
             let has=|pred:fn(BurstKind)->bool|fx.bursts.iter().flatten().any(|b|pred(b.kind));
-            assert_eq!(has(|k|matches!(k,BurstKind::Ricochet{..})),terminal==Terminal::Ricochet);
+            // With the rebuilt effects a stopped round sprays off the face as an armour strike.
+            let strike_spray = terminal==Terminal::Ricochet || (terminal==Terminal::Bounce && crate::fx_plumes::enabled());
+            assert_eq!(has(|k|matches!(k,BurstKind::Ricochet{..})),strike_spray);
             assert_eq!(has(|k|matches!(k,BurstKind::HotRim{..})),matches!(terminal,Terminal::Penetration|Terminal::Shatter|Terminal::Ricochet));
             assert_eq!(has(|k|matches!(k,BurstKind::PenetrationSmoke(_))),terminal==Terminal::Penetration,
                 "smoke only where the round went through");

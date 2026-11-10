@@ -108,14 +108,32 @@ pub struct Trees {
     trees: Vec<DTree>,
     /// batches touched this frame (rebuilt once in `update`).
     dirty: Vec<bool>,
-    // Immutable source geometry is rebuilt with each batch, not duplicated in world saves.
-    support: Vec<Arc<ground_support::Source>>,
     // Separate optional save packet preserves the existing instance/identity record layout.
     released: std::collections::BTreeMap<usize,ground_support::Released>,
     // Detail base nodes are immutable; these are its actual ordinary mutation revisions.
     // Coarse-only editable grids have no revision contract and never reuse this certificate.
     support_revision: Option<(usize,u64,u64)>,
     support_openings: Vec<crate::terrain_opening::TerrainOpening>,
+}
+
+/// Seconds a tree of `height` m takes to fall: a uniform rod pivoting at its base from a
+/// 5 degree lean reaches the ground in about 1.6 * sqrt(2 h / (3 g)) * ln(...) ~ 1.0 * sqrt(h).
+fn hinge_fall_seconds(height: f32) -> f32 { height.max(0.5).sqrt().clamp(1.0, 4.5) }
+
+/// The pose of a tree `t` seconds into its hinge fall toward `dir` (unit, horizontal), and
+/// whether it has reached the ground. The rest angle lays the trunk on the line from the
+/// ground at the base to the ground one tree-length along the fall.
+fn hinge_fall(base: Mat4, pivot: Vec3, height: f32, dir: Vec3, t: f32,
+    ground: impl Fn(f32, f32) -> f32) -> (Mat4, bool) {
+    let tip = pivot + dir * height;
+    let rise = ground(tip.x, tip.z) - ground(pivot.x, pivot.z);
+    let end_angle = (std::f32::consts::FRAC_PI_2 - rise.atan2(height.max(0.1))).clamp(0.3, 2.6);
+    let k = (t / hinge_fall_seconds(height)).clamp(0.0, 1.0);
+    // The angle grows as the square of time (gravity's torque grows as the tree leans).
+    let axis = Vec3::Y.cross(dir).normalize_or_zero();
+    let hinge = Mat4::from_translation(pivot) * Mat4::from_axis_angle(axis, end_angle * k * k)
+        * Mat4::from_translation(-pivot);
+    (hinge * base, k >= 1.0)
 }
 
 /// The trunk's diameter (mesh units) where the bow meets it: the extent of the mesh's section by
@@ -243,7 +261,6 @@ impl Trees {
             batches: Vec::new(),
             trees: Vec::new(),
             dirty: Vec::new(),
-            support: Vec::new(),
             released: Default::default(),
             support_revision: None,
             support_openings: Vec::new(),
@@ -297,7 +314,6 @@ impl Trees {
         self.trees.extend(page_tree_records(bi, mesh, &mats));
         self.batches.push((rbatch, mats));
         self.dirty.push(false);
-        self.support.push(Arc::new(ground_support::Source::new(mesh)));
     }
 
     /// Register all initial spatial pages for one tree prototype as a single packed renderer load
@@ -317,13 +333,11 @@ impl Trees {
         if renderer_batches.len() != pages.len() {
             return false;
         }
-        let support = Arc::new(ground_support::Source::new(mesh));
         for (&rbatch, page) in renderer_batches.iter().zip(pages) {
             let bi = self.batches.len();
             self.trees.extend(page_tree_records(bi, mesh, page));
             self.batches.push((rbatch, page.to_vec()));
             self.dirty.push(false);
-            self.support.push(support.clone());
         }
         true
     }
@@ -434,40 +448,26 @@ impl Trees {
     /// Advance falls and rewrite the touched instance buffers (only moving batches pay).
     pub fn update(&mut self, dt: f32, r: &mut Renderer, terrain: &crate::terrain::Heightfield,
         events: &mut Vec<TreeEvent>) {
-        let revision=terrain.detail.as_ref().map(|detail|(Arc::as_ptr(detail) as usize,
-            detail.crater_revision(),detail.rut_revision()));
-        let recheck_rest=revision.is_none()||revision!=self.support_revision
-            ||terrain.openings.list()!=self.support_openings.as_slice();
-        if recheck_rest {
-            self.support_revision=revision;
-            self.support_openings=terrain.openings.list().to_vec();
-        }
+        // A released tree hinges about its base toward `dir` and lies along the ground: a
+        // prescribed fall, not a rigid-body solution (the owner, 9 November 2026, of the solved
+        // falls: "lets just remove those and do them in a negligible compute cost way. they
+        // didn't work really"). The solved fall cost 0.08 ms a tree an update, and every fallen
+        // tree was solved again whenever a footprint or rut changed the ground. Limits, named
+        // in docs/PHYSICAL_TRUTH_AUDIT.md: the trunk does not roll, slide or bounce; its rest
+        // angle comes from the ground's height at the base and one tree-length along the fall,
+        // so on broken ground the crown can hang over or sink into the relief between those
+        // two points; a fallen tree does not move again if the ground under it is cratered.
         for i in 0..self.trees.len() {
-            if self.trees[i].state==State::Down && recheck_rest {
-                let tree=&mut self.trees[i];
-                let motion=self.released.entry(i).or_insert_with(||ground_support::Released::new(
-                    self.batches[tree.batch].1[tree.inst],Vec3::ZERO,1.0));
-                if self.support[tree.batch].advance(motion,0.0,Vec3::ZERO,0.0,|x,z|terrain.height_at(x,z))
-                    .is_some_and(|step|!step.sleeping) {
-                    // No new release kick: gravity and the changed actual support wake it.
-                    tree.state=State::Falling {t:motion.motion.age,dir:Vec3::ZERO};
-                }
-            }
             let State::Falling { t: ft, dir } = self.trees[i].state else {
                 continue;
             };
-            let nt = ft + dt.max(0.0).min(0.05);
             let tree = &mut self.trees[i];
-            let release_work=release_work_per_mass(2.0*tree.trunk_r,tree.height,tree.push_work);
-            // Rebuilt explicitly for pre-rigid-motion saves; new saves always carry the full
-            // velocities/rotation/contact age and continue those exact ordinary solver inputs.
-            let motion=self.released.entry(i).or_insert_with(||ground_support::Released::new(
-                self.batches[tree.batch].1[tree.inst],dir,ft));
-            let Some(step)=self.support[tree.batch].advance(motion,dt.max(0.0).min(0.05),dir,release_work,
-                |x,z|terrain.height_at(x,z)) else {continue;};
-            let pose=step.model;
-            tree.state=if step.sleeping {State::Down}else{State::Falling {t:nt,dir}};
-            if let Some((pos,_impact))=step.hit {events.push(TreeEvent::Thud {pos});}
+            let dir = if dir.length_squared() < 0.25 { Vec3::Z } else { dir };
+            let nt = ft + dt.clamp(0.0, 0.05);
+            let (pose, done) = hinge_fall(tree.base, tree.pos, tree.height, dir, nt,
+                |x, z| terrain.height_at(x, z));
+            tree.state = if done { State::Down } else { State::Falling { t: nt, dir } };
+            if done { events.push(TreeEvent::Thud { pos: tree.pos + dir * tree.height * 0.6 }); }
             let (bi, ii) = (tree.batch, tree.inst);
             self.batches[bi].1[ii] = pose;
             self.dirty[bi] = true;
@@ -564,6 +564,27 @@ impl Trees {
     }
 
     /// How many trees are down (headless assertions).
+    /// Harness only: release `n` standing trees spread evenly over the whole stand, each in a
+    /// hashed direction, as a tank's push would. Returns how many were released.
+    pub fn debug_fell_spread(&mut self, n: usize) -> usize {
+        let standing: Vec<usize> = (0..self.trees.len()).filter(|&i| self.trees[i].state == State::Standing).collect();
+        if standing.is_empty() || n == 0 { return 0; }
+        let stride = (standing.len() / n).max(1);
+        let mut events = Vec::new();
+        let mut felled = 0;
+        for &i in standing.iter().step_by(stride).take(n) {
+            let a = (i as u32).wrapping_mul(2654435761) as f32 / u32::MAX as f32 * std::f32::consts::TAU;
+            self.snap(i, Vec3::new(a.cos(), 0.0, a.sin()), &mut events);
+            felled += 1;
+        }
+        felled
+    }
+
+    /// Trees whose fall is still being solved (not yet asleep on the ground).
+    pub fn falling_count(&self) -> usize {
+        self.trees.iter().filter(|t| matches!(t.state, State::Falling { .. })).count()
+    }
+
     pub fn debug_down_count(&self) -> usize {
         self.trees.iter().filter(|t| t.state == State::Down).count()
     }
@@ -599,6 +620,25 @@ mod tests {
                 "expected non-tree dressing: {path}"
             );
         }
+    }
+
+    #[test]
+    fn a_hinge_fall_lays_the_trunk_along_the_ground_and_ends() {
+        let pivot = Vec3::new(40.0, 2.0, -15.0);
+        let top = |pose: Mat4| pose.transform_point3(pivot + Vec3::Y * 10.0);
+        // Level ground: upright at the start, flat along +Z at the end.
+        let (start, done) = hinge_fall(Mat4::IDENTITY, pivot, 10.0, Vec3::Z, 0.0, |_, _| 2.0);
+        assert!(!done && top(start).distance(pivot + Vec3::Y * 10.0) < 1e-3);
+        let (end, done) = hinge_fall(Mat4::IDENTITY, pivot, 10.0, Vec3::Z, 10.0, |_, _| 2.0);
+        assert!(done && top(end).distance(pivot + Vec3::Z * 10.0) < 1e-2, "{:?}", top(end));
+        // Up a 1-in-2 bank the crown rests higher than the base, on the bank's own line.
+        let bank = |_x: f32, z: f32| 2.0 + (z + 15.0) * 0.5;
+        let (end, _) = hinge_fall(Mat4::IDENTITY, pivot, 10.0, Vec3::Z, 10.0, bank);
+        let crown = top(end);
+        assert!(crown.y > pivot.y + 3.0 && (crown - pivot).length() > 9.99, "{crown:?}");
+        // The pivot never moves and the fall takes longer for a taller tree.
+        assert!(end.transform_point3(pivot).distance(pivot) < 1e-3);
+        assert!(hinge_fall_seconds(20.0) > hinge_fall_seconds(8.0));
     }
 
     #[test]

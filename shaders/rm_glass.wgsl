@@ -280,7 +280,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // over the dial: at its peak twice an ivory wall's brightness, the TPZ "like the sun inside
         // the tank" that evening. Removed; the cover's dust still scatters (`dirt_colour`).
         spec += rm_ggx_specular(n, v, s.dir, rough, vec3(f0)) * s.e * ndl * vis;
-        spec += groove_glint(n, groove_t, v, s.dir, groove.coverage) * s.e * ndl * vis;
+        // A lamp's glint along the grooves at 30 %: the grooves' few stroke directions broke each
+        // lamp's reflection into a star (the owner: "star things ... on the optics").
+        spec += 0.3 * groove_glint(n, groove_t, v, s.dir, groove.coverage) * s.e * ndl * vis;
         dirt_light += s.e * ndl * vis / RM_PI;
     }
     dirt_light += rm_sky_hemisphere(n) * open_side;

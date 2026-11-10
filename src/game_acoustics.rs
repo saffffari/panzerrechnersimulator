@@ -21,6 +21,9 @@ use std::rc::Rc;
 /// gun, turret disc, gun, breech cover, gun lever).
 const MACHINERY_FRAMES: [usize; 5] = [2, 7, 8, 12, 13];
 const CACHE_CAPACITY: usize = 160;
+/// Live play: wall time one update may spend tracing, and the rays traced between clock reads.
+const LIVE_TRACE_BUDGET_S: f32 = 0.0015;
+const LIVE_TRACE_CHUNK_RAYS: u32 = 4;
 /// Room constant of the fighting compartment, m² [E]: from the traced cabin's T20 of 0.16–0.19 s
 /// (`tests::the_real_cabin_rings_and_an_open_cupola_lets_it_out`) with an estimated 10 m³ of air
 /// and 35 m² of surface: A = 0.161 V / T ≈ 9 m², R = A / (1 − A/S) ≈ 12 m².
@@ -71,9 +74,10 @@ impl CabinVoxels {
     /// copied on the caller's thread. The worker keeps exactly the triangles `build` gets back
     /// from `world_triangles` with identity frames: the non-degenerate ones (as `CabinFire`
     /// keeps them) whose bounds meet the ±8 m box. The occupancy grid does not depend on their
-    /// order. `None` when the traced rooms are off (`KESSEL_ACOUSTICS=0`) or no thread starts.
+    /// order. `None` when the traced rooms are off (the default; `KESSEL_ACOUSTICS=1`) or no thread starts.
     pub fn spawn(meshes: &[(usize, &crate::gltf_load::CpuMesh)]) -> Option<std::thread::JoinHandle<CabinVoxels>> {
-        if !acoustics_enabled() { return None; }
+        // The unit tests build the voxels whatever the switch says.
+        if !acoustics_enabled() && !cfg!(test) { return None; }
         let copies: Vec<(usize, Vec<[f32; 3]>, Vec<u32>)> = meshes.iter()
             .map(|(frame, mesh)| (*frame, mesh.vertices.iter().map(|v| v.pos).collect(), mesh.indices.clone()))
             .collect();
@@ -342,6 +346,9 @@ pub(super) struct WorldAcoustics {
     order: VecDeque<FieldKey>,
     queue: VecDeque<(FieldKey, Vec3, Vec3, Vec3)>,
     job: Option<(FieldKey, TraceJob)>,
+    /// Live play: finished traces whose binaural responses are being synthesised on a worker
+    /// thread (the same computation, off the simulation thread; 10-36 ms an update before).
+    pending_irs: Vec<(FieldKey, std::thread::JoinHandle<StereoIr>)>,
     pub traces_done: u32,
     pub rays_traced: u64,
     pub traced_rooms: u32,
@@ -538,7 +545,8 @@ impl Game {
             return (Some(Rc::clone(ir)), true);
         }
         let queued = self.acoustics.job.as_ref().is_some_and(|(k, _)| *k == key)
-            || self.acoustics.queue.iter().any(|(k, ..)| *k == key);
+            || self.acoustics.queue.iter().any(|(k, ..)| *k == key)
+            || self.acoustics.pending_irs.iter().any(|(k, _)| *k == key);
         if !queued && self.acoustics.queue.len() < 24 {
             self.acoustics.queue.push_back((key, virtual_source, listener, forward));
         }
@@ -553,14 +561,34 @@ impl Game {
         (stand_in, false)
     }
 
+    fn install_traced_ir(&mut self, key: FieldKey, ir: StereoIr) {
+        self.acoustics.cache.insert(key, Rc::new(ir));
+        self.acoustics.order.push_back(key);
+        self.acoustics.traces_done += 1;
+        while self.acoustics.order.len() > CACHE_CAPACITY {
+            if let Some(old) = self.acoustics.order.pop_front() { self.acoustics.cache.remove(&old); }
+        }
+    }
+
     /// Spend this update's ray budget on the queued traces; keep the listener's own field warm.
     pub(super) fn advance_acoustic_traces(&mut self) {
         let ear = self.ear_pos;
         if ear == Vec3::ZERO || !acoustics_enabled() { return; }
+        // Install the responses the synthesis workers have finished.
+        let mut k = 0;
+        while k < self.acoustics.pending_irs.len() {
+            if self.acoustics.pending_irs[k].1.is_finished() {
+                let (key, worker) = self.acoustics.pending_irs.swap_remove(k);
+                if let Ok(ir) = worker.join() { self.install_traced_ir(key, ir); }
+            } else { k += 1; }
+        }
         // The listener's own field (his hands, feet and voice) and, aboard, the four plates.
         let local = ear + self.ear_forward * 0.3 - Vec3::Y * 0.4;
-        let _ = self.acoustic_field_for(local);
+        { let _p = crate::sim_phase::Probe::new("acoustic_field_for_ear"); let _ = self.acoustic_field_for(local); }
         let (per_update, cabin_rays, outdoor_rays) = self.acoustic_ray_budget();
+        // A slow live frame is cut into several updates; the traces converge over frames, so only
+        // the first pays for rays (a later step would spend them on the same ear and sources).
+        if self.realtime_substep > 0 { return; }
         if self.acoustics.job.is_none() {
             if let Some((key, source, listener, forward)) = self.acoustics.queue.pop_front() {
                 let atmosphere = crate::sound_propagation::active_atmosphere();
@@ -597,20 +625,35 @@ impl Game {
             self.acoustics.install_voxels(voxels);
         }
         let done = {
-            let (scene, _models) = self.acoustic_scene(key.inside, ear);
+            let (scene, _models) = { let _p = crate::sim_phase::Probe::new("acoustic_scene_build"); self.acoustic_scene(key.inside, ear) };
+            let _trace_probe = crate::sim_phase::Probe::new("acoustic_trace_rays");
             let before = job.progress();
-            let done = job.advance(&scene, per_update);
+            // Live play caps the wall time one update spends here: the same rays, traced over
+            // more updates (convergence time only). Harness updates keep the fixed ray count.
+            let done = if self.fea.live {
+                let began = std::time::Instant::now();
+                let mut spent = 0;
+                loop {
+                    let chunk = LIVE_TRACE_CHUNK_RAYS.min(per_update - spent);
+                    let done = job.advance(&scene, chunk);
+                    spent += chunk;
+                    if done || spent >= per_update || began.elapsed().as_secs_f32() >= LIVE_TRACE_BUDGET_S { break done; }
+                }
+            } else {
+                job.advance(&scene, per_update)
+            };
             self.acoustics.rays_traced += u64::from(job.progress() - before);
             done
         };
         if done {
             let seed = key.cell[0] as u32 ^ (key.cell[1] as u32).rotate_left(11) ^ (key.cell[2] as u32).rotate_left(22);
-            let ir = Rc::new(StereoIr::synthesize(job.echogram(), seed));
-            self.acoustics.cache.insert(key, ir);
-            self.acoustics.order.push_back(key);
-            self.acoustics.traces_done += 1;
-            while self.acoustics.order.len() > CACHE_CAPACITY {
-                if let Some(old) = self.acoustics.order.pop_front() { self.acoustics.cache.remove(&old); }
+            if self.fea.live && self.acoustics.pending_irs.len() < 4 {
+                let gram = job.echogram().clone();
+                let worker = std::thread::spawn(move || StereoIr::synthesize(&gram, seed));
+                self.acoustics.pending_irs.push((key, worker));
+            } else {
+                let ir = StereoIr::synthesize(job.echogram(), seed);
+                self.install_traced_ir(key, ir);
             }
         } else {
             self.acoustics.job = Some((key, job));
@@ -1053,11 +1096,15 @@ impl Game {
 }
 
 
-/// `KESSEL_ACOUSTICS=0` turns the traced rooms off (no traces, every voice on the parametric tail
-/// it takes anyway once the convolution budget is spent): the A/B switch for their cost.
+/// The traced rooms are off unless `KESSEL_ACOUSTICS=1` (the owner, 9 November 2026: "Let's get
+/// rid of the ray traced audio"): no traces, every voice on the parametric tail it takes anyway
+/// once the convolution budget is spent. Head out of the cupola on the move, the traces cost
+/// 10 to 11 ms of every update (play record demo-20261109-212702). Distance, air absorption,
+/// occlusion by line of sight and the enclosure's loss are unchanged; what is lost is each
+/// place's own traced echo. Named in docs/PHYSICAL_TRUTH_AUDIT.md.
 fn acoustics_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("KESSEL_ACOUSTICS").as_deref() != Ok("0"))
+    *ON.get_or_init(|| std::env::var("KESSEL_ACOUSTICS").as_deref() == Ok("1"))
 }
 
 impl WorldAcoustics {

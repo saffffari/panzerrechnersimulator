@@ -75,6 +75,12 @@ const LOCAL_UTC_OFFSET_H: f64 = 3.0;
 static REVIEW_LAMP_GAIN_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3F80_0000);
 
 pub(super) fn review_lamp_gain() -> f32 {
+    // `KESSEL_LAMP_GAIN=x`: the same review factor from the environment (dynamic-range sheets);
+    // unset everywhere else.
+    static ENV: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    if let Some(gain) = *ENV.get_or_init(|| std::env::var("KESSEL_LAMP_GAIN").ok().and_then(|v| v.parse().ok()).filter(|g: &f32| g.is_finite() && *g >= 1.0)) {
+        return gain;
+    }
     f32::from_bits(REVIEW_LAMP_GAIN_BITS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
@@ -4411,7 +4417,7 @@ mod tests {
         }
         assert_eq!(smoke_setters, vec!["game_fea_range.rs".to_string()]);
         let game = std::fs::read_to_string("src/game.rs").unwrap();
-        assert!(game.contains("let practical_gain = power * game_fea_range::review_lamp_gain();"));
+        assert!(game.contains("let practical_gain = power * game_fea_range::review_lamp_gain() * rig::cabin_lights_setting();"));
         // The tissue's section (inside cells drawn at a camera cut) is set by the range alone.
         let needle = ["set_review", "_section(Some"].concat();
         let mut section_setters = Vec::new();

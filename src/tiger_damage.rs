@@ -124,13 +124,17 @@ impl Fault {
             // Times are tuning; the sources give procedures but no durations.
             Fault::RecoilLeak => inside(20.0),
             Fault::HydraulicFault => inside(3.0),
-            Fault::RingJammed => Some(FieldRepair { seconds: 12.0, outside: true, spare: None }),
+            // From inside since 9 November 2026 (the owner: "instead of the easy breaks outside we
+            // just move their repairs to interior so while protected then you stay safe"): the
+            // wedged fragment is knocked out of the ring gap from the basket, the ring bolts and
+            // bearing reached from below. A concession to play: both were outside jobs.
+            Fault::RingJammed => Some(FieldRepair { seconds: 12.0, outside: false, spare: None }),
             Fault::SightOutOfTrue => inside(25.0),
             Fault::MgBarrel => inside(6.0),
             Fault::RadioShock => inside(2.0),
             // The former workshop jobs: long, and each eats a carried spare.
             Fault::MountSheared => with(75.0, false, Spare::MountBolts),
-            Fault::RingWrecked => with(90.0, true, Spare::RingBolts),
+            Fault::RingWrecked => with(90.0, false, Spare::RingBolts),
             Fault::SightSmashed => with(40.0, false, Spare::Telescope),
             Fault::MgWrecked => with(30.0, false, Spare::AaMg),
             Fault::None | Fault::Spall => None,
@@ -374,15 +378,18 @@ pub fn effects(zone: Zone, strike: Strike, seed: u32) -> Vec<Effect> {
     let chance=|salt:u32,p:f32|chance(salt,p*work);
     match zone {
         Zone::RunningGear { side, track } => {
-            let wheels = match class { Rifle => 0.01, Light => 0.08, Medium => 0.14, Heavy => 0.25 };
+            // Halved with the track-break chances below on 9 November 2026 (the owner: "the tank
+            // needs to have more armor ... it needs to be tougher"): in his runs a T-34 at 100 to
+            // 300 m took the gun, the visor or a track with most hits it landed. Tuning, as before.
+            let wheels = match class { Rifle => 0.005, Light => 0.04, Medium => 0.07, Heavy => 0.15 };
             out.push(Effect::RunningGear(side, wheels*work));
             // Anti-tank rifles needed 4–5 hits on one pin, so they never break a track here;
             // a 45 mm hit at 30–200 m did. High explosive under the pannier wrecks the links.
             let breaks = match (class, track) {
                 (Rifle, _) => 0.0,
-                (Light, true) => 0.7, (Light, false) => 0.25,
-                (Medium, true) => 0.85, (Medium, false) => 0.4,
-                (Heavy, true) => 0.95, (Heavy, false) => 0.6,
+                (Light, true) => 0.35, (Light, false) => 0.1,
+                (Medium, true) => 0.45, (Medium, false) => 0.15,
+                (Heavy, true) => 0.75, (Heavy, false) => 0.4,
             } + if strike.high_explosive && class >= Medium { 0.1 } else { 0.0 };
             if chance(1, breaks) { out.push(Effect::BreakTrack(side)); }
         }
@@ -399,7 +406,7 @@ pub fn effects(zone: Zone, strike: Strike, seed: u32) -> Vec<Effect> {
         // Bow plate is not a spare-link hit. The current source set has no separately
         // identified hung-link assembly; do not remove inventory from an arbitrary plate strike.
         Zone::DriverVisor => {
-            if chance(5, if class == Rifle { 0.5 } else { 0.85 }) { out.push(Effect::DriverVisorJam); }
+            if chance(5, if class == Rifle { 0.05 } else { 0.3 }) { out.push(Effect::DriverVisorJam); }
         }
         Zone::BallMount => {
             let wrecked = class >= Light && chance(6, 0.6);
@@ -408,7 +415,7 @@ pub fn effects(zone: Zone, strike: Strike, seed: u32) -> Vec<Effect> {
         }
         Zone::Mantlet => {
             let (sheared,leak)=match class {
-                Rifle=>(0.0,0.0),Light=>(0.0,0.15),Medium=>(0.25,0.4),Heavy=>(0.6,0.3),
+                Rifle=>(0.0,0.0),Light=>(0.0,0.05),Medium=>(0.05,0.15),Heavy=>(0.2,0.25),
             };
             let r=roll(seed,8);
             if r<sheared*work {out.push(Effect::Fault(ModuleKind::MainGun,Fault::MountSheared));}
@@ -585,7 +592,7 @@ mod tests {
         let track = Zone::RunningGear { side: Side::Left, track: true };
         assert_eq!(share(track, 14.5, |e| matches!(e, Effect::BreakTrack(_))), 0.0);
         let broken = share(track, 45.0, |e| *e == Effect::BreakTrack(Side::Left));
-        assert!((0.62..0.78).contains(&broken), "{broken}");
+        assert!((0.28..0.42).contains(&broken), "{broken}");
         let cracked = share(Zone::Cupola { block: 2 }, 14.5, |e| matches!(e, Effect::VisionBlock { block: 2, holder: false }));
         assert!(cracked > 0.7, "{cracked}");
         assert_eq!(share(Zone::Cupola { block: 2 }, 14.5, |e| matches!(e, Effect::VisionBlock { holder: true, .. })), 0.0);
@@ -597,7 +604,7 @@ mod tests {
     fn a_76mm_mantlet_hit_can_shear_the_mount_or_start_a_leak_and_they_exclude_each_other() {
         let sheared = share(Zone::Mantlet, 76.2, |e| *e == Effect::Fault(ModuleKind::MainGun, Fault::MountSheared));
         let leaking = share(Zone::Mantlet, 76.2, |e| *e == Effect::Fault(ModuleKind::MainGun, Fault::RecoilLeak));
-        assert!((0.2..0.3).contains(&sheared) && (0.35..0.45).contains(&leaking), "{sheared} {leaking}");
+        assert!((0.03..0.08).contains(&sheared) && (0.11..0.19).contains(&leaking), "{sheared} {leaking}");
         for seed in 0..2000 {
             let gun = effects(Zone::Mantlet, strike(76.2), seed).into_iter()
                 .filter(|e| matches!(e, Effect::Fault(ModuleKind::MainGun, _))).count();
@@ -673,8 +680,11 @@ mod tests {
         let mut exterior = Exterior::default();
         assert!(exterior.take_spare(Spare::RingBolts) && !exterior.take_spare(Spare::RingBolts));
         assert_eq!(exterior.spares_left(Spare::MountBolts), 2);
-        assert!(Fault::RingJammed.field_repair().unwrap().outside);
-        assert!(Fault::RingWrecked.field_repair().unwrap().outside);
+        // Every field repair is done from inside the vehicle (the owner, 9 November 2026).
+        for fault in [Fault::RecoilLeak, Fault::HydraulicFault, Fault::RingJammed, Fault::SightOutOfTrue, Fault::MgBarrel,
+            Fault::RadioShock, Fault::MountSheared, Fault::RingWrecked, Fault::SightSmashed, Fault::MgWrecked] {
+            assert!(!fault.field_repair().unwrap().outside, "{fault:?}");
+        }
         assert!(Fault::SightOutOfTrue.functional(), "an untrue sight still shows a reticle");
         assert!(!Fault::RecoilLeak.functional());
     }

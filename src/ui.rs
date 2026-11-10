@@ -103,8 +103,8 @@ pub enum PlayMode {
 /// playtesting goes"), with the Editor and Graphics; `KESSEL_MENU_FULL=1` brings back every entry.
 /// No entry's code is removed; the hidden ones are only not listed.
 pub const MENU_FULL_ENV: &str = "KESSEL_MENU_FULL";
-const PLAYTEST_MENU: [MenuAction; 4] = [
-    MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Editor, MenuAction::Graphics,
+const PLAYTEST_MENU: [MenuAction; 5] = [
+    MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Crew, MenuAction::Editor, MenuAction::Graphics,
 ];
 const FULL_MENU: [MenuAction; 12] = [
     MenuAction::Bridge, MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
@@ -133,6 +133,10 @@ pub enum MenuAction {
     /// The spring bridge (`spring-bridge-v2`): take it from its defenders, then hold it against
     /// the counter-attacks, one human with the living AI crew.
     Bridge,
+    /// The crew for the missions above: crewed (the living AI crew) or solo (the player alone,
+    /// working every post). A setting row: Enter or left/right changes it (the owner,
+    /// 9 November 2026).
+    Crew,
     Singleplayer,
     Coop,
     Playtest,
@@ -151,6 +155,7 @@ impl MenuAction {
     pub fn label(self, full: bool) -> &'static str {
         match self {
             MenuAction::Bridge => "Bridge: Take and Hold",
+            MenuAction::Crew => "Crew",
             MenuAction::Singleplayer => "Singleplayer",
             MenuAction::Coop => "Co-op",
             MenuAction::Playtest => "Act One Playtest",
@@ -452,6 +457,8 @@ pub struct MenuModel {
     pub canyon_times: Option<(f32, f32)>,
     /// The full title menu (`KESSEL_MENU_FULL=1`) rather than the playtest menu.
     pub full: bool,
+    /// The crew row's setting: solo (the player alone aboard) rather than crewed.
+    pub one_man: bool,
 }
 
 impl Default for MenuModel {
@@ -467,11 +474,16 @@ impl Default for MenuModel {
             expedition_save_available: false,
             canyon_times: None,
             full: full_menu_requested(),
+            one_man: crate::game::one_man_requested(),
         }
     }
 }
 
 impl MenuModel {
+    /// The crew row as shown: its present setting.
+    pub fn crew_label(&self) -> &'static str {
+        if self.one_man { "Crew: Solo" } else { "Crew: Crewed" }
+    }
     pub fn title_rows(&self) -> Vec<MenuAction> {
         title_actions(self.full, crate::graphics::fixed_playtest_graphics())
     }
@@ -523,8 +535,10 @@ mod title_menu_tests {
 
     #[test]
     fn playtest_menu_lists_the_two_missions_the_editor_and_graphics() {
-        rows_click_to_their_actions(false, &[MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Editor, MenuAction::Graphics]);
+        rows_click_to_their_actions(false, &[MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Crew, MenuAction::Editor, MenuAction::Graphics]);
         let menu = MenuModel { full: false, ..MenuModel::default() };
+        assert_eq!(MenuModel { one_man: false, ..MenuModel::default() }.crew_label(), "Crew: Crewed");
+        assert_eq!(MenuModel { one_man: true, ..MenuModel::default() }.crew_label(), "Crew: Solo");
         for hidden in [MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest, MenuAction::LoadCheckpoint,
             MenuAction::Canyon, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition] {
             assert_eq!(menu.row_of(hidden), None, "{hidden:?} is hidden on the playtest menu");
@@ -665,7 +679,7 @@ mod pause_menu_tests {
                 MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition];
             if !fixed { expected.push(MenuAction::Graphics); }
             assert_eq!(title_actions(true, fixed), expected);
-            let mut playtest = vec![MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Editor];
+            let mut playtest = vec![MenuAction::Bridge, MenuAction::CanyonV2, MenuAction::Crew, MenuAction::Editor];
             if !fixed { playtest.push(MenuAction::Graphics); }
             assert_eq!(title_actions(false, fixed), playtest);
             for (row, action) in PauseAction::ALL.into_iter().enumerate() {
@@ -1706,7 +1720,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
     }
     let step = m.row_step();
     for (i, action) in m.title_rows().into_iter().enumerate() {
-        let label = action.label(m.full);
+        let label = if action == MenuAction::Crew { m.crew_label() } else { action.label(m.full) };
         let selected = i == m.selected;
         let text = if selected { format!(">  {label}  <") } else { label.to_owned() };
         let enabled = match action {
@@ -1749,7 +1763,11 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
             }
             None => "ONE TIGER / ADAPTIVE DEFENCE / PERMADEATH",
         },
+        Some(MenuAction::Crew) if m.one_man => "SOLO: YOU ALONE IN THE TIGER, WORKING EVERY POST    ENTER CHANGES",
+        Some(MenuAction::Crew) => "CREWED: GUNNER, LOADER, DRIVER AND RADIO OPERATOR WITH YOU    ENTER CHANGES",
+        Some(MenuAction::Bridge) if m.one_man => "SPRING BRIDGE / TAKE IT, THEN HOLD IT / YOU ALONE",
         Some(MenuAction::Bridge) => "SPRING BRIDGE / TAKE IT, THEN HOLD IT / YOU AND YOUR CREW",
+        Some(MenuAction::CanyonV2) if !m.full && m.one_man => "POPULATED GAEA CANYON / YOU ALONE / PERMADEATH",
         Some(MenuAction::CanyonV2) if !m.full => "POPULATED GAEA CANYON / YOU AND YOUR CREW / PERMADEATH",
         Some(MenuAction::CanyonV2) => "POPULATED GAEA CANYON / ADAPTIVE DEFENCE / PERMADEATH",
         Some(MenuAction::Platoon) => "CANYON V2 / THREE TIGERS / RADIO ORDERS (T) / PERMADEATH",

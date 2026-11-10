@@ -955,6 +955,24 @@ mod armor_calibration_tests;
 mod tests {
     use super::*;
     #[test]
+    fn the_sight_s_elevation_rungs_are_the_pzgr_39_s_own_hold_over() {
+        // shaders/blit.wgsl `STRICH_ELEVATION`: 500, 1,000, 1,500 and 2,000 m in Strich (1/6400 circle).
+        let source = include_str!("../shaders/blit.wgsl");
+        // The redrawn Strichbild compiles: the blit is built at start-up and a bad shader stops the game.
+        let module = wgpu::naga::front::wgsl::parse_str(source).expect("blit.wgsl parses");
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(), wgpu::naga::valid::Capabilities::all())
+            .validate(&module).expect("blit.wgsl validates");
+        let line = source.lines().find(|l| l.starts_with("const STRICH_ELEVATION")).expect("the rungs' constant");
+        let values: Vec<f32> = line.rsplit('(').next().unwrap().trim_end_matches(");").split(',')
+            .map(|v| v.trim().parse().expect("a number")).collect();
+        assert_eq!(values.len(), 4);
+        for (value, range) in values.iter().zip([500.0f32, 1000.0, 1500.0, 2000.0]) {
+            let strich = (PZGR_39.drop_at(range) / range).atan() / (std::f32::consts::TAU / 6400.0);
+            assert!((value - strich).abs() < 0.05, "{range} m: the shader has {value}, the round needs {strich}");
+        }
+    }
+
+    #[test]
     fn crosswind_matches_analytic_drift_and_keeps_calm_calibration() {
         let shell=&PZGR_39;
         let (calm_drift,calm_velocity)=shell.crosswind_step(0.0,1.0,Vec3::ZERO,Vec3::ZERO,Vec3::Z);

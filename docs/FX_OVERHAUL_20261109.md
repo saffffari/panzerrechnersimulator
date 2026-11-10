@@ -106,6 +106,73 @@ unchanged.
 The near wreck is the dearest case: its column fills most of the frame. It costs 2.1 ms at
 17 m, under 1 ms at 60 m and beyond, nothing measurable past 300 m.
 
+## Second round (9 November, the owner's notes)
+
+- **Flames stand on the burning surface itself.** Every burning surface patch of the wreck (about
+  0.22 m apart, up to 40 per fire) is a flame root with its own surface normal: the flames rise off
+  a sloped plate, the deck, a hull side or a corner as the surface lies, not from a flat disc. A
+  root is kept by its patch's identity once it has caught and its strength eases toward the
+  surface's own over about a second, so the fire no longer jumps between refreshes. The flame's
+  box gets its own fine march (16 steps), which removed the speckle.
+- **Colour.** A sooty flame's gradient: yellow (1,650-1,750 K) only in the hot core low in the
+  body, orange through it (1,250-1,450 K), red-orange at the ragged edges and tips. The colour is an
+  authored display ramp (dull red, red-orange, orange, deep orange-yellow, yellow); the three-band
+  Planck chroma it replaces put so little in green that the display's tone curve made the flame
+  pinkish. Brightness follows the Planck photopic weight compressed to its square root (the full
+  weight spans 200x and washed the core white). 1,500 K is 0.45 renderer units (about 2.4e4 cd/m^2).
+  Explosions: a fireball peaks near 1,550 K at the core and shows half its emission (soot rolling
+  over it); a shell burst's flash peaks near 1,650 K for an instant.
+- **Embers** no longer form a funnel: most die low and soon (life skewed short), each wanders on its
+  own random-walk path, at most 140 per fire, none past 80 m, dimmer. The pale specks across the sky
+  in the darker frames are falling snow made visible by the exposure (`KESSEL_RM_SKIP=4` removes
+  them), not embers.
+- **The ammunition flash.** The game's blast light for a whole-load cook-off was 20,000-57,000
+  renderer units (about 1-3e9 cd) held for 0.85 s. With the new effects it is capped at 1,500 units
+  (about 8e7 cd: a burning-propellant fireball of some 400 m^2 at about 2e5 cd/m^2) and falls as
+  f^5 over its life.
+- **A gentler eye, switchable: `KESSEL_EYE=gentle`.** Outdoors the eye follows a slow (8 s) log
+  average of the field and only a third of each change about it, within 0.5 log units (about 1.7
+  stops) either way; a flash leaves a quarter of its afterimage. The default eye is unchanged.
+- **The blast's pressure front** is now drawn on the raymarch backend (it was never drawn there): the
+  snow it lifts in a band just behind it as it sweeps outward at the speed of sound, thickest where
+  the overpressure was highest, and a faint condensation shell while it is above about 8 kPa. The
+  front's refraction is still not drawn on this backend. At 319 m/s it crosses 5 m a frame, so it
+  shows for a few frames only.
+- **Strikes on armour.** Every cannon strike: a flash and puff volume at the struck point, grey off
+  the plate; a perforation's darker, the compartment venting through the hole for seven seconds.
+  Drawn at any range, so the gunner can read a hit at 600-900 m. A round stopped by the plate no
+  longer draws as a perforation (smoke venting from an unholed plate and puffs inside the hull);
+  inside the struck hull the blow shakes dust off the plate's inner face. A knocked-out T-34 that is
+  not burning smoulders: a thin dark trail for five minutes.
+- **Machine guns on armour.** Each hit keeps its spark spray, pock mark and recorded strike; added: a
+  ricochet whine off glancing hits (HT-07, pitched up and quieter) and a burst's hail (HT-02, at
+  most once per 1.6 s per vehicle), each varied per hit in pitch and level. A machine gun's
+  propellant smoke no longer draws as a metres-long white stream (its millimetre grains were merged
+  into 8-45 cm smoke cells).
+- **Cigarette.** Its smoke and ash merge into centimetre cells with no coverage floor (each wisp
+  grain had become a smoke ball across the view), the sidestream is 40 % and the exhale 45 % of
+  before, and the coal glows dull red at rest and flares orange on the draw.
+- **Column size options** (`KESSEL_FX_COLUMN=H,W,D`): see below.
+- **Hot fragments** after a penetration: the struck part's perforation is solved once per contact
+  instead of twice (each a component walk with allocations). The 3 s stall of the 9 November run
+  is mostly the synchronous fragment-damage solve and the plate-solve join, not the effects.
+
+### How big a burning T-34's smoke column really is
+
+A burning tank releases very roughly 3-10 MW. By Briggs' plume-rise formulas (buoyancy flux about
+30 m^4/s^3 for 3.5 MW convected) in the Canyon's 5.5 m/s wind the plume rises about 55 m before it
+levels off and trails downwind:
+
+- **At 10 s:** the starting plume's head is at about 30-40 m.
+- **At 1 min:** it reaches its full rise of about 55 m, with a trail a few hundred metres downwind.
+- **At 10 min:** with a third of the heat it reaches about 40 m.
+
+In still air it would stand two to three times higher. The present column (about 100 m) is
+therefore about twice a real one in that wind. The pick sheets show the same wreck three ways:
+`fx-overhaul-20261109-fxcolumn-options-three-tiger-view.jpg`, `...-options-wreck-wide.jpg` and
+`...-options-wreck-column.jpg` (A: current, about 100 m; B: about 55 m, width 0.8; C: about 40 m,
+width 0.6, density 0.7).
+
 ## Captures (`/home/alex/panzer/captures/`)
 
 Each scene has 5120x2880 stills and 5120x2880 30 fps clips per variant
@@ -117,6 +184,15 @@ labelled with the measured cost (`...-<scene>-old-left-new-right-<shot>.jpg/.mp4
 - `impact`: `t0.05s`, `t0.3s`, `t1s`, `t3s`, clip `strikes`
 - `fog`: `wreck450m`, `wreck450m-binocular`, `cookoff-t0.4s`, `cookoff-t3s`, `cookoff-t10s`, clip `far`
 - `three`: `tiger-view`, clip `pan`
+- `shock` (new only): `he40m-f1..f5`, `cookoff150m-f3..f25`, clips `he40m`, `cookoff150m`
+- `sight` (old and new; observer camera with the TZF's field on the line of fire, real Pzgr. 39
+  rounds at 300, 600 and 900 m): `<range>m-hit`, `-hit+0.5s`, `-hit+3s`, `-hit+8s`, `-hit+15s`, clips `<range>m`
+- `mg` (old and new): `onto-t34-sight`, `onto-t34-near`, `onto-tiger` at frames 20 and 40, clips of each
+- cook-off with the gentle eye: `fx-overhaul-20261109-fxlab-cookoff-new-gentle-eye-*`; the
+  exposure set old, new and new-gentle-eye: `fx-overhaul-20261109-fxeye-*` and `-fxeye2-*`
+- column sizes: `fx-overhaul-20261109-fxcolumn-options-*.jpg`
+- cigarette, the loader smoking at his post: `fx-overhaul-20261109-fxcig-old-left-new-right-loader_cig_*.jpg`
+  (first fix) and `fx-overhaul-20261109-fxcig-new2-*` (the flare halved, a little more wisp)
 
 Receipts: `fx-overhaul-20261109-fxlab-<scene>-<old|new>.json`.
 
@@ -139,6 +215,10 @@ Receipts: `fx-overhaul-20261109-fxlab-<scene>-<old|new>.json`.
    against 26 renderer units at full strength): the flame's own radiance times its area.
 7. **The cupola's relayed vision blocks** (raster relays) show no wreck smoke column now; they drew
    the three old smoke supports. The gunner's sight and every raymarched view draw the new volumes.
+
+Note on the `mg` scene's `onto-tiger` clip: the dense white plume crossing it is the Tiger's own
+cold-engine exhaust (`exhaust_plume.rs`: a cold Maybach at idle in winter, thinning over its
+420 s warm-up), not the machine guns; the camera stands behind the Tiger's rear plate.
 
 ## Follow-ups
 

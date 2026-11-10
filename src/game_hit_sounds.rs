@@ -30,13 +30,21 @@ pub(super) fn own_hull_hit_ear(mut ear: crate::sound_propagation::EarLevel, leve
 }
 
 impl Game {
-    /// With KESSEL_SFX_GENERATED=1 the generated take of the family's row (HT-09 penetration,
-    /// HT-06 stopped; the interior `_w` take for a strike heard inside) replaces the recording,
-    /// at the same calibrated emission with no filter shift.
-    fn generated_hit_take(&mut self, voice: &mut crate::audio::HitVoice, family: HitFamily, seed: u32, inside: bool) {
-        let Some(row) = crate::sfx_rows::hit_row(matches!(family, HitFamily::Penetration)) else { return };
-        let mut files = crate::sfx_rows::takes(row.id, inside);
-        if files.is_empty() { files = crate::sfx_rows::takes(row.id, false); }
+    /// With KESSEL_SFX_GENERATED=1 the generated take of the impact's row by calibre band and
+    /// outcome (`sfx_rows::generated_hit_id`; without an impact, the family's HT-09 or HT-06; the
+    /// interior `_w` take for a strike heard inside) replaces the recording, at the same
+    /// calibrated emission with no filter shift.
+    fn generated_hit_take(&mut self, voice: &mut crate::audio::HitVoice, family: HitFamily,
+        event: Option<&crate::ballistics::ImpactEvent>, seed: u32, inside: bool)
+    {
+        if !crate::sfx_rows::generated_switch() { return; }
+        let penetration = matches!(family, HitFamily::Penetration);
+        let mut files = Vec::new();
+        for id in [crate::sfx_rows::generated_hit_id(penetration, event), crate::sfx_rows::generated_hit_id(penetration, None)] {
+            files = crate::sfx_rows::takes(id, inside);
+            if files.is_empty() { files = crate::sfx_rows::takes(id, false); }
+            if !files.is_empty() { break; }
+        }
         if files.is_empty() { return; }
         if let Some(mono) = self.generated_mono(&files[seed as usize % files.len()]) {
             voice.mono = mono;
@@ -48,10 +56,10 @@ impl Game {
     /// Schedule a tank hit heard in the world with its recording at `sfx`'s emission (shifted by
     /// the voice's filter loss). False if the recordings are not installed.
     pub(super) fn schedule_hit_recording(&mut self, family: HitFamily, sfx: crate::audio::Sfx,
-        src: Vec3, seed: u32, path: &'static str) -> bool
+        src: Vec3, seed: u32, path: &'static str, event: Option<&crate::ballistics::ImpactEvent>) -> bool
     {
         let Some(mut voice) = self.audio.as_ref().and_then(|a| a.hit_voice(family, seed)) else { return false };
-        self.generated_hit_take(&mut voice, family, seed, false);
+        self.generated_hit_take(&mut voice, family, event, seed, false);
         log_hit_voice(path, family, &voice, src.distance(self.threat_center()));
         let emission = sound_emission_for(sfx).shifted(voice.level_shift_db);
         let stereo = voice.stereo();
@@ -71,7 +79,7 @@ impl Game {
         let Some(mut voice) = self.audio.as_ref().and_then(|a| a.hit_voice(family, seed)) else { return false };
         let inside = matches!(self.listener_enclosure(), crate::sound_propagation::Enclosure::Buttoned
             | crate::sound_propagation::Enclosure::HatchOpen);
-        self.generated_hit_take(&mut voice, family, seed, inside);
+        self.generated_hit_take(&mut voice, family, Some(event), seed, inside);
         log_hit_voice("own_hull", family, &voice, station_distance);
         let enclosure = self.listener_enclosure();
         let ear = own_hull_hit_ear(

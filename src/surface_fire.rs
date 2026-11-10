@@ -802,6 +802,29 @@ impl CabinFire {
     pub fn sweep(&self, from: Vec3, to: Vec3, models: &[Mat4; FRAMES]) -> Option<Contact> {
         self.sweep_inverse(from, to, &models.map(|m| m.inverse()))
     }
+    /// One world box round every enabled source frame at `models` (`None`: no source surface).
+    /// A segment whose own box misses it meets no source triangle.
+    pub fn world_bounds(&self, models: &[Mat4; FRAMES]) -> Option<(Vec3, Vec3)> {
+        let mut bounds: Option<(Vec3, Vec3)> = None;
+        for (frame, grid) in self.grids.iter().enumerate() {
+            if !self.frame_enabled[frame] || grid.triangles.is_empty() { continue; }
+            let Some((lo, hi)) = grid.bounds else { continue; };
+            for corner in 0..8 {
+                let p = models[frame].transform_point3(Vec3::new(
+                    if corner & 1 == 0 { lo.x } else { hi.x }, if corner & 2 == 0 { lo.y } else { hi.y },
+                    if corner & 4 == 0 { lo.z } else { hi.z }));
+                bounds = Some(bounds.map_or((p, p), |(a, b)| (a.min(p), b.max(p))));
+            }
+        }
+        // Outward padding for the rounding of the corner transforms.
+        bounds.map(|(lo, hi)| { let pad = Vec3::splat(1.0e-3) + 8.0 * f32::EPSILON * lo.abs().max(hi.abs()); (lo - pad, hi + pad) })
+    }
+    /// [`Self::sweep`] with the frames' inverses already taken (`models.map(|m| m.inverse())`),
+    /// for a caller that sweeps many segments against one pose: `sweep` inverts all `FRAMES`
+    /// models for every segment.
+    pub fn sweep_posed(&self, from: Vec3, to: Vec3, inverse: &[Mat4; FRAMES]) -> Option<Contact> {
+        self.sweep_inverse(from, to, inverse)
+    }
     /// Manipulation reach may exclude only the object already held by that manipulator.
     /// Every other source still occludes; the shared projectile/fire frame mask is untouched.
     pub fn sweep_except_frame(&self,from:Vec3,to:Vec3,models:&[Mat4;FRAMES],excluded:Option<usize>)->Option<Contact> {

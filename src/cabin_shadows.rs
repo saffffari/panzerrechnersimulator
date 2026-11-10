@@ -761,7 +761,7 @@ impl CabinShadows {
                         pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
                         pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
-                        work.shadow_instanced_draws += 1;
+                        work.shadow_instanced_draws += 1; crate::renderer::count_shadow_draws(2, 1);
                     }
                 }
                 // Always restore static depth on a dynamic change, including when the last
@@ -808,7 +808,7 @@ impl CabinShadows {
                     pass.set_push_constants(wgpu::ShaderStages::VERTEX,0,bytemuck::bytes_of(&push));
                     pass.set_vertex_buffer(0,p.vbuf.slice(..));pass.set_vertex_buffer(1,b.inst_buf.slice(b.active_instance_bytes()));
                     pass.set_index_buffer(p.ibuf.slice(..),wgpu::IndexFormat::Uint32);
-                    for range in shadow_instance_ranges(b,p,matrix,SIDE){pass.draw_indexed(0..p.index_count,0,range);work.shadow_instanced_draws+=1;}
+                    for range in shadow_instance_ranges(b,p,matrix,SIDE){pass.draw_indexed(0..p.index_count,0,range);work.shadow_instanced_draws+=1;crate::renderer::count_shadow_draws(3, 1);}
                 }
             }
         }

@@ -21,12 +21,12 @@ pub const MAX_WRECK_PLUMES: usize = 12;
 /// Embers for all fires together, nearest fire first.
 pub const MAX_EMBERS: usize = 4096;
 /// Beyond this a fire throws no embers (one 4 mm ember is far below a pixel and too faint).
-pub const EMBER_REACH_M: f32 = 140.0;
+pub const EMBER_REACH_M: f32 = 80.0;
 
-/// The flame's soot radiance at 1500 K, renderer units (about 7e4 cd/m^2: a luminous hydrocarbon
+/// The flame's soot radiance at 1500 K, renderer units (about 2.4e4 cd/m^2: a luminous hydrocarbon
 /// pool flame). Every flame and fireball temperature scales from it by the Planck spectrum's
 /// photopic weight.
-pub const FLAME_RADIANCE_1500K: f32 = 1.4;
+pub const FLAME_RADIANCE_1500K: f32 = 0.45;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -73,12 +73,21 @@ fn steps_for(size: f32, distance: f32, focal_px: f32) -> f32 {
 }
 
 /// One burning thing as the game sees it.
+/// One place on a burning surface the flames stand on: a burning surface patch's point and
+/// outward normal (world), its footprint radius and how strongly it burns (0..1).
 #[derive(Clone, Copy, Debug)]
+pub struct Root { pub pos: Vec3, pub normal: Vec3, pub radius: f32, pub strength: f32 }
+
+/// Roots drawn per fire, and over all fires (the shader loops over a fire's roots per sample).
+pub const MAX_ROOTS_PER_FIRE: usize = 40;
+pub const MAX_ROOTS: usize = 384;
+
+#[derive(Clone, Debug)]
 pub struct Fire {
     /// Where the flames stand (the deck, a breach), world.
     pub base: Vec3,
-    /// Up to three flame roots relative to `base` (offset, radius m; radius 0 = none).
-    pub roots: [(Vec3, f32); 3],
+    /// The burning surface the flames stand on (world), at most `MAX_ROOTS_PER_FIRE`.
+    pub roots: Vec<Root>,
     /// 0..1.35, the game's fire strength (fuel and damage); 0 = smouldering only.
     pub strength: f32,
     /// Seconds since ignition.
@@ -105,36 +114,67 @@ pub fn smooth(a: f32, b: f32, x: f32) -> f32 {
 }
 
 /// The column over a burning wreck.
-pub fn wreck_plume(fire: &Fire, wind: Vec2, eye: Vec3, focal_px: f32) -> Plume {
+/// `KESSEL_FX_COLUMN=H,W,D`: the wreck columns' height, width and smoke density times these (a
+/// review of the column's size; default 1,1,1).
+fn column_scale() -> [f32; 3] {
+    static SCALE: std::sync::OnceLock<[f32; 3]> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let v: Vec<f32> = std::env::var("KESSEL_FX_COLUMN").ok().map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+        if v.len() == 3 && v.iter().all(|x| x.is_finite() && *x > 0.0) { [v[0], v[1], v[2]] } else { [1.0; 3] }
+    })
+}
+
+pub fn wreck_plume(fire: &Fire, wind: Vec2, eye: Vec3, focal_px: f32, roots_out: &mut Vec<[f32; 4]>) -> Plume {
     let (flame, soot, albedo) = burn_phase(fire.strength, fire.age);
+    let [col_h, col_w, col_d] = column_scale();
+    let soot = soot * col_d;
     // A buoyant plume rises tens of metres before it bends over and spreads in the wind; a big
     // fuel fire's column stands 60-120 m (authored to the fire's strength).
-    let height = 35.0 + 65.0 * fire.strength.clamp(0.0, 1.35) * (0.6 + 0.4 * smooth(0.0, 30.0, fire.age));
+    let height = (35.0 + 65.0 * fire.strength.clamp(0.0, 1.35) * (0.6 + 0.4 * smooth(0.0, 30.0, fire.age))) * col_h;
     let rise_mps = 4.0 + 3.0 * fire.strength;
     let bend = wind * (height / rise_mps) * 0.7;
-    let base_r = 1.1 + 0.4 * fire.strength;
-    let top_r = 0.16 * height + 2.0;
+    let base_r = (1.1 + 0.4 * fire.strength) * col_w;
+    let top_r = (0.16 * height + 2.0) * col_w;
     let flame_h = (1.2 + 3.2 * flame).max(0.0);
     let mut p = Plume::default();
     p.a = [fire.base.x, fire.base.y, fire.base.z, KIND_WRECK];
     p.b = [bend.x, height, bend.y, base_r];
     p.c = [flame, 2.4 * soot, fire.age, (fire.seed % 100_000) as f32];
     p.d = [flame_h, top_r, albedo, 0.0];
-    for (k, (offset, radius)) in fire.roots.iter().enumerate() {
-        let lane = [offset.x, offset.y, offset.z, radius * (0.6 + 0.4 * flame.min(1.0))];
-        match k { 0 => p.r0 = lane, 1 => p.r1 = lane, _ => p.r2 = lane }
+    // The roots go to the shared root list; the plume names its slice of it.
+    let start = roots_out.len() / 2;
+    let mut root_lo = fire.base;
+    let mut root_hi = fire.base;
+    for root in fire.roots.iter().take(MAX_ROOTS_PER_FIRE) {
+        if roots_out.len() / 2 >= MAX_ROOTS { break; }
+        roots_out.push([root.pos.x, root.pos.y, root.pos.z, root.radius]);
+        roots_out.push([root.normal.x, root.normal.y, root.normal.z, root.strength]);
+        root_lo = root_lo.min(root.pos);
+        root_hi = root_hi.max(root.pos);
     }
+    p.r0 = [start as f32, (roots_out.len() / 2 - start) as f32, root_lo.y - 0.3, root_hi.y + flame_h * 1.4 + 0.5];
+    // The flames' own box (the shader marches it finely): the roots, their footprints, licks and lean.
+    let lean = Vec3::new(bend.x, 0.0, bend.y) / height.max(1.0) * flame_h * 0.4;
+    let flame_lo = root_lo - Vec3::new(1.2, 0.4, 1.2) + lean.min(Vec3::ZERO);
+    let flame_hi = root_hi + Vec3::new(1.2, flame_h * 1.4 + 0.5, 1.2) + lean.max(Vec3::ZERO);
+    p.r1 = [flame_lo.x, flame_lo.y, flame_lo.z, 0.0];
+    p.r2 = [flame_hi.x, flame_hi.y, flame_hi.z, 0.0];
     let top = fire.base + Vec3::new(bend.x, height, bend.y);
     let reach = Vec3::new(top_r, 0.0, top_r) * 1.1;
-    let lo = fire.base.min(top) - reach - Vec3::new(base_r, 0.5, base_r);
-    let hi = fire.base.max(top) + reach + Vec3::new(base_r, 0.0, base_r);
+    let lo = fire.base.min(top).min(root_lo - Vec3::splat(1.5)) - reach - Vec3::new(base_r, 0.5, base_r);
+    let hi = fire.base.max(top).max(root_hi + Vec3::new(1.5, flame_h * 1.4, 1.5)) + reach + Vec3::new(base_r, 0.0, base_r);
     p.set_bounds(lo, hi);
     // The flame's light on its own smoke: its radiance (about 0.55 of the 1500 K value over the
     // body) over its projected area.
-    let area: f32 = fire.roots.iter().map(|(_, r)| 2.0 * r * flame_h * 0.55).sum();
+    let area = root_area(fire, flame_h).min(8.0);
     p.e[3] = FLAME_RADIANCE_1500K * 0.55 * area * flame.min(1.0).max(0.0);
     p.d[3] = steps_for(height.max(top_r * 2.0), p.distance(eye), focal_px);
     p
+}
+
+/// The flames' projected area: each root's footprint width by its flame's height, about half filled.
+fn root_area(fire: &Fire, flame_h: f32) -> f32 {
+    fire.roots.iter().map(|r| 2.0 * r.radius * flame_h * (0.35 + 0.65 * r.strength) * 0.5).sum()
 }
 
 /// The flame's radiant intensity and colour for the scene light (renderer units), and where it
@@ -143,11 +183,14 @@ pub fn flame_light(fire: &Fire) -> Option<(Vec3, f32, [f32; 3], f32)> {
     let (flame, ..) = burn_phase(fire.strength, fire.age);
     if flame <= 0.02 { return None; }
     let flame_h = 1.2 + 3.2 * flame;
-    let area: f32 = fire.roots.iter().map(|(_, r)| 2.0 * r * (0.6 + 0.4 * flame.min(1.0)) * flame_h * 0.55).sum();
+    let area = root_area(fire, flame_h).min(8.0);
     let intensity = FLAME_RADIANCE_1500K * 0.55 * area * flame.min(1.0);
-    let colour = crate::incandescence::planck_chroma(1350.0);
+    let colour = flame_colour(1350.0);
     let peak = colour.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
-    Some((fire.base + Vec3::Y * (flame_h * 0.55), intensity, colour.map(|c| c / peak), flame_h * 0.6))
+    // The light stands over the burning surface's strength-weighted middle.
+    let weight: f32 = fire.roots.iter().map(|r| r.strength).sum();
+    let centre = if weight > 1e-3 { fire.roots.iter().map(|r| r.pos * r.strength).sum::<Vec3>() / weight } else { fire.base };
+    Some((centre + Vec3::Y * (flame_h * 0.55), intensity, colour.map(|c| c / peak), flame_h * 0.6))
 }
 
 /// A detonation's fireball and its smoke: `scale` its size against an 88 mm burst's (a cook-off's
@@ -173,6 +216,27 @@ pub fn fireball(origin: Vec3, scale: f32, age: f32, wind: Vec2, seed: u32, stem:
     Some(p)
 }
 
+/// A tank round striking armour: the white-orange flash of the steel and the round's work, a
+/// metre or so across for a few tens of milliseconds, then the puff it throws off the plate (paint,
+/// scale and dust, grey; a perforation's darker and longer, the compartment venting through the
+/// hole). `strength` about 1 for a 76-88 mm round. Readable through a sight at combat ranges.
+pub fn strike_flash(origin: Vec3, normal: Vec3, strength: f32, perforated: bool, age: f32, wind: Vec2, seed: u32, eye: Vec3, focal_px: f32) -> Option<Plume> {
+    let life = if perforated { 7.0 } else { 3.0 };
+    if age > life || age < 0.0 { return None; }
+    let rmax = (0.75 * strength).clamp(0.4, 1.4);
+    let o = origin + normal * (rmax * 0.5);
+    let mut p = Plume::default();
+    p.a = [o.x, o.y, o.z, KIND_FIREBALL];
+    p.b = [wind.x, 0.0, wind.y, rmax];
+    p.c = [1.4, if perforated { 3.0 } else { 1.6 }, age, (seed % 100_000) as f32];
+    p.d = [life, 0.0, if perforated { 0.14 } else { 0.42 }, 0.0];
+    let r = Vec3::splat(rmax * (2.0 + 0.4 * age) + 1.0);
+    let rise = Vec3::new(wind.x * age * 0.25, age.min(12.0) * (1.8 + 0.12 * rmax) + rmax, wind.y * age * 0.25);
+    p.set_bounds(o.min(o + rise) - r, o.max(o + rise) + r);
+    p.d[3] = steps_for(2.0 * r.x, p.distance(eye), focal_px);
+    Some(p)
+}
+
 /// A shell's burst on the ground: `radius` the thrown cloud's (about 2.5 m for 76-88 mm HE),
 /// `snow` the share of snow in what is thrown.
 pub fn burst(origin: Vec3, radius: f32, snow: f32, age: f32, wind: Vec2, seed: u32, eye: Vec3, focal_px: f32) -> Option<Plume> {
@@ -195,6 +259,28 @@ pub fn burst(origin: Vec3, radius: f32, snow: f32, age: f32, wind: Vec2, seed: u
     Some(p)
 }
 
+pub const KIND_SHOCK: f32 = 3.0;
+
+/// A blast's pressure front at `radius` (moving at the speed of sound): the snow it lifts off the
+/// ground in a thin band just behind it, and while the overpressure is high (tens of kPa, within
+/// some metres of a large charge) a brief condensation shell in the cold humid air. The refraction
+/// of the front itself is not drawn on this backend (named in the ledger). `ground_y` is the ground
+/// under the origin.
+pub fn shock(origin: Vec3, ground_y: f32, radius: f32, max_radius: f32, tnt_kg: f32, seed: u32, eye: Vec3, focal_px: f32) -> Option<Plume> {
+    if !(radius > 0.2 && radius < max_radius) || tnt_kg <= 0.0 { return None; }
+    let kpa = crate::pressure_front::overpressure_kpa(tnt_kg, radius);
+    if kpa < 1.0 { return None; }
+    let mut p = Plume::default();
+    p.a = [origin.x, ground_y, origin.z, KIND_SHOCK];
+    p.b = [0.0, origin.y - ground_y, 0.0, radius];
+    p.c = [kpa, 0.0, 0.0, (seed % 100_000) as f32];
+    p.d = [max_radius, 0.0, 0.85, 0.0];
+    let r = radius + 1.5;
+    p.set_bounds(Vec3::new(origin.x - r, ground_y - 0.5, origin.z - r), Vec3::new(origin.x + r, origin.y + r, origin.z + r));
+    p.d[3] = steps_for(2.0 * r, p.distance(eye), focal_px).max(16.0);
+    Some(p)
+}
+
 /// One ember: position and packed radiance (colour at its temperature, intensity 0..2).
 #[derive(Clone, Copy, Debug)]
 pub struct Ember { pub pos: Vec3, pub colour: [f32; 3], pub intensity: f32 }
@@ -212,29 +298,41 @@ pub fn embers(fire: &Fire, wind: Vec2, time: f32, count: usize, out: &mut Vec<Em
     let (flame, ..) = burn_phase(fire.strength, fire.age);
     if flame <= 0.05 { return; }
     let flame_h = 1.2 + 3.2 * flame;
-    let roots: Vec<_> = fire.roots.iter().filter(|(_, r)| *r > 0.0).collect();
+    let roots: Vec<_> = fire.roots.iter().filter(|r| r.strength > 0.05).collect();
     if roots.is_empty() { return; }
     for i in 0..count {
         let id = (i as u32).wrapping_mul(0x9e37_79b9) ^ fire.seed;
-        let life = 2.0 + 3.0 * hash01(id ^ 0x51);
+        // Most embers burn out low and soon; a few ride the plume high (life skewed short).
+        let life = 0.7 + 3.8 * hash01(id ^ 0x51).powf(2.5);
         let clock = time / life + hash01(id ^ 0x77);
         let generation = clock.floor() as u32;
         let age_t = clock.fract();
         let age = age_t * life;
         let spawn = id ^ generation.wrapping_mul(0x85eb_ca6b);
-        let (offset, radius) = roots[(spawn as usize) % roots.len()];
+        let root = roots[(spawn as usize) % roots.len()];
+        let (offset, radius) = (root.pos - fire.base + root.normal * 0.1, root.radius * 1.5);
         let a = hash01(spawn ^ 0x13) * std::f32::consts::TAU;
-        let r = hash01(spawn ^ 0x29).sqrt() * radius * 1.6;
-        // Lofted in the plume (2.5-5 m/s, slowing as it leaves the hot core), swirling.
-        let rise = (2.5 + 2.5 * hash01(spawn ^ 0x3d)) * age * (1.0 - 0.25 * age_t) + flame_h * 0.3;
-        let wobble = hash01(spawn ^ 0x61) * 6.0;
-        let swirl = Vec3::new((age * 2.3 + a + wobble).sin(), 0.0, (age * 1.9 + a * 1.7).cos()) * (0.6 + 2.2 * age_t);
-        let drift = Vec3::new(wind.x, 0.0, wind.y) * age * (0.6 + 0.4 * hash01(spawn ^ 0x41));
-        let pos = fire.base + *offset + Vec3::new(a.cos() * r, rise, a.sin() * r) + swirl + drift;
-        let kelvin = 1300.0 - 500.0 * age_t;
-        let chroma = crate::incandescence::planck_chroma(kelvin);
-        let fade = (1.0 - age_t).powf(1.5) * smooth(0.0, 0.08, age_t);
-        out.push(Ember { pos, colour: chroma.map(|c| c.min(1.0)), intensity: 1.2 * fade * (0.4 + 0.6 * hash01(spawn ^ 0x55)) });
+        let r = hash01(spawn ^ 0x29).sqrt() * radius;
+        // Lofted at its own speed (1.5-5 m/s), slowing as it leaves the hot core.
+        let rise = (1.5 + 3.5 * hash01(spawn ^ 0x3d)) * age * (1.0 - 0.3 * age_t) + flame_h * 0.2;
+        // Its own turbulent wander: two incommensurate sways per axis at random rates and phases,
+        // growing as the square root of its age (a random walk), so no two share a path and the
+        // cloud has no envelope.
+        let sway = |salt: u32| {
+            let f1 = 0.7 + 2.5 * hash01(spawn ^ salt);
+            let f2 = 1.9 + 3.1 * hash01(spawn ^ salt.wrapping_mul(3));
+            let p1 = hash01(spawn ^ salt.wrapping_mul(5)) * 6.283;
+            let p2 = hash01(spawn ^ salt.wrapping_mul(7)) * 6.283;
+            (age * f1 + p1).sin() * 0.65 + (age * f2 + p2).sin() * 0.35
+        };
+        let amp = 0.5 * age.sqrt() * (0.4 + 1.2 * hash01(spawn ^ 0x61));
+        let wander = Vec3::new(sway(0x101) * amp, 0.0, sway(0x202) * amp);
+        let drift = Vec3::new(wind.x, 0.0, wind.y) * age * (0.4 + 0.6 * hash01(spawn ^ 0x41));
+        let pos = fire.base + offset + Vec3::new(a.cos() * r, rise, a.sin() * r) + wander + drift;
+        let kelvin = 1250.0 - 450.0 * age_t;
+        let chroma = flame_colour(kelvin);
+        let fade = (1.0 - age_t).powf(2.0) * smooth(0.0, 0.06, age_t);
+        out.push(Ember { pos, colour: chroma.map(|c| c.min(1.0)), intensity: 0.7 * fade * (0.2 + 0.8 * hash01(spawn ^ 0x55).powi(2)) });
     }
 }
 
@@ -269,6 +367,21 @@ pub fn noise_volume(n: usize) -> Vec<u8> {
     out
 }
 
+/// The flame's displayed colour (linear sRGB, red 1) at `kelvin`: dull red at 900 K, red-orange,
+/// orange at 1,300 K, deep orange-yellow at 1,500 K, yellow only at 1,750 K and above. Authored to how a sooty flame
+/// reads by eye; the three-band Planck chroma (`incandescence::planck_chroma`) put so little in
+/// green that the display's tone curve turned the flame pinkish.
+pub fn flame_colour(kelvin: f32) -> [f32; 3] {
+    const STOPS: [(f32, [f32; 3]); 5] = [(900.0, [1.0, 0.07, 0.01]), (1100.0, [1.0, 0.17, 0.02]),
+        (1300.0, [1.0, 0.30, 0.035]), (1500.0, [1.0, 0.45, 0.07]), (1750.0, [1.0, 0.66, 0.20])];
+    let k = kelvin.clamp(STOPS[0].0, STOPS[4].0);
+    let i = STOPS.iter().rposition(|(t, _)| *t <= k).unwrap_or(0).min(3);
+    let (t0, c0) = STOPS[i];
+    let (t1, c1) = STOPS[i + 1];
+    let f = ((k - t0) / (t1 - t0)).clamp(0.0, 1.0);
+    std::array::from_fn(|c| c0[c] + (c1[c] - c0[c]) * f)
+}
+
 /// WGSL constants for rm_plumes.wgsl: the Planck table (chroma times photopic weight relative to
 /// 1500 K, 700-2500 K in 100 K steps) and the 1500 K flame radiance.
 pub fn shader_prefix() -> String {
@@ -287,13 +400,15 @@ pub fn shader_prefix() -> String {
     let reference = photopic(1500.0);
     let rows: Vec<String> = (0..N).map(|i| {
         let kelvin = T0 + DT * i as f32;
-        let chroma = crate::incandescence::planck_chroma(kelvin);
-        // Chroma normalised to unit luminance-ish (green band), times relative photopic weight.
-        let g = chroma[1].max(1e-6);
-        let w = (photopic(kelvin) / reference) as f32;
-        format!("vec3<f32>({:?}, {:?}, {:?})", chroma[0] / g * w, chroma[1] / g * w, chroma[2] / g * w)
+        let chroma = flame_colour(kelvin);
+        // Unit luminance, times the Planck photopic weight relative to 1500 K compressed to its
+        // square root (the full weight spans 200x from the dull edges to the core and the core
+        // washed white; authored).
+        let y = 0.2126 * chroma[0] + 0.7152 * chroma[1] + 0.0722 * chroma[2];
+        let w = ((photopic(kelvin) / reference) as f32).sqrt() / y;
+        format!("vec3<f32>({:?}, {:?}, {:?})", chroma[0] * w, chroma[1] * w, chroma[2] * w)
     }).collect();
-    let tint = { let c = crate::incandescence::planck_chroma(1350.0); let m = c[0].max(c[1]).max(c[2]); c.map(|v| v / m) };
+    let tint = flame_colour(1350.0);
     format!("const FX_PLANCK_T0: f32 = {T0:?};\nconst FX_PLANCK_DT: f32 = {DT:?};\nconst FX_PLANCK_N: u32 = {N}u;\n\
         const FX_FLAME_RADIANCE_1500K: f32 = {FLAME_RADIANCE_1500K:?};\n\
         const FX_FLAME_TINT: vec3<f32> = vec3<f32>({:?}, {:?}, {:?});\n\

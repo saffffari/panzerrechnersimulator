@@ -216,6 +216,7 @@ mod spatial_audio;
 mod spatial_grid;
 mod street_plan;
 mod tank;
+mod tiger_gen2;
 mod vehicle_ground;
 mod source_point_support;
 mod static_wreck_support;
@@ -1090,10 +1091,13 @@ fn run_gfxbench(
     let bench_station = std::env::var("KESSEL_BENCH_STATION").ok();
     if let Some(station) = bench_station.as_deref() {
         g.station = match station { "loader" => game::Station::Loader, "commander" => game::Station::Commander,
+            "radioman" => game::Station::Radioman,
             "driver" => game::Station::Driver, "gunner" => game::Station::Gunner,
             _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
     }
     if std::env::var("KESSEL_BENCH_HATCH").as_deref() == Ok("open") { g.toggle_hatch(); }
+    // `KESSEL_BENCH_LAMPS=1`: the cabin lamps on (with `KESSEL_LAMP_GAIN`, the dynamic-range sheets).
+    if std::env::var("KESSEL_BENCH_LAMPS").as_deref() == Ok("1") { g.set_cabin_lights(true); }
     // `KESSEL_BENCH_IMPACT=AHEAD_M,RIGHT_M,PERIOD`: every PERIOD timed frames a 76.2 mm HE shell
     // (6.2 kg, 680 m/s, 20 deg down from ahead) strikes the ground that far ahead of and right of
     // the tank: its blast sparks and ground ejecta, the combat records the relays draw.
@@ -1103,6 +1107,12 @@ fn run_gfxbench(
         Ok((v[0], v[1], v[2] as u32))
     }).transpose()?;
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    // `KESSEL_BENCH_RING=NEAR_M,FAR_M`: the Soviet riflemen spread over a ring round the Tiger.
+    if let Some(v) = std::env::var("KESSEL_BENCH_RING").ok()
+        .map(|value| value.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>()) {
+        anyhow::ensure!(v.len() == 2 && v[0] > 0.0 && v[1] >= v[0], "KESSEL_BENCH_RING is NEAR_M,FAR_M");
+        g.debug_stage_infantry_ring(v[0], v[1]);
+    }
     // `KESSEL_BENCH_ORBIT=x,y,z`: orbit that point instead of the player's eye.
     let center = std::env::var("KESSEL_BENCH_ORBIT").ok()
         .and_then(|v| { let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect(); (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2])) })
@@ -1137,6 +1147,13 @@ fn run_gfxbench(
         .or_else(|| bench_kills.last().map(|at| at + 300));
     let mut kill_split: Option<usize> = None;
     let mut kill_marks: Vec<usize> = Vec::new();
+    // `KESSEL_BENCH_MG=START,FRAMES`: the station's machine gun held for FRAMES timed frames from
+    // START. `KESSEL_BENCH_STILLS=F1,F2,...`: a PNG of each of those timed frames (`OUT_fN.png`).
+    let bench_mg: Option<(u32, u32)> = std::env::var("KESSEL_BENCH_MG").ok().and_then(|v| {
+        let p: Vec<u32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        (p.len() == 2).then(|| (p[0], p[1])) });
+    let bench_stills: Vec<u32> = std::env::var("KESSEL_BENCH_STILLS").ok()
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect()).unwrap_or_default();
     for i in 0..(frames + WARMUP) {
         // Five seconds after the kill the phase counters restart, so the end-of-run phases are
         // the settled state's, not the detonation's and the thrown turret's.
@@ -1172,7 +1189,9 @@ fn run_gfxbench(
             g.debug_ground_strike(point, incoming, 6.2, 76.2, &r);
         }
         let simulation_started = std::time::Instant::now();
-        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+        let mg_held = bench_mg.is_some_and(|(start, n)| i >= WARMUP + start && i < WARMUP + start + n);
+        let input = if mg_held { TankInput { mg_coax: true, coax: true, ..Default::default() } } else { TankInput::default() };
+        g.update(&input, 1.0 / 60.0, &mut r);
         let simulation_ms = simulation_started.elapsed().as_secs_f64() * 1000.0;
         // Deterministic orbit: 22 m ring, 9 m up, one full sweep over the timed frames —
         // exercises city, terrain, tanks and the FX pools from every bearing.
@@ -1218,6 +1237,16 @@ fn run_gfxbench(
         } else { device.poll(wgpu::PollType::wait_indefinitely()).ok(); }
         let frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
         let live_ms = live_started.elapsed().as_secs_f64() * 1000.0;
+        if i >= WARMUP && bench_stills.contains(&(i - WARMUP)) {
+            // The still is rendered again from the same state (the eye has already adapted to it).
+            let path = format!("{}_f{}.png", out.trim_end_matches(".png"), i - WARMUP);
+            let (w, h) = (r.iw, r.ih);
+            if bench_station.as_deref() == Some("gunner") {
+                raymarch_showcase::eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, w, h)))?;
+            } else {
+                r.render_to_png(&device, &queue, &path, w, h)?;
+            }
+        }
         if live_frame { r.camera.zfar = saved_far; r.end_coop_shadow_frame(); }
         let gpu_frame = if pipelined { Vec::new() } else { r.read_gpu_profile_frame(&device, &queue)? };
         if i >= WARMUP && !pipelined {
@@ -1300,6 +1329,11 @@ fn run_gfxbench(
                     k + 1, mean(&times[a..b]), meanf(&simulation_times[a..b]), b - a);
             }
             println!("[gfxbench] simulation phases from the settle frame (ms): {}", g.sim_phase.take());
+            println!("[gfxbench] infantry rifle shots (german, soviet): {}", g.mixed_combat_telemetry()["rifle_shots"]);
+            println!("[gfxbench] T-34 coax rounds at the Tiger: {}", g.stat_enemy_coax_on_tiger);
+            { let receipt = g.capture_small_arms_receipt();
+              println!("[gfxbench] small arms: discharges {}, contacts on the Tiger's armour {}, spark bursts {}",
+                  receipt["discharges"], receipt["player_armor_contacts"], receipt["armor_spark_bursts"]); }
             for (i, e) in g.enemies.iter().enumerate() {
                 println!("[gfxbench] enemy {i}: alive {}, overturned {}, speed {:.2} m/s, {:.0} m off, height {:.2} over ground, roll {:.2} pitch {:.2}",
                     e.alive, e.overturned(), e.speed, e.pos.distance(g.player.pos), e.pos.y - g.hf.height_at(e.pos.x, e.pos.z), e.roll, e.pitch);
@@ -1315,6 +1349,7 @@ fn run_gfxbench(
             println!("[gfxbench] from the settle frame {at}: gpu frame {gpu:.2} ms, simulation {sim:.2} ms (mean of {} frames)", times.len() - a);
             if kill_split.is_none() { println!("[gfxbench] simulation phases from the settle frame (ms): {}", g.sim_phase.take()); }
         }
+        println!("[gfxbench] shadow draws by source over the whole run ({} frames): {}", times.len(), renderer::take_shadow_draws());
         times.sort_by(f32::total_cmp);
         let n = times.len();
         let avg: f32 = times.iter().sum::<f32>() / n as f32;
@@ -2686,6 +2721,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                     canyon_times: canyon::times_path().ok()
                         .and_then(|path| { let t = canyon::load_times(&path); t.last_s.zip(t.best_s) }),
                     full: ui::full_menu_requested(),
+                    one_man: game::one_man_requested(),
                 },
             );
             // KESSEL_UI_MENU_SIZE=WxH renders the title at another size (1920x1080 by default).
@@ -5546,8 +5582,8 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
     // plate breaking, the armour cut away round the shot's line through the plate's thickness and
     // the fragments inside.
     if g.replay_has_impact() {
-        for (t, name) in [(0.12f32, "impact_incoming"), (0.24, "impact_strike"), (0.42, "impact_cut_opening"),
-            (0.52, "impact_cut_half"), (0.68, "impact_cut_open"), (0.95, "impact_cut_end")] {
+        for (t, name) in [(0.12f32, "section_incoming"), (0.24, "section_in_plate"), (0.36, "section_through"),
+            (0.52, "section_fragments"), (0.68, "section_fragments_later"), (0.95, "section_end")] {
             g.render_replay_impact(t, &mut r);
             converge_headless_screenshot(&mut r, &device, &queue, 16)?;
             r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
@@ -11931,6 +11967,9 @@ const KIA_BLACK_SECONDS: f32 = 2.0;
 // takes ~15 s at 60 fps, so the showroom Tiger drifts around to show every side without hurrying.
 const MENU_SPIN_RATE: f32 = 0.007;
 
+/// Left edge of the in-play text lines (hint, crew line, crew-control status), 0..1 of the frame.
+const HUD_TEXT_LEFT: f32 = 0.025;
+
 // Act title-card hold (seconds): the between-acts/restart card that doubles as the loading screen.
 const ACT_CARD_DUR: f32 = 4.0;
 
@@ -11947,24 +11986,26 @@ pub(crate) const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Impact(f32), Throw(f32), Crew(f32), Done }
 
-/// A death by a round through the armour (the owner, 2026-11-02): after the fade and a short
-/// black, the struck surface from outside, the round arriving and the plate breaking in slow
-/// motion and the armour cut away round the shot to show the fragments inside
-/// (`Game::render_replay_impact`); then the turret's rear upper corner toward the breech, the
-/// whole aftermath replayed; then the aerial shot of where the round came from; then the card.
+/// A death by a round through the armour (the owner, 2026-11-02, re-cut 2026-11-09): after the
+/// fade and a short black, the shot in its context, the aerial view from behind the Tiger of
+/// where the round came from (`Game::render_replay_exterior`; "death replays dont properly put the
+/// shot into context"); then the vehicle in section on the plane of the shot, the round going
+/// through the armour in slow motion and the fragments inside (`Game::render_replay_impact`);
+/// then the interior without a section, from the turret's rear centre looking forward, the whole
+/// aftermath replayed in slow motion; then the card.
 pub(crate) const IMPACT_BLACK_S: f32 = 1.5;
 pub(crate) const IMPACT_SECONDS: f32 = 9.0;
-fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + IMPACT_SECONDS + REPLAY_DUR + DEATH_EXTERIOR_SECONDS }
+fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + DEATH_EXTERIOR_SECONDS + IMPACT_SECONDS + REPLAY_DUR }
 fn penetration_shot(card: death_card::Presentation, t: f32) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
-    let impact = DEATH_FADE + IMPACT_BLACK_S;
+    let exterior = DEATH_FADE + IMPACT_BLACK_S;
+    let impact = exterior + DEATH_EXTERIOR_SECONDS;
     let interior = impact + IMPACT_SECONDS;
-    let exterior = interior + REPLAY_DUR;
     if t < DEATH_FADE { DeathShot::Fade }
-    else if t < impact { DeathShot::Black }
+    else if t < exterior { DeathShot::Black }
+    else if t < impact { DeathShot::Exterior((t - exterior) / DEATH_EXTERIOR_SECONDS) }
     else if t < interior { DeathShot::Impact((t - impact) / IMPACT_SECONDS) }
-    else if t < exterior { DeathShot::Interior((t - interior) / REPLAY_DUR) }
-    else if t < card.reveal_at_s() { DeathShot::Exterior((t - exterior) / DEATH_EXTERIOR_SECONDS) }
+    else if t < card.reveal_at_s() { DeathShot::Interior((t - interior) / REPLAY_DUR) }
     else if t < card_end { DeathShot::Card }
     else { DeathShot::Done }
 }
@@ -11972,20 +12013,26 @@ fn penetration_shot(card: death_card::Presentation, t: f32) -> DeathShot {
 /// A death in the stowage's cook-off (`Game::cookoff_death`; the owner, 2026-11-02): black at once
 /// from the bang while it rings (the world held), then the tank from outside as the rest of the
 /// stowage goes and the turret is thrown (the world runs on, silent), then the dead from above the
-/// open ring, then the card.
+/// open ring, then the card. With `context` (a round set it off and the record has where it came
+/// from, `Game::death_shot_known`), the aerial view of that round coming in plays after the black
+/// with the world still held (the owner, 9 November 2026).
 use game::{COOKOFF_BLACK_S, COOKOFF_CREW_S, COOKOFF_THROW_S};
-fn cookoff_shot(card: death_card::Presentation, t: f32) -> DeathShot {
+fn cookoff_context_s(context: bool) -> f32 { if context { DEATH_EXTERIOR_SECONDS } else { 0.0 } }
+fn cookoff_reveal_s(context: bool) -> f32 { COOKOFF_BLACK_S + cookoff_context_s(context) + COOKOFF_THROW_S + COOKOFF_CREW_S }
+fn cookoff_shot(card: death_card::Presentation, t: f32, context: bool) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
+    let throw = COOKOFF_BLACK_S + cookoff_context_s(context);
     if t < COOKOFF_BLACK_S { DeathShot::Black }
-    else if t < COOKOFF_BLACK_S + COOKOFF_THROW_S { DeathShot::Throw((t - COOKOFF_BLACK_S) / COOKOFF_THROW_S) }
-    else if t < card.reveal_at_s() { DeathShot::Crew((t - COOKOFF_BLACK_S - COOKOFF_THROW_S) / COOKOFF_CREW_S) }
+    else if t < throw { DeathShot::Exterior((t - COOKOFF_BLACK_S) / DEATH_EXTERIOR_SECONDS) }
+    else if t < throw + COOKOFF_THROW_S { DeathShot::Throw((t - throw) / COOKOFF_THROW_S) }
+    else if t < card.reveal_at_s() { DeathShot::Crew((t - throw - COOKOFF_THROW_S) / COOKOFF_CREW_S) }
     else if t < card_end { DeathShot::Card }
     else { DeathShot::Done }
 }
 /// The death's shot: the cook-off's order when the man died in it, the penetration replay's when a
 /// round through the armour killed him, else the ordinary one.
-fn death_shot_for(cookoff: bool, impact: bool, card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
-    if cookoff { cookoff_shot(card, t) } else if impact { penetration_shot(card, t) } else { death_shot(card, t, has_replay) }
+fn death_shot_for(cookoff: bool, impact: bool, context: bool, card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
+    if cookoff { cookoff_shot(card, t, context) } else if impact { penetration_shot(card, t) } else { death_shot(card, t, has_replay) }
 }
 fn death_shot(card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
@@ -12107,29 +12154,43 @@ mod local_presentation_tests {
 
     #[test]
     fn a_cookoff_death_is_black_at_once_then_outside_then_the_dead_then_the_card() {
-        let reveal = COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S;
+        let reveal = cookoff_reveal_s(false);
+        assert_eq!(reveal, COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S);
         let card = death_card::Presentation::silent(1, 1943, reveal, DEATH_CARD_SECONDS);
-        assert_eq!(cookoff_shot(card, 0.0), DeathShot::Black, "no fade: black from the bang");
-        assert_eq!(cookoff_shot(card, COOKOFF_BLACK_S - 0.01), DeathShot::Black);
-        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + 0.01), DeathShot::Throw(p) if p < 0.01));
-        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + COOKOFF_THROW_S + 0.01), DeathShot::Crew(p) if p < 0.01));
-        assert_eq!(cookoff_shot(card, reveal + 0.01), DeathShot::Card);
-        assert_eq!(cookoff_shot(card, reveal + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
-        assert_eq!(death_shot_for(false, false, card, 0.5, true), DeathShot::Fade, "other deaths keep their fade");
+        assert_eq!(cookoff_shot(card, 0.0, false), DeathShot::Black, "no fade: black from the bang");
+        assert_eq!(cookoff_shot(card, COOKOFF_BLACK_S - 0.01, false), DeathShot::Black);
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + 0.01, false), DeathShot::Throw(p) if p < 0.01));
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + COOKOFF_THROW_S + 0.01, false), DeathShot::Crew(p) if p < 0.01));
+        assert_eq!(cookoff_shot(card, reveal + 0.01, false), DeathShot::Card);
+        assert_eq!(cookoff_shot(card, reveal + DEATH_CARD_SECONDS + 0.01, false), DeathShot::Done);
+        assert_eq!(death_shot_for(false, false, false, card, 0.5, true), DeathShot::Fade, "other deaths keep their fade");
+        // A round set it off: where it came from plays between the black and the throw.
+        let reveal = cookoff_reveal_s(true);
+        let card = death_card::Presentation::silent(1, 1943, reveal, DEATH_CARD_SECONDS);
+        assert_eq!(cookoff_shot(card, COOKOFF_BLACK_S - 0.01, true), DeathShot::Black);
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + 0.01, true), DeathShot::Exterior(p) if p < 0.01));
+        let throw = COOKOFF_BLACK_S + DEATH_EXTERIOR_SECONDS;
+        assert!(matches!(cookoff_shot(card, throw + 0.01, true), DeathShot::Throw(p) if p < 0.01));
+        assert!(matches!(cookoff_shot(card, throw + COOKOFF_THROW_S + 0.01, true), DeathShot::Crew(p) if p < 0.01));
+        assert_eq!(cookoff_shot(card, reveal + 0.01, true), DeathShot::Card);
+        assert_eq!(death_shot_for(true, false, true, card, COOKOFF_BLACK_S + 0.01, true), cookoff_shot(card, COOKOFF_BLACK_S + 0.01, true));
     }
 
     #[test]
-    fn a_penetration_death_shows_the_impact_then_the_interior_then_where_it_came_from_then_the_card() {
+    fn a_penetration_death_shows_where_it_came_from_then_the_section_then_the_interior_then_the_card() {
         let card = death_card::Presentation::silent(1, 1943, penetration_reveal_s(), DEATH_CARD_SECONDS);
         assert_eq!(penetration_shot(card, 0.5), DeathShot::Fade);
         assert_eq!(penetration_shot(card, DEATH_FADE + 0.1), DeathShot::Black, "a second or two of black");
-        let impact = DEATH_FADE + IMPACT_BLACK_S;
+        let exterior = DEATH_FADE + IMPACT_BLACK_S;
+        assert!(matches!(penetration_shot(card, exterior + 0.01), DeathShot::Exterior(p) if p < 0.01), "the shot in its context first");
+        let impact = exterior + DEATH_EXTERIOR_SECONDS;
         assert!(matches!(penetration_shot(card, impact + 0.01), DeathShot::Impact(p) if p < 0.01));
         assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + 0.01), DeathShot::Interior(p) if p < 0.01));
-        assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + REPLAY_DUR + 0.01), DeathShot::Exterior(p) if p < 0.01));
+        assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + REPLAY_DUR - 0.01), DeathShot::Interior(p) if p > 0.99),
+            "the interior runs to the card");
         assert_eq!(penetration_shot(card, penetration_reveal_s() + 0.01), DeathShot::Card);
         assert_eq!(penetration_shot(card, penetration_reveal_s() + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
-        assert_eq!(death_shot_for(false, true, card, impact + 0.5, true), penetration_shot(card, impact + 0.5));
+        assert_eq!(death_shot_for(false, true, true, card, impact + 0.5, true), penetration_shot(card, impact + 0.5));
     }
 
     #[test]
@@ -14043,7 +14104,7 @@ impl WindowState {
             // The fatal view fades, the screen is black for two seconds, the card is held for
             // five, and the run ends. No score plays over it.
             println!("[panzerrechnersystem] killed: {over_cause:?}");
-            let reveal = if self.game.cookoff_death() { COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S }
+            let reveal = if self.game.cookoff_death() { cookoff_reveal_s(self.game.death_shot_known()) }
                 else if self.game.replay_has_impact() { penetration_reveal_s() }
                 else { DEATH_FADE + DEATH_BLACK_SECONDS };
             let card = Some(death_card::Presentation::silent(self.game.death_card_seed(),
@@ -14185,6 +14246,12 @@ impl WindowState {
         }
     }
 
+    /// The title menu's crew row: solo or crewed for the next mission started from the menu.
+    fn toggle_menu_crew(&mut self) {
+        self.menu.one_man = !self.menu.one_man;
+        game::set_one_man(self.menu.one_man);
+    }
+
     /// Campaign, playtest, editor and checkpoint load. Legacy development views remain keyboard-accessible without
     /// expanding the player's title menu. Escape preserves the live pause/resume round trip.
     fn menu_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
@@ -14206,8 +14273,10 @@ impl WindowState {
         match code {
             KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + self.menu.row_count() - 1) % self.menu.row_count(),
             KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % self.menu.row_count(),
+            KeyCode::ArrowLeft | KeyCode::ArrowRight if self.menu.action() == Some(ui::MenuAction::Crew) => self.toggle_menu_crew(),
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.action() {
                 Some(ui::MenuAction::Graphics) => self.open_graphics(true),
+                Some(ui::MenuAction::Crew) => self.toggle_menu_crew(),
                 Some(ui::MenuAction::Singleplayer) => self.start_play(PlayMode::Kampagne),
                 Some(ui::MenuAction::Coop) => self.start_play(PlayMode::Koop),
                 Some(ui::MenuAction::Playtest) => self.start_play(PlayMode::Playtest),
@@ -14287,6 +14356,7 @@ impl WindowState {
         if gpu_sampling { self.renderer.begin_gpu_profile_frame(); }
         // The live RTT tile and the presented view are two cameras on the same machine. Bracket
         // them as one frame so whichever renders first populates the single shared shadow map.
+        self.renderer.set_display_size(self.config.width, self.config.height);
         self.renderer
             .begin_coop_shadow_frame(self.game.player.center());
         let shadow_ready = self.game.refresh_rtt_periscopes(&mut self.renderer);
@@ -14371,6 +14441,7 @@ impl WindowState {
                     "work_since_last_line": {
                         "scene_renders": work.scene_renders, "shadow_passes": work.shadow_passes,
                         "shadow_mesh_draws": work.shadow_mesh_draws, "shadow_instanced_draws": work.shadow_instanced_draws,
+                        "shadow_draws_by_source": renderer::take_shadow_draws(),
                         "scene_mesh_draws": work.scene_mesh_draws, "scene_instanced_draws": work.scene_instanced_draws,
                         "fullscreen_raster_passes": work.fullscreen_raster_passes, "compute_passes": work.compute_passes,
                         "smoke_passes": work.smoke_passes, "bloom_passes": work.bloom_passes, "snow_passes": work.snow_passes,
@@ -14504,8 +14575,10 @@ impl WindowState {
             let pulse = 0.75 + 0.25 * (self.renderer.time * 9.0).sin();
             pixel_font::draw_centered(&mut self.renderer, prompt, 0.5, 0.895, 2, [1.0, 0.55, 0.18, pulse]);
         }
-        // What the outlined thing is and which button works it: small, bottom centre, in the
-        // outline's own colour (owner, 2026-10-03; play is otherwise wordless).
+        // What the outlined thing is and which button works it: small, in the outline's own
+        // colour (owner, 2026-10-03; play is otherwise wordless). The hint, the crew's line and
+        // the crew-control status stand at the bottom left since 9 November 2026 (the owner,
+        // 1 November: "move these text popups to the bottom left"): out of the middle of the view.
         // Mission guidance (src/mission.rs): the order sheet while it is held up and the net's
         // lines, display-resolution text outside the crush like the menus.
         if let Some(overlay) = self.game.mission_overlay() {
@@ -14526,16 +14599,16 @@ impl WindowState {
         let interaction_label = camp_hint.clone().or_else(|| self.game.hover_label_text()
             .map(|label| interaction_hint(&label, self.game.interact_kind())));
         if let Some(hint) = interaction_label {
-            pixel_font::draw_centered(&mut self.renderer, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
+            pixel_font::draw_left(&mut self.renderer, &hint, HUD_TEXT_LEFT, 0.94, 1, HOVER_OUTLINE_RGBA);
         }
         // The crew's intercom: one terse line, a few seconds, above the interaction hint
         // (solo with a living crew only; KESSEL_INTERCOM=0 silences it).
         if let Some(line) = self.game.intercom_line() {
             let line = line.to_owned();
-            pixel_font::draw_centered(&mut self.renderer, &line, 0.5, 0.865, 1, [0.80, 0.84, 0.70, 0.80]);
+            pixel_font::draw_left(&mut self.renderer, &line, HUD_TEXT_LEFT, 0.865, 1, [0.80, 0.84, 0.70, 0.80]);
         }
         if let Some(status) = self.game.crew_control_status() {
-            pixel_font::draw_centered(&mut self.renderer, &status, 0.5, 0.905, 1, [0.88, 0.88, 0.88, 0.85]);
+            pixel_font::draw_left(&mut self.renderer, &status, HUD_TEXT_LEFT, 0.905, 1, [0.88, 0.88, 0.88, 0.85]);
         }
         // A dot where the crosshair rests on something the hands can use.
         if (camp_hint.is_some() || self.game.hover_label_text().is_some()) && !self.game.sidearm_is_drawn() {
@@ -14698,8 +14771,10 @@ impl WindowState {
             .configure_crew_render_view(lan::LanRole::Gunner, true, &mut self.renderer);
         self.renderer.set_active_view(optic_slot);
         let local_body_visibility = self.game.hide_first_person_for_optic(&mut self.renderer);
+        self.renderer.set_sight_exterior_pass(true);
         self.renderer
             .render_optic_snapshot(&self.device, &self.queue);
+        self.renderer.set_sight_exterior_pass(false);
         for (slot, visible) in local_body_visibility {
             self.renderer.set_visible(slot, visible);
         }
@@ -15174,9 +15249,18 @@ impl WindowState {
             self.game.set_audio_silenced(true);
         }
         if let Some(card) = card.filter(|card| card.is_silent() && cookoff) {
-            match cookoff_shot(card, t) {
+            match cookoff_shot(card, t, self.game.death_shot_known()) {
+                // The round that set it off, from where it came (the world still held).
+                DeathShot::Exterior(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.render_replay_exterior(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
                 DeathShot::Throw(phase) => {
                     let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.end_replay_exterior(&mut self.renderer);
                     self.game.render_cookoff_outside(phase, &mut self.renderer);
                     self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
                     frame.present();
@@ -15201,11 +15285,12 @@ impl WindowState {
                 _ => {}
             }
         }
-        // A round through the armour: the impact shot, the interior and the aerial shot, then the card.
+        // A round through the armour: where it came from, the section shot, the interior, the card.
         if let Some(card) = card.filter(|card| card.is_silent() && !cookoff && self.game.replay_has_impact()) {
             match penetration_shot(card, t) {
                 DeathShot::Impact(phase) => {
                     let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.end_replay_exterior(&mut self.renderer);
                     self.game.render_replay_impact(phase, &mut self.renderer);
                     self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
                     frame.present();
@@ -15999,8 +16084,14 @@ impl ApplicationHandler for App {
                             let has_replay = state.game.last_fatal.is_some();
                             let card_end = card.card_end_s().unwrap_or(t);
                             let impact = state.game.replay_has_impact();
-                            match death_shot_for(state.game.cookoff_death(), impact, card, t, has_replay) {
+                            let cookoff = state.game.cookoff_death();
+                            match death_shot_for(cookoff, impact, state.game.death_shot_known(), card, t, has_replay) {
                                 DeathShot::Card => state.state = AppState::Death { t: card_end, card: Some(card) },
+                                // The cook-off's context shot gives way to the throw.
+                                DeathShot::Exterior(_) if cookoff => {
+                                    state.game.end_replay_exterior(&mut state.renderer);
+                                    state.state = AppState::Death { t: COOKOFF_BLACK_S + DEATH_EXTERIOR_SECONDS, card: Some(card) };
+                                }
                                 // The penetration replay's shots give way to the card.
                                 DeathShot::Impact(_) | DeathShot::Interior(_) | DeathShot::Exterior(_) if impact => {
                                     state.game.end_replay_cutaway(&mut state.renderer);
@@ -17332,7 +17423,7 @@ impl ApplicationHandler for App {
                         // waited for before any view of the world returns.
                         if state.game.casualty_tissue_pending() {
                             let shot = card.filter(|card| card.is_silent()).map(|card| death_shot_for(cookoff,
-                                state.game.replay_has_impact(), card, nt, state.game.last_fatal.is_some()));
+                                state.game.replay_has_impact(), state.game.death_shot_known(), card, nt, state.game.last_fatal.is_some()));
                             match shot {
                                 Some(DeathShot::Fade) => {}
                                 Some(DeathShot::Black) => state.game.settle_casualty_tissue(false),
@@ -17341,11 +17432,11 @@ impl ApplicationHandler for App {
                                 _ => state.game.settle_casualty_tissue(true),
                             }
                         }
-                        if cookoff && card.is_some_and(|card| matches!(cookoff_shot(card, nt), DeathShot::Throw(_) | DeathShot::Crew(_))) {
+                        if cookoff && card.is_some_and(|card| matches!(cookoff_shot(card, nt, state.game.death_shot_known()), DeathShot::Throw(_) | DeathShot::Crew(_))) {
                             state.game.update_realtime(&TankInput::default(), dt, &mut state.renderer);
                         }
                         let finished = card.map_or(nt >= DEATH_END, |card| if card.is_silent() {
-                            death_shot_for(cookoff, state.game.replay_has_impact(), card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
+                            death_shot_for(cookoff, state.game.replay_has_impact(), state.game.death_shot_known(), card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
                         } else {
                             card.phase(nt, state.game.death_score_elapsed(),
                                 state.game.death_score_finished()) == death_card::Phase::Finished
@@ -17427,9 +17518,12 @@ impl ApplicationHandler for App {
 }
 
 /// Longest wall interval one redraw hands to the simulation. `Game::update_realtime` runs one
-/// full update per 50 ms, so this bounds catch-up at five updates; a longer hitch or OS suspend
-/// is a pause, not a backlog whose own cost makes the next frame slower still.
-const MAX_FRAME_DT: f32 = 0.25;
+/// full update per 50 ms, so this bounds catch-up at two updates; a longer frame, a hitch or an
+/// OS suspend runs the game slower, not as a backlog whose own cost makes the next frame slower
+/// still. At five updates (0.25 s, until 9 November 2026) a fight whose update cost 25 ms and
+/// whose render cost 26 ms held itself at three updates a frame, 101 ms, once anything pushed
+/// it there (the owner: "the fps is at 10"); at two the same costs settle at 76 ms.
+const MAX_FRAME_DT: f32 = 0.10;
 
 /// Simulated seconds for a redraw whose previous frame started `elapsed` seconds ago. A frame
 /// with no predecessor (first frame, focus regain, fresh world) advances one nominal 60 Hz step.
@@ -17446,17 +17540,17 @@ mod frame_clock_tests {
 
     #[test]
     fn ordinary_frames_consume_their_full_wall_time() {
-        for dt in [1.0 / 144.0, 1.0 / 60.0, 0.05, 0.1, 0.25] {
+        for dt in [1.0 / 144.0, 1.0 / 60.0, 0.05, 0.1] {
             assert_eq!(frame_dt(Some(dt)), dt);
         }
     }
 
     #[test]
-    fn a_hitch_is_capped_at_five_catch_up_updates() {
-        for dt in [0.2501, 1.0, 4.9, 5.1, 3600.0] {
+    fn a_hitch_is_capped_at_two_catch_up_updates() {
+        for dt in [0.1001, 0.25, 1.0, 4.9, 5.1, 3600.0] {
             let capped = frame_dt(Some(dt));
             assert_eq!(capped, MAX_FRAME_DT);
-            assert!((capped / 0.05).ceil() <= 5.0);
+            assert!((capped / 0.05).ceil() <= 2.0);
         }
     }
 
@@ -17855,6 +17949,10 @@ fn main() -> anyhow::Result<()> {
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(200.0),
         );
+    }
+    if args.len() >= 2 && args[1] == "tiger-gen2-check" {
+        // CPU only: the gen2 Tiger's hull, turret and gun split against the present bake.
+        return tiger_gen2::check();
     }
     if args.len() >= 2 && args[1] == "t34-seed" {
         return t34_canyon_training::write_seed(

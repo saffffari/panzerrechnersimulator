@@ -388,6 +388,11 @@ pub(super) struct CrewSolo {
     loader_busy_s: f32,
     /// The loader has a round in his hands at the breech this step (the ram does not slip back).
     pub loader_holding: bool,
+    /// The physical loader's stall guards (`crew_loader_work`, transient): how long his hands
+    /// have failed to follow the cartridge in this phase, and a rack slot he gave up on with the
+    /// time left before he tries it again.
+    pub(super) loader_stall_s: f32,
+    pub(super) loader_skip: Option<(usize, f32)>,
     pub(super) loader_work: loader_work::Work,
     pub(super) assignment: crew_assignment::Assignment,
     pub dump_permission: DumpPermission,
@@ -448,6 +453,8 @@ impl Default for CrewSolo {
             empties_rack: EmptiesRack::default(),
             loader_busy_s: 0.0,
             loader_holding: false,
+            loader_stall_s: 0.0,
+            loader_skip: None,
             loader_work: loader_work::Work::default(),
             assignment: crew_assignment::Assignment::default(),
             dump_permission: DumpPermission::NotAsked,
@@ -1181,6 +1188,15 @@ impl Game {
             return;
         }
         let perf = self.crew_solo.man(CrewRole::Driver).performance().max(0.15);
+        // Easing the steering off needs no thinking time and is quick: the order to stop turning
+        // is obeyed at once (the owner, 9 November 2026: the hull kept turning after the key was up).
+        {
+            let (order, cmd) = (self.crew_solo.driver_order.y, self.crew_solo.driver_cmd.y);
+            if order.abs() < cmd.abs() || order * cmd < 0.0 {
+                let ease = 8.0 * perf * dt;
+                self.crew_solo.driver_cmd.y = cmd + (order.clamp(-cmd.abs(), cmd.abs()) - cmd).clamp(-ease, ease);
+            }
+        }
         self.crew_solo.driver_react_s += dt;
         if self.crew_solo.driver_react_s < DRIVER_REACT_S / perf {
             return;

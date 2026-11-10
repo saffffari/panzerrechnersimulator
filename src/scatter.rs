@@ -650,6 +650,9 @@ impl Scatter {
     }
 
     /// Advance only active objects, upload only dirty spatial pages, and persist every final pose.
+    /// Bodies still being solved (falling, airborne or sliding).
+    pub fn active_count(&self) -> usize { self.active.len() }
+
     pub fn update(
         &mut self,
         dt: f32,

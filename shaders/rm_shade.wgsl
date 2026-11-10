@@ -89,15 +89,19 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32, mo
     var ao_sum = 0.0;
     var bands = 0.0;
     var irradiance = vec3(0.0);
-    // Eight directions at 800x450 and above, up to sixteen on a lower grid (fr.samples.x).
-    let dirs = clamp(u32(round(8.0 * fr.samples.x)), 8u, 16u);
+    // Eight directions at the preset's sample budget of one, up to thirty-two (fr.samples.x).
+    let dirs = clamp(u32(round(8.0 * fr.samples.x)), 8u, 32u);
     for (var dir = 0u; dir < dirs; dir += 1u) {
         let angle = (f32(dir) + jitter) * (2.0 * RM_PI / f32(dirs));
         let step = vec2(cos(angle), sin(angle));
         var horizon = 0.0;
         var horizon_near = 0.0;
         for (var s = 1u; s <= 8u; s += 1u) {
-            let t = pow((f32(s) - 0.5 + jitter * 0.5) / 8.0, 1.6);
+            // The jitter spans the whole step, so over frames every distance along the slice is
+            // sampled. Spanning half of it left fixed gaps between the eight distances, and a
+            // bright object entered a pixel's gather only at those distances: rings of bounce
+            // round it that the history could not average away (10 November 2026).
+            let t = pow((f32(s) - 1.0 + jitter) / 8.0, 1.6);
             let p = pixel + vec2<i32>(step * radius_px * t);
             if (any(p < vec2(0)) || any(p >= dims)) { break; }
             let sample = pixel_relative(p);
@@ -127,6 +131,7 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32, mo
 // walls around it. Cover beyond the range counts as open (named approximation).
 const RM_AO_RANGE_M: f32 = 4.0;
 const RM_AO_RAYS: u32 = 2u;
+const RM_AO_FRESH_FACTOR: u32 = 6u;
 const RM_AO_BLEND: f32 = 0.15;
 // Temporal filter for the shade's stochastic terms (the screen gather's jittered slices and
 // steps, the occlusion rays): each frame's estimate is blended into the history reprojected
@@ -196,8 +201,12 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, hi
     let b = cross(n, t);
     let origin = world + n * (0.015 + 0.002 * dist);
     var open = 0.0;
-    // RM_AO_RAYS at 800x450 and above, more on a lower grid (fr.samples.x).
-    let rays = max(RM_AO_RAYS, u32(round(f32(RM_AO_RAYS) * fr.samples.x)));
+    // RM_AO_RAYS times the sample budget (fr.samples.x). A pixel with no usable history (newly
+    // uncovered by a turn of the head, or the first frame) has nothing to average with, so it
+    // traces RM_AO_FRESH_FACTOR times as many: its first estimate was one of three values (two
+    // rays) and showed as static until the history filled in.
+    let base_rays = max(RM_AO_RAYS, u32(round(f32(RM_AO_RAYS) * fr.samples.x)));
+    let rays = select(base_rays * RM_AO_FRESH_FACTOR, base_rays, history.valid);
     for (var k = 0u; k < rays; k += 1u) {
         let seed = u32(pixel.x) * 7919u + u32(pixel.y) * 104729u + u32(fr.vol.w) * 2654435761u + k * 40503u;
         let r1 = rm_hash01(seed);
@@ -870,7 +879,9 @@ fn fs(in: VsOut) -> ShadeOut {
                 if (r < 0.02) { continue; }
                 let w = to / r;
                 if (dot(n, w) <= 0.0 || dot(face.m, w) <= 0.02) { continue; }
-                let through = rm_aperture_acceptance(face, w);
+                // The clear pane's own narrow field, or the share it scatters every way (fr.worn_count.w,
+                // `pane_glow` in renderer_raymarch.rs), whichever is more along this line.
+                let through = max(rm_aperture_acceptance(face, w), clamp(face.measure.x, 0.0, 1.0) * fr.worn_count.w);
                 if (through <= 0.0) { continue; }
                 let omega = rm_quad_projected_solid_angle(world, n, c, face.u, face.v);
                 if (omega <= 1.0e-7) { continue; }

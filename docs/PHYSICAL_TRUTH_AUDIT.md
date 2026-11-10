@@ -24,6 +24,11 @@ the game"); `KESSEL_FX_LEGACY=1` restores the previous effects. What the live co
 | Budgets | 8 world fires (unchanged), 48 volumes, 4,096 fire embers, 12,288 grain embers, nearest first. The cabin fire's grains six times fewer and sqrt(6) wider (same covered area and light). |
 | Burn curve | Flames to 35 % and smoke thinning and greying over 90-420 s (authored settle; the game's fuel model still decides whether anything burns). |
 | Relayed views | The raster vision-block relays draw the shared smoke supports only; wreck columns are not in them (open gap). |
+| Flame roots, colour | Roots are the wreck's burning surface patches (their positions and normals); the flame shape over them is prescribed. The flame colour is an **authored display ramp**, its brightness the Planck photopic weight **compressed to its square root** (named, not radiometric). |
+| Ammunition flash | The blast light capped at 1,500 renderer units (an estimate of a propellant fireball's intensity) with the new effects. |
+| Eye (`KESSEL_EYE=gentle`) | Review variant, **off by default**: the adaptation follows a slow field average and a third of each change within +-0.5 log units; a flash's afterimage a quarter. Not a fitted observer model. |
+| Pressure front | Drawn on the raymarch backend as lifted snow behind the front and a condensation shell above about 8 kPa (authored shapes on the Kingery-Bulmash overpressure); **its refraction is not drawn on this backend**. |
+| Strike flash and puff | A prescribed flash-and-puff volume per cannon strike event; not a modelled plate-flash. |
 
 Gate: `cargo run --release -- fx-lab PREFIX SCENE` for `wreck`, `cookoff`, `impact`, `fog`, `three`,
 with and without `KESSEL_FX_LEGACY=1`; the kill bench (`gfxbench` with `KESSEL_BENCH_KILL=60,120,180`).
@@ -5285,3 +5290,49 @@ peak level estimated per row (75-120 dB; the table) through the ordinary propaga
 bullet-on-steel spectrum class; rows that replace an existing voice (behind
 `KESSEL_SFX_GENERATED=1`) take that voice's calibrated emission, the hit takes with no filter
 shift. Takes are resampled linearly to the engine's rate. Unauditioned.
+
+## Traced room acoustics off by default (9 November 2026, owner-directed)
+
+The owner: "Let's get rid of the ray traced audio." `KESSEL_ACOUSTICS=1` turns the traced rooms
+back on; without it no acoustic rays are traced and every voice takes the parametric tail (the
+path a voice already took once the convolution budget was spent). Unchanged: distance, air
+absorption, line-of-sight occlusion, the enclosure's transmission loss, the headset. Lost: each
+place's own traced early reflections and decay (the cabin's, a canyon wall's). Basis for the
+cost: play record `demo-20261109-212702`, head out of the cupola on the move, 10 to 11 ms of
+every simulation update. The parametric tail is an estimate, not a solution of the room; it has
+not been compared by ear against the traced result since this change.
+
+## Cheap falls for trees and spent cases (9 November 2026, owner-directed)
+
+The owner, of the solved collisions: "lets just remove those and do them in a negligible compute
+cost way. they didn't work really."
+
+- **Trees.** A released tree hinges about its base toward the push and lies along the line from
+  the ground at its base to the ground one tree-length away (`trees::hinge_fall`); it takes
+  about sqrt(height) seconds, the angle growing as the square of time. It is a prescribed
+  motion, not a rigid-body solution: no roll, slide or bounce; on broken ground the crown can
+  hang over or sink into the relief between those two points (unmeasured); a fallen tree is not
+  moved again when the ground under it changes. The solver (`tree_ground_support.rs`) is kept in
+  the source with its tests and is no longer called.
+- **Spent 8.8 cm cases.** Still dropped through the contact solver, but a case aboard is put to
+  rest once it stays within 5 cm of one place for 0.25 s (was 1 cm for 1 s), and a resting case
+  aboard is never solved again when the turret traverses or the tank tilts: it rides the turret
+  where it stopped. A case can therefore rest on a slope it would roll down.
+
+## Port daylight gain switch (10 November 2026, owner-requested, default off)
+
+`KESSEL_PORT_LIGHT=N` multiplies each pane's transmittance in the aperture records the raymarch
+shade and volume passes read, so the daylight the vision blocks and periscopes pass into the
+compartment (surfaces and shafts) is N times the measured figure. At 1 (the default) nothing
+changes. Above 1 it has no physical basis; the honest levers are the eye's adaptation and the
+glass's real transmittance. The ports' pictures (the relayed exterior views) do not use it.
+
+Additions (9 November, stage N): loop banks (`sfx_rows::LOOP_BANKS`) are sums of takes at
+estimated mix gains, voiced by the positioned-loop pool at the game's ear level; the T-34's
+idle/moving split is at 10 % / 4 % of top speed with a 0.9..1.15 rev shift (estimates); enemies
+beyond 800 m are one power-summed drone at the loudest one's bearing (an aggregation, not one
+voice each); the horizon artillery (DS-12) is a presentation bed with no modelled source: 48 dB(A)
+in the open [E] from a fixed north-east bearing, less the listener's enclosure and headset; the
+radio's idle hiss (IN-32) is 42 dB(A) in the headset [E]. Hit takes are picked by calibre band
+(10, 20, 60, 100 mm) and outcome (estimates of where the takes' character changes); the bailing
+crew's running take plays at the landing point, not following the man.

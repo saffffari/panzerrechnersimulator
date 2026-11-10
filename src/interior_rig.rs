@@ -139,7 +139,10 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
 /// The actual instrument backlight's linear spectrum, shared by both rendering backends.
 /// This changes only the TPZ source, not the independent indicator lamps or exposure.
 // 2 November 2026: paler and dimmer (the owner: "the dial can be less orange but dimmer").
-pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.50, 0.14);
+// 9 November 2026: deep orange again, sRGB about (255, 134, 38), a little redder than the dome
+// lamp (the owner: "that light dial ive asked 1000000 times to make more orange"); the
+// brightness is unchanged. The paler one was linear (1.0, 0.50, 0.14).
+pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.24, 0.02);
 /// Ten percent below the 2026-10-30 output, plus the deeper-orange spectrum above.
 /// This is an owner-directed appearance calibration, not measured period photometry.
 pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.018 * CABIN_PRACTICAL_POWER_SCALE;
@@ -175,6 +178,37 @@ mod tpz_setting_tests {
         assert!(dusk < night && dusk > noon, "eased through civil twilight");
     }
 }
+/// `KESSEL_CABIN_LIGHTS=F` (0 to 1, default `CABIN_LIGHTS_SETTING`): one dimmer on every cabin
+/// fixture's output (the dome lamp, the dial's illuminator, the indicator lamps, the crew board,
+/// the radio and driver panel lamps): their light and their glowing faces alike. An authored
+/// setting, not a measured one (the owner, 10 November 2026: "turn them and the dial and cabin
+/// lights down a lot").
+pub fn cabin_lights_setting() -> f32 {
+    static SETTING: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *SETTING.get_or_init(|| std::env::var("KESSEL_CABIN_LIGHTS").ok().and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map_or(CABIN_LIGHTS_SETTING, |v| v.clamp(0.0, 1.0)))
+}
+pub const CABIN_LIGHTS_SETTING: f32 = 1.0;
+
+/// `KESSEL_INDICATOR_SCALE=F` (0.25 to 1, default `INDICATOR_SCALE`): the edge of the turret's
+/// four annunciator lamps and the breech lamps as a share of their fixtures' size. The lamp
+/// keeps its surface brightness, so its light goes as the square of the scale (`scaled`).
+pub fn indicator_scale() -> f32 {
+    static SCALE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| std::env::var("KESSEL_INDICATOR_SCALE").ok().and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map_or(INDICATOR_SCALE, |v| v.clamp(0.25, 1.0)))
+}
+pub const INDICATOR_SCALE: f32 = 1.0;
+
+impl LampEmission {
+    /// The same lamp at `scale` times the edge: the same surface radiance over scale^2 the area.
+    pub fn scaled(mut self, scale: f32) -> Self {
+        self.radiant_intensity *= scale * scale;
+        self.source_radius_m *= scale;
+        self
+    }
+}
+
 /// The driver's ignition lamp, a finite cube on his panel (`lamp_mounts::IGNITION`), an indicator's
 /// power. Before 2026-10-28 an invisible point at 0.025, twelve times the dome lamp, which washed
 /// the driver's post red.
@@ -187,7 +221,11 @@ mod lighting_tests {
     #[test]
     fn named_cabin_fixtures_emit_the_same_power_on_both_backends() {
         // No backend scales a fixture's power: game.rs drives the lights by the switch alone.
-        assert!(include_str!("game.rs").contains("let practical_gain = power;"));
+        // The lamps' power is the fixture's, times the review range's LAMP POWER factor (and its
+        // `KESSEL_LAMP_GAIN` environment twin), which is 1 in every play path
+        // (`game_fea_range::review_lamp_gain`; test `the_lamp_power_is_one_unless_the_range_sets_it`).
+        assert!(include_str!("game.rs").contains("let practical_gain = power * game_fea_range::review_lamp_gain() * rig::cabin_lights_setting();"));
+        assert_eq!(CABIN_LIGHTS_SETTING, 1.0, "the dimmer's default is the fixtures' own output until the owner picks a setting");
         assert!(!include_str!("game.rs").contains("cabin_practical_gain"));
     }
 

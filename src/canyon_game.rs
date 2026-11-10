@@ -105,8 +105,33 @@ impl Game {
         let routes = [encounter.route(0), encounter.route(1)];
         let legs: Vec<(Vec2, Vec2)> = routes.iter()
             .flat_map(|beat| beat.iter().zip(beat.iter().cycle().skip(1)).map(|(&a, &b)| (a, b))).collect();
-        let start_eye = Vec3::new(spec.start.x, self.hf.height_at(spec.start.x, spec.start.y) + tank::TIGER_PARTS.center_h,
-            spec.start.y);
+        // The Tiger starts unseen by the opening patrols (`canyon::unseen_start`): a point of a
+        // patrol's route within `START_UNSEEN_M` with a clear line from a T-34's sight height to
+        // the Tiger's roof sees it. Tried from the authored start back along the course's route.
+        const START_UNSEEN_M: f32 = 700.0;
+        const START_MARGIN_M: f32 = 40.0;
+        let lookouts: Vec<Vec3> = legs.iter().flat_map(|&(a, b)| {
+            let n = (a.distance(b) / 15.0).ceil().max(1.0) as usize;
+            (0..n).map(move |k| a.lerp(b, k as f32 / n as f32))
+        }).map(|p| Vec3::new(p.x, self.hf.height_at(p.x, p.y) + 2.3, p.y)).collect();
+        let seen = |p: Vec2| {
+            let roof = Vec3::new(p.x, self.hf.height_at(p.x, p.y) + 2.9, p.y);
+            lookouts.iter().any(|&eye| eye.distance(roof) <= START_UNSEEN_M && self.optical_los_clear(eye, roof))
+        };
+        let start = match crate::canyon::unseen_start(&spec.route, spec.start, START_MARGIN_M, seen) {
+            Some((at, heading)) => {
+                println!("[canyon] start drawn back {:.0} m along the route to ({:.0}, {:.0}): the opening patrols saw the authored start ({:.0}, {:.0})",
+                    at.distance(spec.start), at.x, at.y, spec.start.x, spec.start.y);
+                self.player = Tank::new(at.x, at.y, heading, &self.hf, tank::TIGER_PARTS);
+                self.spawn_xz = (at.x, at.y);
+                at
+            }
+            None => {
+                if seen(spec.start) { println!("[canyon] the opening patrols see the authored start and the route offers no unseen point: the start stands"); }
+                spec.start
+            }
+        };
+        let start_eye = Vec3::new(start.x, self.hf.height_at(start.x, start.y) + tank::TIGER_PARTS.center_h, start.y);
         // No gun may see the start within its opening range: the Tiger is not fired on before it has
         // moved (the courtyard's rule for its spawn).
         let watched = [start_eye];
@@ -320,6 +345,7 @@ impl Game {
             best_s,
             take_and_hold: run.spec.finish_by_mission,
             crew: self.singleplayer_crew_active,
+            course_lines: run.spec.brief.clone(),
         })
     }
 

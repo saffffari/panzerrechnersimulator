@@ -93,7 +93,14 @@ pub struct RaymarchQuality {
 }
 
 impl RaymarchQuality {
+    /// `KESSEL_RM_SAMPLES=N` (1 to 16) sets the budget outright: N times the occlusion rays,
+    /// horizon-gather directions (to 32) and rough-reflection rays (to 8) per pixel per frame.
     pub fn sample_budget(&self, iw: u32, ih: u32) -> f32 {
+        static FORCED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+        if let Some(forced) = *FORCED.get_or_init(|| std::env::var("KESSEL_RM_SAMPLES").ok()
+            .and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(1.0, 16.0))) {
+            return forced;
+        }
         (self.budget_pixels / (iw.max(1) * ih.max(1)) as f32).clamp(1.0, self.max_samples)
     }
 
@@ -179,7 +186,14 @@ impl GraphicsPreset {
     /// Periscope and vision-block relay views re-rendered per frame (raster_optics.rs). Low keeps
     /// every visible pane drawn but refreshes the largest each frame and rotates one more
     /// through the rest, so a small side pane may lag a frame or three.
-    pub const fn optic_relays_per_frame(self) -> usize {
+    /// `KESSEL_OPTIC_RELAYS_PER_FRAME=N` sets it outright (the largest port in view always
+    /// refreshes; the others take turns at N - 1 a frame and show their last image between).
+    pub fn optic_relays_per_frame(self) -> usize {
+        static FORCED: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+        if let Some(forced) = *FORCED.get_or_init(|| std::env::var("KESSEL_OPTIC_RELAYS_PER_FRAME").ok()
+            .and_then(|v| v.parse::<usize>().ok()).filter(|&n| n >= 1)) {
+            return forced;
+        }
         match self {
             Self::Low => 2,
             Self::High | Self::Ultra => usize::MAX,

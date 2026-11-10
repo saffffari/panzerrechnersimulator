@@ -537,6 +537,19 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
         if let Some(f) = film.as_mut() {
             f.step(&mut g, &mut r, &device, &queue, step)?;
         }
+        // KESSEL_DEBUG_FELL_TREES=N: a solver check, never a play result. Two seconds in, N trees
+        // spread over the map are released; every five seconds the count still falling prints.
+        if let Some(n) = std::env::var("KESSEL_DEBUG_FELL_TREES").ok().and_then(|v| v.parse::<usize>().ok()) {
+            if step == 120 { println!("[canyon-trees] released {}", g.debug_fell_trees(n)); }
+            if step > 120 && step % 300 == 0 {
+                let (falling, scatter) = g.loose_world_counts();
+                println!("[canyon-trees] t={t:.0} falling={falling} scatter_active={scatter}");
+            }
+        }
+        // KESSEL_CANYON_PHASES=1: the simulation's probes for each 30 simulated seconds.
+        if step % 1800 == 1799 && std::env::var("KESSEL_CANYON_PHASES").as_deref() == Ok("1") {
+            println!("[canyon-phases] {}", serde_json::json!({"t":t,"wall_s":began.elapsed().as_secs_f64(),"phases_ms":g.sim_phase.take()}));
+        }
         if step % 600 == 0 && std::env::var("KESSEL_T34_DBG").as_deref() == Ok("1") {
             println!("[t34-ai-state] {}", serde_json::json!({"t":t,"tiger":g.player.pos.to_array(),"tiger_heading":g.player.heading,"winter":g.winter_encounter_snapshot()}));
         }
@@ -584,7 +597,9 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     }
     crate::simulation_uploads::drain(&device, &queue)?;
     trace.flush()?;
-    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":if invincible {"rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result"} else {"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression"},"manifest":manifest,"simulation_hz":60,"film":cuts.is_some(),"mission":g.mission_report(),"winter":g.winter_encounter_snapshot()});
+    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":if invincible {"rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result"} else {"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression"},"manifest":manifest,"simulation_hz":60,"film":cuts.is_some(),"mission":g.mission_report(),"winter":g.winter_encounter_snapshot(),
+        "small_arms_on_tiger":{"enemy_coax_rounds":g.stat_enemy_coax_on_tiger,"infantry_rifle_shots":g.mixed_combat_telemetry()["rifle_shots"],
+            "discharges":g.capture_small_arms_receipt()["discharges"],"player_armor_contacts":g.capture_small_arms_receipt()["player_armor_contacts"]}});
     fs::write(
         format!("{prefix}_result.json"),
         serde_json::to_vec_pretty(&receipt)?,

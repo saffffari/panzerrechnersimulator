@@ -186,6 +186,24 @@ fn record_casualties(
     !role_alive(crew, state.identity)
 }
 
+/// The title menu's crew choice for the next run: 0 not chosen (the launcher's `KESSEL_ONE_MAN`
+/// decides), 1 crewed, 2 solo. Process-local, like the runtime manifest selection.
+static CREW_CHOICE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Whether the next singleplayer run puts the player alone in the Tiger (the other four seats
+/// unmanned; he works every post) rather than with the living crew.
+pub fn one_man_requested() -> bool {
+    match CREW_CHOICE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => std::env::var("KESSEL_ONE_MAN").is_ok_and(|v| v == "1"),
+        choice => choice == 2,
+    }
+}
+
+/// The title menu's choice: solo (alone aboard) or crewed (the living crew).
+pub fn set_one_man(one_man: bool) {
+    CREW_CHOICE.store(if one_man { 2 } else { 1 }, std::sync::atomic::Ordering::Relaxed);
+}
+
 impl Game {
     /// Put the full singleplayer crew aboard without modifying input or creating a LAN session.
     /// A LAN or couch session keeps its own crew. Idempotent: revisiting configuration cannot
@@ -195,9 +213,10 @@ impl Game {
         if self.singleplayer_crew_active && self.singleplayer_crew.is_none() {
             self.singleplayer_crew = Some(SingleplayerCrew::new(SINGLEPLAYER_CREWMAN));
             fill_roster(&mut self.crew);
-            // KESSEL_ONE_MAN=1 (launcher --one-man): the player alone aboard. The other four
-            // seats are unmanned from the start, the state a killed man leaves; he works every post.
-            if std::env::var("KESSEL_ONE_MAN").is_ok_and(|v| v == "1") {
+            // Solo (the title menu's crew row, or the launcher's --one-man): the player alone
+            // aboard. The other four seats are unmanned from the start, the state a killed man
+            // leaves; he works every post.
+            if one_man_requested() {
                 for person in self.crew.iter_mut().filter(|p| p.role != SINGLEPLAYER_CREWMAN) {
                     person.ok = false;
                 }

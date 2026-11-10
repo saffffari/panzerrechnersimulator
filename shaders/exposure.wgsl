@@ -44,8 +44,10 @@ struct ExposureClock {
     // The rate of the slow pigment processes over real time: the sky clock's rate with the day
     // cycle on (Renderer::pigment_rate), 1 otherwise. Named in docs/PHYSICAL_TRUTH_AUDIT.md.
     pigment_rate: f32,
-    pad0: f32,
-    pad1: f32,
+    // KESSEL_EXPOSURE=shared (docs/EXPOSURE_SCHEME_20261110.md): the outside world's adaptation
+    // level (cd/m^2; 0 without the switch) and the optic's transmission the view looks through.
+    outside_cd_m2: f32,
+    optic_transmission: f32,
     pad2: f32,
 };
 @group(0) @binding(2) var<uniform> clock: ExposureClock;
@@ -145,14 +147,22 @@ fn current_pupil() -> f32 {
     return state[4] * (1.0 - OBS_PUPIL_SLOW_SHARE) + state[5] * OBS_PUPIL_SLOW_SHARE;
 }
 
+// A flash's afterimage on top of an adaptation: with the shared exposure it may lift it by at most
+// 0.3 log units (it dims an optic, never blacks it out) and is gone within about a second.
+fn flash_on(adapted: f32) -> f32 {
+    let after = flash_afterimage(state[10], state[11]);
+    if (OBS_SHARED) { return adapted + min(after * select(0.0, 1.0, state[11] < 1.2), adapted); }
+    return adapted + after;
+}
+
 fn cone_adaptation() -> f32 {
     let bleached = cone_equivalent_background_log(-0.72 + OBS_CONE_BLEACH_LOG * state[6]);
-    return pow(10.0, max(state[8], bleached)) + flash_afterimage(state[10], state[11]);
+    return flash_on(pow(10.0, max(state[8], bleached)));
 }
 
 fn rod_adaptation() -> f32 {
     let bleached = rod_equivalent_background_log(-2.86 + OBS_ROD_BLEACH_LOG * state[7]);
-    return pow(10.0, max(state[9], bleached)) + flash_afterimage(state[10], state[11]);
+    return flash_on(pow(10.0, max(state[9], bleached)));
 }
 
 fn relax(value: f32, goal: f32, tau: f32, dt: f32) -> f32 {
@@ -166,7 +176,11 @@ fn rise_tau(base_tau: f32, excess_log: f32, inside: bool, m_target: f32) -> f32 
     let onset = select(OBS_OUTSIDE_DAZZLE_FROM_LOG, OBS_DAZZLE_FROM_LOG, inside);
     let ramp = select(OBS_OUTSIDE_DAZZLE_RAMP_LOG, OBS_DAZZLE_RAMP_LOG, inside);
     let photopic = select(smoothstep(OBS_OUTSIDE_DAZZLE_MESOPIC_FROM, 1.0, m_target), 1.0, inside);
-    return mix(base_tau, OBS_DAZZLE_TAU, smoothstep(onset, onset + ramp, excess_log) * photopic);
+    let tau = mix(base_tau, OBS_DAZZLE_TAU, smoothstep(onset, onset + ramp, excess_log) * photopic);
+    // KESSEL_EXPOSURE=shared: the eye rises no faster than a 3 s time constant, so a burst of
+    // one's own machine gun (a second of flashes lighting the smoke and the snow) moves it a
+    // little, never takes the target away (the owner, 10 November).
+    return select(tau, max(tau, 3.0), OBS_SHARED);
 }
 
 fn bleach_step(b: f32, retinal: f32, regeneration: f32, photosensitivity: f32, dt: f32) -> f32 {
@@ -209,7 +223,7 @@ fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: 
         select(OBS_ROD_TAU_DOWN, rise_tau(OBS_ROD_TAU_UP, rod_rise, inside, m_target), rod_target > state[9]), dt);
     state[10] = state[10] * exp(-dt / OBS_FLASH_MEMORY_TAU);
     if (flashing) {
-        state[10] += coverage * bright * area * dt;
+        state[10] += coverage * bright * area * dt * select(1.0, 0.25, OBS_GENTLE);
         state[11] = 0.0;
     } else {
         state[11] = min(state[11] + dt, 1.0e6);
@@ -422,6 +436,32 @@ fn finish_meter(li: u32, sum: MeterSum) {
         lp = clamp_luminance(pow(10.0, state[22] + OBS_INSIDE_RESPONSE * (log10(metered_p) - state[22])));
         ls = clamp_luminance(pow(10.0, state[23] + OBS_INSIDE_RESPONSE * (log10(metered_s) - state[23])));
     }
+    // KESSEL_EYE=gentle: a flash may darken the eye no further than 0.4 log units (about 1.3
+    // stops) above the field's recent log average (lane 32, 1.5 s), and leaves a quarter of its
+    // afterimage. It only ever caps a sudden rise: a steady field, or one that stays bright
+    // for a few seconds, adapts exactly as the default eye (the first version compressed every
+    // change toward an 8 s average and washed open snow out white after a dark start).
+    if (OBS_GENTLE && state[1] >= 0.0) {
+        let cap = state[32] + 0.4;
+        let lgp = log10(metered_p);
+        if (lgp > cap) {
+            let shift = cap - lgp;
+            lp = clamp_luminance(pow(10.0, log10(lp) + shift));
+            ls = clamp_luminance(pow(10.0, log10(ls) + shift));
+        }
+    }
+    // KESSEL_EXPOSURE=shared: every outside view (head out, the sight, the binoculars) adapts to
+    // the outside world's own level, half the optic's light loss showing; the cabin eye adapts to
+    // the cabin no further than 1.2 log units (four stops) below it. A fire or a flash in one view
+    // does not move the outside level.
+    if (OBS_SHARED && clock.outside_cd_m2 > 0.0) {
+        let ratio_s = log10(ls) - log10(lp);
+        let outside = log10(clock.outside_cd_m2);
+        var lg = outside - 0.5 * log10(max(clock.optic_transmission, 0.05));
+        if (inside && !optic) { lg = max(log10(lp), outside - 1.2); }
+        lp = clamp_luminance(pow(10.0, lg));
+        ls = clamp_luminance(pow(10.0, lg + ratio_s));
+    }
     let field = clamp_luminance(field_p);
     let coverage = s.w / max(w.x, 1.0);
     let bright = select(0.0, p.w / max(s.w, 1.0), s.w > 0.0);
@@ -453,6 +493,7 @@ fn finish_meter(li: u32, sum: MeterSum) {
     if (fresh || state[30] > 0.5 || (clock.time_s < state[31] && state[1] >= 0.0)) {
         state[22] = log10(metered_p);
         state[23] = log10(metered_s);
+        state[32] = log10(metered_p);
         let pupil = pupil_diameter(lp, monocular);
         let area = pupil_area(pupil);
         state[4] = pupil;
@@ -477,6 +518,7 @@ fn finish_meter(li: u32, sum: MeterSum) {
     state[1] = clock.time_s;
     let follow = 1.0 - exp(-dt / OBS_INSIDE_REFERENCE_TAU);
     state[22] += (log10(metered_p) - state[22]) * follow;
+    state[32] += (log10(metered_p) - state[32]) * (1.0 - exp(-dt / 1.5));
     state[23] += (log10(metered_s) - state[23]) * follow;
     if (dt > 0.0) {
         let steps = u32(ceil(dt / OBS_MAX_STEP));

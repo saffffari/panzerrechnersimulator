@@ -129,6 +129,9 @@ pub struct CourseSpec {
     pub opening_platoons: bool,
     /// The after-action card's headline on success (`"headline"`).
     pub headline: &'static str,
+    /// The opening card's own first lines for this course (`"brief"`, a list of strings): what the
+    /// run asks, in the course's words. Empty keeps the card's built-in ravine or bridge lines.
+    pub brief: Vec<String>,
 }
 
 fn num(value: &serde_json::Value, what: &str) -> anyhow::Result<f32> {
@@ -161,6 +164,42 @@ pub fn from_edits(edits: Option<&serde_json::Value>) -> anyhow::Result<Option<Co
         }
     }
     Ok(Some(spec))
+}
+
+/// Where a run starts so that nothing of the opening defence sees the Tiger (the owner,
+/// 9 November 2026: "you should be out of sight and unspotted"): the authored start if `seen`
+/// is false there, else the nearest point back along the course's route (from the route point
+/// nearest the start toward the route's beginning, tried every `STEP` metres) from which the
+/// next `margin_m` metres back are unseen too, taken at the far end of that stretch, facing along
+/// the route toward the start. `None` when the start is unseen or the route offers no such
+/// point (the authored start stands).
+pub fn unseen_start(route: &[Vec2], start: Vec2, margin_m: f32, seen: impl Fn(Vec2) -> bool) -> Option<(Vec2, f32)> {
+    const STEP: f32 = 5.0;
+    if !seen(start) { return None; }
+    let nearest = route.iter().enumerate()
+        .min_by(|a, b| a.1.distance_squared(start).total_cmp(&b.1.distance_squared(start)))?.0;
+    // The way back: the start, then the route's points from the nearest one to its first.
+    let mut back = vec![start];
+    back.extend(route[..=nearest].iter().rev().copied());
+    let mut samples = vec![start];
+    for leg in back.windows(2) {
+        let length = leg[0].distance(leg[1]);
+        let mut along = STEP;
+        while along <= length {
+            samples.push(leg[0].lerp(leg[1], along / length));
+            along += STEP;
+        }
+    }
+    let need = (margin_m / STEP).ceil() as usize;
+    let mut clear = 0usize;
+    for (i, &point) in samples.iter().enumerate() {
+        clear = if seen(point) { 0 } else { clear + 1 };
+        if clear > need {
+            let toward = samples[i - 1] - point;
+            return Some((point, toward.x.atan2(toward.y)));
+        }
+    }
+    None
 }
 
 pub fn parse(block: &serde_json::Value) -> anyhow::Result<CourseSpec> {
@@ -208,6 +247,8 @@ pub fn parse(block: &serde_json::Value) -> anyhow::Result<CourseSpec> {
         opening_platoons: block["opening_platoons"].as_bool().unwrap_or(true),
         // A card headline is a few words read once per run; it lives for the program.
         headline: block["headline"].as_str().map_or("THE RAVINE IS BEHIND YOU", |h| Box::leak(h.to_uppercase().into_boxed_str())),
+        brief: block["brief"].as_array().map(|lines| lines.iter().filter_map(|l| l.as_str()).map(str::to_owned).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -393,11 +434,20 @@ pub struct RunBrief {
     pub take_and_hold: bool,
     /// The living AI crew holds the posts the player is not at (`enable_singleplayer_crew`).
     pub crew: bool,
+    /// The course's own lines (`CourseSpec::brief`); empty for the ravine and the bridge.
+    pub course_lines: Vec<String>,
 }
 
 impl RunBrief {
     pub fn lines(&self) -> Vec<String> {
         let km = self.length_m / 1000.0;
+        if !self.course_lines.is_empty() {
+            // A course that states its own task: its lines, then the two that hold on every course.
+            let mut lines = self.course_lines.clone();
+            lines.push("Nothing fires until it has seen or heard you.".into());
+            lines.push("Death ends it too. Every attempt is a new deployment.".into());
+            return lines;
+        }
         vec![
             if self.take_and_hold {
                 format!("Take the bridge in the town to the {} of you, then hold it.", self.direction)
@@ -421,7 +471,7 @@ impl RunBrief {
     /// A representative brief for the headless UI capture.
     pub fn example() -> Self {
         Self { direction: "north", length_m: 4930.0, seed: 29, start_clock: "15:48".into(), weather: "snow", best_s: None,
-            take_and_hold: false, crew: true }
+            take_and_hold: false, crew: true, course_lines: Vec::new() }
     }
 }
 
@@ -513,6 +563,19 @@ pub fn format_time(seconds: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_seen_start_is_drawn_back_along_the_route_past_a_margin_of_unseen_ground() {
+        // A straight road east; everything east of x = -300 is seen, and a gap at -340..-330 too.
+        let route: Vec<Vec2> = (0..=100).map(|i| Vec2::new(-1000.0 + 10.0 * i as f32, 0.0)).collect();
+        let seen = |p: Vec2| p.x > -300.0 || (-340.0..=-330.0).contains(&p.x);
+        assert_eq!(unseen_start(&route, Vec2::new(-400.0, 0.0), 40.0, seen), None, "an unseen start stands");
+        let (at, heading) = unseen_start(&route, Vec2::new(-200.0, 3.0), 40.0, seen).expect("drawn back");
+        assert!(at.x < -340.0 - 40.0 && at.x > -420.0, "past the seen gap and its margin, no farther than needed: {at:?}");
+        assert!((heading - std::f32::consts::FRAC_PI_2).abs() < 0.05, "facing east along the route: {heading}");
+        assert_eq!(unseen_start(&route, Vec2::new(-200.0, 3.0), 40.0, |_| true), None, "no unseen point: the start stands");
+        assert_eq!(unseen_start(&[], Vec2::ZERO, 40.0, |_| true), None);
+    }
 
     fn block() -> serde_json::Value {
         serde_json::json!({

@@ -183,6 +183,15 @@ impl Audio {
     /// vehicles no longer listed fade out and stop. Call once per simulation update.
     pub fn set_vehicle_voices(&self, vehicles: &[VehicleVoice], dt: f32) {
         let samples = self.vehicle_samples();
+        let vehicles = if self.set_generated_vehicle_voices(vehicles, dt) { &[][..] } else {
+            for bank in [crate::sfx_rows::LOOP_T34_IDLE, crate::sfx_rows::LOOP_T34_MOVING] {
+                if self.generated_loops.borrow().contains_key(bank) {
+                    self.set_generated_loop(bank, &[], dt, MAX_VEHICLE_VOICES, 0.4, true,
+                        crate::sound_levels::SpectrumClass::Engine);
+                }
+            }
+            vehicles
+        };
         self.set_positioned_loops(&self.vehicle_voices, vehicles, dt, samples,
             "loop:t34_exterior", MAX_VEHICLE_VOICES, 0.4, true,
             crate::sound_levels::SpectrumClass::Engine);
@@ -191,6 +200,8 @@ impl Audio {
     /// Actual burning surfaces only. Shares the live/capture listener stage and positioned-loop
     /// implementation with vehicles; independent pool means a wreck cannot steal an engine voice.
     pub fn set_fire_voices(&self, fires: &[VehicleVoice], dt: f32) {
+        let rest = self.set_generated_fire_voices(fires, dt);
+        let fires = &rest[..];
         if fires.is_empty() && self.fire_voices.borrow().slots.is_empty() { return; }
         let samples = self.fire_voices.borrow_mut().samples.get_or_insert_with(|| {
             let mut pcm: Vec<i16> = crate::acoustics::synth_burning_fire(8.0, 0xF1AE_2026)
@@ -293,6 +304,105 @@ impl Audio {
             slot.loop_control.set_rate(vehicle.playback_speed.clamp(0.25, 3.0));
             slot.loop_control.set_gain(slot.fade * master);
         }
+    }
+}
+
+
+/// The T-34 loop's speed fraction back from `playback_speed` (`Game::enemy_vehicle_voices` sets
+/// `0.83 + 1.6 * speed_frac`).
+fn t34_speed_frac(playback_speed: f32) -> f32 {
+    ((playback_speed - 0.83) / 1.6).clamp(0.0, 1.0)
+}
+
+impl Audio {
+    fn generated_pool(&self, bank: &'static str) -> std::rc::Rc<RefCell<VehicleVoices>> {
+        std::rc::Rc::clone(self.generated_loops.borrow_mut().entry(bank)
+            .or_insert_with(|| std::rc::Rc::new(RefCell::new(VehicleVoices::default()))))
+    }
+
+    fn generated_pool_holds(&self, bank: &'static str, id: usize) -> bool {
+        self.generated_loops.borrow().get(bank).is_some_and(|p| p.borrow().slots.iter().any(|s| s.id == id))
+    }
+
+    /// Voice a generated loop bank (`sfx_rows::LOOP_BANKS`) at these positions this update; empty
+    /// fades it out. False (and nothing voiced) while the bank is still decoding, is not
+    /// installed, or the rule does not want it: the caller then keeps its existing voice.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_generated_loop(&self, bank: &'static str, voices: &[VehicleVoice], dt: f32,
+        capacity: usize, fade_s: f32, exterior: bool, class: crate::sound_levels::SpectrumClass) -> bool
+    {
+        let samples = if crate::sfx_rows::loop_wanted(bank) { crate::sfx_rows::loop_bank(bank) } else { None };
+        let Some(samples) = samples else {
+            // Retire a pool left over (the switch is read live).
+            if let Some(pool) = self.generated_loops.borrow().get(bank).cloned() {
+                if !pool.borrow().slots.is_empty() {
+                    let silent: Arc<[f32]> = Arc::from(vec![0.0f32; 2]);
+                    // Only fading: a key of its own so the bank's level cache is not computed on silence.
+                    self.set_positioned_loops(&pool, &[], dt, silent, "loop:gen:retiring",
+                        capacity, fade_s, exterior, class);
+                }
+            }
+            return false;
+        };
+        if voices.is_empty() && !self.generated_loops.borrow().contains_key(bank) { return true; }
+        let pool = self.generated_pool(bank);
+        self.set_positioned_loops(&pool, voices, dt, samples, &format!("loop:gen:{bank}"),
+            capacity, fade_s, exterior, class);
+        true
+    }
+
+    /// With the generated takes wanted and decoded, the T-34s idle on TS-01 and drive on TS-02
+    /// with their tracks (TS-05), crossfading as they start and stop; the synthesised loop fades.
+    fn set_generated_vehicle_voices(&self, vehicles: &[VehicleVoice], dt: f32) -> bool {
+        use crate::sfx_rows::{LOOP_T34_IDLE, LOOP_T34_MOVING};
+        if !crate::sfx_rows::loop_wanted(LOOP_T34_IDLE) { return false; }
+        if crate::sfx_rows::loop_bank(LOOP_T34_IDLE).is_none() | crate::sfx_rows::loop_bank(LOOP_T34_MOVING).is_none() {
+            return false;
+        }
+        let (mut still, mut driving) = (Vec::new(), Vec::new());
+        for v in vehicles {
+            let frac = t34_speed_frac(v.playback_speed);
+            // Hysteresis so a tank creeping at the threshold does not flap between the takes.
+            let moving_now = self.generated_pool_holds(LOOP_T34_MOVING, v.id);
+            let mut g = *v;
+            if frac > if moving_now { 0.04 } else { 0.10 } {
+                // The take is recorded at speed: a narrow rev shift, not the synth's 0.83..2.43.
+                g.playback_speed = 0.9 + 0.25 * frac;
+                driving.push(g);
+            } else {
+                g.playback_speed = 1.0;
+                still.push(g);
+            }
+        }
+        self.set_generated_loop(LOOP_T34_IDLE, &still, dt, MAX_VEHICLE_VOICES, 0.4, true,
+            crate::sound_levels::SpectrumClass::Engine);
+        self.set_generated_loop(LOOP_T34_MOVING, &driving, dt, MAX_VEHICLE_VOICES, 0.4, true,
+            crate::sound_levels::SpectrumClass::Engine);
+        true
+    }
+
+    /// With the switch on and the banks decoded, the Tiger's own deck fire takes FR-01 with paint
+    /// blistering (FR-04) heard outside, FR-02 with heating steel (FR-05) heard from inside, and
+    /// every burning wreck the engine-bay fire (FR-03) with rubber (FR-06) and steel (FR-05).
+    /// Returns the fires left for the synthesised voice.
+    fn set_generated_fire_voices(&self, fires: &[VehicleVoice], dt: f32) -> Vec<VehicleVoice> {
+        use crate::sfx_rows::{LOOP_DECK_FIRE, LOOP_DECK_FIRE_INSIDE, LOOP_WRECK_FIRE};
+        use crate::sound_propagation::Enclosure;
+        let inside = matches!(self.listener_enclosure.get(), Enclosure::Buttoned | Enclosure::HatchOpen);
+        let own_bank = if inside { LOOP_DECK_FIRE_INSIDE } else { LOOP_DECK_FIRE };
+        let ready = |bank: &'static str| crate::sfx_rows::loop_wanted(bank) && crate::sfx_rows::loop_bank(bank).is_some();
+        let (mut own, mut wrecks, mut rest) = (Vec::new(), Vec::new(), Vec::new());
+        for f in fires {
+            if f.id == 0 && ready(own_bank) { own.push(*f); }
+            else if f.id != 0 && ready(LOOP_WRECK_FIRE) { wrecks.push(*f); }
+            else { rest.push(*f); }
+        }
+        let class = crate::sound_levels::SpectrumClass::Engine;
+        // FR-02 is already the fire heard through the roof: no second plate model over it.
+        self.set_generated_loop(LOOP_DECK_FIRE_INSIDE, if inside { &own } else { &[] }, dt, 1, 0.3, false, class);
+        self.set_generated_loop(LOOP_DECK_FIRE, if inside { &[] } else { &own }, dt, 1, 0.3, true, class);
+        self.set_generated_loop(LOOP_WRECK_FIRE, &wrecks, dt, 6, 0.06, true, class);
+        rest
     }
 }
 

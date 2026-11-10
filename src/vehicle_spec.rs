@@ -203,7 +203,7 @@ pub static TIGER_I: VehicleSpec = VehicleSpec {
     reverse_kmh: &[2.8, 4.4, 7.0, 11.0],
     road_speed: 45.0 / 3.6,
     // The existing player model's 0.7 rad/s [E] (powertrain, unchanged).
-    max_yaw_rate: 0.7,
+    max_yaw_rate: 0.45, // [E] 26 deg/s; 0.7 until 9 November 2026 (the owner: turning "too sensitive")
     suspension: SuspensionKind::InterleavedTorsionBar,
     // Eight swing arms per side [T1I, EW-Tiger], 800 mm wheels [EW-Tiger].
     stations: 8,
@@ -233,7 +233,10 @@ pub static TIGER_I: VehicleSpec = VehicleSpec {
     // the hydraulic shock absorbers on the first and last arms [E: the brief and the commonly
     // cited Jentz & Doyle description; not checked this session] at 0.5 of their station's
     // critical damping, which damps pitch most (the end stations have the longest lever).
-    friction_damping: 0.06,
+    // [E] 0.15 since 9 November 2026 (0.06 before): the owner could not see out of any sight
+    // across country for the hull's rocking. The interleaved wheels' and the tracks' friction
+    // is not measured; this is the calmer end of the estimate.
+    friction_damping: 0.15,
     shock_damping: 0.5,
     damper_stations: &[0, 7],
     step_m: crate::tank_support::TIGER_STEP_M,

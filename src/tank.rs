@@ -557,6 +557,17 @@ pub fn load_tiger_rtt() -> [Option<CpuMesh>; 3] {
 }
 
 pub fn build_tiger() -> [CpuMesh; 3] {
+    // `KESSEL_TIGER=gen2`: the gen2 rig's hull, turret and gun in place of the bake's (a first,
+    // rough fit; `tiger_gen2.rs` names what stays the present Tiger's).
+    if crate::tiger_gen2::enabled() {
+        match crate::tiger_gen2::build(&TIGER_PARTS) {
+            Ok((meshes, report)) => {
+                println!("[tiger-gen2] drawn as the player's Tiger: {:?}", report);
+                return meshes;
+            }
+            Err(error) => eprintln!("[tiger-gen2] not loaded, the present Tiger stands: {error:#}"),
+        }
+    }
     (|| Some([
         load_painted_tiger("assets/tanks/tiger/baked/tiger_hull.glb").ok()?,
         load_painted_tiger("assets/tanks/tiger/baked/tiger_turret.glb").ok()?,

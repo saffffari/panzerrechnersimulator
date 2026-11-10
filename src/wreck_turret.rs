@@ -223,6 +223,15 @@ impl Body {
     pub fn model(&self) -> Mat4 {
         Mat4::from_rotation_translation(self.rotation,self.center-self.rotation*self.local_com)
     }
+    /// The farthest support sample from the centre of mass, padded for the rounding of the pose.
+    fn reach(&self) -> f32 {
+        self.points.iter().map(|&p|(p-self.local_com).length_squared()).fold(0.0f32,f32::max).sqrt()*1.001+0.001
+    }
+    /// An upper bound of the ground under every sample of the body at its present centre.
+    fn ground_bound(&self, terrain:&Heightfield, reach:f32) -> f32 {
+        let c=glam::Vec2::new(self.center.x,self.center.z);
+        terrain.height_upper_bound(c-glam::Vec2::splat(reach),c+glam::Vec2::splat(reach))
+    }
     fn inverse_world(&self) -> Mat3 {
         let r=Mat3::from_quat(self.rotation);r*self.inverse_inertia*r.transpose()
     }
@@ -265,9 +274,11 @@ impl Body {
         let identity=[Mat4::IDENTITY;surface_fire::FRAMES];
         let local=self.source.support_hull.source_contacts(&identity);
         let bounds=world_bounds(self.source.hull_bounds,hull_world);
+        let ground_bound=self.ground_bound(terrain,self.reach());
         for &local in self.points.iter() {
             let offset=self.rotation*(local-self.local_com);let p=self.center+offset;
-            if (p.y-terrain.height_at(p.x,p.z)).abs()<=0.004 {
+            // A sample more than the tolerance above the footprint's highest ground is not on it.
+            if p.y-0.004<=ground_bound && (p.y-terrain.height_at(p.x,p.z)).abs()<=0.004 {
                 let d=0.05;let normal=Vec3::new(terrain.height_at(p.x-d,p.z)-terrain.height_at(p.x+d,p.z),
                     2.0*d,terrain.height_at(p.x,p.z-d)-terrain.height_at(p.x,p.z+d)).normalize();
                 if vertical_force_feasible(normal) {contacts.push(offset);}
@@ -338,6 +349,7 @@ impl Body {
             if self.supported_at_rest(terrain,&hull,hull_world) {self.rest_hull=Some(hull_world);self.rest_age_s=0.0;return;}
             self.settled=false;self.quiet_s=0.0;self.rest_hull=None;
         }
+        let reach=self.reach();
         for _ in 0..steps {
             let previous=self.model();
             self.velocity.y-=9.81*h;
@@ -349,9 +361,21 @@ impl Body {
             let mut contacts=Vec::new();
             let mut hull_paths=Vec::new();
             let mut hull_ends=Vec::new();
-            for &local in self.points.iter() {
+            // Broad phase, exact: no sample lies farther than `reach` from the centre of mass, and
+            // the ground under the body's footprint is nowhere above `ground_bound`. A sample at or
+            // above that bound cannot be in the ground, and a body whose swept box misses the
+            // hull's box sweeps nothing; the contacts found are the same set as before. (A thrown
+            // turret queried the ground under every sample on every substep of its flight:
+            // 55 to 68 ms an update for 13 to 16 s after each catastrophic kill, 7 November 2026.)
+            let ground_bound=self.ground_bound(terrain,reach);
+            let previous_center=previous.transform_point3(self.local_com);
+            let pad=Vec3::splat(reach+0.004);
+            let near_hull=self.velocity.y<=0.0
+                && may_touch(previous_center.min(self.center)-pad,previous_center.max(self.center)+pad,bounds);
+            let airborne=self.center.y-reach>=ground_bound+0.002 && !near_hull;
+            for &local in self.points.iter().filter(|_|!airborne) {
                 let p=model.transform_point3(local);
-                let ground=terrain.height_at(p.x,p.z);
+                let ground=if p.y<ground_bound+0.002 {terrain.height_at(p.x,p.z)} else {f32::NEG_INFINITY};
                 if p.y<ground+0.002 {
                     let d=0.05;
                     let normal=Vec3::new(terrain.height_at(p.x-d,p.z)-terrain.height_at(p.x+d,p.z),
@@ -361,7 +385,7 @@ impl Body {
                 }
                 // During ascent the turret is leaving its ring. On descent query the same
                 // loaded hull triangles so it can come to rest on its own engine deck.
-                if self.velocity.y<=0.0 {
+                if near_hull {
                     let from=previous.transform_point3(local)+Vec3::Y*0.004;
                     let to=p-Vec3::Y*0.004;
                     if may_touch(from,to,bounds) {hull_paths.push([from,to]);hull_ends.push(p);}

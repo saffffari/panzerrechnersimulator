@@ -13,13 +13,25 @@ pub(super) struct PlayerSightCover<'a> {
     pub world: &'a world_index::WorldCover,
     pub movement: &'a world_index::WorldCover,
     pub source: &'a surface_fire::CabinFire,
-    pub models: &'a [Mat4;surface_fire::FRAMES],
+    /// The inverses of the source frames' models, taken once for the whole update.
+    pub inverse: &'a [Mat4;surface_fire::FRAMES],
+    /// `CabinFire::world_bounds` at the same models: a ray whose box misses it is not swept.
+    pub bounds: Option<(Vec3,Vec3)>,
 }
 impl crate::infantry_combat::CoverSet for PlayerSightCover<'_> {
     fn first_hit(&self,origin:Vec3,direction:Vec3,range:f32)->Option<f32> {
         let world=self.world.first_hit(origin,direction,range);
-        let own=self.source.sweep(origin,origin+direction*range,self.models).map(|hit|hit.fraction*range);
+        let end=origin+direction*range;
+        let own=self.bounds.filter(|(lo,hi)|origin.min(end).cmple(*hi).all()&&origin.max(end).cmpge(*lo).all())
+            .and_then(|_|{ let _p=crate::sim_phase::Probe::new("sight_source"); self.source.sweep_posed(origin,end,self.inverse) }).map(|hit|hit.fraction*range);
         world.into_iter().chain(own).min_by(f32::total_cmp)
+    }
+    /// A soldier's eight 6 m obstacle feelers read the same occupancy his steps are stopped by
+    /// (the world and the vehicles' boxes), not the Tiger's source triangles: they swept 3.2 M
+    /// triangles eight times a man a step, 21 ms an update with 125 men round the tank
+    /// (9 November 2026). Sight keeps the source surfaces.
+    fn first_obstacle(&self,origin:Vec3,direction:Vec3,range:f32)->Option<f32> {
+        self.movement.first_hit(origin,direction,range)
     }
     fn occupies(&self,point:Vec3,margin:f32,y0:f32,y1:f32)->bool {
         self.movement.occupies(point,margin,y0,y1)
@@ -267,6 +279,12 @@ impl Game {
                                 &crate::sound_levels::BULLET_ON_STEEL_1M),
                             None, Some(recorded.map(|m| m.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect()).unwrap_or(sound)));
                     }
+                }
+                // A glancing hit's whine, a raking burst's hail (bullet_strike_audio.rs).
+                {
+                    let key = match armor.vehicle { ProjectileVehicle::Enemy(i) => i as u32, _ => u32::MAX };
+                    let cosine = (-projectile.velocity.normalize_or_zero()).dot(armor.world_normal).abs();
+                    self.bullet_strike_layers(key, contact.pos, cosine, projectile.seed);
                 }
                 // All small-arms profiles are inert against tank armor: no AP resolution, HP chip,
                 // spall, or cabin fire. Roof/belly blocking below needs no invented plate values.
