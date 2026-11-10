@@ -5252,3 +5252,14 @@ peak level estimated per row (75-120 dB; the table) through the ordinary propaga
 bullet-on-steel spectrum class; rows that replace an existing voice (behind
 `KESSEL_SFX_GENERATED=1`) take that voice's calibrated emission, the hit takes with no filter
 shift. Takes are resampled linearly to the engine's rate. Unauditioned.
+
+## Traced room acoustics off by default (9 November 2026, owner-directed)
+
+The owner: "Let's get rid of the ray traced audio." `KESSEL_ACOUSTICS=1` turns the traced rooms
+back on; without it no acoustic rays are traced and every voice takes the parametric tail (the
+path a voice already took once the convolution budget was spent). Unchanged: distance, air
+absorption, line-of-sight occlusion, the enclosure's transmission loss, the headset. Lost: each
+place's own traced early reflections and decay (the cabin's, a canyon wall's). Basis for the
+cost: play record `demo-20261109-212702`, head out of the cupola on the move, 10 to 11 ms of
+every simulation update. The parametric tail is an estimate, not a solution of the room; it has
+not been compared by ear against the traced result since this change.

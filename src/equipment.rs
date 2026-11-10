@@ -129,13 +129,20 @@ fn carried_hammer_step(remaining_s: f32, trigger: bool, pickup_press: bool,
     }
 }
 
-/// A put-down kit follows the basket when inside; an outside kit remains at its world position.
+/// A put-down kit rides the steel it was set on: the basket and turret, or the hull (the driver's
+/// and radioman's floor); an outside kit remains at its world position.
 #[derive(Clone, Copy)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct ToolRest {
     pub turret: bool,
+    #[serde(default)]
+    pub hull: bool,
     pub model: Mat4,
 }
+
+/// The collision frames that turn with the turret (`Game::fire_surface_models`): the turret, the
+/// gun's two frames, the cupola lid, the basket disc, the breech cover and its lever.
+const TURRET_BORNE_FRAMES: [usize; 7] = [1, 2, 6, 7, 8, 12, 13];
 
 /// One launcher and two spare bombs form a single carried loadout. Spare bombs are
 /// a compact game representation of reserve shots, rather than five additional tubes.
@@ -263,7 +270,8 @@ impl Game {
 
     fn toolbox_model(&self) -> Mat4 {
         if let Some(rest) = self.toolbox_rest {
-            if rest.turret { self.player.turret_model() * rest.model } else { rest.model }
+            if rest.turret { self.player.turret_model() * rest.model }
+            else if rest.hull { self.player.hull_model() * rest.model } else { rest.model }
         } else { self.player.turret_model() * Mat4::from_translation(TOOLBOX_MESH) }
     }
 
@@ -413,16 +421,24 @@ impl Game {
             }
             let ground = self.hf.height_at(position.x, position.z);
             let down = Vec3::new(position.x, ground - 0.2, position.z);
-            position.y = self.cabin_fire.sweep(position, down, &models)
-                .map_or(ground, |hit| {
-                    models[hit.frame].transform_point3(hit.point).y
-                });
+            let support = self.cabin_fire.sweep(position, down, &models)
+                .map(|hit| (hit.frame, models[hit.frame].transform_point3(hit.point).y));
+            position.y = support.map_or(ground, |(_, y)| y);
             position.y += 0.012 - toolbox_mesh().min.y;
             let rotation = Quat::from_rotation_y(forward.x.atan2(forward.z));
             let world = Mat4::from_rotation_translation(rotation, position);
-            let turret = self.mode == Mode::Tank;
-            Some(ToolRest { turret, model: if turret {
+            // Set down beside the driver it stays on the hull floor while the turret traverses
+            // (the owner, 9 November 2026: "hammer was despawned when i had it up front in
+            // drivers seat": it had been carried round with the turret, out through the hull).
+            let turret = match support {
+                Some((frame, _)) => TURRET_BORNE_FRAMES.contains(&frame),
+                None => false,
+            };
+            let hull = !turret && (support.is_some() || self.mode == Mode::Tank);
+            Some(ToolRest { turret, hull, model: if turret {
                 self.player.turret_model().inverse() * world
+            } else if hull {
+                self.player.hull_model().inverse() * world
             } else { world } })
         };
         self.carrying_track_kit = false;

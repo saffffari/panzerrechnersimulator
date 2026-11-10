@@ -2685,12 +2685,20 @@ impl Backend {
             }
         }
         // Depth faces for the two strongest lights near the eye.
+        // The gun sight's exterior pass shows no receiver in the compartment's air, and the
+        // shade and volume passes give a compartment light to no receiver outside that air
+        // (rm_shade.wgsl, rm_volume.wgsl: `rm_cabin_domain(lights[index].a.xyz) >= 0`). A cube
+        // for a cabin lamp there was twelve depth passes a frame that nothing sampled; the
+        // interior pass that follows ranks and draws its own.
+        let unseen_cabin_light = |p: Vec3| r.sight_exterior_pass && r.cabin_medium.as_ref()
+            .is_some_and(|medium| medium.contains_world(&r.cabin_medium_uniform, p));
         let mut ranked: Vec<(f32, usize)> = self.lights.iter().enumerate().filter_map(|(i, l)| {
-            let d2 = (Vec3::from_array([l.a[0], l.a[1], l.a[2]]) - eye).length_squared();
+            let at = Vec3::from_array([l.a[0], l.a[1], l.a[2]]);
+            let d2 = (at - eye).length_squared();
             let power = l.b[3] * l.b[..3].iter().cloned().fold(0.0, f32::max);
             // Firefly lanterns (kind 3) take no shadow cube: six scene depth faces for a source of
             // micro-candela (named in the ledger).
-            (d2 < 45.0 * 45.0 && power > 0.0 && l.c[2] != 3.0).then(|| (power / (d2 + 0.25), i))
+            (d2 < 45.0 * 45.0 && power > 0.0 && l.c[2] != 3.0 && !unseen_cabin_light(at)).then(|| (power / (d2 + 0.25), i))
         }).collect();
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
         self.shadowed = [None; POINT_SHADOWS];
@@ -3603,7 +3611,7 @@ impl Backend {
             pass.set_vertex_buffer(0, p.vbuf.slice(..));
             pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
             pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            if shadow { work.shadow_instanced_draws += 1; } else { work.scene_instanced_draws += 1; }
+            if shadow { work.shadow_instanced_draws += 1; super::count_shadow_draws(if view_index > 2.5 { 10 } else { 6 }, 1); } else { work.scene_instanced_draws += 1; }
             pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
         }
         pass.set_pipeline(mesh_pipe);
@@ -3663,7 +3671,7 @@ impl Backend {
             pass.set_index_buffer(m.rigid_index_buffer().slice(..), wgpu::IndexFormat::Uint32);
             for range in m.primary_index_ranges(vp) {
                 if range.is_empty() { continue; }
-                if shadow { work.shadow_mesh_draws += 1; } else { work.scene_mesh_draws += 1; }
+                if shadow { work.shadow_mesh_draws += 1; super::count_shadow_draws(if view_index > 2.5 { 9 } else { 5 }, 1); } else { work.scene_mesh_draws += 1; }
                 pass.draw_indexed(range, 0, 0..1);
             }
         }
@@ -3679,7 +3687,7 @@ impl Backend {
             pass.set_bind_group(1, material.tex_bind.as_ref(), &[]);
             let slot = if shadow { view_index as usize } else { crate::terrain_lod::GBUFFER_SLOT };
             if terrain.lod.draw(pass, slot) > 0 {
-                if shadow { work.shadow_mesh_draws += 1; } else { work.scene_mesh_draws += 1; }
+                if shadow { work.shadow_mesh_draws += 1; super::count_shadow_draws(if view_index > 2.5 { 9 } else { 5 }, 1); } else { work.scene_mesh_draws += 1; }
             }
         }
     }
@@ -4250,6 +4258,11 @@ mod shader_tests {
             assert!(!source.contains("clamp(4.0 * lights[index].a.w, 0.15, 0.3)"), "{name} keeps its own housing stop");
         }
         let this = include_str!("renderer_raymarch.rs");
+        // The sight's exterior pass drops the cabin lamps' cubes only because both light loops
+        // give a compartment light to no receiver outside the compartment.
+        assert!(rm_source("rm_shade.wgsl").contains("if (!receiver_in_cabin && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }"));
+        assert!(rm_source("rm_volume.wgsl").contains("if (cabin_domain < 0 && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }"));
+        assert!(this.contains("&& !unseen_cabin_light(at)).then(|| (power / (d2 + 0.25), i))"));
         assert!(this.contains("if shadow && ((m.emissive_own && m.emissive > 0.0) || housing(m)) { continue; }"));
         assert!(this.contains("&& (light_in_cabin || (m.vsm_frame == 0 && m.vehicle_finish == [0.0; 4] && !m.painted_steel));"));
     }

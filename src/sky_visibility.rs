@@ -826,7 +826,7 @@ impl SkyVisibility {
                     if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(tile); pass.set_scissor_rect(x,y,w,h); }
                     for range in m.shadow_index_ranges(*matrix,TILE) {
                         pass.draw_indexed(range,0,tile as u32..tile as u32+1);
-                        work.shadow_mesh_draws+=1;
+                        work.shadow_mesh_draws+=1; crate::renderer::count_shadow_draws(0, 1);
                     }
                 }
             }
@@ -857,7 +857,7 @@ impl SkyVisibility {
                     pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
                     for range in ranges.into_iter().map(|r| r.start..r.end.min(b.inst_count)).filter(|r| !r.is_empty()) {
                         pass.draw_indexed(0..p.index_count, 0, range);
-                        work.shadow_instanced_draws += 1;
+                        work.shadow_instanced_draws += 1; crate::renderer::count_shadow_draws(0, 1);
                     }
                 }
                 drawn.1 += 1;
@@ -922,7 +922,7 @@ impl SkyVisibility {
                 let first = k;
                 while k < TILES && admitted(k) { k += 1; }
                 pass.draw_indexed(0..index_count,0,first as u32..k as u32);
-                work.shadow_mesh_draws+=1;
+                work.shadow_mesh_draws+=1; crate::renderer::count_shadow_draws(1, 1);
             }
             drawn.0 += 1;
         }
@@ -939,7 +939,7 @@ impl SkyVisibility {
                 if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(k); pass.set_scissor_rect(x,y,w,h); }
                 let push=PushData {model:glam::Mat4::IDENTITY.to_cols_array_2d(),params:[k as f32,0.0,0.0,0.0]};
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX,0,bytemuck::bytes_of(&push));
-                for range in shadow_instance_ranges(b,p,*matrix,TILE){pass.draw_indexed(0..p.index_count,0,range);work.shadow_instanced_draws+=1;}
+                for range in shadow_instance_ranges(b,p,*matrix,TILE){pass.draw_indexed(0..p.index_count,0,range);work.shadow_instanced_draws+=1;crate::renderer::count_shadow_draws(1, 1);}
             }
         }
         let rebuilds = self.rebuilds.get() + 1;

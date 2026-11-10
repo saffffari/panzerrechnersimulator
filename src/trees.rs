@@ -116,7 +116,18 @@ pub struct Trees {
     // Coarse-only editable grids have no revision contract and never reuse this certificate.
     support_revision: Option<(usize,u64,u64)>,
     support_openings: Vec<crate::terrain_opening::TerrainOpening>,
+    /// Fallen trees still to be checked against the changed ground, `REST_RECHECKS_PER_UPDATE`
+    /// an update, and whether the ground changed again after this round was listed.
+    rest_recheck: std::collections::VecDeque<usize>,
+    rest_recheck_again: bool,
 }
+
+/// How many fallen trees one update checks against changed ground. Every footprint and track
+/// rut advances the terrain's revision, so in a fight it changes on every update; checking every
+/// fallen tree each time cost 0.08 ms a tree an update (60 down: 4.8 ms, Canyon v2, measured
+/// 9 November 2026). Each tree is still checked against the ground as it finally is; only how
+/// soon after the change is bounded by this cadence.
+const REST_RECHECKS_PER_UPDATE: usize = 2;
 
 /// The trunk's diameter (mesh units) where the bow meets it: the extent of the mesh's section by
 /// the horizontal plane `y`, among the section's segments within `reach` of the tree's axis (the
@@ -247,6 +258,8 @@ impl Trees {
             released: Default::default(),
             support_revision: None,
             support_openings: Vec::new(),
+            rest_recheck: std::collections::VecDeque::new(),
+            rest_recheck_again: false,
         }
     }
 
@@ -441,9 +454,21 @@ impl Trees {
         if recheck_rest {
             self.support_revision=revision;
             self.support_openings=terrain.openings.list().to_vec();
+            // A round already under way was listed before this change: run another after it.
+            if self.rest_recheck.is_empty() {
+                self.rest_recheck.extend((0..self.trees.len()).filter(|&i|self.trees[i].state==State::Down));
+            } else {self.rest_recheck_again=true;}
+        } else if self.rest_recheck.is_empty() && self.rest_recheck_again {
+            self.rest_recheck_again=false;
+            self.rest_recheck.extend((0..self.trees.len()).filter(|&i|self.trees[i].state==State::Down));
+        }
+        let mut due=[usize::MAX;REST_RECHECKS_PER_UPDATE];
+        for slot in &mut due {
+            let Some(i)=self.rest_recheck.pop_front() else {break;};
+            *slot=i;
         }
         for i in 0..self.trees.len() {
-            if self.trees[i].state==State::Down && recheck_rest {
+            if self.trees[i].state==State::Down && due.contains(&i) {
                 let tree=&mut self.trees[i];
                 let motion=self.released.entry(i).or_insert_with(||ground_support::Released::new(
                     self.batches[tree.batch].1[tree.inst],Vec3::ZERO,1.0));
@@ -564,6 +589,27 @@ impl Trees {
     }
 
     /// How many trees are down (headless assertions).
+    /// Harness only: release `n` standing trees spread evenly over the whole stand, each in a
+    /// hashed direction, as a tank's push would. Returns how many were released.
+    pub fn debug_fell_spread(&mut self, n: usize) -> usize {
+        let standing: Vec<usize> = (0..self.trees.len()).filter(|&i| self.trees[i].state == State::Standing).collect();
+        if standing.is_empty() || n == 0 { return 0; }
+        let stride = (standing.len() / n).max(1);
+        let mut events = Vec::new();
+        let mut felled = 0;
+        for &i in standing.iter().step_by(stride).take(n) {
+            let a = (i as u32).wrapping_mul(2654435761) as f32 / u32::MAX as f32 * std::f32::consts::TAU;
+            self.snap(i, Vec3::new(a.cos(), 0.0, a.sin()), &mut events);
+            felled += 1;
+        }
+        felled
+    }
+
+    /// Trees whose fall is still being solved (not yet asleep on the ground).
+    pub fn falling_count(&self) -> usize {
+        self.trees.iter().filter(|t| matches!(t.state, State::Falling { .. })).count()
+    }
+
     pub fn debug_down_count(&self) -> usize {
         self.trees.iter().filter(|t| t.state == State::Down).count()
     }
@@ -756,6 +802,8 @@ impl Trees {
         };
         self.support_revision=None;
         self.support_openings.clear();
+        self.rest_recheck.clear();
+        self.rest_recheck_again=false;
         Ok(())
     }
     pub(crate) fn present_world_state(&self,r:&mut Renderer) {

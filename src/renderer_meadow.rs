@@ -544,7 +544,7 @@ impl MeadowGpu {
             let l = level as u32;
             let vertices = meadow::level_capacity(l) * meadow::level_vertices(l);
             pass.draw(0..vertices, first..first + count);
-            if camera { work.scene_instanced_draws += 1; } else { work.shadow_instanced_draws += 1; }
+            if camera { work.scene_instanced_draws += 1; } else { work.shadow_instanced_draws += 1; super::count_shadow_draws(8, 1); }
         }
         if camera {
             for level in 0..LEVELS {

@@ -1329,6 +1329,7 @@ fn run_gfxbench(
             println!("[gfxbench] from the settle frame {at}: gpu frame {gpu:.2} ms, simulation {sim:.2} ms (mean of {} frames)", times.len() - a);
             if kill_split.is_none() { println!("[gfxbench] simulation phases from the settle frame (ms): {}", g.sim_phase.take()); }
         }
+        println!("[gfxbench] shadow draws by source over the whole run ({} frames): {}", times.len(), renderer::take_shadow_draws());
         times.sort_by(f32::total_cmp);
         let n = times.len();
         let avg: f32 = times.iter().sum::<f32>() / n as f32;
@@ -14419,6 +14420,7 @@ impl WindowState {
                     "work_since_last_line": {
                         "scene_renders": work.scene_renders, "shadow_passes": work.shadow_passes,
                         "shadow_mesh_draws": work.shadow_mesh_draws, "shadow_instanced_draws": work.shadow_instanced_draws,
+                        "shadow_draws_by_source": renderer::take_shadow_draws(),
                         "scene_mesh_draws": work.scene_mesh_draws, "scene_instanced_draws": work.scene_instanced_draws,
                         "fullscreen_raster_passes": work.fullscreen_raster_passes, "compute_passes": work.compute_passes,
                         "smoke_passes": work.smoke_passes, "bloom_passes": work.bloom_passes, "snow_passes": work.snow_passes,
@@ -14748,8 +14750,10 @@ impl WindowState {
             .configure_crew_render_view(lan::LanRole::Gunner, true, &mut self.renderer);
         self.renderer.set_active_view(optic_slot);
         let local_body_visibility = self.game.hide_first_person_for_optic(&mut self.renderer);
+        self.renderer.set_sight_exterior_pass(true);
         self.renderer
             .render_optic_snapshot(&self.device, &self.queue);
+        self.renderer.set_sight_exterior_pass(false);
         for (slot, visible) in local_body_visibility {
             self.renderer.set_visible(slot, visible);
         }
@@ -17493,9 +17497,12 @@ impl ApplicationHandler for App {
 }
 
 /// Longest wall interval one redraw hands to the simulation. `Game::update_realtime` runs one
-/// full update per 50 ms, so this bounds catch-up at five updates; a longer hitch or OS suspend
-/// is a pause, not a backlog whose own cost makes the next frame slower still.
-const MAX_FRAME_DT: f32 = 0.25;
+/// full update per 50 ms, so this bounds catch-up at two updates; a longer frame, a hitch or an
+/// OS suspend runs the game slower, not as a backlog whose own cost makes the next frame slower
+/// still. At five updates (0.25 s, until 9 November 2026) a fight whose update cost 25 ms and
+/// whose render cost 26 ms held itself at three updates a frame, 101 ms, once anything pushed
+/// it there (the owner: "the fps is at 10"); at two the same costs settle at 76 ms.
+const MAX_FRAME_DT: f32 = 0.10;
 
 /// Simulated seconds for a redraw whose previous frame started `elapsed` seconds ago. A frame
 /// with no predecessor (first frame, focus regain, fresh world) advances one nominal 60 Hz step.
@@ -17512,17 +17519,17 @@ mod frame_clock_tests {
 
     #[test]
     fn ordinary_frames_consume_their_full_wall_time() {
-        for dt in [1.0 / 144.0, 1.0 / 60.0, 0.05, 0.1, 0.25] {
+        for dt in [1.0 / 144.0, 1.0 / 60.0, 0.05, 0.1] {
             assert_eq!(frame_dt(Some(dt)), dt);
         }
     }
 
     #[test]
-    fn a_hitch_is_capped_at_five_catch_up_updates() {
-        for dt in [0.2501, 1.0, 4.9, 5.1, 3600.0] {
+    fn a_hitch_is_capped_at_two_catch_up_updates() {
+        for dt in [0.1001, 0.25, 1.0, 4.9, 5.1, 3600.0] {
             let capped = frame_dt(Some(dt));
             assert_eq!(capped, MAX_FRAME_DT);
-            assert!((capped / 0.05).ceil() <= 5.0);
+            assert!((capped / 0.05).ceil() <= 2.0);
         }
     }
 

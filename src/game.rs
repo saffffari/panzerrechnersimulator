@@ -10429,6 +10429,9 @@ pub struct Game {
     /// Live catch-up keeps source/physics clocks current but publishes expensive fire/grass
     /// particle pages once, from the final completed simulation state.
     defer_presentation_rebuild: bool,
+    /// Which step of a subdivided live frame is running (0 for the first, and for every direct
+    /// `update`). Work that only converges over frames (the acoustic traces) runs on step 0.
+    realtime_substep: u32,
     /// Counts updates for the fire presentation's cadence (`FIRE_PRESENTATION_PERIOD`).
     fire_presentation_phase: u32,
     /// Per burning wreck: the fire clock at which its flame roots were last read off its burning
@@ -15017,6 +15020,7 @@ impl Game {
             rtt_last_refresh,
             defer_rtt_to_render: false,
             defer_presentation_rebuild: false,
+            realtime_substep: 0,
             fire_presentation_phase: 0,
             fx_fire_roots: std::collections::HashMap::new(),
             bullet_bursts: std::collections::HashMap::new(),
@@ -17848,12 +17852,14 @@ impl Game {
             self.defer_rtt_to_render=true;
         }
         let mut advanced=false;
-        for _ in 0..count {
+        for substep in 0..count {
             if self.game_over().is_some() {break;}
             if let Some(audio)=&self.audio {audio.set_simulation_audio_time(r.time);}
+            self.realtime_substep=substep;
             self.update(&partition,step,r);
             advanced=true;
         }
+        self.realtime_substep=0;
         if let Some(audio)=&self.audio {audio.finish_simulation_audio_frame();}
         self.defer_presentation_rebuild=previous_presentation;
         self.defer_rtt_to_render=previous_rtt;
@@ -19293,16 +19299,16 @@ impl Game {
         // their events into the pooled FX + the ranged-audio scheduler.
         self.sim_phase.seg("wrecks");
         let mut tree_events = Vec::new();
-        self.trees.update(dt, r, &self.hf, &mut tree_events);
-        self.route_tree_events(tree_events);
+        { let _p = crate::sim_phase::Probe::new("trees_update"); self.trees.update(dt, r, &self.hf, &mut tree_events); }
+        { let _p = crate::sim_phase::Probe::new("route_tree_events"); self.route_tree_events(tree_events); }
 
         // Only active pushables advance; each final transform becomes its persistent rest pose.
         let mut scatter_events = Vec::new();
-        self.scatter.update(dt, r, &self.hf, &mut scatter_events);
-        self.route_scatter_events(scatter_events);
+        { let _p = crate::sim_phase::Probe::new("scatter_update"); self.scatter.update(dt, r, &self.hf, &mut scatter_events); }
+        { let _p = crate::sim_phase::Probe::new("route_scatter_events"); self.route_scatter_events(scatter_events); }
 
         // Advance ballistic wall chunks + support cascades (docs/DESTRUCTION.md §6).
-        self.chunks.update(dt, r, &self.hf);
+        { let _p = crate::sim_phase::Probe::new("chunks_update"); self.chunks.update(dt, r, &self.hf); }
 
         // Advance the PLAYER's interior fire: it grows once lit and, once established, reaches the
         // ammunition on a countdown — an unchecked fire cooks off the ammo (catastrophic kill).
@@ -32110,6 +32116,11 @@ impl Game {
 
     /// Route tree events (snap cracks, ground thuds) into the pooled FX and the ranged-audio
     /// scheduler. The trees subsystem itself stays deaf and mute — this is its voice.
+    /// Harness only: see `Trees::debug_fell_spread`.
+    pub fn debug_fell_trees(&mut self, n: usize) -> usize { self.trees.debug_fell_spread(n) }
+    /// Trees still falling, and loose scatter bodies still being solved.
+    pub fn loose_world_counts(&self) -> (usize, usize) { (self.trees.falling_count(), self.scatter.active_count()) }
+
     fn route_tree_events(&mut self, events: Vec<crate::trees::TreeEvent>) {
         for ev in events {
             match ev {

@@ -739,7 +739,7 @@ impl ScatterGpu {
             let (first, last) = page.bucket_range;
             if self.multi_draw {
                 pass.multi_draw_indexed_indirect(&self.indirect, u64::from(view_base + first) * 20, last - first);
-                if view == 3 { work.scene_instanced_draws += 1; } else { work.shadow_instanced_draws += 1; }
+                if view == 3 { work.scene_instanced_draws += 1; } else { work.shadow_instanced_draws += 1; super::count_shadow_draws(7, 1); }
             } else {
                 for b in first..last {
                     pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&b));

@@ -74,9 +74,10 @@ impl CabinVoxels {
     /// copied on the caller's thread. The worker keeps exactly the triangles `build` gets back
     /// from `world_triangles` with identity frames: the non-degenerate ones (as `CabinFire`
     /// keeps them) whose bounds meet the ±8 m box. The occupancy grid does not depend on their
-    /// order. `None` when the traced rooms are off (`KESSEL_ACOUSTICS=0`) or no thread starts.
+    /// order. `None` when the traced rooms are off (the default; `KESSEL_ACOUSTICS=1`) or no thread starts.
     pub fn spawn(meshes: &[(usize, &crate::gltf_load::CpuMesh)]) -> Option<std::thread::JoinHandle<CabinVoxels>> {
-        if !acoustics_enabled() { return None; }
+        // The unit tests build the voxels whatever the switch says.
+        if !acoustics_enabled() && !cfg!(test) { return None; }
         let copies: Vec<(usize, Vec<[f32; 3]>, Vec<u32>)> = meshes.iter()
             .map(|(frame, mesh)| (*frame, mesh.vertices.iter().map(|v| v.pos).collect(), mesh.indices.clone()))
             .collect();
@@ -1095,11 +1096,15 @@ impl Game {
 }
 
 
-/// `KESSEL_ACOUSTICS=0` turns the traced rooms off (no traces, every voice on the parametric tail
-/// it takes anyway once the convolution budget is spent): the A/B switch for their cost.
+/// The traced rooms are off unless `KESSEL_ACOUSTICS=1` (the owner, 9 November 2026: "Let's get
+/// rid of the ray traced audio"): no traces, every voice on the parametric tail it takes anyway
+/// once the convolution budget is spent. Head out of the cupola on the move, the traces cost
+/// 10 to 11 ms of every update (play record demo-20261109-212702). Distance, air absorption,
+/// occlusion by line of sight and the enclosure's loss are unchanged; what is lost is each
+/// place's own traced echo. Named in docs/PHYSICAL_TRUTH_AUDIT.md.
 fn acoustics_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("KESSEL_ACOUSTICS").as_deref() != Ok("0"))
+    *ON.get_or_init(|| std::env::var("KESSEL_ACOUSTICS").as_deref() == Ok("1"))
 }
 
 impl WorldAcoustics {
