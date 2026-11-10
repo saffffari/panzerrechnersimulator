@@ -176,7 +176,11 @@ fn rise_tau(base_tau: f32, excess_log: f32, inside: bool, m_target: f32) -> f32 
     let onset = select(OBS_OUTSIDE_DAZZLE_FROM_LOG, OBS_DAZZLE_FROM_LOG, inside);
     let ramp = select(OBS_OUTSIDE_DAZZLE_RAMP_LOG, OBS_DAZZLE_RAMP_LOG, inside);
     let photopic = select(smoothstep(OBS_OUTSIDE_DAZZLE_MESOPIC_FROM, 1.0, m_target), 1.0, inside);
-    return mix(base_tau, OBS_DAZZLE_TAU, smoothstep(onset, onset + ramp, excess_log) * photopic);
+    let tau = mix(base_tau, OBS_DAZZLE_TAU, smoothstep(onset, onset + ramp, excess_log) * photopic);
+    // KESSEL_EXPOSURE=shared: the eye rises no faster than a 3 s time constant, so a burst of
+    // one's own machine gun (a second of flashes lighting the smoke and the snow) moves it a
+    // little, never takes the target away (the owner, 10 November).
+    return select(tau, max(tau, 3.0), OBS_SHARED);
 }
 
 fn bleach_step(b: f32, retinal: f32, regeneration: f32, photosensitivity: f32, dt: f32) -> f32 {
