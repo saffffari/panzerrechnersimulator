@@ -44,6 +44,10 @@ fn scratch_frame_u(n: vec3<f32>) -> vec3<f32> {
 fn glass_scratches(local: vec3<f32>, n: vec3<f32>, footprint_m: f32) -> ScratchSample {
     var out: ScratchSample;
     out.tangent = scratch_frame_u(n);
+    // Off by default since 2026-11-09 (the owner: "they are too noticeable"): the glass is clean of
+    // grooves. GLASS_SCRATCHES comes from `raster_optics::glass_scratch_switch`
+    // (KESSEL_GLASS_SCRATCHES=1 brings them back for review).
+    if (!GLASS_SCRATCHES) { out.coverage = 0.0; return out; }
     let u = out.tangent;
     let v = cross(n, u);
     let p = vec2(dot(local, u), dot(local, v));

@@ -18409,8 +18409,8 @@ impl Game {
                     // gun (see the lay section of `update_crew_vehicle_controls`), so the commander
                     // looks with the mouse and points the turret with the arrows at once.
                     const SENS: f32 = 0.0022;
-                    // At a vision block the head stays at the block: the mouse's sideways sweep
-                    // under RMB steps to the next block (tiger_periscopes::update_cupola_focus).
+                    // At a vision block the head stays at the block: the mouse turns the eye within
+                    // the block's field instead (tiger_periscopes::update_cupola_focus).
                     if self.cupola_focus.index.is_none() {
                         self.head_yaw += input.look_dx * SENS;
                         self.head_pitch = clamp_commander_head_pitch(
@@ -18668,7 +18668,7 @@ impl Game {
                 self.switch_near_restore=Some(self.cupola_focus.saved_near.unwrap_or(r.camera.znear));
             }
             self.sim_phase.seg("tank.eye_switch");
-            self.update_cupola_focus(input.aim, input.look_dx, dt, r);
+            self.update_cupola_focus(input.aim, glam::Vec2::new(input.look_dx, input.look_dy), dt, r);
             if self.switch_t>0.0 {r.camera.znear=r.camera.znear.min(0.005);}
             else if let Some(near)=self.switch_near_restore.take() {r.camera.znear=near;}
 

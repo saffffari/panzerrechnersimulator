@@ -108,7 +108,15 @@ fn march_reflection(rel: vec3<f32>, dir: vec3<f32>, jitter: f32) -> Hit {
 fn pane_offscreen(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<f32>) -> vec3<f32> {
     let origin_rel = rel + n * 0.01;
     let t = rm_ray_nearest(fr.cam_pos.xyz + origin_rel, dir, 0.0, 80.0);
-    if (t < 0.0) { return sky; }
+    if (t < 0.0) {
+        // A reflected ray from a pane inside the crew compartment that meets nothing has slipped
+        // through a gap in the traced cabin: it sees the sky only as far as the compartment's cover
+        // map opens the pane to it, as rm_reflect.wgsl's misses do. Before 2026-11-09 it took the
+        // whole sky: the pale band of "reflection" under the driver's visor slit by day.
+        let world = fr.cam_pos.xyz + origin_rel;
+        if (rm_cabin_domain(world) >= 0) { return sky * rm_cabin_sky_visibility(world, n); }
+        return sky;
+    }
     let hit_rel = origin_rel + dir * t;
     let pr = rm_project(hit_rel);
     if (pr.z > 0.0 && all(pr.xy >= vec2(0.0)) && all(pr.xy < vec2(1.0))) {
@@ -227,9 +235,17 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
                          rm_cabin_sky_visibility(world, n), pc.extra.w > 0.5);
     let sky_r = mix(rm_sky_hemisphere(r), rm_sky_background(r).rgb, smoothstep(-0.05, 0.25, r.y));
     var reflected = sky_r * sky_vis;
-    let hit = march_reflection(rel, r, jitter);
-    if (RM_RAY_QUERIES && hit.weight < 0.99) { reflected = pane_offscreen(rel, n, r, sky_r); }
-    reflected = mix(reflected, hit.colour, hit.weight);
+    // With ray queries the reflected ray is traced (`pane_offscreen`: the lit frame where the frame
+    // shows its hit). The depth-buffer march decided hit or miss per frame from a few samples and
+    // flickered on the vision blocks as the seat swayed by fractions of a millimetre (2026-11-09:
+    // from the commander's seat 80 % of the pixels that flickered on the blocks). It remains
+    // the path without ray queries.
+    if (RM_RAY_QUERIES) {
+        reflected = pane_offscreen(rel, n, r, sky_r);
+    } else {
+        let hit = march_reflection(rel, r, jitter);
+        reflected = mix(reflected, hit.colour, hit.weight);
+    }
     // The light reaching the pane's grime from the viewer's side: with ray queries, the share of
     // that hemisphere open to the sky (four fixed rays, the periscopes' folds included) instead of
     // the top-down cover map, which counts a cabin's ports and hatch as roofed.
