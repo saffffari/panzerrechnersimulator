@@ -2706,6 +2706,21 @@ pub struct BlitRect {
     pub clear: bool,
 }
 
+/// Shadow draws by the system that issued them, for the session record (`shadow_draws_by_source`):
+/// sky-visibility static and dynamic, cabin lamps static and dynamic, the forward sun pass, the
+/// raymarch cascades' meshes and instanced batches (sun and sky cover), the strewn field, the
+/// meadow, and the raymarch point-light cube faces' meshes and instanced batches.
+pub const SHADOW_DRAW_SOURCES: [&str; 11] = ["sky_static", "sky_dynamic", "cabin_static", "cabin_dynamic",
+    "forward_sun", "cascade_mesh", "cascade_instanced", "scatter", "meadow", "point_mesh", "point_instanced"];
+static SHADOW_DRAWS: [std::sync::atomic::AtomicU64; 11] = [const { std::sync::atomic::AtomicU64::new(0) }; 11];
+pub fn count_shadow_draws(source: usize, n: u64) {
+    SHADOW_DRAWS[source].fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+}
+/// The counts since the last call, as a JSON object.
+pub fn take_shadow_draws() -> serde_json::Value {
+    serde_json::Value::Object(SHADOW_DRAW_SOURCES.iter().zip(&SHADOW_DRAWS)
+        .map(|(name, n)| (name.to_string(), serde_json::json!(n.swap(0, std::sync::atomic::Ordering::Relaxed)))).collect())
+}
 /// Actual work encoded by `render_internal`, accumulated until explicitly reset. This is a cheap
 /// CPU-side counter—not a timing estimate—and therefore works in headless tests and on Metal where
 /// timestamp-query support varies. Couch benchmarks reset it once per simulation frame so the log
@@ -3144,6 +3159,9 @@ pub struct Renderer {
     pub rt_skip: bool,
     /// True only while the gunner's exterior optic snapshot is being rasterised.
     optic_hide_pass: bool,
+    /// True while the eyepiece composite's exterior sight picture is prepared and drawn (its
+    /// pass A): every receiver in it lies outside the compartment's air.
+    sight_exterior_pass: bool,
     /// The scene TLAS, rebuilt every frame from mesh/instance transforms (wgpu 27 has no refit;
     /// full rebuild is the only mode and is ~0.1–0.3 ms at this instance count). Created lazily
     /// on the first frame — instanced batches arrive after Renderer::new.
@@ -6517,6 +6535,7 @@ impl Renderer {
             rt_scene,
             rt_skip: false,
             optic_hide_pass: false,
+            sight_exterior_pass: false,
             rt_tlas: None,
             rt_tlas_cap: 0,
             rt_split,
@@ -8534,6 +8553,15 @@ impl Renderer {
         self.coop_shadow.set_reuse(reuse)
     }
 
+    /// Bracket the eyepiece composite's exterior sight pass (see `sight_exterior_pass`).
+    /// KESSEL_SIGHT_PASS_CUBES=1 keeps the pass as it was before 9 November 2026 (the cabin
+    /// lamps' shadow cubes drawn in it too), for comparison.
+    pub fn set_sight_exterior_pass(&mut self, on: bool) {
+        static KEEP_CUBES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let keep = *KEEP_CUBES.get_or_init(|| std::env::var("KESSEL_SIGHT_PASS_CUBES").as_deref() == Ok("1"));
+        self.sight_exterior_pass = on && !keep;
+    }
+
     /// End the split-screen frame and invalidate its cached matrix. This is deliberately explicit:
     /// subsequent RTT, solo, menu or next-frame work falls straight back to its own camera cascade.
     pub fn end_coop_shadow_frame(&mut self) {
@@ -8740,13 +8768,14 @@ impl Renderer {
         // show this backend's exterior raster captures (an interim, docs/RAYMARCHING_ENGINE.md),
         // which need the visibility atlas and lamp cubes on the frames a port is in view.
         let relay_optics = !raster_passes && self.raymarch.as_ref().is_some_and(|rm| rm.relays_optics());
-        if relay_optics { self.prepare_raster_optics(queue, &cam); }
+        if relay_optics { let _probe = crate::sim_phase::Probe::new("upload_relay_optics"); self.prepare_raster_optics(queue, &cam); }
         let relayed = relay_optics && self.raster_optics_prepared();
         if (self.raster_lighting || self.menu_mode) && (raster_passes || relayed) {
             let near = self.near_shadow_uniform();
             let near_camera = CameraUniform { light_view_proj: near.view_proj, ..cam };
             queue.write_buffer(&self.near_shadow_camera_buf,0,bytemuck::bytes_of(&near_camera));
             queue.write_buffer(&self.near_shadow_buf,0,bytemuck::bytes_of(&near));
+            let _probe = crate::sim_phase::Probe::new("upload_cabin_sky_prepare");
             if raster_passes { self.cabin_shadows.prepare(self,queue,&cam); }
             else { self.cabin_shadows.prepare_unmapped(self,queue); }
             self.sky_visibility.prepare(self,queue);
@@ -8872,12 +8901,14 @@ impl Renderer {
             self.prepare_weapon_particles(device, queue);
         }
         if let Some(mut rm) = self.raymarch.take() {
-            rm.prepare(self, device, queue);
+            { let _probe = crate::sim_phase::Probe::new("upload_rm_prepare"); rm.prepare(self, device, queue); }
             if let Some(mut sf) = self.scatter_field.take() {
+                let _probe = crate::sim_phase::Probe::new("upload_scatter_prepare");
                 sf.prepare(self, rm.shadow_views(), device, queue);
                 self.scatter_field = Some(sf);
             }
             if let Some(mut meadow) = self.meadow.take() {
+                let _probe = crate::sim_phase::Probe::new("upload_meadow_prepare");
                 meadow.prepare(self, rm.shadow_views(), rm.shadow_texels(), queue);
                 self.meadow = Some(meadow);
             }
@@ -8941,6 +8972,7 @@ impl Renderer {
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         self.eye_local.upload(queue, self.camera.fov_y, self.camera.aspect);
         if let Some(surface) = &self.rt_surface_gpu {
+            let _probe = crate::sim_phase::Probe::new("upload_rt_instance_records");
             let triangles = self.meshes.iter().filter(|m| m.glass && m.visible)
                 .flat_map(|m| {
                     m.rt_source.iter().flat_map(move |source| {
@@ -9060,6 +9092,7 @@ impl Renderer {
     }
 
     fn render_internal(&self, encoder: &mut wgpu::CommandEncoder, finish_ldr: bool) {
+        let _probe = crate::sim_phase::Probe::new("render_internal_encode");
         if let Some(rm) = &self.raymarch {
             rm.encode(self, encoder, finish_ldr);
             return;
@@ -9076,6 +9109,7 @@ impl Renderer {
         // ---- sun shadow pass: depth of all opaque casters from the light's POV ----
         // Only legacy forward consumers read these maps. Deferred hardware queries and the
         // portable source-BVH path both resolve sun visibility from actual scene triangles.
+        let sun_shadow_probe = crate::sim_phase::Probe::new("render_sun_shadows_encode");
         if !self.deferred && !self.raster_lighting {
             for near in [false, true] {
             if (near && !self.shader_backend) || (!near && !self.coop_shadow.should_render()) { continue; }
@@ -9144,12 +9178,14 @@ impl Renderer {
                 pass.set_vertex_buffer(0, p.vbuf.slice(..));
                 pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
                 pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                work.shadow_instanced_draws += 1;
+                work.shadow_instanced_draws += 1; count_shadow_draws(4, 1);
                 pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
             }
             }
         }
+        drop(sun_shadow_probe);
         if self.raster_lighting {
+            let _p = crate::sim_phase::Probe::new("render_cabin_sky_shadows_encode");
             self.cabin_shadows.encode(self,encoder,&mut work);
             self.sky_visibility.encode(self,encoder,&mut work);
         }
@@ -9166,7 +9202,7 @@ impl Renderer {
             encoder.copy_buffer_to_buffer(probe, (PROBE_MEAN_GROUND * 16) as u64,
                 &self.pixel_particle_uniform, 256, 16);
         }
-        self.encode_raster_optics(encoder, &mut work);
+        { let _p = crate::sim_phase::Probe::new("render_raster_optics_encode"); self.encode_raster_optics(encoder, &mut work); }
         // Diagnostic baseline computes sky before opaque geometry. Normal forward and deferred
         // paths both evaluate the identical atmosphere only at primary misses after depth exists.
         if !self.depth_gate_sky {
@@ -10458,6 +10494,7 @@ impl Renderer {
     /// Emissive geometry remains geometry: it participates in visibility and can return radiance
     /// when a secondary ray commits to it. Only explicit view-local/transparent paths stay out.
     fn rt_update(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        let _probe = crate::sim_phase::Probe::new("render_rt_update");
         let query = self.gpu_profile.as_ref().and_then(|p|p.begin_encoder_span(encoder,"scene-acceleration-builds"));
         self.rt_update_scene(device, encoder);
         // Bind after allocation/build recording: upload_uniforms runs before this function.
@@ -10847,6 +10884,7 @@ impl Renderer {
     /// (true rigid motion vectors), uniform upload, ping-pong flip. Must run before
     /// render_internal encodes the accum pass.
     fn accum_prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let _probe = crate::sim_phase::Probe::new("render_accum_prepare");
         if !self.deferred {
             return;
         }
@@ -10993,7 +11031,7 @@ impl Renderer {
         let commands = encoder.finish();
         let finish_ms = finish_started.elapsed().as_secs_f32() * 1000.0;
         let submit_started = std::time::Instant::now();
-        queue.submit([commands]);
+        { let _probe = crate::sim_phase::Probe::new("render_queue_submit"); queue.submit([commands]); }
         // The CPU side of the frame the GPU pass timings cannot see: the TLAS rewrite and its
         // build's per-instance work inside wgpu (at record, finish and submit), for gfxbench.
         self.bench_cpu_ms = [rt_ms, finish_ms, submit_started.elapsed().as_secs_f32() * 1000.0];
@@ -11453,13 +11491,14 @@ impl Renderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
-        self.flush_track_stamps(device, &mut encoder);
-        self.rt_update(device, &mut encoder);
-        self.accum_prepare(device, queue);
-        self.render_internal(&mut encoder, true);
+        // Timers (sim_phase probes, reported in the session log's calls): where submission goes.
+        { let _p = crate::sim_phase::Probe::new("render_track_stamps"); self.flush_track_stamps(device, &mut encoder); }
+        { let _p = crate::sim_phase::Probe::new("render_rt_update"); self.rt_update(device, &mut encoder); }
+        { let _p = crate::sim_phase::Probe::new("render_accum_prepare"); self.accum_prepare(device, queue); }
+        { let _p = crate::sim_phase::Probe::new("render_internal_encode"); self.render_internal(&mut encoder, true); }
         self.flush_pixel_ink(device, &mut encoder);
-        self.blit(device, &mut encoder, view, format);
-        queue.submit([encoder.finish()]);
+        { let _p = crate::sim_phase::Probe::new("render_blit"); self.blit(device, &mut encoder, view, format); }
+        { let _p = crate::sim_phase::Probe::new("render_queue_submit"); queue.submit([encoder.finish()]); }
     }
 
     /// The paper overlays are drawn on the internal grid: queue them (`repair_manual::
@@ -11497,10 +11536,10 @@ impl Renderer {
             label: Some("optic-pass"),
         });
         self.flush_track_stamps(device, &mut encoder);
-        self.rt_update(device, &mut encoder);
-        self.accum_prepare(device, queue);
+        { let _p = crate::sim_phase::Probe::new("render_rt_update"); self.rt_update(device, &mut encoder); }
+        { let _p = crate::sim_phase::Probe::new("render_accum_prepare"); self.accum_prepare(device, queue); }
         self.optic_hide_pass = true;
-        self.render_internal(&mut encoder, true);
+        { let _p = crate::sim_phase::Probe::new("render_internal_encode"); self.render_internal(&mut encoder, true); }
         self.optic_hide_pass = false;
         encoder.copy_texture_to_texture(
             self.ldr_tex.as_image_copy(),
@@ -11511,7 +11550,7 @@ impl Renderer {
                 depth_or_array_layers: 1,
             },
         );
-        queue.submit([encoder.finish()]);
+        { let _probe = crate::sim_phase::Probe::new("render_queue_submit"); queue.submit([encoder.finish()]); }
     }
 
     /// One SPLITSCREEN viewport: a complete internal-resolution frame (the caller has posed
@@ -11539,7 +11578,7 @@ impl Renderer {
         self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
         self.blit_rect(device, &mut encoder, view, format, Some(rect));
-        queue.submit([encoder.finish()]);
+        { let _probe = crate::sim_phase::Probe::new("render_queue_submit"); queue.submit([encoder.finish()]); }
     }
 
     /// Composite the queued UI text OVER an already-rendered surface frame (LoadOp::Load) — the
