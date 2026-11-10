@@ -8665,11 +8665,11 @@ impl Renderer {
         let _probe = crate::sim_phase::Probe::new("render_upload_uniforms");
         self.apply_weather_override();
         queue.write_buffer(&self.blit_ubuf, 16, bytemuck::bytes_of(&self.blit_reticle()));
-        self.prepare_scene_visibility(device,queue);
+        { let _probe = crate::sim_phase::Probe::new("upload_scene_visibility"); self.prepare_scene_visibility(device,queue); }
         // Actor topology can change between frames. Refresh source/instance tables before writing
         // per-frame material state, not later in rt_update after that write already used old sizes.
-        self.rt_refresh_actor_lookup(queue);
-        self.rt_rebuild_surface_pack(device);
+        { let _probe = crate::sim_phase::Probe::new("upload_rt_actor_lookup"); self.rt_refresh_actor_lookup(queue); }
+        { let _probe = crate::sim_phase::Probe::new("upload_rt_surface_pack"); self.rt_rebuild_surface_pack(device); }
         if let Some(buffer) = &self.bloom_portal_buf {
             // The actual interior-view gate stays true while a hatch is open, and is cleared
             // for outside cameras, driver's wide objective, and the gunner's sight snapshot.
