@@ -233,7 +233,10 @@ pub static TIGER_I: VehicleSpec = VehicleSpec {
     // the hydraulic shock absorbers on the first and last arms [E: the brief and the commonly
     // cited Jentz & Doyle description; not checked this session] at 0.5 of their station's
     // critical damping, which damps pitch most (the end stations have the longest lever).
-    friction_damping: 0.06,
+    // [E] 0.15 since 9 November 2026 (0.06 before): the owner could not see out of any sight
+    // across country for the hull's rocking. The interleaved wheels' and the tracks' friction
+    // is not measured; this is the calmer end of the estimate.
+    friction_damping: 0.15,
     shock_damping: 0.5,
     damper_stations: &[0, 7],
     step_m: crate::tank_support::TIGER_STEP_M,

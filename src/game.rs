@@ -26152,12 +26152,15 @@ impl Game {
 }
 
 /// Time constant of the gunner sight view's low-pass on the hull's pitch and roll, seconds
-/// (`KESSEL_SIGHT_DAMPING_S`, 0 = the raw view). 0.25 s passes slopes and a slow pitch and takes
-/// out most of a bump's jolt; a comfort estimate, not a measured head-and-brow-pad response.
+/// (`KESSEL_SIGHT_DAMPING_S`, 0 = the raw view). 0.8 s since 9 November 2026 (the owner: "its
+/// impossible to look out while the tank is moving"; 0.25 s before, which took out a bump's jolt
+/// and left the rocking): slopes still pass, the rocking across country mostly does not, and the
+/// bore wanders further about the reticle on the move. A comfort estimate, not a measured
+/// head-and-brow-pad response.
 fn sight_damping_s() -> f32 {
     static TAU: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *TAU.get_or_init(|| std::env::var("KESSEL_SIGHT_DAMPING_S").ok()
-        .and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(0.25, |v| v.clamp(0.0, 2.0)))
+        .and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(0.8, |v| v.clamp(0.0, 2.0)))
 }
 
 impl Game {

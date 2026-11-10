@@ -464,8 +464,10 @@ pub struct HeadSway {
 }
 
 pub const HEAD_HZ: f32 = 1.8;
-pub const HEAD_DAMPING: f32 = 0.5;
-pub const HEAD_TRAVEL_M: f32 = 0.08;
+pub const HEAD_DAMPING: f32 = 0.8;
+// 0.03 m and 0.8 since 9 November 2026 (0.08 m and 0.5 before): the head's own lag added to the
+// hull's rocking in every seat and sight (the owner: "too much motion inside this vehicle").
+pub const HEAD_TRAVEL_M: f32 = 0.03;
 
 impl HeadSway {
     /// Advance by `dt` under the seat's acceleration `seat` (hull frame: x left, y up, z forward;
