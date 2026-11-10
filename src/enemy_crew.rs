@@ -533,6 +533,7 @@ impl Aftermath {
                     person.pos += delta.normalize_or_zero() * dt * 0.75;
                     if delta.length() < 0.08 {
                         person.phase = Phase::Falling;
+                        self.cues.push(("SV-02", person.exit));
                         // Off the roof on the side away from the Tiger.
                         if away != Vec3::ZERO { person.heading = away.x.atan2(away.z); }
                         let off = Vec3::new(person.heading.sin(), 0.0, person.heading.cos());
@@ -555,6 +556,11 @@ impl Aftermath {
                         person.velocity.y = 0.0;
                         if support == ground {
                             person.phase = Phase::Escaping;
+                            self.cues.push(("SV-03", person.pos));
+                            // A man with his legs whole runs off; the injured stumble silently.
+                            if !(person.missing[7] || person.missing[8] || person.missing[9] || person.missing[10]) {
+                                self.cues.push(("SV-06", person.pos));
+                            }
                         }
                     }
                 }

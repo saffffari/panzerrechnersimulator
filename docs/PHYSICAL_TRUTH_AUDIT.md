@@ -5288,3 +5288,13 @@ shade and volume passes read, so the daylight the vision blocks and periscopes p
 compartment (surfaces and shafts) is N times the measured figure. At 1 (the default) nothing
 changes. Above 1 it has no physical basis; the honest levers are the eye's adaptation and the
 glass's real transmittance. The ports' pictures (the relayed exterior views) do not use it.
+
+Additions (9 November, stage N): loop banks (`sfx_rows::LOOP_BANKS`) are sums of takes at
+estimated mix gains, voiced by the positioned-loop pool at the game's ear level; the T-34's
+idle/moving split is at 10 % / 4 % of top speed with a 0.9..1.15 rev shift (estimates); enemies
+beyond 800 m are one power-summed drone at the loudest one's bearing (an aggregation, not one
+voice each); the horizon artillery (DS-12) is a presentation bed with no modelled source: 48 dB(A)
+in the open [E] from a fixed north-east bearing, less the listener's enclosure and headset; the
+radio's idle hiss (IN-32) is 42 dB(A) in the headset [E]. Hit takes are picked by calibre band
+(10, 20, 60, 100 mm) and outcome (estimates of where the takes' character changes); the bailing
+crew's running take plays at the landing point, not following the man.
