@@ -2667,6 +2667,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                     canyon_times: canyon::times_path().ok()
                         .and_then(|path| { let t = canyon::load_times(&path); t.last_s.zip(t.best_s) }),
                     full: ui::full_menu_requested(),
+                    one_man: game::one_man_requested(),
                 },
             );
             // KESSEL_UI_MENU_SIZE=WxH renders the title at another size (1920x1080 by default).
@@ -14166,6 +14167,12 @@ impl WindowState {
         }
     }
 
+    /// The title menu's crew row: solo or crewed for the next mission started from the menu.
+    fn toggle_menu_crew(&mut self) {
+        self.menu.one_man = !self.menu.one_man;
+        game::set_one_man(self.menu.one_man);
+    }
+
     /// Campaign, playtest, editor and checkpoint load. Legacy development views remain keyboard-accessible without
     /// expanding the player's title menu. Escape preserves the live pause/resume round trip.
     fn menu_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
@@ -14187,8 +14194,10 @@ impl WindowState {
         match code {
             KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + self.menu.row_count() - 1) % self.menu.row_count(),
             KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % self.menu.row_count(),
+            KeyCode::ArrowLeft | KeyCode::ArrowRight if self.menu.action() == Some(ui::MenuAction::Crew) => self.toggle_menu_crew(),
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.action() {
                 Some(ui::MenuAction::Graphics) => self.open_graphics(true),
+                Some(ui::MenuAction::Crew) => self.toggle_menu_crew(),
                 Some(ui::MenuAction::Singleplayer) => self.start_play(PlayMode::Kampagne),
                 Some(ui::MenuAction::Coop) => self.start_play(PlayMode::Koop),
                 Some(ui::MenuAction::Playtest) => self.start_play(PlayMode::Playtest),

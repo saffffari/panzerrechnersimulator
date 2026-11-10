@@ -283,6 +283,7 @@ mod crew_damage;
 mod crew_physics;
 #[path = "singleplayer_crew.rs"]
 mod singleplayer_crew;
+pub use singleplayer_crew::{one_man_requested, set_one_man};
 use singleplayer_crew::SingleplayerCrew;
 #[path = "crew_corpse_render.rs"]
 mod crew_corpse_render;
