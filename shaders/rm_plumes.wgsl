@@ -11,6 +11,9 @@
 @group(2) @binding(0) var<storage, read> plumes: array<Plume>;
 @group(2) @binding(1) var noise_tex: texture_3d<f32>;
 @group(2) @binding(2) var noise_samp: sampler;
+// Flame roots (src/fx_plumes.rs Root): per root, position xyz + footprint radius, outward normal
+// xyz + strength; a wreck plume's r0 = (first root, count, lowest y, highest y).
+@group(2) @binding(3) var<storage, read> roots: array<vec4<f32>>;
 
 struct Plume {
     a: vec4<f32>,  // base xyz, kind
@@ -19,9 +22,9 @@ struct Plume {
     d: vec4<f32>,  // flame height m, top radius m, smoke albedo, march steps
     e: vec4<f32>,  // bounds min xyz, flame light (renderer W/sr)
     f: vec4<f32>,  // bounds max xyz, snow share (bursts) / soot colour warmth
-    r0: vec4<f32>, // flame roots: offset from base xyz, root radius m (0 = none)
-    r1: vec4<f32>,
-    r2: vec4<f32>,
+    r0: vec4<f32>, // flame roots: first index in `roots`, count, lowest y, highest y
+    r1: vec4<f32>, // the flames' box: min xyz
+    r2: vec4<f32>, //                  max xyz
 };
 const KIND_WRECK: u32 = 0u;
 const KIND_FIREBALL: u32 = 1u;
@@ -99,40 +102,49 @@ fn wreck_envelope(p: Plume, w: vec3<f32>) -> f32 {
 
 fn flame_temperature(p: Plume, w: vec3<f32>, t: f32) -> f32 {
     let strength = p.c.x;
-    if (strength <= 0.01) { return 0.0; }
+    let count = u32(p.r0.y);
+    if (strength <= 0.01 || count == 0u || w.y < p.r0.z || w.y > p.r0.w) { return 0.0; }
     let hf = p.d.x;
     var best = 0.0;
-    var roots = array<vec4<f32>, 3>(p.r0, p.r1, p.r2);
-    // One noise field for all roots (the roots differ in place, so their licks still differ).
-    let hlo = p.a.y + min(min(p.r0.y, p.r1.y), p.r2.y);
-    if (w.y < hlo - 0.1 * hf || w.y > p.a.y + max(max(p.r0.y, p.r1.y), p.r2.y) + 1.3 * hf) { return 0.0; }
+    // One noise field for every root (the roots differ in place, so their licks still differ).
     let q = vec3(w.x * 0.8, w.y * 0.6 - t * 2.4, w.z * 0.8) + vec3(0.0, 0.0, p.c.w * 0.013);
     let n = plume_fbm(q * 0.5);
-    let warp = vec2(plume_noise(q * 0.9 + vec3(0.3, 0.0, 0.0)), plume_noise(q * 0.9 + vec3(0.0, 0.0, 0.6))) - vec2(0.5);
+    let warp = vec3(plume_noise(q * 0.9 + vec3(0.3, 0.0, 0.0)) - 0.5, 0.0, plume_noise(q * 0.9 + vec3(0.0, 0.0, 0.6)) - 0.5);
     let n2 = plume_noise(vec3(w.x, w.y - t * 4.0, w.z) * 1.4 + vec3(p.c.w * 0.007));
-    for (var k = 0u; k < 3u; k += 1u) {
-        let root = roots[k];
-        if (root.w <= 0.0) { continue; }
-        let o = p.a.xyz + root.xyz;
-        let h = (w.y - o.y) / hf;
-        if (h < -0.05 || h > 1.3) { continue; }
-        // A broad burning mass with licks: rising turbulence (the noise field climbs at about
-        // 2.5 m/s) warps the body sideways more the higher it goes; the wind leans it a little.
-        let lean = vec2(p.b.x, p.b.z) / max(p.b.y, 1.0) * hf * h * h * 0.25;
-        let width = root.w * 1.5;
-        let off = (w.xz - o.xz - lean - warp * width * (0.3 + 1.1 * clamp(h, 0.0, 1.0))) / width;
-        let radius = (1.0 - 0.55 * clamp(h, 0.0, 1.0)) * (0.7 + 0.6 * n);
-        let d = length(off) / max(radius, 0.05);
+    let lean_per_m = vec3(p.b.x, 0.0, p.b.z) / max(p.b.y, 1.0) * 0.25;
+    let start = u32(p.r0.x);
+    for (var k = 0u; k < count; k += 1u) {
+        let a = roots[(start + k) * 2u];
+        let b = roots[(start + k) * 2u + 1u];
+        let rs = b.w;
+        if (rs <= 0.02) { continue; }
+        // The flame stands on its own patch of the burning surface: its footprint lies in that
+        // surface's plane (a sloped plate, a hull side, the deck), and the gas leaves it rising,
+        // pushed off the surface (the air side of the plane only).
+        let nrm = b.xyz;
+        var rise = vec3(0.0, 0.85, 0.0) + nrm * 0.35;
+        rise -= nrm * min(dot(rise, nrm) - 0.2, 0.0);
+        rise = normalize(rise);
+        let rel = w - a.xyz;
+        let s = dot(rel, nrm) / max(dot(rise, nrm), 0.2);
+        let hk = hf * (0.35 + 0.65 * rs);
+        let h = s / hk;
+        if (h < -0.08 || h > 1.3) { continue; }
+        let hc = clamp(h, 0.0, 1.0);
+        let foot = rel - rise * s - lean_per_m * hk * hc * hc - warp * a.w * (0.6 + 2.2 * hc);
+        let radius = a.w * 1.6 * (1.0 - 0.5 * hc) * (0.7 + 0.6 * n);
+        let d = length(foot) / max(radius, 0.03);
         let body = (1.0 - smoothstep(0.45, 1.0, d)) * (1.0 - smoothstep(0.45 + 0.5 * n2, 1.2, h));
-        best = max(best, body * (0.7 + 0.5 * n2));
+        best = max(best, body * (0.7 + 0.5 * n2) * (0.6 + 0.4 * rs));
     }
-    // Soot-laden flame: about 1000 K at the ragged edges, 1450 K in the body, hotter with strength.
-    return select(0.0, 850.0 + best * (520.0 + 120.0 * min(strength, 1.5)), best > 0.04);
+    // Soot-laden flame: dull red (about 950 K) at the ragged edges and tips, orange through the
+    // body, yellow-orange (about 1,600 K) in the hottest core, hotter with strength.
+    return select(0.0, 880.0 + pow(best, 0.85) * (600.0 + 100.0 * min(strength, 1.5)), best > 0.04);
 }
 
 fn flame_only(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     var out = Sample(0.0, 0.0, vec3(0.0));
-    if (w.y > p.a.y + p.d.x * 1.4 + 1.0) { return out; }
+    if (w.y > p.r0.w || w.y < p.r0.z) { return out; }
     let kelvin = flame_temperature(p, w, t);
     if (kelvin > 0.0) {
         let k = 1.4 * smoothstep(850.0, 1100.0, kelvin);
@@ -168,7 +180,7 @@ fn wreck_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
         out.sigma_t = max(density, 0.0);
         out.sigma_s = out.sigma_t * p.d.z;
     }
-    let kelvin = select(0.0, flame_temperature(p, w, t), w.y <= p.a.y + p.d.x * 1.4 + 1.0);
+    let kelvin = flame_temperature(p, w, t);
     if (kelvin > 0.0) {
         // Luminous soot flame: absorption about 1.4 /m, emitting Planck radiance (Kirchhoff).
         let k = 1.4 * smoothstep(850.0, 1100.0, kelvin);
@@ -316,48 +328,72 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     if (t1 <= t0) { discard; }
     let t = fr.cam_pos.w;
     let steps = u32(clamp(p.d.w, 8.0, 64.0));
-    let dt = (t1 - t0) / f32(steps);
+    // The flames are a metre or two inside a box a hundred metres tall: the ray's stretch through
+    // the flame box (r1, r2) takes its own fine march, the rest the coarse one, front to back.
+    var segs = array<vec3<f32>, 3>(vec3(t0, t1, f32(steps)), vec3(0.0), vec3(0.0));
+    var nseg = 1u;
+    if (u32(p.r0.y) > 0u) {
+        let fb = ray_box(eye, ray, p.r1.xyz, p.r2.xyz);
+        let fa = max(fb.x, t0);
+        let fz = min(fb.y, t1);
+        if (fz > fa) {
+            let total = max(t1 - t0, 1.0e-3);
+            let before = fa - t0;
+            let after = t1 - fz;
+            nseg = 0u;
+            if (before > 0.01) { segs[nseg] = vec3(t0, fa, max(2.0, ceil(f32(steps) * before / total))); nseg += 1u; }
+            segs[nseg] = vec3(fa, fz, 16.0); nseg += 1u;
+            if (after > 0.01) { segs[nseg] = vec3(fz, t1, max(2.0, ceil(f32(steps) * after / total))); nseg += 1u; }
+        }
+    }
     // Blue-noise-free per-pixel jitter (the crush's dither then hides the banding).
     let jitter = rm_hash01(u32(pixel.x) * 7919u + u32(pixel.y) * 104729u + u32(fr.vol.w) * 2654435761u);
     let sun_on = fr.sun_radiance.w > 0.5;
     let mu = dot(ray, fr.sun_dir.xyz);
     let sky_down = (fr.sky_zenith.rgb + fr.sky_horizon.rgb) * 0.5;
     let sky_up = fr.sky_ground.rgb;
-    let flame_pos = p.a.xyz + vec3(0.0, p.d.x * 0.45, 0.0);
+    let flame_pos = (p.r1.xyz + p.r2.xyz) * 0.5;
     let flame_i = p.e.w;
     var radiance = vec3(0.0);
     var trans = 1.0;
     var depth_sum = 0.0;
     var weight_sum = 0.0;
     let reach = max(p.b.w, 1.5) * 1.5;
-    for (var i = 0u; i < steps; i += 1u) {
-        let tt = t0 + (f32(i) + jitter) * dt;
-        let w = eye + ray * tt;
-        let s = plume_sample(p, w, t);
-        if (s.sigma_t <= 1.0e-4) { continue; }
-        var source = s.emit;
-        if (s.sigma_s * dt * trans > 0.002) {
-            var light = vec3(0.0);
-            if (sun_on) {
-                let tau_sun = plume_shadow(p, w, fr.sun_dir.xyz, reach, t);
-                light += fr.sun_radiance.rgb * rm_phase_dense(mu, 0.35, s.sigma_t) * exp(-tau_sun) * rm_cloud_shadow(w);
+    for (var g = 0u; g < nseg; g += 1u) {
+        let sa = segs[g].x;
+        let n = u32(segs[g].z);
+        let dt = (segs[g].y - sa) / f32(n);
+        for (var i = 0u; i < n; i += 1u) {
+            let tt = sa + (f32(i) + jitter) * dt;
+            let w = eye + ray * tt;
+            let s = plume_sample(p, w, t);
+            if (s.sigma_t <= 1.0e-4) { continue; }
+            var source = s.emit;
+            if (s.sigma_s * dt * trans > 0.002) {
+                var light = vec3(0.0);
+                if (sun_on) {
+                    let tau_sun = plume_shadow(p, w, fr.sun_dir.xyz, reach, t);
+                    light += fr.sun_radiance.rgb * rm_phase_dense(mu, 0.35, s.sigma_t) * exp(-tau_sun) * rm_cloud_shadow(w);
+                }
+                let tau_up = plume_shadow(p, w, vec3(0.0, 1.0, 0.0), reach, t);
+                // The sky above through the plume's own depth, the snow's upwelling light below.
+                light += sky_down * exp(-tau_up) * 0.9 + sky_up * 0.5;
+                if (flame_i > 0.0) {
+                    let to_flame = flame_pos - w;
+                    // The flames are metres across: no closer than their own extent.
+                    let d2 = max(dot(to_flame, to_flame), 9.0);
+                    light += FX_FLAME_TINT * flame_i / d2 * exp(-sqrt(d2) * s.sigma_t * 0.25) / (4.0 * RM_PI);
+                }
+                source += s.sigma_s * light;
             }
-            let tau_up = plume_shadow(p, w, vec3(0.0, 1.0, 0.0), reach, t);
-            // The sky above through the plume's own depth, the snow's upwelling light below.
-            light += sky_down * exp(-tau_up) * 0.9 + sky_up * 0.5;
-            if (flame_i > 0.0) {
-                let to_flame = flame_pos - w;
-                let d2 = max(dot(to_flame, to_flame), 0.25);
-                light += FX_FLAME_TINT * flame_i / d2 * exp(-sqrt(d2) * s.sigma_t * 0.25) / (4.0 * RM_PI);
-            }
-            source += s.sigma_s * light;
+            let step_t = exp(-s.sigma_t * dt);
+            let absorbed = trans * (1.0 - step_t);
+            radiance += trans * source * (1.0 - step_t) / s.sigma_t;
+            depth_sum += absorbed * tt;
+            weight_sum += absorbed;
+            trans *= step_t;
+            if (trans < 0.004) { break; }
         }
-        let step_t = exp(-s.sigma_t * dt);
-        let absorbed = trans * (1.0 - step_t);
-        radiance += trans * source * (1.0 - step_t) / s.sigma_t;
-        depth_sum += absorbed * tt;
-        weight_sum += absorbed;
-        trans *= step_t;
         if (trans < 0.004) { break; }
     }
     if (weight_sum <= 1.0e-5) { discard; }

@@ -2800,6 +2800,8 @@ pub struct Renderer {
     pub fx_plumes: Vec<crate::fx_plumes::Plume>,
     /// The fires' embers for this frame (crate::fx_plumes::embers), one native pixel each.
     pub fx_embers: Vec<crate::fx_plumes::Ember>,
+    /// The fires' flame roots (crate::fx_plumes::Root, two lanes each), indexed by the plumes.
+    pub fx_roots: Vec<[f32; 4]>,
     /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
     /// backend cuts, displaces and shades them (renderer_scars.rs).
     mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
@@ -6256,6 +6258,7 @@ impl Renderer {
             fireflies: Vec::new(),
             fx_plumes: Vec::new(),
             fx_embers: Vec::new(),
+            fx_roots: Vec::new(),
             mesh_scars: std::collections::HashMap::new(),
             actor_mesh_clones: Vec::new(),
             raster_optics: shader_backend.then(|| {

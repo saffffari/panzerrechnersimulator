@@ -572,6 +572,7 @@ impl Temporal {
 struct PlumePass {
     pipe: wgpu::RenderPipeline,
     buf: wgpu::Buffer,
+    roots: wgpu::Buffer,
     bind: wgpu::BindGroup,
     noise: wgpu::Texture,
     noise_pending: Option<Vec<u8>>,
@@ -1699,10 +1700,15 @@ impl Backend {
         });
         let plumes = {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("rm-plumes-bgl"), entries: &[readonly_storage(0, S::VERTEX_FRAGMENT), tex3d(1, S::FRAGMENT), sampler_filtering(2, S::FRAGMENT)],
+                label: Some("rm-plumes-bgl"), entries: &[readonly_storage(0, S::VERTEX_FRAGMENT), tex3d(1, S::FRAGMENT), sampler_filtering(2, S::FRAGMENT),
+                    readonly_storage(3, S::FRAGMENT)],
             });
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rm-plumes"), size: (crate::fx_plumes::MAX_PLUMES * std::mem::size_of::<crate::fx_plumes::Plume>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            });
+            let roots = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rm-plume-roots"), size: (crate::fx_plumes::MAX_ROOTS * 32) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
             });
             let noise = device.create_texture(&wgpu::TextureDescriptor {
@@ -1719,7 +1725,7 @@ impl Backend {
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("rm-plumes"), layout: &bgl, entries: &[entry(0, buf.as_entire_binding()),
                     entry(1, wgpu::BindingResource::TextureView(&noise.create_view(&Default::default()))),
-                    entry(2, wgpu::BindingResource::Sampler(&repeat))],
+                    entry(2, wgpu::BindingResource::Sampler(&repeat)), entry(3, roots.as_entire_binding())],
             });
             let shader = rm_shader(device, "rm-plumes", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_rt_stub.wgsl", "rm_plumes.wgsl"]);
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1732,7 +1738,7 @@ impl Backend {
                 fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs"), targets: std::slice::from_ref(&premultiplied), compilation_options: Default::default() }),
                 multiview: None, cache: None,
             });
-            PlumePass { pipe, buf, bind, noise, noise_pending: Some(crate::fx_plumes::noise_volume(PLUME_NOISE as usize)), list: Vec::new() }
+            PlumePass { pipe, buf, roots, bind, noise, noise_pending: Some(crate::fx_plumes::noise_volume(PLUME_NOISE as usize)), list: Vec::new() }
         };
         let sparks_shader = rm_shader(device, "rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]);
         const WEAPON_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4, 4 => Uint32x4];
@@ -2994,6 +3000,8 @@ impl Backend {
         crate::fx_plumes::sort_far_to_near(&mut self.plumes.list, eye, crate::fx_plumes::MAX_PLUMES);
         if !self.plumes.list.is_empty() {
             queue.write_buffer(&self.plumes.buf, 0, bytemuck::cast_slice(&self.plumes.list));
+            let roots = &r.fx_roots[..r.fx_roots.len().min(crate::fx_plumes::MAX_ROOTS * 2)];
+            if !roots.is_empty() { queue.write_buffer(&self.plumes.roots, 0, bytemuck::cast_slice(roots)); }
         }
         self.stats.plumes = self.plumes.list.len();
     }
