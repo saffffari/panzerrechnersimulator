@@ -145,3 +145,17 @@ Three ways to keep the owner's shape:
 
 Either way it needs a Normandy map (bocage, the Manneville stud park, the ridge), which does not
 exist, and it comes after the duel mode, the laptop and Mac work, and the bug list.
+
+### Decided, 10 November 2026: two times, declared
+
+The owner: "prologue beach defense from different perspective that you're not expected to survive
+can end when you get killed and then start act 1 from the story".
+
+- **Prologue, 6 June 1944.** A defender at the coast, another man, not the Tiger commander. The
+  player is not expected to live; the prologue ends at his death (or, should he last, at a set
+  point: to be decided). The date is shown.
+- **Act 1, 18 July 1944.** The dig-out at Manneville, alone, crew buried; the gun works once
+  re-zeroed. The date is shown. A person, a letter or an object carries from the one to the other.
+- To settle when it is written: which strongpoint and which beach (it must be a real one, with
+  its source); what the defender mans (a machine gun, an anti-tank gun, a 5 cm in a casemate);
+  what the link is.
