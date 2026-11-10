@@ -428,6 +428,7 @@ pub(super) const NOT_KEPT: &[(&str, &str)] = &[
     ("realtime_substep", "the live frame's step counter, zero between frames"),
     ("cigarette_fx_slots", "renderer slots"), ("swarm", "the infantry swarm, playtest courses only, not in the range"), ("act", "the act's authored data"), ("tank_editor_scene", "editor scene"),
     ("grass", "the grass about the camera (see the module doc)"), ("platoon", "radio orders, not in the range"),
+    ("duel", "the two-player link, not in the range"),
     ("enemy_report_audit", "an audit log"), ("campaign", "campaign coordinator, not in the range"),
     ("expedition_runtime", "expedition, not in the range"), ("support_camp", "expedition camp"),
     ("halftrack_runtime", "expedition halftrack"), ("theatre", "expedition theatre"), ("river", "expedition rivers"),

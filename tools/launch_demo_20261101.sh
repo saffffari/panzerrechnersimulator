@@ -24,6 +24,8 @@
 #   tools/launch_demo_20261101.sh --berlin        Berlin, 30 April 1945: the Reichstag, Koenigsplatz, the Moltke Bridge and the
 #                                                 Brandenburg Gate (docs/BERLIN_REICHSTAG_1945.md), 17:30
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
+#   tools/launch_demo_20261101.sh --duel-host     two-player duel on the Canyon: wait for the other player (UDP 28944)
+#   tools/launch_demo_20261101.sh --duel-join ADDRESS[:PORT]   join the host at that address
 #   tools/launch_demo_20261101.sh --res 640x360   render grid (default 1280x720, an exact 4x on the 5K panel)
 #   tools/launch_demo_20261101.sh --look deltap-tinted  the deltaP look (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered
 #                                                 colour, pyramid bloom); the default is the standard display at 1280x720,
@@ -72,6 +74,8 @@ while (( $# )); do
         --menu) MODE=menu ;;
         --full-menu) MODE=menu; FULL_MENU=1 ;;
         --windowed) WINDOWED=1 ;;
+        --duel-host) MODE=canyon; EXTRA_ENV+=("KESSEL_DUEL=host") ;;
+        --duel-join) MODE=canyon; EXTRA_ENV+=("KESSEL_DUEL=join:$2"); shift ;;
         --platoon) PLATOON=1 ;;
         --one-man) ONE_MAN=1 ;;
         --gen2) EXTRA_ENV+=(KESSEL_TIGER=gen2) ;;

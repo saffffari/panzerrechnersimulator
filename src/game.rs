@@ -48,6 +48,8 @@ mod canyon_pilot;
 pub use canyon_pilot::CanyonPilot;
 #[path = "platoon.rs"]
 pub mod platoon;
+#[path = "duel.rs"]
+pub mod duel;
 #[path = "street_nav.rs"]
 pub(crate) mod street_nav;
 #[path = "winter_mission.rs"]
@@ -10129,6 +10131,8 @@ pub struct Game {
     /// Platoon mode (`KESSEL_PLATOON=2`): the wingmen's crews, orders and radio. `None` keeps the
     /// Halbe finale's plain `update_allied_tigers` behaviour.
     pub platoon: Option<platoon::Platoon>,
+    /// The two-player duel's link and state (`duel.rs`); `None` in every other mode.
+    duel: Option<duel::Duel>,
     ally_shot_tick: u32,
     campaign_hulks: Vec<CampaignHulk>,
     finale_town_integrity: f32,
@@ -12289,11 +12293,13 @@ impl Game {
         // the player's scarred machine, then follow and engage through the real tracer/kill path.
         let mut ally_slots: Vec<[usize; 3]> = Vec::new();
         let mut ally_state: Vec<AllyTiger> = Vec::new();
-        if (act.id == 3 || platoon::requested()) && !isolated_population {
+        // A duel builds one rig: the other player's Tiger (`duel.rs`).
+        let duel_requested = duel::requested().is_some();
+        if (act.id == 3 || platoon::requested() || duel_requested) && !isolated_population {
             let route = (act.goal - act.spawn).normalize_or_zero();
             let right = Vec2::new(route.y, -route.x);
             let heading = route.x.atan2(route.y);
-            for (i, side) in [-1.0f32, 1.0].into_iter().enumerate() {
+            for (i, side) in [-1.0f32, 1.0].into_iter().take(if duel_requested { 1 } else { 2 }).enumerate() {
                 let p = act.spawn - route * (18.0 + i as f32 * 7.0) + right * side * 14.0;
                 let tank = Tank::new(p.x, p.y, heading, &hf, tank::TIGER_PARTS);
                 let base = scene.len();
@@ -14807,6 +14813,7 @@ impl Game {
             enemies,
             allies: ally_state,
             platoon: None,
+            duel: None,
             ally_shot_tick: 0,
             campaign_hulks: Vec::new(),
             finale_town_integrity: 100.0,
@@ -17065,6 +17072,8 @@ impl Game {
         if self.allies.is_empty() {
             return;
         }
+        // In a duel the one ally rig is the other player's Tiger, posed and fired from the wire.
+        if self.duel.is_some() { self.update_duel(dt); return; }
         let player_pos = self.player.pos;
         let player_forward = self.player.forward();
         let player_right = self.player.right();
@@ -28050,7 +28059,11 @@ impl Game {
                 if penetrated && self.allies[index].tank.alive {
                     // Platoon wingmen take the simplified behind-armour casualty model and may
                     // fight on; the Halbe finale's allies die on the first penetration as before.
-                    let destroyed = if self.platoon.is_some() {
+                    // In a duel what my shell did to the other Tiger is decided on his machine and
+                    // comes back as his state; here it marks the plate and no more.
+                    let destroyed = if self.duel.is_some() {
+                        false
+                    } else if self.platoon.is_some() {
                         self.platoon_on_penetration(index, armor.part, armor.facing, event.behind_armor, projectile.seed)
                     } else {
                         true
@@ -28277,6 +28290,7 @@ impl Game {
         self.fx.smoke_dur = 1.4;
         // The breech is shut at the shot: the fumes enter when it opens (`vent_bore_smoke`).
         self.gun_shots = sequence;
+        self.duel_note_fire(self.he_loaded, muzzle, direction, sequence ^ 0x88F1_0001);
         if let Some(audio)=&self.audio {audio.soundscape_main_gun_fired();}
         if let Some(runtime) = self.campaign.as_mut() {
             runtime.battle_pressure = (runtime.battle_pressure + 14.0).min(100.0);

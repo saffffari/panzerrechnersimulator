@@ -113,6 +113,7 @@ mod repair_manual_capture;
 mod sky_review;
 mod canyon;
 mod canyon_attempt;
+mod duel_run;
 mod playtest_smoke;
 mod swarm_bench;
 mod t34_canyon_training;
@@ -13909,13 +13910,20 @@ impl WindowState {
                 if winter_combat {
                     g.enable_live_playtest_encounter();
                 }
-                if canyon_course {
+                // The duel plays on the course's map without its garrison, camp or director.
+                let duel = game::duel::requested();
+                if let Some(request) = &duel {
+                    if let Err(error) = g.enable_duel(request) {
+                        eprintln!("[duel] cannot start: {error:#}");
+                        return false;
+                    }
+                } else if canyon_course {
                     if let Err(error) = g.enable_canyon_course() {
                         eprintln!("[canyon] cannot field the course: {error:#}");
                         return false;
                     }
                 }
-                if course_camp {
+                if course_camp && duel.is_none() {
                     let seed = std::env::var("KESSEL_SEED").ok()
                         .and_then(|value| value.parse::<u64>().ok()).unwrap_or(1944);
                     let enabled = g.expedition_initial_camp_position()
@@ -14609,6 +14617,10 @@ impl WindowState {
         }
         if let Some(status) = self.game.crew_control_status() {
             pixel_font::draw_left(&mut self.renderer, &status, HUD_TEXT_LEFT, 0.905, 1, [0.88, 0.88, 0.88, 0.85]);
+        }
+        // The duel's one line: waiting for the other player, lost touch, or the result.
+        if let Some(line) = self.game.duel_status_line() {
+            pixel_font::draw_left(&mut self.renderer, &line, HUD_TEXT_LEFT, 0.825, 1, [0.92, 0.80, 0.55, 0.90]);
         }
         // A dot where the crosshair rests on something the hands can use.
         if (camp_hint.is_some() || self.game.hover_label_text().is_some()) && !self.game.sidearm_is_drawn() {
@@ -17958,6 +17970,12 @@ fn main() -> anyhow::Result<()> {
         return t34_canyon_training::write_seed(
             args.get(2).map(String::as_str).unwrap_or("assets/ai/weights_t34_seed.bin"),
             args.get(3).map(String::as_str).unwrap_or("assets/ai/weights_academy.bin"));
+    }
+    if args.len() >= 2 && args[1] == "duel-run" {
+        // One end of a headless two-player duel: `duel-run host|join:ADDRESS PREFIX SECONDS`.
+        return duel_run::run(args.get(2).map(String::as_str).unwrap_or("host"),
+            args.get(3).map(String::as_str).unwrap_or("duel"),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30.0));
     }
     if args.len() >= 2 && args[1] == "t34-canyon-eval" {
         // Worker for tools/t34_canyon_es.py: comma-separated Canyon seeds, episode seconds; reads
