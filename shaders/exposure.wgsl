@@ -422,9 +422,9 @@ fn finish_meter(li: u32, sum: MeterSum) {
         lp = clamp_luminance(pow(10.0, state[22] + OBS_INSIDE_RESPONSE * (log10(metered_p) - state[22])));
         ls = clamp_luminance(pow(10.0, state[23] + OBS_INSIDE_RESPONSE * (log10(metered_s) - state[23])));
     }
-    // KESSEL_EYE=gentle: outdoors the eye follows a slow log average of the field (lane 32, 8 s)
+    // The gentle eye (the default; KESSEL_EYE=wide turns it off): outdoors the eye follows a slow log average of the field (lane 32, 8 s)
     // and only a third of the change about it, within 0.5 log units (about 1.7 stops) either
-    // way; a flash then leaves a quarter of its afterimage (the default eye: OBS_GENTLE false).
+    // way; a flash then leaves a quarter of its afterimage (the wide eye: OBS_GENTLE false).
     if (OBS_GENTLE && !inside && state[1] >= 0.0) {
         let base = state[32];
         let ratio_s = log10(metered_s) - log10(metered_p);

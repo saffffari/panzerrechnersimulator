@@ -130,7 +130,8 @@ The near wreck is the dearest case: its column fills most of the frame. It costs
   renderer units (about 1-3e9 cd) held for 0.85 s. With the new effects it is capped at 1,500 units
   (about 8e7 cd: a burning-propellant fireball of some 400 m^2 at about 2e5 cd/m^2) and falls as
   f^5 over its life.
-- **A gentler eye, switchable: `KESSEL_EYE=gentle`.** Outdoors the eye follows a slow (8 s) log
+- **A gentler eye, the default since the owner's yes on 9 November 2026 (`KESSEL_EYE=wide` is the
+  eye as it was; it was first shipped as the switch `KESSEL_EYE=gentle`).** Outdoors the eye follows a slow (8 s) log
   average of the field and only a third of each change about it, within 0.5 log units (about 1.7
   stops) either way; a flash leaves a quarter of its afterimage. The default eye is unchanged.
 - **The blast's pressure front** is now drawn on the raymarch backend (it was never drawn there): the
