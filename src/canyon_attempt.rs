@@ -584,7 +584,9 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     }
     crate::simulation_uploads::drain(&device, &queue)?;
     trace.flush()?;
-    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":if invincible {"rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result"} else {"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression"},"manifest":manifest,"simulation_hz":60,"film":cuts.is_some(),"mission":g.mission_report(),"winter":g.winter_encounter_snapshot()});
+    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":if invincible {"rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result"} else {"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression"},"manifest":manifest,"simulation_hz":60,"film":cuts.is_some(),"mission":g.mission_report(),"winter":g.winter_encounter_snapshot(),
+        "small_arms_on_tiger":{"enemy_coax_rounds":g.stat_enemy_coax_on_tiger,"infantry_rifle_shots":g.mixed_combat_telemetry()["rifle_shots"],
+            "discharges":g.capture_small_arms_receipt()["discharges"],"player_armor_contacts":g.capture_small_arms_receipt()["player_armor_contacts"]}});
     fs::write(
         format!("{prefix}_result.json"),
         serde_json::to_vec_pretty(&receipt)?,

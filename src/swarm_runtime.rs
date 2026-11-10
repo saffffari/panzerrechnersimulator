@@ -320,9 +320,10 @@ impl Game {
         }
     }
 
-    /// The soldier's perception point on the Tiger (`small_arm_player_aim_point`), re-sampled every
-    /// `AIM_RESAMPLE_S` (staggered) and kept in the hull's frame between samples so it moves with
-    /// the tank: the visibility test runs at sensor cadence, not every frame (named).
+    /// The soldier's perception point on the Tiger (`small_arm_player_aim_point`) with a clear
+    /// sight line through the world to it, re-sampled every `AIM_RESAMPLE_S` (staggered) and kept
+    /// in the hull's frame between samples so it moves with the tank: both visibility tests run
+    /// at sensor cadence, not every frame (named).
     pub(super) fn swarm_cached_aim_point(&mut self, i: usize, eye: Vec3, dt: f32) -> Option<Vec3> {
         const AIM_RESAMPLE_S: f32 = 0.2;
         let hull = self.player.hull_model();
@@ -332,7 +333,7 @@ impl Game {
             None => true,
         };
         if stale {
-            let point = self.small_arm_player_aim_point(eye);
+            let point = self.small_arm_player_aim_point(eye).filter(|&p| self.optical_los_clear(eye, p));
             let local = point.map(|p| hull.inverse().transform_point3(p));
             // Stagger the next sample by the man's index so the samples spread over the frames.
             let phase = (i % 12) as f32 / 12.0 * AIM_RESAMPLE_S * 0.5;

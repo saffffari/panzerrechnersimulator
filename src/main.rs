@@ -1103,6 +1103,12 @@ fn run_gfxbench(
         Ok((v[0], v[1], v[2] as u32))
     }).transpose()?;
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    // `KESSEL_BENCH_RING=NEAR_M,FAR_M`: the Soviet riflemen spread over a ring round the Tiger.
+    if let Some(v) = std::env::var("KESSEL_BENCH_RING").ok()
+        .map(|value| value.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>()) {
+        anyhow::ensure!(v.len() == 2 && v[0] > 0.0 && v[1] >= v[0], "KESSEL_BENCH_RING is NEAR_M,FAR_M");
+        g.debug_stage_infantry_ring(v[0], v[1]);
+    }
     // `KESSEL_BENCH_ORBIT=x,y,z`: orbit that point instead of the player's eye.
     let center = std::env::var("KESSEL_BENCH_ORBIT").ok()
         .and_then(|v| { let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect(); (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2])) })
@@ -1300,6 +1306,11 @@ fn run_gfxbench(
                     k + 1, mean(&times[a..b]), meanf(&simulation_times[a..b]), b - a);
             }
             println!("[gfxbench] simulation phases from the settle frame (ms): {}", g.sim_phase.take());
+            println!("[gfxbench] infantry rifle shots (german, soviet): {}", g.mixed_combat_telemetry()["rifle_shots"]);
+            println!("[gfxbench] T-34 coax rounds at the Tiger: {}", g.stat_enemy_coax_on_tiger);
+            { let receipt = g.capture_small_arms_receipt();
+              println!("[gfxbench] small arms: discharges {}, contacts on the Tiger's armour {}, spark bursts {}",
+                  receipt["discharges"], receipt["player_armor_contacts"], receipt["armor_spark_bursts"]); }
             for (i, e) in g.enemies.iter().enumerate() {
                 println!("[gfxbench] enemy {i}: alive {}, overturned {}, speed {:.2} m/s, {:.0} m off, height {:.2} over ground, roll {:.2} pitch {:.2}",
                     e.alive, e.overturned(), e.speed, e.pos.distance(g.player.pos), e.pos.y - g.hf.height_at(e.pos.x, e.pos.z), e.roll, e.pitch);
@@ -2686,6 +2697,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                     canyon_times: canyon::times_path().ok()
                         .and_then(|path| { let t = canyon::load_times(&path); t.last_s.zip(t.best_s) }),
                     full: ui::full_menu_requested(),
+                    one_man: game::one_man_requested(),
                 },
             );
             // KESSEL_UI_MENU_SIZE=WxH renders the title at another size (1920x1080 by default).
@@ -5546,8 +5558,8 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
     // plate breaking, the armour cut away round the shot's line through the plate's thickness and
     // the fragments inside.
     if g.replay_has_impact() {
-        for (t, name) in [(0.12f32, "impact_incoming"), (0.24, "impact_strike"), (0.42, "impact_cut_opening"),
-            (0.52, "impact_cut_half"), (0.68, "impact_cut_open"), (0.95, "impact_cut_end")] {
+        for (t, name) in [(0.12f32, "section_incoming"), (0.24, "section_in_plate"), (0.36, "section_through"),
+            (0.52, "section_fragments"), (0.68, "section_fragments_later"), (0.95, "section_end")] {
             g.render_replay_impact(t, &mut r);
             converge_headless_screenshot(&mut r, &device, &queue, 16)?;
             r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
@@ -11947,24 +11959,22 @@ pub(crate) const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Impact(f32), Throw(f32), Crew(f32), Done }
 
-/// A death by a round through the armour (the owner, 2026-11-02): after the fade and a short
-/// black, the struck surface from outside, the round arriving and the plate breaking in slow
-/// motion and the armour cut away round the shot to show the fragments inside
-/// (`Game::render_replay_impact`); then the turret's rear upper corner toward the breech, the
-/// whole aftermath replayed; then the aerial shot of where the round came from; then the card.
+/// A death by a round through the armour (the owner, 2026-11-02, re-cut 2026-11-09): after the
+/// fade and a short black, the vehicle in section on the plane of the shot, the round going
+/// through the armour in slow motion and the fragments inside (`Game::render_replay_impact`);
+/// then the interior without a section, from the turret's rear centre looking forward, the whole
+/// aftermath replayed in slow motion; then the card. No aerial shot.
 pub(crate) const IMPACT_BLACK_S: f32 = 1.5;
 pub(crate) const IMPACT_SECONDS: f32 = 9.0;
-fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + IMPACT_SECONDS + REPLAY_DUR + DEATH_EXTERIOR_SECONDS }
+fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + IMPACT_SECONDS + REPLAY_DUR }
 fn penetration_shot(card: death_card::Presentation, t: f32) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
     let impact = DEATH_FADE + IMPACT_BLACK_S;
     let interior = impact + IMPACT_SECONDS;
-    let exterior = interior + REPLAY_DUR;
     if t < DEATH_FADE { DeathShot::Fade }
     else if t < impact { DeathShot::Black }
     else if t < interior { DeathShot::Impact((t - impact) / IMPACT_SECONDS) }
-    else if t < exterior { DeathShot::Interior((t - interior) / REPLAY_DUR) }
-    else if t < card.reveal_at_s() { DeathShot::Exterior((t - exterior) / DEATH_EXTERIOR_SECONDS) }
+    else if t < card.reveal_at_s() { DeathShot::Interior((t - interior) / REPLAY_DUR) }
     else if t < card_end { DeathShot::Card }
     else { DeathShot::Done }
 }
@@ -12126,7 +12136,8 @@ mod local_presentation_tests {
         let impact = DEATH_FADE + IMPACT_BLACK_S;
         assert!(matches!(penetration_shot(card, impact + 0.01), DeathShot::Impact(p) if p < 0.01));
         assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + 0.01), DeathShot::Interior(p) if p < 0.01));
-        assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + REPLAY_DUR + 0.01), DeathShot::Exterior(p) if p < 0.01));
+        assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + REPLAY_DUR - 0.01), DeathShot::Interior(p) if p > 0.99),
+            "the interior runs to the card: no aerial shot");
         assert_eq!(penetration_shot(card, penetration_reveal_s() + 0.01), DeathShot::Card);
         assert_eq!(penetration_shot(card, penetration_reveal_s() + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
         assert_eq!(death_shot_for(false, true, card, impact + 0.5, true), penetration_shot(card, impact + 0.5));
@@ -14185,6 +14196,12 @@ impl WindowState {
         }
     }
 
+    /// The title menu's crew row: solo or crewed for the next mission started from the menu.
+    fn toggle_menu_crew(&mut self) {
+        self.menu.one_man = !self.menu.one_man;
+        game::set_one_man(self.menu.one_man);
+    }
+
     /// Campaign, playtest, editor and checkpoint load. Legacy development views remain keyboard-accessible without
     /// expanding the player's title menu. Escape preserves the live pause/resume round trip.
     fn menu_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
@@ -14206,8 +14223,10 @@ impl WindowState {
         match code {
             KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + self.menu.row_count() - 1) % self.menu.row_count(),
             KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % self.menu.row_count(),
+            KeyCode::ArrowLeft | KeyCode::ArrowRight if self.menu.action() == Some(ui::MenuAction::Crew) => self.toggle_menu_crew(),
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.action() {
                 Some(ui::MenuAction::Graphics) => self.open_graphics(true),
+                Some(ui::MenuAction::Crew) => self.toggle_menu_crew(),
                 Some(ui::MenuAction::Singleplayer) => self.start_play(PlayMode::Kampagne),
                 Some(ui::MenuAction::Coop) => self.start_play(PlayMode::Koop),
                 Some(ui::MenuAction::Playtest) => self.start_play(PlayMode::Playtest),
@@ -15201,7 +15220,7 @@ impl WindowState {
                 _ => {}
             }
         }
-        // A round through the armour: the impact shot, the interior and the aerial shot, then the card.
+        // A round through the armour: the section shot, then the interior, then the card.
         if let Some(card) = card.filter(|card| card.is_silent() && !cookoff && self.game.replay_has_impact()) {
             match penetration_shot(card, t) {
                 DeathShot::Impact(phase) => {
