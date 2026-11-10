@@ -424,6 +424,7 @@ pub(super) const NOT_KEPT: &[(&str, &str)] = &[
     ("bullet_bursts", "the hit-sound layers' burst timing (presentation)"),
     ("stat_enemy_coax_on_tiger", "a bench counter"),
     ("panzerfaust_issued", "set at build from the map"), ("lay_idle_s", "an input timer at the sight"),
+    ("realtime_substep", "the live frame's step counter, zero between frames"),
     ("cigarette_fx_slots", "renderer slots"), ("swarm", "the infantry swarm, playtest courses only, not in the range"), ("act", "the act's authored data"), ("tank_editor_scene", "editor scene"),
     ("grass", "the grass about the camera (see the module doc)"), ("platoon", "radio orders, not in the range"),
     ("enemy_report_audit", "an audit log"), ("campaign", "campaign coordinator, not in the range"),
