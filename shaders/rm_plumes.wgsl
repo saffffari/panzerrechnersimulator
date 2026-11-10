@@ -385,8 +385,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
             if (after > 0.01) { segs[nseg] = vec3(fz, t1, max(2.0, ceil(f32(steps) * after / total))); nseg += 1u; }
         }
     }
-    // Blue-noise-free per-pixel jitter (the crush's dither then hides the banding).
-    let jitter = rm_hash01(u32(pixel.x) * 7919u + u32(pixel.y) * 104729u + u32(fr.vol.w) * 2654435761u);
+    // A fixed per-pixel jitter of the march's start (the crush's dither hides the banding it
+    // breaks up). Not per frame: a frame-varying jitter made the volumes fizz on screen.
+    let jitter = rm_hash01(u32(pixel.x) * 7919u + u32(pixel.y) * 104729u);
     let sun_on = fr.sun_radiance.w > 0.5;
     let mu = dot(ray, fr.sun_dir.xyz);
     let sky_down = (fr.sky_zenith.rgb + fr.sky_horizon.rgb) * 0.5;
