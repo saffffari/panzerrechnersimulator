@@ -23045,9 +23045,11 @@ impl Game {
                                 }
                             }
                         }
-                        TrackRepairPhase::FitLink if self.expedition_runtime.is_some() => {
-                            self.hover_label=Some("PUT DOWN KIT - BRING A PHYSICAL SPARE LINK TO THE BREAK");
-                        }
+                        // With a camp on the map (the Canyon's) this step used to hand over to
+                        // the workshop: a physical spare link carried from the camp. Nothing on
+                        // screen said how, and the repair stopped here (the owner, 10 November
+                        // 2026: "track repair didn't work"). The roadside ritual is the same
+                        // everywhere now: a spare link off the bow plate, four blows.
                         TrackRepairPhase::FitLink if self.exterior.spare_links == 0 => {
                             // The links hung on the bow plate are used up or were shot away.
                             self.hover_label = Some("NO SPARE TRACK LINK LEFT");
@@ -27991,6 +27993,28 @@ impl Game {
                         impact_pos, projectile.seed, "enemy_penetration", Some(&event))
                     {
                         self.schedule_sound_from(crate::audio::Sfx::ImpactTank, impact_pos);
+                        self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
+                    }
+                } else if penetrated && self.wrecks[index].kind == WreckKind::Burn && !self.wrecks[index].burning {
+                    // A round through a tank already knocked out or abandoned but not yet burning
+                    // sets it alight, with the sound of a penetration. Before this it rang like a
+                    // bounce and nothing changed, so an abandoned T-34 stood intact and took round
+                    // after round (the owner, 9 and 10 November 2026: "the last t34 was
+                    // indestructable", "some tanks invincible still"). Authored for legibility: a
+                    // second hole always starts the fire, and the load cooks off within seconds.
+                    let w = &mut self.wrecks[index];
+                    w.burning = true;
+                    w.ignition_load = 0.25;
+                    w.fuel_remaining = 1.0;
+                    w.cookoff_t = Some(2.0 + (projectile.seed % 5) as f32);
+                    w.absorb_impact(&event);
+                    w.fire_entry_world = Some(impact_pos);
+                    w.fire_hit_turret = armor.part == ArmorPart::Turret;
+                    println!("[panzerrechnersystem] {} #{} (already out of action) set burning by {} at {:.0} m.",
+                        self.enemies[index].kind.name(), index, projectile.shell.name, projectile.distance_m);
+                    if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::PenetrationHit,
+                        impact_pos, projectile.seed, "enemy_wreck_penetration", Some(&event))
+                    {
                         self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
                     }
                 } else {

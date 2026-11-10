@@ -455,8 +455,9 @@ impl Game {
     fn workshop_mount_target(&self,eye:Vec3,look:Vec3,compatible:Option<PartKind>)->Option<usize> {
         let hm=self.player.hull_model();let tm=self.player.turret_model();let gm=self.sight_model();
         (0..MOUNT_COUNT).filter(|&i|compatible.is_none_or(|kind|kind.fits_mount(i)))
-            .filter(|&i|!state::running_track_mount(i)||(self.track_repair_phase==TrackRepairPhase::FitLink
-                &&self.broken_repair_track().is_some_and(|(kind,_)|i==if kind==ModuleKind::LeftTrack {16}else{17})))
+            // The track's break is the roadside ritual's alone (`Game::update_foot`): the workshop
+            // no longer takes the click there for a physical spare link.
+            .filter(|&i|!state::running_track_mount(i))
             .filter_map(|i|{let point=self.workshop.mount_point(i,hm,tm,gm);
                 (equipment::repair_in_reach(eye,look,point,0.10)&&self.workshop_clear_to(eye,point))
                     .then_some((i,eye.distance_squared(point)))})
@@ -621,8 +622,12 @@ impl Game {
     pub(super) fn verify_workshop_track(&mut self,kind:ModuleKind)->bool {
         if self.expedition_runtime.is_none() {return true;}
         let mount=if kind==ModuleKind::LeftTrack {16}else if kind==ModuleKind::RightTrack {17}else{return false;};
-        if self.track_repair_phase!=TrackRepairPhase::HammerPin||self.track_hits<4
-            ||!self.workshop.state.part_at(mount).is_some_and(|p|p.kind==PartKind::TrackLink&&p.condition>=0.999) {return false;}
+        if self.track_repair_phase!=TrackRepairPhase::HammerPin||self.track_hits<4 {return false;}
+        // The link fitted by the roadside ritual came off the bow plate: whatever the camp's
+        // parts ledger holds at this mount is made whole with it.
+        for part in &mut self.workshop.state.parts {
+            if matches!(part.location,PartLocation::Mount{mount:at} if at==mount) {part.condition=1.0;}
+        }
         self.workshop.state.mounts[mount].fastening=1.0;
         self.workshop.state.mounts[mount].tested=true;true
     }
