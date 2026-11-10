@@ -301,7 +301,14 @@ impl Powertrain {
                 let affordable_yaw=available_power*DRIVE_EFFICIENCY/(mass*G*0.10*half_track);
                 yaw_target=yaw_target.clamp(-affordable_yaw,affordable_yaw);
             }
-            self.yaw_rate+=(yaw_target-self.yaw_rate).clamp(-0.85*h,0.85*h);
+            // The hull is wound up at 0.85 rad/s² and stops faster, YAW_STOP_RAD_S2: with the
+            // steering returned the tracks' scrub on the ground brakes the turn, it does not coast
+            // (the owner, 9 November 2026: "continues turning tank ... after i stop input").
+            // Both figures are estimates.
+            const YAW_STOP_RAD_S2:f32=3.0;
+            let easing=yaw_target.abs()<self.yaw_rate.abs()||yaw_target*self.yaw_rate<0.0;
+            let slew=if easing {YAW_STOP_RAD_S2}else{0.85}*h;
+            self.yaw_rate+=(yaw_target-self.yaw_rate).clamp(-slew,slew);
             let steering_power=mass*G*0.10*half_track*self.yaw_rate.abs();
             let steering_share=if self.accessory_shaft_demand_w>0.0 {
                 (steering_power/(available_power*DRIVE_EFFICIENCY).max(1.0)).clamp(0.0,1.0)

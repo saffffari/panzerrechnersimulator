@@ -203,7 +203,7 @@ pub static TIGER_I: VehicleSpec = VehicleSpec {
     reverse_kmh: &[2.8, 4.4, 7.0, 11.0],
     road_speed: 45.0 / 3.6,
     // The existing player model's 0.7 rad/s [E] (powertrain, unchanged).
-    max_yaw_rate: 0.7,
+    max_yaw_rate: 0.45, // [E] 26 deg/s; 0.7 until 9 November 2026 (the owner: turning "too sensitive")
     suspension: SuspensionKind::InterleavedTorsionBar,
     // Eight swing arms per side [T1I, EW-Tiger], 800 mm wheels [EW-Tiger].
     stations: 8,

@@ -1188,6 +1188,15 @@ impl Game {
             return;
         }
         let perf = self.crew_solo.man(CrewRole::Driver).performance().max(0.15);
+        // Easing the steering off needs no thinking time and is quick: the order to stop turning
+        // is obeyed at once (the owner, 9 November 2026: the hull kept turning after the key was up).
+        {
+            let (order, cmd) = (self.crew_solo.driver_order.y, self.crew_solo.driver_cmd.y);
+            if order.abs() < cmd.abs() || order * cmd < 0.0 {
+                let ease = 8.0 * perf * dt;
+                self.crew_solo.driver_cmd.y = cmd + (order.clamp(-cmd.abs(), cmd.abs()) - cmd).clamp(-ease, ease);
+            }
+        }
         self.crew_solo.driver_react_s += dt;
         if self.crew_solo.driver_react_s < DRIVER_REACT_S / perf {
             return;

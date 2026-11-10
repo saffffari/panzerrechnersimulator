@@ -6284,6 +6284,25 @@ fn engine_hiss_active(alive: bool, modules: &[Module]) -> bool {
 /// past the half-turn where the chase would pick the opposite direction. A lead that is already
 /// larger (a scripted lay) is left as set; only the input's own contribution is bounded.
 const MAX_LAY_LEAD_RAD: f32 = 2.6;
+/// The hand off the controls: after `LAY_IDLE_S` without mouse or key lay input the commanded lay
+/// may lead the turret and gun by no more than these, so they settle where they are instead of
+/// running on to wherever the earlier movement had pointed (the owner, 9 November 2026: "gun moves
+/// after i stop input ... building up mouse movements and causing overshoot"). The traverse is
+/// still the Tiger's 6 degrees a second while the hand moves. Authored feel.
+const LAY_IDLE_S: f32 = 0.12;
+const LAY_IDLE_LEAD_YAW_RAD: f32 = 0.012;
+const LAY_IDLE_LEAD_PITCH_RAD: f32 = 0.006;
+/// The turret closes the last of its lead at this gain (full rate beyond 1/gain rad of lead):
+/// 8 until 9 November 2026, which left the last seven degrees creeping in over three seconds.
+const LAY_CHASE_YAW_GAIN: f32 = 20.0;
+/// `a - b` wrapped to the half turn either side.
+fn angle_between(a: f32, b: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let mut d = (a - b) % TAU;
+    if d > PI { d -= TAU; }
+    if d < -PI { d += TAU; }
+    d
+}
 fn advance_lay_yaw(lay_yaw: f32, turret_yaw: f32, delta: f32) -> f32 {
     use std::f32::consts::{PI, TAU};
     let mut lead = (lay_yaw - turret_yaw) % TAU;
@@ -10350,6 +10369,8 @@ pub struct Game {
     casing_pull: f32,              // 0..1 — LMB-held progress working the case out
     drive_cmd: f32,                // the GATED drive command this frame (engine-audio rev source)
     steer_cmd: f32,                // gated steering demand: steering also loads the Maybach/gearbox
+    /// Seconds since the last mouse or key lay input at the sight (`LAY_IDLE_S`).
+    lay_idle_s: f32,
     running_gear_motion: crate::audio::RunningGearMotion,
     turret_audio_prev_yaw: f32,    // prior simulation pose for actual traverse-motor speed
     gun_elevation_motion: crate::audio::GunElevationMotion,
@@ -14944,6 +14965,7 @@ impl Game {
             casing_pull: 0.0,
             drive_cmd: 0.0,
             steer_cmd: 0.0,
+            lay_idle_s: 0.0,
             running_gear_motion: crate::audio::RunningGearMotion::default(),
             turret_audio_prev_yaw: 0.0,
             gun_elevation_motion: crate::audio::GunElevationMotion::default(),
@@ -17560,6 +17582,14 @@ impl Game {
                     -look_dx * sens + traverse_cmd * 0.9 * dt);
                 self.lay_pitch = (self.lay_pitch - look_dy * sens + elevate_cmd * 0.25 * dt)
                     .clamp(-0.139, 0.261);
+                let laying = look_dx.abs() + look_dy.abs() > 0.5 || traverse_cmd != 0.0 || elevate_cmd != 0.0;
+                self.lay_idle_s = if laying { 0.0 } else { self.lay_idle_s + dt };
+                if self.lay_idle_s >= LAY_IDLE_S {
+                    self.lay_yaw = advance_lay_yaw(self.player.turret_yaw, self.player.turret_yaw,
+                        angle_between(self.lay_yaw, self.player.turret_yaw).clamp(-LAY_IDLE_LEAD_YAW_RAD, LAY_IDLE_LEAD_YAW_RAD));
+                    self.lay_pitch = self.lay_pitch.clamp(self.player.gun_pitch - LAY_IDLE_LEAD_PITCH_RAD,
+                        self.player.gun_pitch + LAY_IDLE_LEAD_PITCH_RAD);
+                }
             } else {
                 self.lay_yaw = self.player.turret_yaw;
                 self.lay_pitch = self.player.gun_pitch;
@@ -17572,7 +17602,7 @@ impl Game {
                 if d < -std::f32::consts::PI {
                     d += std::f32::consts::TAU;
                 }
-                (d * 8.0).clamp(-1.0, 1.0)
+                (d * LAY_CHASE_YAW_GAIN).clamp(-1.0, 1.0)
             };
             let chase_pitch =
                 ((self.lay_pitch - self.player.gun_pitch) * 10.0).clamp(-1.0, 1.0);
