@@ -13,11 +13,11 @@
 //! listed in docs/PHYSICAL_TRUTH_AUDIT.md under "Infantry swarm".
 use glam::{Vec2, Vec3};
 
-/// `KESSEL_INFANTRY_SWARM`: unset = on for the two playtest courses (the spring bridge and Canyon
-/// v2), `0` = today's garrisons exactly, `1` = on for any course map.
+/// `KESSEL_INFANTRY_SWARM`: unset = on for the playtest courses (the spring bridge, Canyon v2 and
+/// the Kursk ridge), `0` = today's garrisons exactly, `1` = on for any course map.
 pub const ENV: &str = "KESSEL_INFANTRY_SWARM";
 /// The course variants the swarm is on for by default.
-pub const DEFAULT_VARIANTS: [&str; 2] = ["spring-bridge-v2", "canyon-v2"];
+pub const DEFAULT_VARIANTS: [&str; 3] = ["spring-bridge-v2", "canyon-v2", "kursk-miasoedovo-v1"];
 
 /// Soviet riflemen fielded on a swarm course (today's courses field 60). The count the frame
 /// target held in `swarm-bench` (docs/INFANTRY_SWARM_PLAN_20261109.md, stage B).

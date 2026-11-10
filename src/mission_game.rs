@@ -435,4 +435,64 @@ mod tests {
         assert!(state.beats.last().unwrap().at.distance(spec.goal) < 1.0);
         for b in &state.beats { assert!(b.at.x > -1150.0 && b.at.x < 2000.0 && b.at.y > -920.0 && b.at.y < 1120.0); }
     }
+
+    /// The Kursk ridge workshop (tools/worldgen/kursk_miasoedovo_v1.py) as generated into the
+    /// shared asset tree: its course, street and mission blocks parse, its attacks enter at knots
+    /// the game accepts, and its kill gates keep the living tanks under the director's cap. The
+    /// workshop is generated, not tracked: without it there is nothing to test.
+    #[test]
+    fn the_kursk_ridge_workshop_parses_and_its_attacks_respect_the_caps() {
+        let dir = "assets/worldgen/workshops/kursk-miasoedovo-v1";
+        let Ok(bytes) = crate::resource::read(format!("{dir}/manifest_edits.json")) else {
+            eprintln!("kursk-miasoedovo-v1 is not generated in this asset tree: skipped (tools/worldgen/kursk_miasoedovo_v1.py)");
+            return;
+        };
+        let edits: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let spec = crate::canyon::from_edits(Some(&edits)).unwrap().unwrap();
+        assert!(spec.finish_by_mission && !spec.director && !spec.opening_platoons);
+        assert_eq!(spec.brief.len(), 3, "the opening card's own lines");
+        assert_eq!(edits["canyon_course"]["variant"], "kursk-miasoedovo-v1");
+        assert!(crate::infantry_swarm::enabled_for_setting(None, edits["canyon_course"]["variant"].as_str()));
+        assert!(spec.garrison.len() >= 12, "{} posts", spec.garrison.len());
+        let plan = crate::street_plan::from_edits(&edits).unwrap().unwrap();
+        assert_eq!(spec.gun_zones.len(), 1);
+        let zone = &spec.gun_zones[0];
+        assert!(zone.candidates.len() >= 8 && zone.candidates.iter().all(|&i| i < plan.gun_sites.len()));
+        assert!(plan.kill_zone.iter().any(|line| line.id == zone.kill_zone));
+        // The start lies behind the ridge: farther from every candidate gun than a gun opens fire.
+        assert!(plan.gun_sites.iter().all(|site| site.at.distance(spec.start) > 600.0));
+        let sheet: serde_json::Value = serde_json::from_slice(&crate::resource::read(format!("{dir}/mission.v1.json")).unwrap()).unwrap();
+        let sheet = mission::parse(&sheet, std::path::Path::new("mission.v1.json")).unwrap();
+        assert_eq!(sheet.order.len(), 3);
+        let resolve = |place: &Place| match place { Place::World(p) => Some(*p), _ => None };
+        let state = MissionState::new(sheet.clone(), &resolve).unwrap();
+        for b in &state.beats { assert!(b.at.x.abs() < 1190.0 && b.at.y.abs() < 1190.0, "{:?}", b.at); }
+        let ids: Vec<&str> = sheet.beats.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(ids, ["position", "look", "first_fire", "reverse_out", "attack_1", "lull_1", "attack_2", "lull_2",
+            "attack_3", "all_tanks"]);
+        assert!(matches!(sheet.beats[1].complete, mission::Completion::Observe { .. }));
+        assert_eq!(sheet.beats.last().unwrap().complete, mission::Completion::DestroyAll);
+        // Every attack enters at a knot `mission_release_platoon` accepts, and an attack opens only
+        // after the kills that close the one before: fielded less those kills never passes the cap.
+        let knots = spec.route.len();
+        let (mut fielded, mut dead, mut sizes) = (5usize, 0usize, Vec::new());
+        for b in &sheet.beats {
+            let releases: Vec<&mission::Release> = b.pacing.release.iter().chain(b.pacing.consequence.iter()).collect();
+            for release in &releases {
+                let j = (release.fraction.expect("a named entry").clamp(0.05, 0.95) * knots as f32) as usize;
+                assert!(j >= 60 && j + 12 < knots, "{}: knot {j} of {knots}", b.id);
+            }
+            let entering: usize = releases.iter().map(|r| r.count).sum();
+            if entering > 0 { sizes.push(entering); }
+            fielded += entering;
+            assert!(fielded - dead <= crate::canyon_director::MAX_LIVE, "{}: {} alive", b.id, fielded - dead);
+            if let mission::Completion::DestroyNear { count, guns: false, .. } = b.complete {
+                dead = dead.max(count as usize);
+                // The stall guard: an attack the game could not site must not hold the sheet open.
+                assert!(matches!(b.fail, mission::Failure::Timeout(s) if s >= 600.0), "{}", b.id);
+            }
+        }
+        assert_eq!(sizes, [2, 3, 5], "three attacks of rising size");
+        assert_eq!(fielded, 15);
+    }
 }

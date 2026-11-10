@@ -345,6 +345,7 @@ impl Game {
             best_s,
             take_and_hold: run.spec.finish_by_mission,
             crew: self.singleplayer_crew_active,
+            course_lines: run.spec.brief.clone(),
         })
     }
 

@@ -16,6 +16,11 @@
 #   tools/launch_demo_20261101.sh --bridge        the spring bridge test map (v2): take the town's bridge, hold it through two
 #                                                 counterattacks, destroy every tank; camp and half-track west of the town;
 #                                                 16:00 on the crew's clock. --bridge-lite: the render-test density
+#   tools/launch_demo_20261101.sh --kursk         the Kursk ridge test map (kursk-miasoedovo-v1, July 1943): halt on the reverse
+#                                                 slope, look into the wooded valley from the forward crest, come back, hold the
+#                                                 ridge through three attacks, destroy every tank; camp and half-track behind the
+#                                                 ridge; 12:00 on the crew's clock (early afternoon by the sun). With --platoon:
+#                                                 two AI Tigers under command
 #   tools/launch_demo_20261101.sh --berlin        Berlin, 30 April 1945: the Reichstag, Koenigsplatz, the Moltke Bridge and the
 #                                                 Brandenburg Gate (docs/BERLIN_REICHSTAG_1945.md), 17:30
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
@@ -54,13 +59,14 @@ RUNTIME="$ROOT/artifacts/runtime"
 # levels) on the 1024x576 grid, exactly 5x on the 5120x2880 panel. Agents: do not change these
 # defaults without asking the owner to confirm first; --look/--res still choose others per run.
 REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
-FULL_MENU=0 BERLIN=0 BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+FULL_MENU=0 BERLIN=0 BRIDGE=0 KURSK=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 EXTRA_ENV=()
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
         --bridge) MODE=canyon; COURSE=spring-bridge-v2; BRIDGE=1 ;;
         --bridge-lite) MODE=canyon; COURSE=spring-bridge-lite-v2; BRIDGE=1 ;;
+        --kursk) MODE=canyon; COURSE=kursk-miasoedovo-v1; KURSK=1 ;;
         --berlin) MODE=canyon; COURSE=berlin-reichstag-v1; BERLIN=1 ;;
         --expedition) MODE=expedition ;;
         --menu) MODE=menu ;;
@@ -90,6 +96,9 @@ while (( $# )); do
 done
 # The bridge map is a bright May afternoon unless --sky-start says otherwise.
 if (( BRIDGE )) && (( ! SKY_SET )); then SKY_START=16:00; fi
+# The Kursk ridge: the map's authored hour, 11:00 UT on 7 July 1943. The crew's clock is UT+1 and
+# the sky is Act One's site (44.5 E), so 12:00 on it is about 14:00 by the sun.
+if (( KURSK )) && (( ! SKY_SET )); then SKY_START=12:00; fi
 # Berlin, 30 April 1945: the late afternoon of the Reichstag's storming (the map's authored hour).
 if (( BERLIN )) && (( ! SKY_SET )); then SKY_START=17:30; fi
 if [[ -n "$LOOK" && $RES_SET == 0 ]]; then RES=1024x576; fi   # deltaP's grid: 5x on the 5120x2880 panel

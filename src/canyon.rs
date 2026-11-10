@@ -129,6 +129,9 @@ pub struct CourseSpec {
     pub opening_platoons: bool,
     /// The after-action card's headline on success (`"headline"`).
     pub headline: &'static str,
+    /// The opening card's own first lines for this course (`"brief"`, a list of strings): what the
+    /// run asks, in the course's words. Empty keeps the card's built-in ravine or bridge lines.
+    pub brief: Vec<String>,
 }
 
 fn num(value: &serde_json::Value, what: &str) -> anyhow::Result<f32> {
@@ -244,6 +247,8 @@ pub fn parse(block: &serde_json::Value) -> anyhow::Result<CourseSpec> {
         opening_platoons: block["opening_platoons"].as_bool().unwrap_or(true),
         // A card headline is a few words read once per run; it lives for the program.
         headline: block["headline"].as_str().map_or("THE RAVINE IS BEHIND YOU", |h| Box::leak(h.to_uppercase().into_boxed_str())),
+        brief: block["brief"].as_array().map(|lines| lines.iter().filter_map(|l| l.as_str()).map(str::to_owned).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -429,11 +434,20 @@ pub struct RunBrief {
     pub take_and_hold: bool,
     /// The living AI crew holds the posts the player is not at (`enable_singleplayer_crew`).
     pub crew: bool,
+    /// The course's own lines (`CourseSpec::brief`); empty for the ravine and the bridge.
+    pub course_lines: Vec<String>,
 }
 
 impl RunBrief {
     pub fn lines(&self) -> Vec<String> {
         let km = self.length_m / 1000.0;
+        if !self.course_lines.is_empty() {
+            // A course that states its own task: its lines, then the two that hold on every course.
+            let mut lines = self.course_lines.clone();
+            lines.push("Nothing fires until it has seen or heard you.".into());
+            lines.push("Death ends it too. Every attempt is a new deployment.".into());
+            return lines;
+        }
         vec![
             if self.take_and_hold {
                 format!("Take the bridge in the town to the {} of you, then hold it.", self.direction)
@@ -457,7 +471,7 @@ impl RunBrief {
     /// A representative brief for the headless UI capture.
     pub fn example() -> Self {
         Self { direction: "north", length_m: 4930.0, seed: 29, start_clock: "15:48".into(), weather: "snow", best_s: None,
-            take_and_hold: false, crew: true }
+            take_and_hold: false, crew: true, course_lines: Vec::new() }
     }
 }
 
