@@ -1101,6 +1101,12 @@ fn run_gfxbench(
         Ok((v[0], v[1], v[2] as u32))
     }).transpose()?;
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    // `KESSEL_BENCH_RING=NEAR_M,FAR_M`: the Soviet riflemen spread over a ring round the Tiger.
+    if let Some(v) = std::env::var("KESSEL_BENCH_RING").ok()
+        .map(|value| value.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>()) {
+        anyhow::ensure!(v.len() == 2 && v[0] > 0.0 && v[1] >= v[0], "KESSEL_BENCH_RING is NEAR_M,FAR_M");
+        g.debug_stage_infantry_ring(v[0], v[1]);
+    }
     // `KESSEL_BENCH_ORBIT=x,y,z`: orbit that point instead of the player's eye.
     let center = std::env::var("KESSEL_BENCH_ORBIT").ok()
         .and_then(|v| { let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect(); (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2])) })
@@ -1277,6 +1283,11 @@ fn run_gfxbench(
                 .map(|w| format!("{:.1}", w.iter().sum::<f64>() / w.len() as f64)).collect();
             println!("[gfxbench] simulation after the kill, per second (ms mean): {}", series.join(" "));
             println!("[gfxbench] simulation phases from five seconds after the kill (ms): {}", g.sim_phase.take());
+            println!("[gfxbench] infantry rifle shots (german, soviet): {}", g.mixed_combat_telemetry()["rifle_shots"]);
+            println!("[gfxbench] T-34 coax rounds at the Tiger: {}", g.stat_enemy_coax_on_tiger);
+            { let receipt = g.capture_small_arms_receipt();
+              println!("[gfxbench] small arms: discharges {}, contacts on the Tiger's armour {}, spark bursts {}",
+                  receipt["discharges"], receipt["player_armor_contacts"], receipt["armor_spark_bursts"]); }
             for (i, e) in g.enemies.iter().enumerate() {
                 println!("[gfxbench] enemy {i}: alive {}, overturned {}, speed {:.2} m/s, {:.0} m off, height {:.2} over ground, roll {:.2} pitch {:.2}",
                     e.alive, e.overturned(), e.speed, e.pos.distance(g.player.pos), e.pos.y - g.hf.height_at(e.pos.x, e.pos.z), e.roll, e.pitch);

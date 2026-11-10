@@ -10693,6 +10693,8 @@ pub struct Game {
     spawn_xz: (f32, f32),
     /// Per-enemy coax-MG burst pacing vs the dismounted player (Foot mode only).
     enemy_mg_cd: Vec<f32>,
+    /// Coax rounds T-34s have fired at the mounted Tiger (bench and review counter).
+    pub stat_enemy_coax_on_tiger: u32,
     /// BRAWL (Academy course F / films): enemies split into two teams by index parity and hunt
     /// EACH OTHER — the player is ignored. Enemy-vs-enemy ballistics resolves the hits.
     pub brawl: bool,
@@ -15124,6 +15126,7 @@ impl Game {
             base_occluders,
             spawn_xz,
             enemy_mg_cd: vec![0.0; N_ENEMIES],
+            stat_enemy_coax_on_tiger: 0,
             brawl: false,
             targets_only: isolated_population,
             playtest_return_fire: (playtest || isolated_population).then_some(false),
@@ -29192,6 +29195,8 @@ impl Game {
                     // Dismounted: the coax chews at the man between main-gun rounds.
                     if self.winter_foot_target() && net_fire {
                         self.enemy_mg_burst(i, dt);
+                    } else if laid && ready && net_fire && !self.brawl {
+                        self.enemy_coax_on_tiger(i, dt, target);
                     }
                 }
                 AiMode::Search => {
@@ -29622,6 +29627,43 @@ impl Game {
             weapon:crate::infantry_combat::Weapon::MachineGun,
         }, 24.0, false, Some("tank_coax_mg"));
         self.schedule_sound_from(crate::audio::Sfx::TankMgShot, from);
+    }
+
+    /// The coax on the mounted Tiger while the main gun is being loaded: bursts of
+    /// `COAX_BURST_ROUNDS` every `COAX_BURST_PERIOD_S` along the laid gun (the coax has no lay of
+    /// its own), inside `COAX_ON_ARMOUR_RANGE_M` with a clear line. Crews did this to blind the
+    /// vision blocks and keep heads down; the rounds are inert on the plate and lethal to a man
+    /// head-out. Burst length, period and range are authored; the DT's ammunition is not counted.
+    fn enemy_coax_on_tiger(&mut self, i: usize, dt: f32, target: Vec3) {
+        const COAX_ON_ARMOUR_RANGE_M: f32 = 400.0;
+        const COAX_BURST_ROUNDS: f32 = 8.0;
+        const COAX_BURST_PERIOD_S: f32 = 3.0;
+        if !self.enemy_return_fire_allowed() || self.enemies[i].kind.casemate() || self.enemies[i].reload <= 0.0 { return; }
+        let interval = crate::infantry_combat::MG_INTERVAL;
+        // Staggered by tank so a platoon's bursts do not coincide.
+        let phase = (self.enemy_track_age.get(i).copied().unwrap_or(0.0) + i as f32 * 0.7) % COAX_BURST_PERIOD_S;
+        if phase >= COAX_BURST_ROUNDS * interval {
+            self.enemy_mg_cd[i] = self.enemy_mg_cd[i].max(0.0);
+            return;
+        }
+        let (from, along) = self.enemies[i].coax_muzzle();
+        if from.distance(target) > COAX_ON_ARMOUR_RANGE_M || !self.optical_los_clear(from, target) { return; }
+        self.enemy_mg_cd[i] -= dt;
+        while self.enemy_mg_cd[i] <= 0.0 {
+            self.enemy_mg_cd[i] += interval;
+            let weapon = crate::infantry_combat::Weapon::MachineGun;
+            self.launch_small_arm(crate::infantry_combat::Shot {
+                shooter: 10000 + i as u32, team: crate::infantry_combat::Team::Soviet, origin: from,
+                direction: crate::anti_infantry_ai::machine_gun_direction(along, u64::from(self.stat_enemy_coax_on_tiger) ^ (i as u64) << 32),
+                range: MG_RANGE, weapon,
+            }, crate::infantry_combat::small_arms_damage(weapon, false), false, Some("tank_coax_mg_on_tiger"));
+            self.stat_enemy_coax_on_tiger = self.stat_enemy_coax_on_tiger.saturating_add(1);
+            self.schedule_sound_from(crate::audio::Sfx::TankMgShot, from);
+            let k = self.next_inf_fx;
+            self.next_inf_fx = (k + 1) % INF_FX;
+            self.inf_flash_t[k] = 0.05;
+            self.inf_flash_pos[k] = from;
+        }
     }
 
     fn enemy_fire(&mut self, i: usize) {

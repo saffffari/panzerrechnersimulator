@@ -20,8 +20,9 @@ fn sensed_actors(
     mut world_los: impl FnMut(Vec3, Vec3) -> bool,
 ) -> Vec<Combatant> {
     snapshot.iter().filter(|other| {
+        // A vehicle's point is offered only after its own sight line was tested (the caller).
         other.team == actor.team
-            || (combat::sight_candidate(actor, other) && world_los(actor.eye(), other.eye()))
+            || (combat::sight_candidate(actor, other) && (other.vehicle || world_los(actor.eye(), other.eye())))
     }).cloned().collect()
 }
 
@@ -33,6 +34,41 @@ fn permitted_infantry_action(mut action: FootAction, return_fire: bool) -> FootA
         action.fire = false;
     }
     action
+}
+
+/// A Soviet rifleman who sees the Tiger and nothing nearer shoots at it whenever his rifle is
+/// ready, whatever his policy or his squad's movement order says: rifle fire on the hull, the
+/// optics and anyone head-out (owner's direction, 9 November 2026). He halts for the shot and
+/// walks on while he works the bolt. The aiming servo, the bolt cycle, the magazine and the
+/// projectile path are the ordinary ones.
+fn pelt_tank_action(mut action:FootAction,cooldown:f32)->FootAction {
+    action.aim=true;action.fire=true;
+    if cooldown<=PELT_HALT_S {action.forward=0.0;action.strafe=0.0;}
+    action
+}
+/// He stops walking this long before the rifle is ready, to turn onto the tank and fire (s).
+const PELT_HALT_S: f32 = 0.3;
+
+/// Whether a comrade stands in the rifleman's line of fire to `to`: within the lane's half-width
+/// of the line in plan (0.5 m at the muzzle, widening 0.02 m a metre for the rifle's spread and
+/// the comrade's own step) at a height the bullet passes through his body. With a hundred men
+/// round the Tiger firing inward, shooting without it killed 56 of them in 18 s (bench,
+/// 9 November 2026).
+fn comrade_in_line_of_fire(shooter:&Combatant,to:Vec3,others:&[Combatant])->bool {
+    let from=shooter.eye();
+    let flat=Vec2::new(to.x-from.x,to.z-from.z);
+    let length=flat.length();
+    if length<0.5 {return false;}
+    let along_dir=flat/length;
+    others.iter().any(|other| {
+        if other.team!=shooter.team||other.id==shooter.id||!other.alive() {return false;}
+        let rel=Vec2::new(other.pos.x-from.x,other.pos.z-from.z);
+        let along=rel.dot(along_dir);
+        if along<=0.3||along>=length {return false;}
+        let across=(rel-along_dir*along).length();
+        let bullet_y=from.y+(to.y-from.y)*along/length;
+        across<=0.5+0.02*along && bullet_y>=other.pos.y-0.2 && bullet_y<=other.pos.y+other.body_height()+0.2
+    })
 }
 
 fn coordinated_infantry_action(mut base:FootAction,obs:&crate::foot_ai::FootObservation,
@@ -451,14 +487,20 @@ impl Game {
             // Asking anyway swept the hull's source triangles for every soldier on the map on
             // every step, which was most of the simulation's cost once a battle was on.
             let within_sight=self.mixed_combat.actors[i].eye().distance(self.player.center())
-                <=crate::infantry_combat::INFANTRY_SENSOR_RANGE+PLAYER_HULL_REACH_M;
+                <=crate::infantry_combat::VEHICLE_SIGHT_RANGE+PLAYER_HULL_REACH_M;
+            let mut tank_point=None;
             if self.mode==Mode::Tank && within_sight {
                 let _probe = crate::sim_phase::Probe::new("mixed_tiger_aim_point");
                 let eye=self.mixed_combat.actors[i].eye();
-                let point=if self.swarm.enabled { self.swarm_cached_aim_point(i,eye,dt) } else { self.small_arm_player_aim_point(eye) };
+                // The point and the world's sight line to it: for the swarm both are sampled
+                // together every 0.2 s (`swarm_cached_aim_point`), not on every step (named).
+                let point=if self.swarm.enabled { self.swarm_cached_aim_point(i,eye,dt) }
+                    else { self.small_arm_player_aim_point(eye).filter(|&p|self.optical_los_clear(eye,p)) };
                 if let Some(point)=point {
                     let mut target=Combatant::new(PLAYER_ACTOR_ID,Team::German,point,0.0);
                     target.perception_point=Some(point);
+                    target.vehicle=true;
+                    tank_point=Some(point);
                     candidates.push(target);
                 }
             }
@@ -535,7 +577,12 @@ impl Game {
                 maneuver.is_some()||investigate.is_some(),tactical[i].cover&&squad_order.regroup.is_none());
             // Practice retains physical target bodies, but NPCs neither pursue nor discharge.
             // Gate before apply_action consumes ammunition or creates shot/pose/audio events.
-            let action = infantry_aim::visible_target_motor(actor, &obs, self.mixed_combat.actions[i], dt);
+            let pelting = actor.team == Team::Soviet && tank_point.is_some() && actor.last_seen == tank_point
+                && obs.values()[26] > 0.0 && swarm_order.rush.is_none()
+                && tank_point.is_some_and(|point| !comrade_in_line_of_fire(actor, point, &snapshot));
+            let wanted = if pelting { pelt_tank_action(self.mixed_combat.actions[i], actor.cooldown) }
+                else { self.mixed_combat.actions[i] };
+            let action = infantry_aim::visible_target_motor(actor, &obs, wanted, dt);
             let mut action = permitted_infantry_action(action, return_fire);
             if swarm_order.hold || swarm_order.rush.is_some() {
                 // Holding (prone or in cover) or bounding: the swarm owns translation.
@@ -1028,6 +1075,25 @@ impl Game {
         self.mixed_combat.enabled = true;
         true
     }
+    /// Bench staging (`KESSEL_BENCH_RING=NEAR_M,FAR_M`): the Soviet riflemen stand spread over a
+    /// ring round the Tiger between the two radii, each facing it, with their posts where they
+    /// stand. The plain bench build leaves them all on one point.
+    pub fn debug_stage_infantry_ring(&mut self, near_m: f32, far_m: f32) {
+        let center = self.player.pos;
+        let count = self.soviet_soldier_count.min(self.soldiers.len());
+        for i in 0..count {
+            let angle = i as f32 * 2.399_963; // golden angle: even in bearing
+            let radius = near_m + (far_m - near_m) * ((i as f32 + 0.5) / count as f32).sqrt();
+            let (x, z) = (center.x + angle.sin() * radius, center.z - angle.cos() * radius);
+            let soldier = &mut self.soldiers[i];
+            soldier.pos = Vec3::new(x, self.hf.height_at(x, z), z);
+            soldier.yaw = (center.x - x).atan2(z - center.z);
+            soldier.route = [soldier.pos; 4];
+        }
+        for actor in self.mixed_combat.actors.iter_mut().take(count) { actor.hp = 0.0; }
+        self.mixed_sync_actors();
+        self.mixed_combat.rifle_shots = [0; 2];
+    }
     pub fn debug_stage_mixed_combat(&mut self, center: Vec3) {
         self.mixed_combat.enabled = true;
         for (i, soldier) in self.soldiers.iter_mut().enumerate() {
@@ -1083,6 +1149,24 @@ mod tests {
         let hidden=combat::observe(&mut actor,&[],&[],Vec3::ZERO,0.1);
         assert!(actor.last_seen.is_some(),"test retains memory but no current sight");
         assert!(!coordinated_infantry_action(base,&hidden,false,true).fire);
+    }
+
+    #[test]
+    fn rifleman_holds_his_shot_at_the_tank_while_a_comrade_is_in_the_line_of_fire() {
+        let shooter=Combatant::new(1,Team::Soviet,Vec3::ZERO,0.0);
+        let tank=Vec3::new(0.0,1.5,-40.0);
+        let man=|id,pos|Combatant::new(id,Team::Soviet,pos,0.0);
+        assert!(!comrade_in_line_of_fire(&shooter,tank,&[shooter.clone()]));
+        assert!(comrade_in_line_of_fire(&shooter,tank,&[man(2,Vec3::new(0.3,0.0,-10.0))]));
+        assert!(!comrade_in_line_of_fire(&shooter,tank,&[man(2,Vec3::new(3.0,0.0,-10.0))]),"beside the lane");
+        assert!(!comrade_in_line_of_fire(&shooter,tank,&[man(2,Vec3::new(0.0,0.0,-45.0))]),"beyond the tank");
+        assert!(!comrade_in_line_of_fire(&shooter,tank,&[man(2,Vec3::new(0.0,-6.0,-10.0))]),"in a hollow under the line");
+        let mut dead=man(2,Vec3::new(0.0,0.0,-10.0));dead.hp=0.0;
+        assert!(!comrade_in_line_of_fire(&shooter,tank,&[dead]));
+        assert!(!comrade_in_line_of_fire(&shooter,tank,&[Combatant::new(3,Team::German,Vec3::new(0.0,0.0,-10.0),0.0)]));
+        let pelted=pelt_tank_action(FootAction {forward:0.8,..Default::default()},0.0);
+        assert!(pelted.aim&&pelted.fire&&pelted.forward==0.0);
+        assert_eq!(pelt_tank_action(FootAction {forward:0.8,..Default::default()},1.2).forward,0.8);
     }
 
     #[test]

@@ -17,6 +17,9 @@ pub const TURN_RATE_RAD_S: f32 = 3.2;
 pub const RIFLE_INTERVAL: f32 = 1.6;
 pub const RIFLE_RANGE: f32 = 120.0;
 pub const INFANTRY_SENSOR_RANGE: f32 = 45.0;
+/// How far a rifleman makes out a tank as a target (m): the rifle's own modelled reach. A hull
+/// 6 m long is seen far beyond the 45 m at which one man is picked out (authored).
+pub const VEHICLE_SIGHT_RANGE: f32 = RIFLE_RANGE;
 pub const RIFLE_RELOAD: f32 = 3.0;
 pub const MG_INTERVAL: f32 = 0.075;
 
@@ -173,6 +176,9 @@ pub struct Combatant {
     /// A source-derived surface or exposed anatomical aim point in a perception-only snapshot.
     /// It is never inserted into the live actor/damage list. Ordinary humans retain their pose.
     pub perception_point: Option<Vec3>,
+    /// The perception point lies on a vehicle: sensed out to `VEHICLE_SIGHT_RANGE`.
+    #[serde(default)]
+    pub vehicle: bool,
     pub last_seen: Option<Vec3>,
     /// Posture captured by the same visible observation as `last_seen`, never a hidden live lookup.
     pub last_seen_crouched: Option<bool>,
@@ -205,6 +211,7 @@ impl Combatant {
             reserve: 30,
             suppression: 0.0,
             perception_point: None,
+            vehicle: false,
             last_seen: None,
             last_seen_crouched: None,
             last_seen_body_height: None,
@@ -471,7 +478,7 @@ pub fn sight_candidate(actor: &Combatant, target: &Combatant) -> bool {
         return false;
     }
     let delta = target.eye() - actor.eye();
-    delta.length() <= INFANTRY_SENSOR_RANGE
+    delta.length() <= if target.vehicle { VEHICLE_SIGHT_RANGE } else { INFANTRY_SENSOR_RANGE }
         && actor
             .forward()
             .dot(Vec3::new(delta.x, 0.0, delta.z).normalize_or_zero())

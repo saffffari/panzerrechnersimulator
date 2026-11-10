@@ -181,3 +181,51 @@ Unit tests for infantry, swarm, small arms, mixed combat, foot AI and source sur
 (9.4 ms), `render_upload_uniforms` 7.9 ms, `render_collect_parcels` 5.5 ms, wrecks 3.3 ms, and
 the GPU frame at 27 ms; the effects are with the `fx-overhaul` session
 (`/home/alex/panzer/fx-overhaul-20261109`, branch `claude/fx-overhaul-20261109`).
+
+## Riflemen fire on the Tiger; the bench fixture's pile (9 November, evening)
+
+**The kill bench above never spread the infantry.** Without `KESSEL_PLAYTEST` the bench skips
+the playtest setup and all 156 riflemen stand on one point beside the Tiger (56 shots in one
+run left from the same muzzle position). The infantry figures above (20.3 to 2.7 ms) are that
+pile's; the cause and the fix hold wherever men are inside the Tiger's box, but the size of the
+gain in play is not measured. `KESSEL_BENCH_RING=NEAR_M,FAR_M` now spreads the men over a ring
+round the Tiger. With `KESSEL_PLAYTEST=1` the men are at their course posts and none is in
+range of the spawn.
+
+Owner's direction: "infantry should pelt tank with small arms fire when they can". Before, a
+rifleman sensed the Tiger only inside the 45 m at which he senses a man, and fired only when
+his policy chose to and his squad was not moving. Now (`infantry_combat.rs`,
+`mixed_combat_runtime.rs`, `swarm_runtime.rs`):
+
+- a vehicle's point is sensed to the rifle's modelled reach, 120 m (`VEHICLE_SIGHT_RANGE`,
+  authored);
+- a Soviet rifleman who sees the Tiger and nothing nearer aims and fires whenever the rifle is
+  ready, halting 0.3 s for the shot, unless he is bounding, boarding, throwing or routed, or a
+  comrade stands in his line of fire (`comrade_in_line_of_fire`);
+- the world sight line to the Tiger is sampled with the aim point every 0.2 s for the swarm,
+  not on every step (**named simplification**).
+
+Ring bench, 156 men at 25 to 110 m, 18 s, same binary settings:
+
+| | Before | After |
+|---|---|---|
+| Rifle shots | 39 | 207 |
+| Strikes on the Tiger's armour | 27 | 214 |
+| Infantry phase, ms per update | 5.8 | 6.2 (11.3 before the sight line was cached) |
+| Riflemen killed by small arms | 17 | 19 |
+
+Open: the 17 to 19 riflemen killed by small arms in both runs (their own side's bullets or
+ricochets; not traced). 207 shots from 156 men in 18 s is about one man in seven firing at
+the bolt's rate; what holds the others (sight line, facing, intent) is not broken down. GPU
+times of these runs are not usable: the effects session was rendering on the same card.
+
+### T-34 coax on the mounted Tiger (same evening)
+
+T-34 crews fired their machine guns only at men on foot. Now (`Game::enemy_coax_on_tiger`,
+`game.rs`) a turreted tank that is tracking the mounted Tiger with its gun laid fires coax
+bursts along the gun while the main gun is being loaded: 8 rounds every 3 s inside 400 m with
+a clear line (burst, period and range authored; the DT's ammunition is not counted). Headless
+Canyon run (`canyon-ai-run`, seed 211, 180 s): 120 coax rounds fired, 133 contacts on the
+Tiger's armour. The run's outcome differs from the 2 November receipt for the same seed
+(Tiger knocked out with one kill, against alive with two); the extra projectiles shift the
+seeds of later shots, so that is not evidence either way.
