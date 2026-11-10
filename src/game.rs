@@ -10702,6 +10702,9 @@ pub struct Game {
     pub mode: Mode,
     foot: FootSoldier,
     panzerfaust_shot: PanzerfaustShot,
+    /// The Tiger carries the Panzerfaust rack on this map: the weapon's era, or a playtest course
+    /// (the owner's concession of 9 November 2026). Set at build.
+    panzerfaust_issued: bool,
     panzerfaust_rack_count: u8,
     panzerfaust_rack_taken: [bool; PANZERFAUST_RACK],
     panzerfaust_source: Option<usize>,
@@ -13352,9 +13355,12 @@ impl Game {
             (12, &scene[slots.breechcover]), (13, &scene[slots.gunlever]),
             (14, &scene[slots.roof_hatches[2]]), (15, &scene[slots.roof_hatches[3]]),
         ];
-        // The Panzerfaust rack exists only where the weapon was in service (the 1945 acts). On the
-        // winter maps its brackets are neither drawn nor part of the cabin's contact surfaces.
-        let panzerfaust_era = act.panzerfaust_in_service();
+        // The Panzerfaust rack exists where the weapon was in service (the 1945 acts) and, by the
+        // owner's concession of 9 November 2026, on the playtest courses whatever their date
+        // ("need a way to destroy tanks as a last resort if your gun is knocked out"): an
+        // anachronism there, the weapon being first issued in August 1943. Elsewhere on the winter
+        // maps its brackets are neither drawn nor part of the cabin's contact surfaces.
+        let panzerfaust_era = act.panzerfaust_in_service() || canyon_map;
         if panzerfaust_era {
             fire_surfaces.push((1, &scene[slots.panzerfaust_brackets]));
         }
@@ -15162,6 +15168,7 @@ impl Game {
             mode: Mode::Tank,
             foot: FootSoldier::default(),
             panzerfaust_shot: PanzerfaustShot::default(),
+            panzerfaust_issued: panzerfaust_era,
             panzerfaust_rack_count: if panzerfaust_era { PANZERFAUST_RACK as u8 } else { 0 },
             panzerfaust_claimed: false,
             panzerfaust_rack_taken: [!panzerfaust_era; PANZERFAUST_RACK],
@@ -15452,7 +15459,7 @@ impl Game {
         self.rounds_spent = 0;
         self.foot.set_total_p08_rounds(u32::from(inv.luger_rounds));
         // An older checkpoint may still list tubes for Act 1; the rack exists only in the 1945 acts.
-        self.panzerfaust_rack_count = if self.act.panzerfaust_in_service() {
+        self.panzerfaust_rack_count = if self.panzerfaust_issued {
             inv.panzerfaust_tubes.min(PANZERFAUST_RACK as u8)
         } else { 0 };
         self.panzerfaust_rack_taken = std::array::from_fn(|i| i >= self.panzerfaust_rack_count as usize);
@@ -21422,7 +21429,7 @@ impl Game {
             || self.foot.reload_t > 0.0
             || self.foot.panzerfaust_swap_t > 0.0
             // No Panzerfaust exists before the 1945 acts; the empty slot is not selectable.
-            || (weapon == crate::foot::FootWeapon::Panzerfaust && !self.act.panzerfaust_in_service())
+            || (weapon == crate::foot::FootWeapon::Panzerfaust && !self.panzerfaust_issued)
         {
             return;
         }
@@ -21742,7 +21749,7 @@ impl Game {
                 self.abandoned_collision[k].set_pose([hulk.hull_model(), hulk.turret_model()]);
                 self.player_powertrain = crate::powertrain::Powertrain::default();
                 self.player = Tank::new(pos.x, pos.z, heading, &self.hf, tank::TIGER_PARTS);
-                let era = self.act.panzerfaust_in_service();
+                let era = self.panzerfaust_issued;
                 self.panzerfaust_rack_count = if era { PANZERFAUST_RACK as u8 } else { 0 };
                 self.panzerfaust_rack_taken = [!era; PANZERFAUST_RACK];
                 self.panzerfaust_source = None;
@@ -23373,7 +23380,7 @@ impl Game {
     /// and its brackets exist only in the 1945 acts (`ActMap::panzerfaust_in_service`).
     fn drive_panzerfaust_rack(&self, r: &mut Renderer) {
         let turret = self.player.turret_model();
-        r.set_visible(self.slots.panzerfaust_brackets, self.act.panzerfaust_in_service());
+        r.set_visible(self.slots.panzerfaust_brackets, self.panzerfaust_issued);
         r.set_model(self.slots.panzerfaust_brackets, turret);
         for (i, &slot) in self.slots.panzerfaust_rack.iter().enumerate() {
             let visible = !self.panzerfaust_rack_taken[i];
