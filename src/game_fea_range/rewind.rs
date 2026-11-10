@@ -420,7 +420,8 @@ impl Unsaved {
 /// `Game` fields neither the world save nor `Unsaved` holds, each with why a run does not need
 /// it back (test `every_game_field_is_kept_or_named`).
 pub(super) const NOT_KEPT: &[(&str, &str)] = &[
-    ("cigarette_fx_slots", "renderer slots"), ("swarm", "the infantry swarm, playtest courses only, not in the range"), ("act", "the act's authored data"), ("tank_editor_scene", "editor scene"),
+    ("cigarette_fx_slots", "renderer slots"), ("fx_fire_roots", "wreck flame roots, re-sampled from the burning surfaces"),
+    ("bullet_bursts", "small-arms strike sound grouping"), ("stat_enemy_coax_on_tiger", "a bench counter"), ("swarm", "the infantry swarm, playtest courses only, not in the range"), ("act", "the act's authored data"), ("tank_editor_scene", "editor scene"),
     ("grass", "the grass about the camera (see the module doc)"), ("platoon", "radio orders, not in the range"),
     ("enemy_report_audit", "an audit log"), ("campaign", "campaign coordinator, not in the range"),
     ("expedition_runtime", "expedition, not in the range"), ("support_camp", "expedition camp"),

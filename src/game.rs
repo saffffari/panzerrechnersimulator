@@ -17788,6 +17788,7 @@ impl Game {
     /// keep the explicit simulation-step API below.
     pub fn update_realtime(&mut self,input:&TankInput,dt:f32,r:&mut Renderer) {
         if !dt.is_finite() || dt<=0.0 {return;}
+        self.fea.live=true;
         if let Some(audio)=&self.audio {audio.begin_simulation_audio_frame(r.time,dt);}
         let count=(dt/0.05).ceil().max(1.0) as u32;
         let step=dt/count as f32;

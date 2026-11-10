@@ -286,6 +286,8 @@ pub(super) const FEA_STOP_COMMIT_S: f32 = 0.25;
 /// commit (`PendingPenetration`): above the plate and round solves' measured 230-330 ms on the
 /// owner's machine, so the update does not wait for them there (named latency).
 pub(super) const FEA_PENETRATION_COMMIT_S: f32 = 0.35;
+/// Live play waits this long past a commit time for a solve before the update holds for it (s).
+pub(super) const FEA_LIVE_GRACE_S: f32 = 3.0;
 
 /// A perforation of the player's Tiger whose plate lattice and round solve run on workers. The
 /// strike is seen and heard at once; its solved consequences commit at a fixed game time after it
@@ -325,6 +327,12 @@ pub(super) struct FeaRuntime {
     pub(super) pending: Vec<PendingPlate>,
     /// Perforations whose plate and round solves run on workers (`PendingPenetration`).
     pub(super) penetrations: Vec<PendingPenetration>,
+    /// Live play (`Game::update_realtime` sets it): a solve still running at its commit time is
+    /// not waited for; its consequences commit on the first update after it finishes, within
+    /// `FEA_LIVE_GRACE_S` (the owner, 9 November 2026: "game still lags when you are hit and
+    /// really lags when penetration occurs"). Headless reviews, films and the range keep the
+    /// fixed commit time and wait, so their runs repeat.
+    pub(super) live: bool,
     /// The hot-fragment pool slot of a steel chip in the crewman's hand.
     pub(super) carried_fragment: Option<usize>,
     next_id: u64,
@@ -1125,6 +1133,13 @@ impl Game {
                 index += 1;
                 continue;
             }
+            // Live play: not yet solved and inside the grace time: look again next update.
+            let due = &self.fea.penetrations[index];
+            let solved = due.plate.as_ref().is_none_or(|h| h.is_finished()) && due.shot.as_ref().is_none_or(|h| h.is_finished());
+            if self.fea.live && !solved && now < due.commit_at_s + FEA_LIVE_GRACE_S {
+                index += 1;
+                continue;
+            }
             let mut p = self.fea.penetrations.remove(index);
             let (impact_world, dir_world, origin_world) = self.fea_finish_penetration(&mut p);
             let mut armor = p.armor;
@@ -1214,6 +1229,12 @@ impl Game {
         let mut index = 0;
         while index < self.fea.pending.len() {
             if self.fea.pending[index].commit_at_s > now {
+                index += 1;
+                continue;
+            }
+            // Live play: not yet solved and inside the grace time: look again next update.
+            let due = &self.fea.pending[index];
+            if self.fea.live && !due.handle.is_finished() && now < due.commit_at_s + FEA_LIVE_GRACE_S {
                 index += 1;
                 continue;
             }
