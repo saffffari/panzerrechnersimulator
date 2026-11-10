@@ -23781,7 +23781,9 @@ impl Game {
         if let Some(runtime) = &self.expedition_runtime {
             // A disabled Tiger does not kill a walking survivor. Unconsciousness is not a
             // death/respawn event either; the front end offers succession only after death.
-            let dead = self.singleplayer_embodied_role().is_some_and(|role| self.crew_solo.man(role).dead)
+            // The embodied man's death by either record: the living crew's (`crew_solo`) or the
+            // physical casualty roster (`controlled_soldier_alive` reads both).
+            let dead = (self.singleplayer_embodied_role().is_some() && !self.controlled_soldier_alive())
                 || (self.mode == Mode::Foot && self.foot.hp <= 0.0);
             return (dead || runtime.state.status == crate::expedition::RunStatus::PersonnelLost)
                 .then_some(self.death_cause.unwrap_or(DeathCause::CrewLost));
@@ -25895,6 +25897,17 @@ impl Game {
         }
 
         let casualty_start = self.couch_casualties.len();
+        // The living crew's own record of each man: without it the five stayed "fit" after the
+        // whole load went, and a run with a course camp (the expedition's rule in `game_over`)
+        // never declared the death (the owner's runs of 9 November 2026).
+        if self.singleplayer_crew_active {
+            for casualty in &hits {
+                if let Some(man) = self.singleplayer_actor_casualty_mut(casualty.peer_id) {
+                    man.dead = true;
+                    man.cause = Some("killed");
+                }
+            }
+        }
         let _ = self.record_physical_crew_casualties(&hits);
         let newly_recorded = self.couch_casualties.len().saturating_sub(casualty_start);
         if newly_recorded > 0 {

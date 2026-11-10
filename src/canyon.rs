@@ -163,6 +163,42 @@ pub fn from_edits(edits: Option<&serde_json::Value>) -> anyhow::Result<Option<Co
     Ok(Some(spec))
 }
 
+/// Where a run starts so that nothing of the opening defence sees the Tiger (the owner,
+/// 9 November 2026: "you should be out of sight and unspotted"): the authored start if `seen`
+/// is false there, else the nearest point back along the course's route (from the route point
+/// nearest the start toward the route's beginning, tried every `STEP` metres) from which the
+/// next `margin_m` metres back are unseen too, taken at the far end of that stretch, facing along
+/// the route toward the start. `None` when the start is unseen or the route offers no such
+/// point (the authored start stands).
+pub fn unseen_start(route: &[Vec2], start: Vec2, margin_m: f32, seen: impl Fn(Vec2) -> bool) -> Option<(Vec2, f32)> {
+    const STEP: f32 = 5.0;
+    if !seen(start) { return None; }
+    let nearest = route.iter().enumerate()
+        .min_by(|a, b| a.1.distance_squared(start).total_cmp(&b.1.distance_squared(start)))?.0;
+    // The way back: the start, then the route's points from the nearest one to its first.
+    let mut back = vec![start];
+    back.extend(route[..=nearest].iter().rev().copied());
+    let mut samples = vec![start];
+    for leg in back.windows(2) {
+        let length = leg[0].distance(leg[1]);
+        let mut along = STEP;
+        while along <= length {
+            samples.push(leg[0].lerp(leg[1], along / length));
+            along += STEP;
+        }
+    }
+    let need = (margin_m / STEP).ceil() as usize;
+    let mut clear = 0usize;
+    for (i, &point) in samples.iter().enumerate() {
+        clear = if seen(point) { 0 } else { clear + 1 };
+        if clear > need {
+            let toward = samples[i - 1] - point;
+            return Some((point, toward.x.atan2(toward.y)));
+        }
+    }
+    None
+}
+
 pub fn parse(block: &serde_json::Value) -> anyhow::Result<CourseSpec> {
     ensure!(block["schema"].as_str() == Some(SCHEMA), "schema must be {SCHEMA:?}");
     ensure!(block["version"].as_u64() == Some(VERSION), "version must be {VERSION}");
@@ -513,6 +549,19 @@ pub fn format_time(seconds: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_seen_start_is_drawn_back_along_the_route_past_a_margin_of_unseen_ground() {
+        // A straight road east; everything east of x = -300 is seen, and a gap at -340..-330 too.
+        let route: Vec<Vec2> = (0..=100).map(|i| Vec2::new(-1000.0 + 10.0 * i as f32, 0.0)).collect();
+        let seen = |p: Vec2| p.x > -300.0 || (-340.0..=-330.0).contains(&p.x);
+        assert_eq!(unseen_start(&route, Vec2::new(-400.0, 0.0), 40.0, seen), None, "an unseen start stands");
+        let (at, heading) = unseen_start(&route, Vec2::new(-200.0, 3.0), 40.0, seen).expect("drawn back");
+        assert!(at.x < -340.0 - 40.0 && at.x > -420.0, "past the seen gap and its margin, no farther than needed: {at:?}");
+        assert!((heading - std::f32::consts::FRAC_PI_2).abs() < 0.05, "facing east along the route: {heading}");
+        assert_eq!(unseen_start(&route, Vec2::new(-200.0, 3.0), 40.0, |_| true), None, "no unseen point: the start stands");
+        assert_eq!(unseen_start(&[], Vec2::ZERO, 40.0, |_| true), None);
+    }
 
     fn block() -> serde_json::Value {
         serde_json::json!({
