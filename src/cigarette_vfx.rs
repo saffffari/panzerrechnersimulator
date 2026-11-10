@@ -35,8 +35,12 @@ pub fn surface(view: View) -> Surface {
     let ash_cycle = if tap > 0.0 && tap < ASH_FALLS_AT { 1.0 } else { finite_unit(view.quarter_progress) };
     Surface {
         // Bright enough to read as a coal, not so bright that bloom swells it past the paper.
-        ember_intensity: if burning { 0.06 + 0.24 * puff } else { 0.0 },
-        ember_color: [255, (112.0 + 56.0 * puff) as u8, (18.0 + 14.0 * puff) as u8],
+        // The rebuilt effects: a dull red coal at rest that flares orange-yellow on the draw
+        // (the draw pulls air through the coal and it burns several times hotter).
+        ember_intensity: if !burning { 0.0 } else if crate::fx_plumes::enabled() { 0.035 + 0.5 * puff.powf(1.5) }
+            else { 0.06 + 0.24 * puff },
+        ember_color: if crate::fx_plumes::enabled() { [255, (70.0 + 120.0 * puff) as u8, (10.0 + 40.0 * puff) as u8] }
+            else { [255, (112.0 + 56.0 * puff) as u8, (18.0 + 14.0 * puff) as u8] },
         char_length_m: if view.cigarette_present && (burning || consumed > 0.00001) {
             0.0007 + 0.0006 * puff
         } else {
@@ -210,7 +214,10 @@ impl Effects {
         };
         let flow = if air.inside { cabin_flow } else { world_flow };
         if visible && view.lit && anchors.tip.is_finite() {
-            let rate = 34.0 + finite_unit(view.puff_phase) * 12.0;
+            // The rebuilt effects (crate::fx_plumes): a thinner sidestream (the owner: the smoke
+            // blocked the view).
+            let thin = if crate::fx_plumes::enabled() { 0.4 } else { 1.0 };
+            let rate = (34.0 + finite_unit(view.puff_phase) * 12.0) * thin;
             let (count, remainder) = emission_budget(self.tip_credit, rate, dt);
             self.tip_credit = remainder;
             self.emit(
@@ -229,7 +236,7 @@ impl Effects {
             self.tip_credit = 0.0;
         }
         if finite_unit(view.exhale) > 0.0 && anchors.mouth.is_finite() {
-            let rate = 120.0 * finite_unit(view.exhale);
+            let rate = 120.0 * finite_unit(view.exhale) * if crate::fx_plumes::enabled() { 0.45 } else { 1.0 };
             let (count, remainder) = emission_budget(self.breath_credit, rate, dt);
             self.breath_credit = remainder;
             self.emit(
@@ -580,7 +587,8 @@ mod tests {
             }
             counts.push(fx.sequence);
         }
-        assert!(counts.iter().all(|n| (*n as i32 - 34).abs() <= 1));
+        let expected = if crate::fx_plumes::enabled() { (34.0f32 * 0.4).round() as i32 } else { 34 };
+        assert!(counts.iter().all(|n| (*n as i32 - expected).abs() <= 1), "{counts:?}");
         let original = Particle {
             id: 7,
             kind: Kind::Exhale,

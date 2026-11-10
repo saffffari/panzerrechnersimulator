@@ -2745,7 +2745,7 @@ impl Backend {
         self.stats.merged_grains = 0;
         if self.debug_skip & 16 != 0 { build_csr(&self.pairs, &mut self.cell_start, &mut self.cell_items); return; }
         #[derive(Default)]
-        struct Cell { sum: Vec3, count: u32, size: f32 }
+        struct Cell { sum: Vec3, count: u32, size: f32, fine: bool }
         let mut merged: HashMap<(i32, i32, i32, u32), Cell> = HashMap::new();
         let mut cell_kinds: Vec<(u32, f32, [f32; 3], f32)> = Vec::new();
         for (batch_index, b) in r.inst_batches.iter().enumerate() {
@@ -2764,6 +2764,11 @@ impl Backend {
             let ember_cap = if crate::fx_plumes::enabled() { FX_GRAIN_EMBERS } else { MAX_EMBERS };
             let packed = pack_ember(color, b.emissive * 6.0 * (2.0 * FIRE_EMBER_SHARE) / per_grain as f32);
             let ids = r.fine_vfx.particle_ids.get(&batch_index);
+            // A cigarette's smoke and ash (cigarette_vfx, identity 0xc196_0001): millimetre
+            // grains a hand's breadth from the eye. With the rebuilt effects they merge into
+            // centimetre cells with no coverage floor (a thin wisp), not the fire's 8-45 cm cells
+            // (each wisp grain became a smoke ball across the view).
+            let fine = crate::fx_plumes::enabled() && ids.and_then(|v| v.first()).is_some_and(|id| id[0] == 0xc196_0001);
             for (i, mat) in b.cpu_mats.iter().take(b.inst_count as usize).enumerate() {
                 if b.is_hidden(i as u32) { continue; }
                 let c = mat.w_axis.truncate();
@@ -2779,12 +2784,13 @@ impl Backend {
                     }
                 }
                 // Merge cell: a few grains deep, scaled with distance so far fires stay compact.
-                let cs = (size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0);
+                let cs = if fine { (size * 3.0).clamp(0.008, 0.03) } else { (size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0) };
                 let key = ((c.x / cs).floor() as i32, (c.y / cs).floor() as i32, (c.z / cs).floor() as i32, batch_index as u32);
                 let cell = merged.entry(key).or_default();
                 cell.sum += c;
                 cell.count += 1;
                 cell.size = cell.size.max(size);
+                cell.fine |= fine;
                 self.stats.merged_grains += 1;
             }
         }
@@ -2802,10 +2808,11 @@ impl Backend {
             let Some(&(_, kind, mut color, emissive)) = cell_kinds.iter().find(|k| k.0 == key.3) else { continue };
             let center = cell.sum / cell.count as f32;
             let d = (center - eye).length();
-            let cs = (cell.size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0);
+            let cs = if cell.fine { (cell.size * 3.0).clamp(0.008, 0.03) } else { (cell.size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0) };
             let radius = (cs * 1.35).max(cell.size * 1.5);
             // Fraction of the cell's cross-section the grains actually cover.
-            let coverage = ((cell.count as f32 * cell.size * cell.size) / (radius * radius)).clamp(0.08, 1.0);
+            let coverage = ((cell.count as f32 * cell.size * cell.size) / (radius * radius)).clamp(if cell.fine { 0.0 } else { 0.08 }, 1.0)
+                * if cell.fine { 0.35 } else { 1.0 };
             // Energy: looking through the cell must give the grains' own radiance times the
             // fraction of the cross-section they cover, so emission per metre is that over the
             // cell's diameter (the tongue shaping in rm_volume.wgsl redistributes, not adds).
@@ -2996,6 +3003,18 @@ impl Backend {
                 println!("[fx] event strength {:.2} ground {:?} age {age:.3} -> {:?}", e.strength, e.ground_y, plume.map(|p| (p.a, p.c, p.e, p.f)));
             }
             self.plumes.list.extend(plume);
+        }
+        // Blast pressure fronts (crate::pressure_front, the game's): the snow each sweeps up and
+        // its condensation shell (the refraction is not drawn here).
+        if self.debug_skip & 2048 == 0 {
+            let c = crate::pressure_front::speed_of_sound_m_s();
+            for front in r.pressure_fronts.active(r.time) {
+                let radius = (r.time - front.emitted_at) * c;
+                let ground = self.events.iter().filter(|e| e.origin.distance(front.origin) < 4.0).find_map(|e| e.ground_y)
+                    .unwrap_or(front.origin.y - 0.5);
+                self.plumes.list.extend(crate::fx_plumes::shock(front.origin, ground, radius, front.max_radius,
+                    front.tnt_kg, front.id as u32, eye, focal_px));
+            }
         }
         crate::fx_plumes::sort_far_to_near(&mut self.plumes.list, eye, crate::fx_plumes::MAX_PLUMES);
         if !self.plumes.list.is_empty() {

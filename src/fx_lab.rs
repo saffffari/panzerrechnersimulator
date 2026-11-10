@@ -144,7 +144,11 @@ pub fn run(prefix: &str, scene: &str) -> anyhow::Result<()> {
     g.targets_only = true;
     let tiger = Vec2::new(-450.0, -410.0);
     g.debug_place_tiger(tiger, 0.0);
-    let variant = if crate::fx_plumes::enabled() { "new" } else { "old" };
+    // `KESSEL_FXLAB_VARIANT=name`: label the files and receipt (a review variant of the same effects).
+    let variant: &'static str = match std::env::var("KESSEL_FXLAB_VARIANT") {
+        Ok(v) if !v.is_empty() => Box::leak(v.into_boxed_str()),
+        _ => if crate::fx_plumes::enabled() { "new" } else { "old" },
+    };
     let mut lab = Lab { device, queue, r, g, prefix: prefix.to_string(), variant, shots: Vec::new() };
     lab.step(30);
     let ground = |lab: &Lab, x: f32, z: f32| lab.g.debug_ground_height(x, z);
@@ -311,7 +315,76 @@ pub fn run(prefix: &str, scene: &str) -> anyhow::Result<()> {
             film.finish()?;
             costs.insert("tiger_view_three_wrecks".into(), lab.time(300, &cam).json());
         }
-        other => anyhow::bail!("unknown fx-lab scene {other} (wreck, cookoff, impact, fog, three)"),
+        "mg" => {
+            // Bursts of 7.62 mm: the Tiger's MG onto a T-34's glacis at 120 m, then the T-34's
+            // onto the Tiger's turret front (scripted rounds through the ordinary flight/contact).
+            // The open ground the burning-wreck scene uses, 22 m from the Tiger.
+            let at = Vec2::new(tiger.x - 15.0, tiger.y + 16.0);
+            let idx = lab.g.debug_park_live_t34(0, at.x, at.y, std::f32::consts::PI)
+                .ok_or_else(|| anyhow::anyhow!("no T-34"))?;
+            let t34 = Vec3::new(at.x, ground(&lab, at.x, at.y), at.y) + Vec3::Y * 1.3;
+            let tiger_turret = t3 + Vec3::Y * 2.3 + Vec3::Z * 1.0;
+            let mg_from = t3 + Vec3::new(0.3, 2.0, 3.0);
+            let near_t34 = eye_at(&lab, t34, Vec3::new(7.0, 1.2, -6.0));
+            let tiger_side = eye_at(&lab, t3, Vec3::new(5.0, 2.2, -6.0));
+            let sight = mg_from + Vec3::Y * 0.4;
+            let shots: [(&str, Vec3, Vec3, f32); 3] = [("onto-t34-sight", sight, t34, 25.0), ("onto-t34-near", near_t34, t34, 50.0), ("onto-tiger", tiger_side, tiger_turret, 50.0)];
+            for (k, (name, eye, target, fov)) in shots.iter().enumerate() {
+                view(&mut lab.r, &mut lab.g, *eye, *target, *fov);
+                lab.settle()?;
+                let mut film = Film::new(&clip(&lab, name), w, h)?;
+                for f in 0..120u32 {
+                    // 900 rounds/min: a round every 4 updates, two-second bursts with a pause.
+                    for u in 0..2u32 {
+                        let tick = f * 2 + u;
+                        if tick % 4 == 0 && (tick / 60) % 2 == 0 {
+                            if k < 2 { lab.g.debug_mg_round(mg_from, t34, None, tick); }
+                            else { lab.g.debug_mg_round(t34 + Vec3::Y * 0.6, tiger_turret, Some(idx), tick); }
+                        }
+                        lab.step(1);
+                    }
+                    view(&mut lab.r, &mut lab.g, *eye, *target, *fov);
+                    let rgba = lab.rgba()?;
+                    film.frame(&rgba)?;
+                    if f == 20 || f == 40 { lab.still(scene, &format!("{name}-f{f}"))?; }
+                }
+                film.finish()?;
+            }
+        }
+        "shock" => {
+            // A 76 mm HE shell 40 m out and a whole-load cook-off at 150 m, their fronts sweeping
+            // the snow (filmed at the frame rate: the front crosses 5 m a frame).
+            let eye = eye_at(&lab, t3, Vec3::new(-9.0, 2.4, -5.0));
+            let fwd = Vec3::Z;
+            let strike_at = t3 + fwd * 40.0 + Vec3::new(-12.0, 0.0, 0.0);
+            let target = strike_at + Vec3::Y * 2.0;
+            view(&mut lab.r, &mut lab.g, eye, target, 50.0);
+            lab.settle()?;
+            let incoming = Vec3::new(0.0, -20f32.to_radians().sin(), -20f32.to_radians().cos()) * 680.0;
+            lab.g.debug_ground_strike(strike_at, incoming, 6.2, 76.2, &lab.r);
+            let mut film = Film::new(&clip(&lab, "he40m"), w, h)?;
+            for f in 0..90u32 {
+                lab.step(2);
+                view(&mut lab.r, &mut lab.g, eye, target, 50.0);
+                let rgba = lab.rgba()?; film.frame(&rgba)?;
+                if [1u32, 2, 3, 5].contains(&f) { lab.still(scene, &format!("he40m-f{f}"))?; }
+            }
+            film.finish()?;
+            let at = Vec2::new(tiger.x - 30.0, tiger.y + 150.0);
+            let base = Vec3::new(at.x, ground(&lab, at.x, at.y), at.y);
+            let target = base + Vec3::Y * 6.0;
+            view(&mut lab.r, &mut lab.g, eye, target, 50.0);
+            lab.g.debug_stage_fx_wreck(0, at.x, at.y, 0.4, true, 0.0).ok_or_else(|| anyhow::anyhow!("no T-34"))?;
+            let mut film = Film::new(&clip(&lab, "cookoff150m"), w, h)?;
+            for f in 0..120u32 {
+                lab.step(1);
+                view(&mut lab.r, &mut lab.g, eye, target, 50.0);
+                let rgba = lab.rgba()?; film.frame(&rgba)?;
+                if [3u32, 8, 15, 25].contains(&f) { lab.still(scene, &format!("cookoff150m-f{f}"))?; }
+            }
+            film.finish()?;
+        }
+        other => anyhow::bail!("unknown fx-lab scene {other} (wreck, cookoff, impact, fog, three, mg, shock)"),
     }
     let receipt = serde_json::json!({"schema": "panzer.fx-lab.v1", "scene": scene, "variant": variant,
         "manifest": manifest, "adapter": adapter.get_info().name, "internal_resolution": [w, h],

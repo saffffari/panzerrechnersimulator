@@ -21,7 +21,7 @@ pub const MAX_WRECK_PLUMES: usize = 12;
 /// Embers for all fires together, nearest fire first.
 pub const MAX_EMBERS: usize = 4096;
 /// Beyond this a fire throws no embers (one 4 mm ember is far below a pixel and too faint).
-pub const EMBER_REACH_M: f32 = 140.0;
+pub const EMBER_REACH_M: f32 = 80.0;
 
 /// The flame's soot radiance at 1500 K, renderer units (about 2.4e4 cd/m^2: a luminous hydrocarbon
 /// pool flame). Every flame and fireball temperature scales from it by the Planck spectrum's
@@ -114,15 +114,27 @@ pub fn smooth(a: f32, b: f32, x: f32) -> f32 {
 }
 
 /// The column over a burning wreck.
+/// `KESSEL_FX_COLUMN=H,W,D`: the wreck columns' height, width and smoke density times these (a
+/// review of the column's size; default 1,1,1).
+fn column_scale() -> [f32; 3] {
+    static SCALE: std::sync::OnceLock<[f32; 3]> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let v: Vec<f32> = std::env::var("KESSEL_FX_COLUMN").ok().map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+        if v.len() == 3 && v.iter().all(|x| x.is_finite() && *x > 0.0) { [v[0], v[1], v[2]] } else { [1.0; 3] }
+    })
+}
+
 pub fn wreck_plume(fire: &Fire, wind: Vec2, eye: Vec3, focal_px: f32, roots_out: &mut Vec<[f32; 4]>) -> Plume {
     let (flame, soot, albedo) = burn_phase(fire.strength, fire.age);
+    let [col_h, col_w, col_d] = column_scale();
+    let soot = soot * col_d;
     // A buoyant plume rises tens of metres before it bends over and spreads in the wind; a big
     // fuel fire's column stands 60-120 m (authored to the fire's strength).
-    let height = 35.0 + 65.0 * fire.strength.clamp(0.0, 1.35) * (0.6 + 0.4 * smooth(0.0, 30.0, fire.age));
+    let height = (35.0 + 65.0 * fire.strength.clamp(0.0, 1.35) * (0.6 + 0.4 * smooth(0.0, 30.0, fire.age))) * col_h;
     let rise_mps = 4.0 + 3.0 * fire.strength;
     let bend = wind * (height / rise_mps) * 0.7;
-    let base_r = 1.1 + 0.4 * fire.strength;
-    let top_r = 0.16 * height + 2.0;
+    let base_r = (1.1 + 0.4 * fire.strength) * col_w;
+    let top_r = (0.16 * height + 2.0) * col_w;
     let flame_h = (1.2 + 3.2 * flame).max(0.0);
     let mut p = Plume::default();
     p.a = [fire.base.x, fire.base.y, fire.base.z, KIND_WRECK];
@@ -226,6 +238,28 @@ pub fn burst(origin: Vec3, radius: f32, snow: f32, age: f32, wind: Vec2, seed: u
     Some(p)
 }
 
+pub const KIND_SHOCK: f32 = 3.0;
+
+/// A blast's pressure front at `radius` (moving at the speed of sound): the snow it lifts off the
+/// ground in a thin band just behind it, and while the overpressure is high (tens of kPa, within
+/// some metres of a large charge) a brief condensation shell in the cold humid air. The refraction
+/// of the front itself is not drawn on this backend (named in the ledger). `ground_y` is the ground
+/// under the origin.
+pub fn shock(origin: Vec3, ground_y: f32, radius: f32, max_radius: f32, tnt_kg: f32, seed: u32, eye: Vec3, focal_px: f32) -> Option<Plume> {
+    if !(radius > 0.2 && radius < max_radius) || tnt_kg <= 0.0 { return None; }
+    let kpa = crate::pressure_front::overpressure_kpa(tnt_kg, radius);
+    if kpa < 1.0 { return None; }
+    let mut p = Plume::default();
+    p.a = [origin.x, ground_y, origin.z, KIND_SHOCK];
+    p.b = [0.0, origin.y - ground_y, 0.0, radius];
+    p.c = [kpa, 0.0, 0.0, (seed % 100_000) as f32];
+    p.d = [max_radius, 0.0, 0.85, 0.0];
+    let r = radius + 1.5;
+    p.set_bounds(Vec3::new(origin.x - r, ground_y - 0.5, origin.z - r), Vec3::new(origin.x + r, origin.y + r, origin.z + r));
+    p.d[3] = steps_for(2.0 * r, p.distance(eye), focal_px).max(16.0);
+    Some(p)
+}
+
 /// One ember: position and packed radiance (colour at its temperature, intensity 0..2).
 #[derive(Clone, Copy, Debug)]
 pub struct Ember { pub pos: Vec3, pub colour: [f32; 3], pub intensity: f32 }
@@ -247,26 +281,37 @@ pub fn embers(fire: &Fire, wind: Vec2, time: f32, count: usize, out: &mut Vec<Em
     if roots.is_empty() { return; }
     for i in 0..count {
         let id = (i as u32).wrapping_mul(0x9e37_79b9) ^ fire.seed;
-        let life = 2.0 + 3.0 * hash01(id ^ 0x51);
+        // Most embers burn out low and soon; a few ride the plume high (life skewed short).
+        let life = 0.7 + 3.8 * hash01(id ^ 0x51).powf(2.5);
         let clock = time / life + hash01(id ^ 0x77);
         let generation = clock.floor() as u32;
         let age_t = clock.fract();
         let age = age_t * life;
         let spawn = id ^ generation.wrapping_mul(0x85eb_ca6b);
         let root = roots[(spawn as usize) % roots.len()];
-        let (offset, radius) = (root.pos - fire.base + root.normal * 0.1, root.radius);
+        let (offset, radius) = (root.pos - fire.base + root.normal * 0.1, root.radius * 1.5);
         let a = hash01(spawn ^ 0x13) * std::f32::consts::TAU;
         let r = hash01(spawn ^ 0x29).sqrt() * radius;
-        // Lofted in the plume (2.5-5 m/s, slowing as it leaves the hot core), swirling.
-        let rise = (2.5 + 2.5 * hash01(spawn ^ 0x3d)) * age * (1.0 - 0.25 * age_t) + flame_h * 0.3;
-        let wobble = hash01(spawn ^ 0x61) * 6.0;
-        let swirl = Vec3::new((age * 2.3 + a + wobble).sin(), 0.0, (age * 1.9 + a * 1.7).cos()) * (0.6 + 2.2 * age_t);
-        let drift = Vec3::new(wind.x, 0.0, wind.y) * age * (0.6 + 0.4 * hash01(spawn ^ 0x41));
-        let pos = fire.base + offset + Vec3::new(a.cos() * r, rise, a.sin() * r) + swirl + drift;
-        let kelvin = 1300.0 - 500.0 * age_t;
+        // Lofted at its own speed (1.5-5 m/s), slowing as it leaves the hot core.
+        let rise = (1.5 + 3.5 * hash01(spawn ^ 0x3d)) * age * (1.0 - 0.3 * age_t) + flame_h * 0.2;
+        // Its own turbulent wander: two incommensurate sways per axis at random rates and phases,
+        // growing as the square root of its age (a random walk), so no two share a path and the
+        // cloud has no envelope.
+        let sway = |salt: u32| {
+            let f1 = 0.7 + 2.5 * hash01(spawn ^ salt);
+            let f2 = 1.9 + 3.1 * hash01(spawn ^ salt.wrapping_mul(3));
+            let p1 = hash01(spawn ^ salt.wrapping_mul(5)) * 6.283;
+            let p2 = hash01(spawn ^ salt.wrapping_mul(7)) * 6.283;
+            (age * f1 + p1).sin() * 0.65 + (age * f2 + p2).sin() * 0.35
+        };
+        let amp = 0.5 * age.sqrt() * (0.4 + 1.2 * hash01(spawn ^ 0x61));
+        let wander = Vec3::new(sway(0x101) * amp, 0.0, sway(0x202) * amp);
+        let drift = Vec3::new(wind.x, 0.0, wind.y) * age * (0.4 + 0.6 * hash01(spawn ^ 0x41));
+        let pos = fire.base + offset + Vec3::new(a.cos() * r, rise, a.sin() * r) + wander + drift;
+        let kelvin = 1250.0 - 450.0 * age_t;
         let chroma = flame_colour(kelvin);
-        let fade = (1.0 - age_t).powf(1.5) * smooth(0.0, 0.08, age_t);
-        out.push(Ember { pos, colour: chroma.map(|c| c.min(1.0)), intensity: 1.2 * fade * (0.4 + 0.6 * hash01(spawn ^ 0x55)) });
+        let fade = (1.0 - age_t).powf(2.0) * smooth(0.0, 0.06, age_t);
+        out.push(Ember { pos, colour: chroma.map(|c| c.min(1.0)), intensity: 0.7 * fade * (0.2 + 0.8 * hash01(spawn ^ 0x55).powi(2)) });
     }
 }
 

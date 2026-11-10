@@ -1070,7 +1070,7 @@ const DEFAULT_CAMERA_EXPOSURE: f32 = 320.0;
 /// change follows the eye's own time course in `observer.rs` / `exposure.wgsl`.
 const UNINITIALIZED_EXPOSURE_TIME: f32 = -1.0;
 /// Floats in one view's eye state (`exposure.wgsl` documents the lanes).
-const EYE_STATE_LANES: usize = 32;
+const EYE_STATE_LANES: usize = 34;
 
 fn uninitialized_exposure_state() -> [f32; EYE_STATE_LANES] {
     let mut state = [0.0; EYE_STATE_LANES];
@@ -12229,7 +12229,7 @@ impl Renderer {
                     "observer_elapsed_s":(frame+1) as f32/60.0,"scene_time_s":self.time,
                     "camera":self.camera.pos.to_array(),"camera_forward":self.camera.forward().to_array(),
                     "interior_light":self.interior_light,"shared_shadow_scope":self.coop_shadow.view_proj.is_some(),
-                    "eye":p.eye,"hdr_mean_cd_m2":p.mean_cd_m2,"hdr_log_mean_cd_m2":p.log_mean_cd_m2,
+                    "eye":p.eye.to_vec(),"hdr_mean_cd_m2":p.mean_cd_m2,"hdr_log_mean_cd_m2":p.log_mean_cd_m2,
                     "stable_observations":self.title_eye_convergence.stable_observations,
                     "settled":self.title_backdrop_settled}));
             }

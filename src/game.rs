@@ -4,6 +4,8 @@
 //! fog, fire, kill them. Each enemy is an independent shooter for now — coordinated swarm AI
 //! (flank/converge) is the next step.
 
+#[path = "bullet_strike_audio.rs"]
+mod bullet_strike_audio;
 #[cfg(test)]
 #[path = "ammunition_service_tests.rs"]
 mod ammunition_service_tests;
@@ -6593,6 +6595,8 @@ fn wreck_kind_index(kind: EnemyKind) -> usize {
 
 /// Root the emitter footprint on the contacted plane. Wall flames climb the wall while
 /// leaning slightly into the compartment; individual cells remain unrotated cubes.
+/// The rebuilt effects' ceiling on a blast's light (renderer units, about 8e7 cd).
+const FX_BLAST_LIGHT_MAX: f32 = 1500.0;
 /// The rebuilt effects' thinning of the cabin fire's grains (see `drive_fire_presentation`).
 const FX_INTERIOR_THIN: usize = 6;
 /// How often a burning wreck's flame roots are re-read off its burning surfaces (s).
@@ -10397,6 +10401,8 @@ pub struct Game {
     /// Per burning wreck: the fire clock at which its flame roots were last read off its burning
     /// surface patches, and those roots (crate::fx_plumes; refreshed every `FX_ROOT_PERIOD_S`).
     fx_fire_roots: std::collections::HashMap<usize, FxRoots>,
+    /// Per struck vehicle: the burst raking it (`bullet_strike_audio`).
+    bullet_bursts: std::collections::HashMap<u32, bullet_strike_audio::BurstTrack>,
     cabin_fire: surface_fire::CabinFire,
     projectile_player_armor:surface_fire::CabinFire,
     projectile_enemy_armor:surface_fire::CabinFire,
@@ -14971,6 +14977,7 @@ impl Game {
             defer_presentation_rebuild: false,
             fire_presentation_phase: 0,
             fx_fire_roots: std::collections::HashMap::new(),
+            bullet_bursts: std::collections::HashMap::new(),
             cabin_fire,
             projectile_player_armor,
             projectile_enemy_armor,
@@ -20791,7 +20798,12 @@ impl Game {
                 pos: b.pos,
                 source_radius: (b.scale * 0.28).max(0.08),
                 color: Vec3::new(1.0, 0.42 + 0.25 * f, 0.12),
-                radiant_intensity: envelope * legacy_reach * legacy_reach * 0.0625,
+                // The rebuilt effects cap it at FX_BLAST_LIGHT_MAX: a burning-propellant fireball
+                // of some 400 m^2 at about 2e5 cd/m^2 is near 8e7 cd (1,500 units); the uncapped
+                // law gave a whole-load cook-off 20,000-57,000 units (1-3e9 cd) and whited out the
+                // frame from 150 m.
+                radiant_intensity: { let i = envelope * legacy_reach * legacy_reach * 0.0625;
+                    if crate::fx_plumes::enabled() { i.min(FX_BLAST_LIGHT_MAX) } else { i } },
             });
         }
         // Same admitted cells, same frame, same emission. No separate wreck floodlight or
@@ -34280,7 +34292,7 @@ impl Game {
                 let d = fire.base.distance(eye);
                 if d < crate::fx_plumes::EMBER_REACH_M && ember_budget > 0 {
                     // Nearest fire first; a far fire throws a token handful.
-                    let want = ((1.0 - d / crate::fx_plumes::EMBER_REACH_M).powi(2) * 360.0) as usize;
+                    let want = ((1.0 - d / crate::fx_plumes::EMBER_REACH_M).powi(2) * 140.0) as usize;
                     let n = want.min(ember_budget);
                     crate::fx_plumes::embers(&fire, wind, fx_time, n, &mut r.fx_embers);
                     ember_budget -= n;
@@ -34890,6 +34902,36 @@ impl Game {
         self.wrecks[idx].ignition_load = 0.75;
         self.wrecks[idx].cookoff_t = None;
         Some(idx)
+    }
+
+    /// Headless-only (`fx-lab`): the `nth` living T-34 parked alive at `(x, z)`, its guns held.
+    pub fn debug_park_live_t34(&mut self, nth: usize, x: f32, z: f32, heading: f32) -> Option<usize> {
+        let idx = self.enemies.iter().enumerate()
+            .filter(|(_, e)| e.alive && matches!(e.kind, crate::tank::EnemyKind::T34)).nth(nth)?.0;
+        self.debug_place_enemy(idx, x, z, heading);
+        self.enemy_active[idx] = true;
+        self.enemies[idx].speed = 0.0;
+        self.enemies[idx].reload = f32::INFINITY;
+        Some(idx)
+    }
+
+    /// Headless-only (`fx-lab`): put a staged wreck's fire out (a cold hull to shoot at).
+    pub fn debug_extinguish_wreck(&mut self, idx: usize) {
+        if let Some(w) = self.wrecks.get_mut(idx) { w.burning = false; w.fuel_remaining = 0.0; }
+    }
+
+    /// Headless-only (`fx-lab`): one 7.62 mm MG round from `from` toward `to` (with a few mrad of
+    /// scatter by `n`), fired as enemy tank `enemy`'s (Soviet) or the player's (German), through
+    /// the ordinary small-arms flight and contact.
+    pub fn debug_mg_round(&mut self, from: Vec3, to: Vec3, enemy: Option<usize>, n: u32) {
+        let h = |k: u32| hash01(n.wrapping_mul(2654435761) ^ k.wrapping_mul(40503)) - 0.5;
+        let dir = ((to - from).normalize_or_zero() + Vec3::new(h(1), h(2), h(3)) * 0.006).normalize_or_zero();
+        let (shooter, team) = match enemy {
+            Some(i) => (10_000 + i as u32, crate::infantry_combat::Team::Soviet),
+            None => (u32::MAX, crate::infantry_combat::Team::German),
+        };
+        self.launch_small_arm(crate::infantry_combat::Shot { shooter, team, origin: from, direction: dir,
+            range: (to - from).length() + 50.0, weapon: crate::infantry_combat::Weapon::MachineGun }, 100.0, false, None);
     }
 
     /// Headless-only (`fx-lab`): the `nth` living T-34 placed at `(x, z)` and either set burning

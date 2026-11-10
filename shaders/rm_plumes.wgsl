@@ -214,11 +214,11 @@ fn fireball_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     let sigma = p.c.y * body * life * (0.5 + n) * (rmax * rmax) / (radius * radius) * 0.7;
     out.sigma_t = sigma;
     out.sigma_s = sigma * p.d.z;
-    // Burning: the propellant's and fillers' sooty flame (about 1650 K at the core) for the first
+    // Burning: the propellant's and fillers' sooty flame (about 1,450 K at the core: orange, not white) for the first
     // fraction of a second, cooling from the outside in, a dull glow lingering in the core.
-    let heat = p.c.x * (exp(-age / (0.10 + 0.02 * rmax)) + 0.12 * exp(-age / (0.6 + 0.08 * rmax)))
+    let heat = p.c.x * (exp(-age / (0.08 + 0.012 * rmax)) + 0.12 * exp(-age / (0.5 + 0.05 * rmax)))
         * (1.0 - smoothstep(0.15, 0.9, d)) * (0.6 + 0.7 * n);
-    let kelvin = 900.0 + 760.0 * min(heat, 1.0);
+    let kelvin = 900.0 + 560.0 * min(heat, 1.0);
     if (heat > 0.02 && kelvin > 950.0) {
         let k = 2.5 * smoothstep(950.0, 1200.0, kelvin);
         out.sigma_t += k;
@@ -275,8 +275,40 @@ fn burst_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     return out;
 }
 
+// A blast's pressure front (KIND_SHOCK): `b.w` its radius, `c.x` its overpressure there (kPa),
+// `b.y` the charge's height over the ground. The snow it lifts lies in a band behind the front,
+// thickest where the overpressure was highest, settling back; a faint condensation shell rides the
+// front itself while it is above about 8 kPa.
+fn shock_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
+    var out = Sample(0.0, 0.0, vec3(0.0));
+    let radius = p.b.w;
+    let kpa = p.c.x;
+    let rel = w - p.a.xyz;
+    let rho = length(rel.xz);
+    let n = plume_noise(vec3(w.x, w.y * 2.0, w.z) * 0.35 + vec3(p.c.w * 0.01));
+    // The ground skirt: what the front has crossed in the last few metres, up to a metre or two.
+    let behind = radius - rho;
+    if (behind > -0.3 && behind < 6.0 + 0.06 * radius && rel.y > -0.3) {
+        let local_kpa = kpa * pow(radius / max(rho, 0.5), 1.6);
+        let lift = clamp(local_kpa / 15.0, 0.0, 1.0);
+        let h = (0.4 + 1.8 * lift) * (0.6 + 0.8 * n) * (1.0 - smoothstep(0.0, 6.0 + 0.06 * radius, behind) * 0.6);
+        let band = smoothstep(-0.3, 0.4, behind) * exp(-max(behind, 0.0) / (2.0 + 0.04 * radius));
+        let skirt = band * (1.0 - smoothstep(0.0, h, rel.y)) * lift;
+        out.sigma_t += 1.6 * skirt * (0.4 + 1.2 * n);
+    }
+    // The condensation shell (a Wilson cloud): within the front's last 12 % of radius.
+    let shell = 1.0 - smoothstep(0.0, 0.12 * radius + 0.3, abs(length(rel - vec3(0.0, p.b.y, 0.0)) - radius));
+    let wet = smoothstep(8.0, 40.0, kpa);
+    if (shell > 0.0 && wet > 0.0 && rel.y > -0.2) {
+        out.sigma_t += 0.25 * shell * wet * (0.5 + n);
+    }
+    out.sigma_s = out.sigma_t * p.d.z;
+    return out;
+}
+
 fn plume_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     let kind = u32(p.a.w);
+    if (kind == 3u) { return shock_sample(p, w, t); }
     if (kind == KIND_FIREBALL) { return fireball_sample(p, w, t); }
     if (kind == KIND_BURST) { return burst_sample(p, w, t); }
     return wreck_sample(p, w, t);
@@ -297,7 +329,7 @@ fn plume_shadow(p: Plume, w: vec3<f32>, dir: vec3<f32>, reach: f32, t: f32) -> f
     var tau = 0.0;
     for (var i = 0u; i < 2u; i += 1u) {
         let x = w + dir * (reach * (f32(i) + 0.5) * 0.5);
-        if (kind == KIND_WRECK) { tau += wreck_envelope(p, x); } else { tau += fireball_envelope(p, x); }
+        if (kind == KIND_WRECK) { tau += wreck_envelope(p, x); } else if (kind != 3u) { tau += fireball_envelope(p, x); }
     }
     return tau * reach * 0.5;
 }
