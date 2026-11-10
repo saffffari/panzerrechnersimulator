@@ -248,7 +248,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (r < 0.03) { continue; }
                 let w = to / r;
                 if (dot(face.m, w) <= 0.02) { continue; }
-                let through = rm_aperture_acceptance(face, w);
+                let through = max(rm_aperture_acceptance(face, w), clamp(face.measure.x, 0.0, 1.0) * fr.worn_count.w);
                 if (through <= 0.0) { continue; }
                 let omega = rm_quad_solid_angle(p, c, face.u, face.v);
                 let radiance = rm_aperture_radiance(face.sky_dir) * vec3(ap[0].w, ap[1].w, ap[2].w) * through;

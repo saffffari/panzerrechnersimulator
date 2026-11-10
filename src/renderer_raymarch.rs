@@ -1124,6 +1124,21 @@ fn ember_offset(seed: u32, k: u32) -> Vec3 {
 /// Above 1 it is a gain with no physical basis (a pane cannot pass more light than falls on it),
 /// offered at the owner's request (10 November 2026: "is there a way we can boost that brightness
 /// significantly"); named in docs/PHYSICAL_TRUTH_AUDIT.md. The ports' own pictures are unchanged.
+/// `KESSEL_PANE_GLOW=F` (0 to 1): the share of the sky's radiance each open pane also sends
+/// into the compartment in every direction, as frosted glass would (1: a perfect diffuser).
+/// Measured 10 November 2026: clear panes light only what lies inside their narrow field
+/// mirrored into the cabin (the far side of the cupola, a strip of wall), 0.03 % of the lamps'
+/// light on an ordinary wall, so the cabin took no daylight and a 64-fold gain changed nothing.
+/// A real block scatters a few per cent (dust, scratches, prism edges); beyond that this is a
+/// look, owner-requested ("they are what bring light inside the interior"). Named in
+/// docs/PHYSICAL_TRUTH_AUDIT.md. rm_shade.wgsl and rm_volume.wgsl read it (fr.worn_count.w).
+fn pane_glow() -> f32 {
+    static GLOW: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *GLOW.get_or_init(|| std::env::var("KESSEL_PANE_GLOW").ok().and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map_or(PANE_GLOW_DEFAULT, |v| v.clamp(0.0, 1.0)))
+}
+const PANE_GLOW_DEFAULT: f32 = 0.0;
+
 fn port_light_gain() -> f32 {
     static GAIN: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *GAIN.get_or_init(|| std::env::var("KESSEL_PORT_LIGHT").ok().and_then(|v| v.parse::<f32>().ok())
@@ -2494,7 +2509,7 @@ impl Backend {
             cabin_air,
             cabin_motion,
             worn_count: [if self.debug_skip & 65536 != 0 { 0.0 } else { r.worn_vehicles.len() as f32 }, aperture_count as f32,
-                if self.debug_skip & SKIP_BEAM_TRACE != 0 { 1.0 } else { 0.0 }, 0.0],
+                if self.debug_skip & SKIP_BEAM_TRACE != 0 { 1.0 } else { 0.0 }, pane_glow()],
             worn: std::array::from_fn(|i| r.worn_vehicles.get(i).copied().unwrap_or([[0.0; 4]; 2])),
             apertures,
             section: r.film_section().unwrap_or([0.0; 4]),

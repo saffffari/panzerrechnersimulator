@@ -875,7 +875,9 @@ fn fs(in: VsOut) -> ShadeOut {
                 if (r < 0.02) { continue; }
                 let w = to / r;
                 if (dot(n, w) <= 0.0 || dot(face.m, w) <= 0.02) { continue; }
-                let through = rm_aperture_acceptance(face, w);
+                // The clear pane's own narrow field, or the share it scatters every way (fr.worn_count.w,
+                // `pane_glow` in renderer_raymarch.rs), whichever is more along this line.
+                let through = max(rm_aperture_acceptance(face, w), clamp(face.measure.x, 0.0, 1.0) * fr.worn_count.w);
                 if (through <= 0.0) { continue; }
                 let omega = rm_quad_projected_solid_angle(world, n, c, face.u, face.v);
                 if (omega <= 1.0e-7) { continue; }
