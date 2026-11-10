@@ -247,8 +247,8 @@ pub fn run(prefix: &str, scene: &str) -> anyhow::Result<()> {
         }
         "fog" => {
             // A burning wreck 450 m up the valley from the Tiger, then a cook-off beside it.
-            let dir = Vec2::new(std::env::var("KESSEL_FXLAB_FOG_DIR").ok().and_then(|v| v.parse().ok()).unwrap_or(0.35f32).sin(),
-                std::env::var("KESSEL_FXLAB_FOG_DIR").ok().and_then(|v| v.parse().ok()).unwrap_or(0.35f32).cos());
+            let dir = Vec2::new(std::env::var("KESSEL_FXLAB_FOG_DIR").ok().and_then(|v| v.parse().ok()).unwrap_or(-0.2f32).sin(),
+                std::env::var("KESSEL_FXLAB_FOG_DIR").ok().and_then(|v| v.parse().ok()).unwrap_or(-0.2f32).cos());
             let range: f32 = std::env::var("KESSEL_FXLAB_FOG_RANGE").ok().and_then(|v| v.parse().ok()).unwrap_or(450.0);
             let at = tiger + dir * range;
             let base = Vec3::new(at.x, ground(&lab, at.x, at.y), at.y);

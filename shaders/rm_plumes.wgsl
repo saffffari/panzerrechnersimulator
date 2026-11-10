@@ -103,6 +103,13 @@ fn flame_temperature(p: Plume, w: vec3<f32>, t: f32) -> f32 {
     let hf = p.d.x;
     var best = 0.0;
     var roots = array<vec4<f32>, 3>(p.r0, p.r1, p.r2);
+    // One noise field for all roots (the roots differ in place, so their licks still differ).
+    let hlo = p.a.y + min(min(p.r0.y, p.r1.y), p.r2.y);
+    if (w.y < hlo - 0.1 * hf || w.y > p.a.y + max(max(p.r0.y, p.r1.y), p.r2.y) + 1.3 * hf) { return 0.0; }
+    let q = vec3(w.x * 0.8, w.y * 0.6 - t * 2.4, w.z * 0.8) + vec3(0.0, 0.0, p.c.w * 0.013);
+    let n = plume_fbm(q * 0.5);
+    let warp = vec2(plume_noise(q * 0.9 + vec3(0.3, 0.0, 0.0)), plume_noise(q * 0.9 + vec3(0.0, 0.0, 0.6))) - vec2(0.5);
+    let n2 = plume_noise(vec3(w.x, w.y - t * 4.0, w.z) * 1.4 + vec3(p.c.w * 0.007));
     for (var k = 0u; k < 3u; k += 1u) {
         let root = roots[k];
         if (root.w <= 0.0) { continue; }
@@ -111,10 +118,6 @@ fn flame_temperature(p: Plume, w: vec3<f32>, t: f32) -> f32 {
         if (h < -0.05 || h > 1.3) { continue; }
         // A broad burning mass with licks: rising turbulence (the noise field climbs at about
         // 2.5 m/s) warps the body sideways more the higher it goes; the wind leans it a little.
-        let q = vec3(w.x * 0.8, w.y * 0.6 - t * 2.4, w.z * 0.8) + vec3(f32(k) * 3.7, 0.0, p.c.w * 0.013);
-        let n = plume_fbm(q * 0.5);
-        let warp = vec2(plume_noise(q * 0.9 + vec3(0.3, 0.0, 0.0)), plume_noise(q * 0.9 + vec3(0.0, 0.0, 0.6))) - vec2(0.5);
-        let n2 = plume_noise(vec3(w.x, w.y - t * 4.0, w.z) * 1.4 + vec3(p.c.w * 0.007));
         let lean = vec2(p.b.x, p.b.z) / max(p.b.y, 1.0) * hf * h * h * 0.25;
         let width = root.w * 1.5;
         let off = (w.xz - o.xz - lean - warp * width * (0.3 + 1.1 * clamp(h, 0.0, 1.0))) / width;
@@ -333,7 +336,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let s = plume_sample(p, w, t);
         if (s.sigma_t <= 1.0e-4) { continue; }
         var source = s.emit;
-        if (s.sigma_s > 0.0) {
+        if (s.sigma_s * dt * trans > 0.002) {
             var light = vec3(0.0);
             if (sun_on) {
                 let tau_sun = plume_shadow(p, w, fr.sun_dir.xyz, reach, t);

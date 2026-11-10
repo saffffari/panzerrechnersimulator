@@ -64,12 +64,12 @@ pub fn enabled() -> bool {
     *ON.get_or_init(|| std::env::var("KESSEL_FX_LEGACY").as_deref() != Ok("1"))
 }
 
-/// March steps for a volume of `size` metres seen from `distance`: about one step per six
-/// native pixels of its depth, 8 to 28 (the per-pixel jitter and the crush's dither hide the
+/// March steps for a volume of `size` metres seen from `distance`: about one step per eight
+/// native pixels of its depth, 8 to 22 (the per-pixel jitter and the crush's dither hide the
 /// rest).
 fn steps_for(size: f32, distance: f32, focal_px: f32) -> f32 {
     let px = size * focal_px / distance.max(1.0);
-    (px / 6.0).clamp(8.0, 28.0)
+    (px / 8.0).clamp(8.0, 22.0)
 }
 
 /// One burning thing as the game sees it.

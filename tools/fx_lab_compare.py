@@ -28,7 +28,7 @@ def cost_line(receipt):
         return ""
     dg = full["gpu_frame_mean_ms"] - empty["gpu_frame_mean_ms"]
     ds = full["simulation_mean_ms"] - empty["simulation_mean_ms"]
-    return f"effects +{dg:.1f} ms GPU frame, +{ds:.1f} ms simulation"
+    return f"effects {dg:+.1f} ms GPU frame, {ds:+.1f} ms simulation (over the empty view)"
 
 
 def label(variant, receipt):

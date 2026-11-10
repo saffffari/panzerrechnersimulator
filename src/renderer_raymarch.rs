@@ -4264,6 +4264,7 @@ mod shader_tests {
             ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),
             ("rm-points", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_points.wgsl"]),
             ("rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]),
+            ("rm-plumes", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_rt_stub.wgsl", "rm_plumes.wgsl"]),
         ];
         for (label, parts) in common { validate(label, &rm_assemble(parts)); }
         validate("rm-aperture", &rm_assemble(&["rm_common.wgsl", "rm_rt_g1.wgsl", "rm_aperture.wgsl"]));
