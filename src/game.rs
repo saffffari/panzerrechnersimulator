@@ -18409,7 +18409,8 @@ impl Game {
                     let ram_locked = ram_consumed_look
                         || (self.grab && input.mg_coax && self.ram > 0.0);
                     // Hands on a wounded man: the mouse is the hands (wrapping, turning), not the eyes.
-                    if !self.lever_pulling && !ram_locked && !casing_consumed_look && !self.crew_solo_hands_busy() {
+                    if !self.lever_pulling && !ram_locked && !casing_consumed_look && !self.crew_solo_hands_busy()
+                        && self.cupola_focus.index.is_none() {
                         self.head_yaw += input.look_dx * SENS; // unclamped — turn all the way around
                         self.head_pitch = (self.head_pitch - input.look_dy * SENS).clamp(-1.2, 1.0);
                     }
@@ -18461,9 +18462,13 @@ impl Game {
                     // gun (see the lay section of `update_crew_vehicle_controls`), so the commander
                     // looks with the mouse and points the turret with the arrows at once.
                     const SENS: f32 = 0.0022;
-                    self.head_yaw += input.look_dx * SENS;
-                    self.head_pitch = clamp_commander_head_pitch(
-                        self.head_pitch - input.look_dy * SENS, self.hatch_open, self.commander_outside);
+                    // At a vision block the head stays at the block: the mouse's sideways sweep
+                    // under RMB steps to the next block (tiger_periscopes::update_cupola_focus).
+                    if self.cupola_focus.index.is_none() {
+                        self.head_yaw += input.look_dx * SENS;
+                        self.head_pitch = clamp_commander_head_pitch(
+                            self.head_pitch - input.look_dy * SENS, self.hatch_open, self.commander_outside);
+                    }
                     let optics_ready = binocular_optics_ready(self.binocular_raise);
                     let fov = if optics_ready {
                         BINOCULAR_FOV_DEG.to_radians()
@@ -18716,7 +18721,7 @@ impl Game {
                 self.switch_near_restore=Some(self.cupola_focus.saved_near.unwrap_or(r.camera.znear));
             }
             self.sim_phase.seg("tank.eye_switch");
-            self.update_cupola_focus(input.aim, dt, r);
+            self.update_cupola_focus(input.aim, input.look_dx, dt, r);
             if self.switch_t>0.0 {r.camera.znear=r.camera.znear.min(0.005);}
             else if let Some(near)=self.switch_near_restore.take() {r.camera.znear=near;}
 

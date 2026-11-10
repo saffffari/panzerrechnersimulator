@@ -117,7 +117,12 @@ fn pane_offscreen(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<f32>) 
         if (abs(scene_distance(p) - d) < 0.05 * d + 0.1) { return textureLoad(lit_tex, p, 0).rgb; }
     }
     let hit = fr.cam_pos.xyz + hit_rel;
-    var radiance = rm_sky_hemisphere(-dir) * rm_sky_visibility(hit, 0.1);
+    // A vision block's reflection lands in the crew compartment behind the eye: ask the cover map
+    // from inside it, as the cabin's own surfaces do. The lifted open-ground test reaches above
+    // the roof and lit that unseen cabin wall with the whole sky, a grey veil over the block's
+    // dark housing (2026-11-09).
+    let sky_open = select(rm_sky_visibility(hit, 0.1), rm_cabin_sky_visibility(hit, -dir), pc.extra.w > 0.5);
+    var radiance = rm_sky_hemisphere(-dir) * sky_open;
     if (fr.sun_radiance.w > 0.5) {
         radiance += fr.sun_radiance.rgb * max(dot(-dir, fr.sun_dir.xyz), 0.0) * rm_sun_visibility(hit, 0.1) / RM_PI;
     }
