@@ -5528,8 +5528,8 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
     // plate breaking, the armour cut away round the shot's line through the plate's thickness and
     // the fragments inside.
     if g.replay_has_impact() {
-        for (t, name) in [(0.12f32, "impact_incoming"), (0.24, "impact_strike"), (0.42, "impact_cut_opening"),
-            (0.52, "impact_cut_half"), (0.68, "impact_cut_open"), (0.95, "impact_cut_end")] {
+        for (t, name) in [(0.12f32, "section_incoming"), (0.24, "section_in_plate"), (0.36, "section_through"),
+            (0.52, "section_fragments"), (0.68, "section_fragments_later"), (0.95, "section_end")] {
             g.render_replay_impact(t, &mut r);
             converge_headless_screenshot(&mut r, &device, &queue, 16)?;
             r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
@@ -11929,24 +11929,22 @@ pub(crate) const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Impact(f32), Throw(f32), Crew(f32), Done }
 
-/// A death by a round through the armour (the owner, 2026-11-02): after the fade and a short
-/// black, the struck surface from outside, the round arriving and the plate breaking in slow
-/// motion and the armour cut away round the shot to show the fragments inside
-/// (`Game::render_replay_impact`); then the turret's rear upper corner toward the breech, the
-/// whole aftermath replayed; then the aerial shot of where the round came from; then the card.
+/// A death by a round through the armour (the owner, 2026-11-02, re-cut 2026-11-09): after the
+/// fade and a short black, the vehicle in section on the plane of the shot, the round going
+/// through the armour in slow motion and the fragments inside (`Game::render_replay_impact`);
+/// then the interior without a section, from the turret's rear centre looking forward, the whole
+/// aftermath replayed in slow motion; then the card. No aerial shot.
 pub(crate) const IMPACT_BLACK_S: f32 = 1.5;
 pub(crate) const IMPACT_SECONDS: f32 = 9.0;
-fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + IMPACT_SECONDS + REPLAY_DUR + DEATH_EXTERIOR_SECONDS }
+fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + IMPACT_SECONDS + REPLAY_DUR }
 fn penetration_shot(card: death_card::Presentation, t: f32) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
     let impact = DEATH_FADE + IMPACT_BLACK_S;
     let interior = impact + IMPACT_SECONDS;
-    let exterior = interior + REPLAY_DUR;
     if t < DEATH_FADE { DeathShot::Fade }
     else if t < impact { DeathShot::Black }
     else if t < interior { DeathShot::Impact((t - impact) / IMPACT_SECONDS) }
-    else if t < exterior { DeathShot::Interior((t - interior) / REPLAY_DUR) }
-    else if t < card.reveal_at_s() { DeathShot::Exterior((t - exterior) / DEATH_EXTERIOR_SECONDS) }
+    else if t < card.reveal_at_s() { DeathShot::Interior((t - interior) / REPLAY_DUR) }
     else if t < card_end { DeathShot::Card }
     else { DeathShot::Done }
 }
@@ -12108,7 +12106,8 @@ mod local_presentation_tests {
         let impact = DEATH_FADE + IMPACT_BLACK_S;
         assert!(matches!(penetration_shot(card, impact + 0.01), DeathShot::Impact(p) if p < 0.01));
         assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + 0.01), DeathShot::Interior(p) if p < 0.01));
-        assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + REPLAY_DUR + 0.01), DeathShot::Exterior(p) if p < 0.01));
+        assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + REPLAY_DUR - 0.01), DeathShot::Interior(p) if p > 0.99),
+            "the interior runs to the card: no aerial shot");
         assert_eq!(penetration_shot(card, penetration_reveal_s() + 0.01), DeathShot::Card);
         assert_eq!(penetration_shot(card, penetration_reveal_s() + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
         assert_eq!(death_shot_for(false, true, card, impact + 0.5, true), penetration_shot(card, impact + 0.5));
@@ -15191,7 +15190,7 @@ impl WindowState {
                 _ => {}
             }
         }
-        // A round through the armour: the impact shot, the interior and the aerial shot, then the card.
+        // A round through the armour: the section shot, then the interior, then the card.
         if let Some(card) = card.filter(|card| card.is_silent() && !cookoff && self.game.replay_has_impact()) {
             match penetration_shot(card, t) {
                 DeathShot::Impact(phase) => {
