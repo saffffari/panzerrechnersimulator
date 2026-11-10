@@ -7033,7 +7033,8 @@ impl Renderer {
     /// dot(p, n) > w). Only the raymarch G-buffer (and its glass and near-wound patches) obeys it:
     /// the sun cascades, point-light faces, sky cover, ray queries and every simulation query
     /// keep the whole vehicle, so the opened view shows the closed vehicle's own light. `None`
-    /// clears it. A view for the film harness, never a change to the scene; play never sets it.
+    /// clears it. A view for the film harness and the death replay's section shot (after the run
+    /// has ended), never a change to the scene; live play never sets it.
     pub fn set_film_section(&mut self, plane: Option<glam::Vec4>, meshes: &[usize]) {
         self.section_window = [0.0; 4];
         for mesh in &mut self.meshes { mesh.section_cut = false; }

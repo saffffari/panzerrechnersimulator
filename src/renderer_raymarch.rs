@@ -4561,9 +4561,11 @@ mod film_section_tests {
             }
         }
         openers.sort();
-        assert_eq!(openers, vec!["game_fea_film.rs".to_string(), "game_fea_range.rs".to_string()],
-            "only the film harness and the review range (`fea-range`) open a section");
-        // The windowed cutaway is the death replay's alone (a presentation view of a replay).
+        // The death replay's first shot is a section on the plane of the shot since the owner's
+        // re-cut of 9 November 2026: a presentation view after the run has ended, never live play.
+        assert_eq!(openers, vec!["death_replay.rs".to_string(), "game_fea_film.rs".to_string(), "game_fea_range.rs".to_string()],
+            "only the death replay, the film harness and the review range (`fea-range`) open a section");
+        // The windowed cutaway was the death replay's alone; its section shot replaced it.
         let mut cutaways = Vec::new();
         let needle = [".set_replay_cutaway", "(Some"].concat();
         for entry in std::fs::read_dir("src").unwrap() {
@@ -4572,7 +4574,7 @@ mod film_section_tests {
                 cutaways.push(path.file_name().unwrap().to_string_lossy().into_owned());
             }
         }
-        assert_eq!(cutaways, vec!["death_replay.rs".to_string()], "only the death replay opens a cutaway");
+        assert_eq!(cutaways, Vec::<String>::new(), "nothing opens a windowed cutaway now");
     }
 }
 
