@@ -1094,6 +1094,8 @@ fn run_gfxbench(
             _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
     }
     if std::env::var("KESSEL_BENCH_HATCH").as_deref() == Ok("open") { g.toggle_hatch(); }
+    // `KESSEL_BENCH_LAMPS=1`: the cabin lamps on (with `KESSEL_LAMP_GAIN`, the dynamic-range sheets).
+    if std::env::var("KESSEL_BENCH_LAMPS").as_deref() == Ok("1") { g.set_cabin_lights(true); }
     // `KESSEL_BENCH_IMPACT=AHEAD_M,RIGHT_M,PERIOD`: every PERIOD timed frames a 76.2 mm HE shell
     // (6.2 kg, 680 m/s, 20 deg down from ahead) strikes the ground that far ahead of and right of
     // the tank: its blast sparks and ground ejecta, the combat records the relays draw.
