@@ -135,11 +135,15 @@ fn flame_temperature(p: Plume, w: vec3<f32>, t: f32) -> f32 {
         let radius = a.w * 1.6 * (1.0 - 0.5 * hc) * (0.7 + 0.6 * n);
         let d = length(foot) / max(radius, 0.03);
         let body = (1.0 - smoothstep(0.45, 1.0, d)) * (1.0 - smoothstep(0.45 + 0.5 * n2, 1.2, h));
-        best = max(best, body * (0.7 + 0.5 * n2) * (0.6 + 0.4 * rs));
+        // The gradient a sooty flame shows: hottest (yellow) low in the middle of the body, orange
+        // through it, red-orange at its ragged edges and toward the tips as the soot cools.
+        let core = (1.0 - smoothstep(0.0, 0.8, d)) * (1.0 - smoothstep(0.1, 0.75, hc));
+        let heat = body * (0.45 + 0.55 * core) * (0.75 + 0.45 * n2) * (0.6 + 0.4 * rs);
+        best = max(best, heat);
     }
-    // Soot-laden flame: dull red (about 950 K) at the ragged edges and tips, orange through the
-    // body, yellow-orange (about 1,600 K) in the hottest core, hotter with strength.
-    return select(0.0, 880.0 + pow(best, 0.85) * (600.0 + 100.0 * min(strength, 1.5)), best > 0.04);
+    // Soot-laden flame: dull red (about 950 K) at the edges and tips, orange (1,250-1,450 K)
+    // through the body, yellow (1,650-1,750 K) only in the hot core low down.
+    return select(0.0, 900.0 + best * (760.0 + 80.0 * min(strength, 1.5)), best > 0.04);
 }
 
 fn flame_only(p: Plume, w: vec3<f32>, t: f32) -> Sample {
@@ -147,7 +151,7 @@ fn flame_only(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     if (w.y > p.r0.w || w.y < p.r0.z) { return out; }
     let kelvin = flame_temperature(p, w, t);
     if (kelvin > 0.0) {
-        let k = 1.4 * smoothstep(850.0, 1100.0, kelvin);
+        let k = 1.4 * smoothstep(880.0, 1050.0, kelvin);
         out.sigma_t = k;
         out.emit = k * planck_radiance(kelvin);
     }
@@ -183,7 +187,7 @@ fn wreck_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     let kelvin = flame_temperature(p, w, t);
     if (kelvin > 0.0) {
         // Luminous soot flame: absorption about 1.4 /m, emitting Planck radiance (Kirchhoff).
-        let k = 1.4 * smoothstep(850.0, 1100.0, kelvin);
+        let k = 1.4 * smoothstep(880.0, 1050.0, kelvin);
         out.sigma_t += k;
         out.emit += k * planck_radiance(kelvin);
     }
@@ -218,7 +222,8 @@ fn fireball_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     // fraction of a second, cooling from the outside in, a dull glow lingering in the core.
     let heat = p.c.x * (exp(-age / (0.08 + 0.012 * rmax)) + 0.12 * exp(-age / (0.5 + 0.05 * rmax)))
         * (1.0 - smoothstep(0.15, 0.9, d)) * (0.6 + 0.7 * n);
-    let kelvin = 900.0 + 560.0 * min(heat, 1.0);
+    // Its core peaks near 1,550 K (deep orange-yellow), the rolling surface 1,150-1,350 K orange.
+    let kelvin = 900.0 + 650.0 * min(heat, 1.0) * (0.7 + 0.3 * (1.0 - smoothstep(0.0, 0.8, d)));
     if (heat > 0.02 && kelvin > 950.0) {
         let k = 2.5 * smoothstep(950.0, 1200.0, kelvin);
         out.sigma_t += k;
@@ -267,7 +272,8 @@ fn burst_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     out.sigma_s = sigma * mix(0.07, p.d.z, clamp(edge, 0.0, 1.0));
     let heat = p.c.x * exp(-age / 0.07) * (1.0 - smoothstep(0.1, 0.8, length(rel0) / (r * 0.8)));
     if (heat > 0.03) {
-        let kelvin = 1100.0 + 1200.0 * heat;
+        // The burst's flash: orange-yellow for an instant, orange-red as it dies (not white).
+        let kelvin = 950.0 + 700.0 * min(heat, 1.0);
         let k = 3.0 * heat;
         out.sigma_t += k;
         out.emit += k * planck_radiance(kelvin);

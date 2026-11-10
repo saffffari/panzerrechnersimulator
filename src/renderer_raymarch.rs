@@ -2768,7 +2768,11 @@ impl Backend {
             // grains a hand's breadth from the eye. With the rebuilt effects they merge into
             // centimetre cells with no coverage floor (a thin wisp), not the fire's 8-45 cm cells
             // (each wisp grain became a smoke ball across the view).
-            let fine = crate::fx_plumes::enabled() && ids.and_then(|v| v.first()).is_some_and(|id| id[0] == 0xc196_0001);
+            // The same for the weapon pages' soot (weapon_vfx, identities 0x5746_xxxx: a gun's
+            // propellant smoke, a strike's dust): their millimetre grains drew a metres-long white
+            // stream down a machine gun's line of fire.
+            let fine = crate::fx_plumes::enabled() && kind == PARCEL_SOOT
+                && ids.and_then(|v| v.first()).is_some_and(|id| id[0] == 0xc196_0001 || id[0] >> 16 == 0x5746);
             for (i, mat) in b.cpu_mats.iter().take(b.inst_count as usize).enumerate() {
                 if b.is_hidden(i as u32) { continue; }
                 let c = mat.w_axis.truncate();
@@ -2812,7 +2816,7 @@ impl Backend {
             let radius = (cs * 1.35).max(cell.size * 1.5);
             // Fraction of the cell's cross-section the grains actually cover.
             let coverage = ((cell.count as f32 * cell.size * cell.size) / (radius * radius)).clamp(if cell.fine { 0.0 } else { 0.08 }, 1.0)
-                * if cell.fine { 0.35 } else { 1.0 };
+                * if cell.fine { 0.6 } else { 1.0 };
             // Energy: looking through the cell must give the grains' own radiance times the
             // fraction of the cross-section they cover, so emission per metre is that over the
             // cell's diameter (the tongue shaping in rm_volume.wgsl redistributes, not adds).
@@ -2990,8 +2994,15 @@ impl Backend {
         let focal_px = r.ih as f32 * 0.5 / (r.camera.fov_y * 0.5).tan();
         let wind = glam::Vec2::new(self.wind.x, self.wind.z);
         for e in &self.events {
-            if e.kind != EVENT_DETONATION || self.debug_skip & 2048 != 0 { continue; }
+            if self.debug_skip & 2048 != 0 { continue; }
             let age = r.time - e.born;
+            // A tank round on armour: its flash and puff (a perforation's venting smoke).
+            if matches!(e.kind, EVENT_ARMOUR | EVENT_PENETRATION) {
+                self.plumes.list.extend(crate::fx_plumes::strike_flash(e.origin, e.normal, e.strength.max(0.6),
+                    e.kind == EVENT_PENETRATION, age, wind, e.seed, eye, focal_px));
+                continue;
+            }
+            if e.kind != EVENT_DETONATION { continue; }
             let plume = if e.strength > 1.0 {
                 crate::fx_plumes::fireball(e.origin, e.strength * 0.45, age, wind, e.seed, e.strength > 4.0, eye, focal_px)
             } else if let Some(gy) = e.ground_y {
@@ -3396,6 +3407,22 @@ impl Backend {
                     }
                 }
                 _ => {
+                    // The rebuilt effects: the strike's flash and puff are a volume
+                    // (`collect_plumes`); inside the struck hull the blow shakes the dust and
+                    // flaking paint off the plate's inner face, a pale haze a hand's breadth to a
+                    // metre in, settling over two seconds.
+                    if crate::fx_plumes::enabled() {
+                        if e.kind == EVENT_ARMOUR && t < 2.2 {
+                            let u = t / 2.2;
+                            for k in 0..3u32 {
+                                let side = Vec3::new(h(20 + k) - 0.5, h(30 + k) - 0.5, h(40 + k) - 0.5) * 0.6;
+                                let center = o - e.normal * (0.25 + 0.35 * u + 0.2 * k as f32) + side - Vec3::Y * (0.3 * u);
+                                let radius = 0.25 + 0.45 * u.sqrt();
+                                push(center, radius, [0.62, 0.58, 0.52], PARCEL_SMOKE, 0.0, (1.0 - u).powf(1.4) * 0.5 / radius, h(50 + k) * 100.0, 0.0);
+                            }
+                        }
+                        continue;
+                    }
                     // Armour strike: a small puff of paint smoke and dust off the plate.
                     if t < 1.4 {
                         let u = t / 1.4;

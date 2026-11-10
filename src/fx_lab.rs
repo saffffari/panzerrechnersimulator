@@ -327,7 +327,7 @@ pub fn run(prefix: &str, scene: &str) -> anyhow::Result<()> {
             let mg_from = t3 + Vec3::new(0.3, 2.0, 3.0);
             let near_t34 = eye_at(&lab, t34, Vec3::new(7.0, 1.2, -6.0));
             let tiger_side = eye_at(&lab, t3, Vec3::new(5.0, 2.2, -6.0));
-            let sight = mg_from + Vec3::Y * 0.4;
+            let sight = t3 + Vec3::new(-0.6, 3.4, 1.0);
             let shots: [(&str, Vec3, Vec3, f32); 3] = [("onto-t34-sight", sight, t34, 25.0), ("onto-t34-near", near_t34, t34, 50.0), ("onto-tiger", tiger_side, tiger_turret, 50.0)];
             for (k, (name, eye, target, fov)) in shots.iter().enumerate() {
                 view(&mut lab.r, &mut lab.g, *eye, *target, *fov);
@@ -384,7 +384,46 @@ pub fn run(prefix: &str, scene: &str) -> anyhow::Result<()> {
             }
             film.finish()?;
         }
-        other => anyhow::bail!("unknown fx-lab scene {other} (wreck, cookoff, impact, fog, three, mg, shock)"),
+        "sight" => {
+            // The Tiger's 88 at a T-34 300, 600 and 900 m up the valley, seen from the gun sight's
+            // place with the TZF 9's field (23 deg across, about 13 deg high at 16:9; 2.5x). An
+            // observer camera there, not the eyepiece render (no reticle, no lens).
+            // Up the valley on the bearing the fog scene showed clear of the ruins.
+            let dir = Vec2::new((-0.2f32).sin(), (-0.2f32).cos());
+            for (k, range) in [300.0f32, 600.0, 900.0].into_iter().enumerate() {
+                let at = tiger + dir * range;
+                let Some(idx) = lab.g.debug_park_live_t34(k, at.x, at.y, std::f32::consts::PI + 0.5) else { continue };
+                let hull = Vec3::new(at.x, ground(&lab, at.x, at.y), at.y) + Vec3::Y * 1.1;
+                let target = hull + Vec3::Y * 1.5;
+                lab.step(30);
+                // The sight's place over the Tiger's front, looking down the line of fire. The
+                // round is a real Pzgr. 39 started a few metres short of the hull with the speed,
+                // flown distance and age of a shot from this range; the armour solve decides.
+                let line = (hull - (t3 + Vec3::Y * 2.2)).normalize_or_zero();
+                let sight = eye_at(&lab, t3, Vec3::new(5.0, 4.5, -7.0));
+                view(&mut lab.r, &mut lab.g, sight, target, 13.0);
+                lab.settle()?;
+                lab.g.debug_launch_round(&crate::ballistics::PZGR_39, true, hull, line, range, 7 + k as u32);
+                let tof = 0.0f32;
+                let marks = [(tof + 0.03, "hit"), (tof + 0.5, "hit+0.5s"), (tof + 3.0, "hit+3s"), (tof + 8.0, "hit+8s"), (tof + 15.0, "hit+15s")];
+                let name = format!("{}m", range as u32);
+                let mut film = Film::new(&clip(&lab, &name), w, h)?;
+                let mut t = 0.0f32;
+                let mut next = 0;
+                while t < tof + 16.0 {
+                    lab.step(2);
+                    t += 2.0 * DT;
+                    view(&mut lab.r, &mut lab.g, sight, target, 13.0);
+                    let rgba = lab.rgba()?;
+                    film.frame(&rgba)?;
+                    if next < marks.len() && t >= marks[next].0 { lab.still(scene, &format!("{name}-{}", marks[next].1))?; next += 1; }
+                }
+                film.finish()?;
+                lab.shots.push(serde_json::json!({"range_m": range, "enemy": idx, "alive_after": lab.g.enemies[idx].alive,
+                    "hp_after": lab.g.enemies[idx].hp}));
+            }
+        }
+        other => anyhow::bail!("unknown fx-lab scene {other} (wreck, cookoff, impact, fog, three, mg, shock, sight)"),
     }
     let receipt = serde_json::json!({"schema": "panzer.fx-lab.v1", "scene": scene, "variant": variant,
         "manifest": manifest, "adapter": adapter.get_info().name, "internal_resolution": [w, h],

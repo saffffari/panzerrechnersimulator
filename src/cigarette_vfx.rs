@@ -37,7 +37,7 @@ pub fn surface(view: View) -> Surface {
         // Bright enough to read as a coal, not so bright that bloom swells it past the paper.
         // The rebuilt effects: a dull red coal at rest that flares orange-yellow on the draw
         // (the draw pulls air through the coal and it burns several times hotter).
-        ember_intensity: if !burning { 0.0 } else if crate::fx_plumes::enabled() { 0.035 + 0.5 * puff.powf(1.5) }
+        ember_intensity: if !burning { 0.0 } else if crate::fx_plumes::enabled() { 0.03 + 0.26 * puff.powf(1.5) }
             else { 0.06 + 0.24 * puff },
         ember_color: if crate::fx_plumes::enabled() { [255, (70.0 + 120.0 * puff) as u8, (10.0 + 40.0 * puff) as u8] }
             else { [255, (112.0 + 56.0 * puff) as u8, (18.0 + 14.0 * puff) as u8] },

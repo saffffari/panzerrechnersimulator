@@ -4907,11 +4907,15 @@ fn integrate_hot_fragment_traced(
             Vec3::new(0.0, -PROJECTILE_GRAVITY_MPS2, 0.0), step_dt);
         fragment.ang += fragment.spin * step_dt;
         let to = from + fragment.vel * step_dt;
-        let (end, surface) = match world.first_surface(fragment.frame, from, to) {
-            Some((fraction, _)) if world.perforation(fragment.frame, from.lerp(to, fraction), fragment.vel, fragment.size).is_some() => {
+        // The struck part's perforation is solved once per contact (it was solved twice: in the
+        // guard and again in the arm, each a component walk with allocations).
+        let hit = world.first_surface(fragment.frame, from, to);
+        let through = hit.and_then(|(fraction, _)| world.perforation(fragment.frame, from.lerp(to, fraction), fragment.vel, fragment.size));
+        let (end, surface) = match hit {
+            Some((fraction, _)) if through.is_some() => {
                 // Through the part it struck, slowed by the work it did on it.
                 let at = from.lerp(to, fraction);
-                let (exit, work) = world.perforation(fragment.frame, at, fragment.vel, fragment.size).unwrap();
+                let (exit, work) = through.unwrap();
                 let speed = fragment.vel.length();
                 let energy = 0.5 * crate::fea_damage::fragments::cube_mass(fragment.size) * speed * speed;
                 let dir = fragment.vel / speed;
@@ -6599,6 +6603,8 @@ fn wreck_kind_index(kind: EnemyKind) -> usize {
 const FX_BLAST_LIGHT_MAX: f32 = 1500.0;
 /// The rebuilt effects' thinning of the cabin fire's grains (see `drive_fire_presentation`).
 const FX_INTERIOR_THIN: usize = 6;
+/// How long a knocked-out, unburning hull smoulders (s).
+const FX_SMOULDER_S: f32 = 300.0;
 /// How often a burning wreck's flame roots are re-read off its burning surfaces (s).
 const FX_ROOT_PERIOD_S: f32 = 1.0;
 
@@ -34187,6 +34193,20 @@ impl Game {
                 world_sources.push((base.distance_squared(listener), base, fire.strength, seed));
                 continue;
             }
+            // A knocked-out hull that is not burning (its crew killed or gone, the engine
+            // wrecked) still smoulders: hot oil, scorched paint and the round's work inside. A
+            // thin dark trail from its deck for five minutes, no flames: from the gun sight it is
+            // what says the tank is finished.
+            if fx && self.enemy_active[i] && !self.enemies[i].alive && !self.wrecks[i].burning
+                && self.wrecks[i].kind != WreckKind::None && self.wrecks[i].fire_t < FX_SMOULDER_S {
+                let enemy = &self.enemies[i];
+                let base = self.wreck_deck_anchors[wreck_kind_index(enemy.kind)].map(|p| enemy.hull_model().transform_point3(p))
+                    .unwrap_or(enemy.center() + Vec3::Y);
+                let seed = 0x7500_0000 ^ i as u32;
+                fx_fires.insert(seed, crate::fx_plumes::Fire { base, roots: Vec::new(), strength: 0.0, age: self.wrecks[i].fire_t, seed });
+                world_sources.push((base.distance_squared(listener), base, 0.0, seed));
+                continue;
+            }
             if self.enemy_active[i] && !self.enemies[i].alive && self.wrecks[i].burning {
                 let wreck_patches = { let _p = crate::sim_phase::Probe::new("fire_wreck_patches"); self.wreck_surface_patches(i) };
                 surface_patches.insert(0x7100_0000 ^ i as u32, wreck_patches);
@@ -34282,7 +34302,11 @@ impl Game {
                     seed,
                 });
                 let eye = r.camera.pos;
-                let plume = crate::fx_plumes::wreck_plume(&fire, wind, eye, focal_px, &mut r.fx_roots);
+                let mut plume = crate::fx_plumes::wreck_plume(&fire, wind, eye, focal_px, &mut r.fx_roots);
+                if seed & 0xFF00_0000 == 0x7500_0000 {
+                    // The smouldering hull: thinner, fading out over its five minutes.
+                    plume.c[1] *= 0.45 * (1.0 - fire.age / FX_SMOULDER_S).clamp(0.0, 1.0);
+                }
                 r.fx_plumes.push(plume);
                 if let Some((at, intensity, colour, radius)) = crate::fx_plumes::flame_light(&fire) {
                     let flick = 0.85 + 0.15 * (fx_time * 11.3 + seed as f32 * 0.37).sin() * (fx_time * 7.1).cos();

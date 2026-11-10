@@ -216,6 +216,27 @@ pub fn fireball(origin: Vec3, scale: f32, age: f32, wind: Vec2, seed: u32, stem:
     Some(p)
 }
 
+/// A tank round striking armour: the white-orange flash of the steel and the round's work, a
+/// metre or so across for a few tens of milliseconds, then the puff it throws off the plate (paint,
+/// scale and dust, grey; a perforation's darker and longer, the compartment venting through the
+/// hole). `strength` about 1 for a 76-88 mm round. Readable through a sight at combat ranges.
+pub fn strike_flash(origin: Vec3, normal: Vec3, strength: f32, perforated: bool, age: f32, wind: Vec2, seed: u32, eye: Vec3, focal_px: f32) -> Option<Plume> {
+    let life = if perforated { 7.0 } else { 3.0 };
+    if age > life || age < 0.0 { return None; }
+    let rmax = (0.75 * strength).clamp(0.4, 1.4);
+    let o = origin + normal * (rmax * 0.5);
+    let mut p = Plume::default();
+    p.a = [o.x, o.y, o.z, KIND_FIREBALL];
+    p.b = [wind.x, 0.0, wind.y, rmax];
+    p.c = [1.4, if perforated { 3.0 } else { 1.6 }, age, (seed % 100_000) as f32];
+    p.d = [life, 0.0, if perforated { 0.14 } else { 0.42 }, 0.0];
+    let r = Vec3::splat(rmax * (2.0 + 0.4 * age) + 1.0);
+    let rise = Vec3::new(wind.x * age * 0.25, age.min(12.0) * (1.8 + 0.12 * rmax) + rmax, wind.y * age * 0.25);
+    p.set_bounds(o.min(o + rise) - r, o.max(o + rise) + r);
+    p.d[3] = steps_for(2.0 * r.x, p.distance(eye), focal_px);
+    Some(p)
+}
+
 /// A shell's burst on the ground: `radius` the thrown cloud's (about 2.5 m for 76-88 mm HE),
 /// `snow` the share of snow in what is thrown.
 pub fn burst(origin: Vec3, radius: f32, snow: f32, age: f32, wind: Vec2, seed: u32, eye: Vec3, focal_px: f32) -> Option<Plume> {
@@ -347,12 +368,12 @@ pub fn noise_volume(n: usize) -> Vec<u8> {
 }
 
 /// The flame's displayed colour (linear sRGB, red 1) at `kelvin`: dull red at 900 K, red-orange,
-/// orange, orange-yellow at 1,500 K, yellow at 1,750 K and above. Authored to how a sooty flame
+/// orange at 1,300 K, deep orange-yellow at 1,500 K, yellow only at 1,750 K and above. Authored to how a sooty flame
 /// reads by eye; the three-band Planck chroma (`incandescence::planck_chroma`) put so little in
 /// green that the display's tone curve turned the flame pinkish.
 pub fn flame_colour(kelvin: f32) -> [f32; 3] {
-    const STOPS: [(f32, [f32; 3]); 5] = [(900.0, [1.0, 0.10, 0.015]), (1100.0, [1.0, 0.22, 0.025]),
-        (1300.0, [1.0, 0.38, 0.05]), (1500.0, [1.0, 0.55, 0.10]), (1750.0, [1.0, 0.72, 0.22])];
+    const STOPS: [(f32, [f32; 3]); 5] = [(900.0, [1.0, 0.07, 0.01]), (1100.0, [1.0, 0.17, 0.02]),
+        (1300.0, [1.0, 0.30, 0.035]), (1500.0, [1.0, 0.45, 0.07]), (1750.0, [1.0, 0.66, 0.20])];
     let k = kelvin.clamp(STOPS[0].0, STOPS[4].0);
     let i = STOPS.iter().rposition(|(t, _)| *t <= k).unwrap_or(0).min(3);
     let (t0, c0) = STOPS[i];
