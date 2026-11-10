@@ -910,7 +910,8 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
             r.reset_replay_history();
             let mut elapsed = 0.0f32;
             for (shot, seconds, label) in [
-                (0u8, crate::IMPACT_SECONDS, "THE PENETRATION DEATH AS THE APP PLAYS IT: THE ROUND THROUGH THE ARMOUR, IN SECTION (SLOW)"),
+                (2u8, crate::DEATH_EXTERIOR_SECONDS, "THE PENETRATION DEATH AS THE APP PLAYS IT: WHERE THE ROUND CAME FROM"),
+                (0, crate::IMPACT_SECONDS, "THE PENETRATION DEATH AS THE APP PLAYS IT: THE ROUND THROUGH THE ARMOUR, IN SECTION (SLOW)"),
                 (1, crate::REPLAY_DUR, "THE PENETRATION DEATH AS THE APP PLAYS IT: THE INTERIOR"),
             ] {
                 death_shots.push(json!({"film_s": enc.frames as f32 / FPS as f32, "shot": label}));
@@ -918,7 +919,7 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
                 for f in 0..frames {
                     let phase = f as f32 / frames as f32;
                     match shot {
-                        0 => g.render_replay_impact(phase, &mut r),
+                        0 => { g.end_replay_exterior(&mut r); g.render_replay_impact(phase, &mut r); }
                         1 => { g.end_replay_cutaway(&mut r); g.render_replay(phase, &mut r); }
                         _ => { g.end_replay_exterior(&mut r); g.render_replay_exterior(phase, &mut r); }
                     }

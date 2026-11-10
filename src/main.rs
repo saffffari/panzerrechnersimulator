@@ -11962,19 +11962,23 @@ pub(crate) const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
 enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Impact(f32), Throw(f32), Crew(f32), Done }
 
 /// A death by a round through the armour (the owner, 2026-11-02, re-cut 2026-11-09): after the
-/// fade and a short black, the vehicle in section on the plane of the shot, the round going
+/// fade and a short black, the shot in its context, the aerial view from behind the Tiger of
+/// where the round came from (`Game::render_replay_exterior`; "death replays dont properly put the
+/// shot into context"); then the vehicle in section on the plane of the shot, the round going
 /// through the armour in slow motion and the fragments inside (`Game::render_replay_impact`);
 /// then the interior without a section, from the turret's rear centre looking forward, the whole
-/// aftermath replayed in slow motion; then the card. No aerial shot.
+/// aftermath replayed in slow motion; then the card.
 pub(crate) const IMPACT_BLACK_S: f32 = 1.5;
 pub(crate) const IMPACT_SECONDS: f32 = 9.0;
-fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + IMPACT_SECONDS + REPLAY_DUR }
+fn penetration_reveal_s() -> f32 { DEATH_FADE + IMPACT_BLACK_S + DEATH_EXTERIOR_SECONDS + IMPACT_SECONDS + REPLAY_DUR }
 fn penetration_shot(card: death_card::Presentation, t: f32) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
-    let impact = DEATH_FADE + IMPACT_BLACK_S;
+    let exterior = DEATH_FADE + IMPACT_BLACK_S;
+    let impact = exterior + DEATH_EXTERIOR_SECONDS;
     let interior = impact + IMPACT_SECONDS;
     if t < DEATH_FADE { DeathShot::Fade }
-    else if t < impact { DeathShot::Black }
+    else if t < exterior { DeathShot::Black }
+    else if t < impact { DeathShot::Exterior((t - exterior) / DEATH_EXTERIOR_SECONDS) }
     else if t < interior { DeathShot::Impact((t - impact) / IMPACT_SECONDS) }
     else if t < card.reveal_at_s() { DeathShot::Interior((t - interior) / REPLAY_DUR) }
     else if t < card_end { DeathShot::Card }
@@ -11984,20 +11988,26 @@ fn penetration_shot(card: death_card::Presentation, t: f32) -> DeathShot {
 /// A death in the stowage's cook-off (`Game::cookoff_death`; the owner, 2026-11-02): black at once
 /// from the bang while it rings (the world held), then the tank from outside as the rest of the
 /// stowage goes and the turret is thrown (the world runs on, silent), then the dead from above the
-/// open ring, then the card.
+/// open ring, then the card. With `context` (a round set it off and the record has where it came
+/// from, `Game::death_shot_known`), the aerial view of that round coming in plays after the black
+/// with the world still held (the owner, 9 November 2026).
 use game::{COOKOFF_BLACK_S, COOKOFF_CREW_S, COOKOFF_THROW_S};
-fn cookoff_shot(card: death_card::Presentation, t: f32) -> DeathShot {
+fn cookoff_context_s(context: bool) -> f32 { if context { DEATH_EXTERIOR_SECONDS } else { 0.0 } }
+fn cookoff_reveal_s(context: bool) -> f32 { COOKOFF_BLACK_S + cookoff_context_s(context) + COOKOFF_THROW_S + COOKOFF_CREW_S }
+fn cookoff_shot(card: death_card::Presentation, t: f32, context: bool) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
+    let throw = COOKOFF_BLACK_S + cookoff_context_s(context);
     if t < COOKOFF_BLACK_S { DeathShot::Black }
-    else if t < COOKOFF_BLACK_S + COOKOFF_THROW_S { DeathShot::Throw((t - COOKOFF_BLACK_S) / COOKOFF_THROW_S) }
-    else if t < card.reveal_at_s() { DeathShot::Crew((t - COOKOFF_BLACK_S - COOKOFF_THROW_S) / COOKOFF_CREW_S) }
+    else if t < throw { DeathShot::Exterior((t - COOKOFF_BLACK_S) / DEATH_EXTERIOR_SECONDS) }
+    else if t < throw + COOKOFF_THROW_S { DeathShot::Throw((t - throw) / COOKOFF_THROW_S) }
+    else if t < card.reveal_at_s() { DeathShot::Crew((t - throw - COOKOFF_THROW_S) / COOKOFF_CREW_S) }
     else if t < card_end { DeathShot::Card }
     else { DeathShot::Done }
 }
 /// The death's shot: the cook-off's order when the man died in it, the penetration replay's when a
 /// round through the armour killed him, else the ordinary one.
-fn death_shot_for(cookoff: bool, impact: bool, card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
-    if cookoff { cookoff_shot(card, t) } else if impact { penetration_shot(card, t) } else { death_shot(card, t, has_replay) }
+fn death_shot_for(cookoff: bool, impact: bool, context: bool, card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
+    if cookoff { cookoff_shot(card, t, context) } else if impact { penetration_shot(card, t) } else { death_shot(card, t, has_replay) }
 }
 fn death_shot(card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
     let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
@@ -12119,30 +12129,43 @@ mod local_presentation_tests {
 
     #[test]
     fn a_cookoff_death_is_black_at_once_then_outside_then_the_dead_then_the_card() {
-        let reveal = COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S;
+        let reveal = cookoff_reveal_s(false);
+        assert_eq!(reveal, COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S);
         let card = death_card::Presentation::silent(1, 1943, reveal, DEATH_CARD_SECONDS);
-        assert_eq!(cookoff_shot(card, 0.0), DeathShot::Black, "no fade: black from the bang");
-        assert_eq!(cookoff_shot(card, COOKOFF_BLACK_S - 0.01), DeathShot::Black);
-        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + 0.01), DeathShot::Throw(p) if p < 0.01));
-        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + COOKOFF_THROW_S + 0.01), DeathShot::Crew(p) if p < 0.01));
-        assert_eq!(cookoff_shot(card, reveal + 0.01), DeathShot::Card);
-        assert_eq!(cookoff_shot(card, reveal + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
-        assert_eq!(death_shot_for(false, false, card, 0.5, true), DeathShot::Fade, "other deaths keep their fade");
+        assert_eq!(cookoff_shot(card, 0.0, false), DeathShot::Black, "no fade: black from the bang");
+        assert_eq!(cookoff_shot(card, COOKOFF_BLACK_S - 0.01, false), DeathShot::Black);
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + 0.01, false), DeathShot::Throw(p) if p < 0.01));
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + COOKOFF_THROW_S + 0.01, false), DeathShot::Crew(p) if p < 0.01));
+        assert_eq!(cookoff_shot(card, reveal + 0.01, false), DeathShot::Card);
+        assert_eq!(cookoff_shot(card, reveal + DEATH_CARD_SECONDS + 0.01, false), DeathShot::Done);
+        assert_eq!(death_shot_for(false, false, false, card, 0.5, true), DeathShot::Fade, "other deaths keep their fade");
+        // A round set it off: where it came from plays between the black and the throw.
+        let reveal = cookoff_reveal_s(true);
+        let card = death_card::Presentation::silent(1, 1943, reveal, DEATH_CARD_SECONDS);
+        assert_eq!(cookoff_shot(card, COOKOFF_BLACK_S - 0.01, true), DeathShot::Black);
+        assert!(matches!(cookoff_shot(card, COOKOFF_BLACK_S + 0.01, true), DeathShot::Exterior(p) if p < 0.01));
+        let throw = COOKOFF_BLACK_S + DEATH_EXTERIOR_SECONDS;
+        assert!(matches!(cookoff_shot(card, throw + 0.01, true), DeathShot::Throw(p) if p < 0.01));
+        assert!(matches!(cookoff_shot(card, throw + COOKOFF_THROW_S + 0.01, true), DeathShot::Crew(p) if p < 0.01));
+        assert_eq!(cookoff_shot(card, reveal + 0.01, true), DeathShot::Card);
+        assert_eq!(death_shot_for(true, false, true, card, COOKOFF_BLACK_S + 0.01, true), cookoff_shot(card, COOKOFF_BLACK_S + 0.01, true));
     }
 
     #[test]
-    fn a_penetration_death_shows_the_impact_then_the_interior_then_where_it_came_from_then_the_card() {
+    fn a_penetration_death_shows_where_it_came_from_then_the_section_then_the_interior_then_the_card() {
         let card = death_card::Presentation::silent(1, 1943, penetration_reveal_s(), DEATH_CARD_SECONDS);
         assert_eq!(penetration_shot(card, 0.5), DeathShot::Fade);
         assert_eq!(penetration_shot(card, DEATH_FADE + 0.1), DeathShot::Black, "a second or two of black");
-        let impact = DEATH_FADE + IMPACT_BLACK_S;
+        let exterior = DEATH_FADE + IMPACT_BLACK_S;
+        assert!(matches!(penetration_shot(card, exterior + 0.01), DeathShot::Exterior(p) if p < 0.01), "the shot in its context first");
+        let impact = exterior + DEATH_EXTERIOR_SECONDS;
         assert!(matches!(penetration_shot(card, impact + 0.01), DeathShot::Impact(p) if p < 0.01));
         assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + 0.01), DeathShot::Interior(p) if p < 0.01));
         assert!(matches!(penetration_shot(card, impact + IMPACT_SECONDS + REPLAY_DUR - 0.01), DeathShot::Interior(p) if p > 0.99),
-            "the interior runs to the card: no aerial shot");
+            "the interior runs to the card");
         assert_eq!(penetration_shot(card, penetration_reveal_s() + 0.01), DeathShot::Card);
         assert_eq!(penetration_shot(card, penetration_reveal_s() + DEATH_CARD_SECONDS + 0.01), DeathShot::Done);
-        assert_eq!(death_shot_for(false, true, card, impact + 0.5, true), penetration_shot(card, impact + 0.5));
+        assert_eq!(death_shot_for(false, true, true, card, impact + 0.5, true), penetration_shot(card, impact + 0.5));
     }
 
     #[test]
@@ -14056,7 +14079,7 @@ impl WindowState {
             // The fatal view fades, the screen is black for two seconds, the card is held for
             // five, and the run ends. No score plays over it.
             println!("[panzerrechnersystem] killed: {over_cause:?}");
-            let reveal = if self.game.cookoff_death() { COOKOFF_BLACK_S + COOKOFF_THROW_S + COOKOFF_CREW_S }
+            let reveal = if self.game.cookoff_death() { cookoff_reveal_s(self.game.death_shot_known()) }
                 else if self.game.replay_has_impact() { penetration_reveal_s() }
                 else { DEATH_FADE + DEATH_BLACK_SECONDS };
             let card = Some(death_card::Presentation::silent(self.game.death_card_seed(),
@@ -15195,9 +15218,18 @@ impl WindowState {
             self.game.set_audio_silenced(true);
         }
         if let Some(card) = card.filter(|card| card.is_silent() && cookoff) {
-            match cookoff_shot(card, t) {
+            match cookoff_shot(card, t, self.game.death_shot_known()) {
+                // The round that set it off, from where it came (the world still held).
+                DeathShot::Exterior(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.render_replay_exterior(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+                    frame.present();
+                    return;
+                }
                 DeathShot::Throw(phase) => {
                     let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.end_replay_exterior(&mut self.renderer);
                     self.game.render_cookoff_outside(phase, &mut self.renderer);
                     self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
                     frame.present();
@@ -15222,11 +15254,12 @@ impl WindowState {
                 _ => {}
             }
         }
-        // A round through the armour: the section shot, then the interior, then the card.
+        // A round through the armour: where it came from, the section shot, the interior, the card.
         if let Some(card) = card.filter(|card| card.is_silent() && !cookoff && self.game.replay_has_impact()) {
             match penetration_shot(card, t) {
                 DeathShot::Impact(phase) => {
                     let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.end_replay_exterior(&mut self.renderer);
                     self.game.render_replay_impact(phase, &mut self.renderer);
                     self.renderer.render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
                     frame.present();
@@ -16020,8 +16053,14 @@ impl ApplicationHandler for App {
                             let has_replay = state.game.last_fatal.is_some();
                             let card_end = card.card_end_s().unwrap_or(t);
                             let impact = state.game.replay_has_impact();
-                            match death_shot_for(state.game.cookoff_death(), impact, card, t, has_replay) {
+                            let cookoff = state.game.cookoff_death();
+                            match death_shot_for(cookoff, impact, state.game.death_shot_known(), card, t, has_replay) {
                                 DeathShot::Card => state.state = AppState::Death { t: card_end, card: Some(card) },
+                                // The cook-off's context shot gives way to the throw.
+                                DeathShot::Exterior(_) if cookoff => {
+                                    state.game.end_replay_exterior(&mut state.renderer);
+                                    state.state = AppState::Death { t: COOKOFF_BLACK_S + DEATH_EXTERIOR_SECONDS, card: Some(card) };
+                                }
                                 // The penetration replay's shots give way to the card.
                                 DeathShot::Impact(_) | DeathShot::Interior(_) | DeathShot::Exterior(_) if impact => {
                                     state.game.end_replay_cutaway(&mut state.renderer);
@@ -17353,7 +17392,7 @@ impl ApplicationHandler for App {
                         // waited for before any view of the world returns.
                         if state.game.casualty_tissue_pending() {
                             let shot = card.filter(|card| card.is_silent()).map(|card| death_shot_for(cookoff,
-                                state.game.replay_has_impact(), card, nt, state.game.last_fatal.is_some()));
+                                state.game.replay_has_impact(), state.game.death_shot_known(), card, nt, state.game.last_fatal.is_some()));
                             match shot {
                                 Some(DeathShot::Fade) => {}
                                 Some(DeathShot::Black) => state.game.settle_casualty_tissue(false),
@@ -17362,11 +17401,11 @@ impl ApplicationHandler for App {
                                 _ => state.game.settle_casualty_tissue(true),
                             }
                         }
-                        if cookoff && card.is_some_and(|card| matches!(cookoff_shot(card, nt), DeathShot::Throw(_) | DeathShot::Crew(_))) {
+                        if cookoff && card.is_some_and(|card| matches!(cookoff_shot(card, nt, state.game.death_shot_known()), DeathShot::Throw(_) | DeathShot::Crew(_))) {
                             state.game.update_realtime(&TankInput::default(), dt, &mut state.renderer);
                         }
                         let finished = card.map_or(nt >= DEATH_END, |card| if card.is_silent() {
-                            death_shot_for(cookoff, state.game.replay_has_impact(), card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
+                            death_shot_for(cookoff, state.game.replay_has_impact(), state.game.death_shot_known(), card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
                         } else {
                             card.phase(nt, state.game.death_score_elapsed(),
                                 state.game.death_score_finished()) == death_card::Phase::Finished

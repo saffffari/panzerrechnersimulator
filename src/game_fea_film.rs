@@ -709,9 +709,11 @@ fn penetration_death_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix
         }
         let banner = ctx.banner.clone();
         let mut elapsed = 0.0f32;
-        // The replay's shots: the section, then the interior, each at its phases; a still at the given ones.
+        // The replay's shots: where the round came from, the section, then the interior, each at
+        // its phases; a still at the given ones.
         for (shot, seconds, label, moments) in [
-            (0u8, crate::IMPACT_SECONDS, "the section on the plane of the shot: the round through the armour", &[(0.12f32, "section_incoming"), (0.24, "section_in_plate"), (0.36, "section_through"), (0.52, "section_fragments"), (0.68, "section_fragments_later"), (0.95, "section_end")][..]),
+            (2u8, crate::DEATH_EXTERIOR_SECONDS, "where the round came from", &[(0.5f32, "exterior")][..]),
+            (0u8, crate::IMPACT_SECONDS, "the section on the plane of the shot: the round through the armour", &[(0.12, "section_incoming"), (0.24, "section_in_plate"), (0.36, "section_through"), (0.52, "section_fragments"), (0.68, "section_fragments_later"), (0.95, "section_end")][..]),
             (1, crate::REPLAY_DUR, "the interior, from the turret's rear centre looking forward", &[(0.2, "interior_early"), (0.5, "interior_mid"), (0.9, "interior_late")][..]),
         ] {
             if let Some(clip) = film.as_mut() { clip.mark(label, "slow motion, silent"); }
@@ -722,7 +724,7 @@ fn penetration_death_study(ctx: &mut Ctx, g: &mut Game, r: &mut Renderer, prefix
                 let moment = moments.iter().find(|(at, tag)| phase >= *at && !written.contains(tag)).map(|(_, tag)| *tag);
                 if film.is_none() && moment.is_none() { continue; }
                 match shot {
-                    0 => g.render_replay_impact(phase, r),
+                    0 => { g.end_replay_exterior(r); g.render_replay_impact(phase, r); }
                     1 => { g.end_replay_cutaway(r); g.render_replay(phase, r); }
                     _ => { g.end_replay_exterior(r); g.render_replay_exterior(phase, r); }
                 }

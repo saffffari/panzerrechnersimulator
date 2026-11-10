@@ -332,6 +332,13 @@ impl Game {
         !self.cookoff_death() && self.last_fatal.as_ref().is_some_and(|f| f.shell_dir.length_squared() > 1.0e-6)
     }
 
+    /// The fatal record has the round's line and the gun it came from: the death's sequence can
+    /// show the shot in its context (`render_replay_exterior`), in a cook-off too.
+    pub fn death_shot_known(&self) -> bool {
+        self.last_fatal.as_ref().is_some_and(|f| f.shell_dir.length_squared() > 1.0e-6
+            && f.shooter_pos.is_finite() && f.entry_point.is_finite() && f.shooter_pos.distance(f.entry_point) > 1.0)
+    }
+
     /// Put the replay's cutaway away (the shots that follow see the whole vehicle).
     pub fn end_replay_cutaway(&mut self, r: &mut Renderer) {
         r.set_replay_cutaway(None, &[]);
