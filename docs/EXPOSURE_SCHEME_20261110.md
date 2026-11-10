@@ -39,6 +39,17 @@ The present eye (`shaders/exposure.wgsl`, `src/observer.rs`) is kept whole as th
    directions, and the lens's ghost and field-edge taps become a disc: no star or cross round a
    bright point anywhere.
 
+7. **One's own guns keep the target.** The owner: "once i fire mg then i cant see the people
+   anymore". A burst of the coax or hull MG at night lights the smoke and snow in front of the
+   gun; the eye metered that light and rose at its dazzle rate (0.6 s). Under the switch every
+   outside view adapts to the outside level, which the muzzle does not move, and no eye rises
+   faster than a 3 s time constant: a one-second burst moves the cabin eye a little and the
+   sight's not at all; the burst's own light is drawn, the infantry stay in view.
+8. **The night sky stays as it is** ("the starry night looks really amazing"): the stars are drawn
+   at their own irradiance per pixel (`rm_shade.wgsl`); the shared level at night is the
+   star- and moonlit snow, close to what the default eye meters with the head out. The night
+   sheets compare the two so that any dimming of the stars is seen before anything is adopted.
+
 ## What stays the same
 
 The default eye (`KESSEL_EXPOSURE` unset), the look's colour steps and grid, bloom, the crush. The
@@ -50,4 +61,6 @@ the two star sources.
 The same moment from every view (commander head out, the cupola blocks, the gun sight at each
 magnification, the driver's visor, the loader's periscope), by day, at dusk and at night with a
 burning wreck in view, default against `KESSEL_EXPOSURE=shared`; a flash in the sight at night,
-frame by frame for three seconds.
+frame by frame for three seconds; at night with riflemen at 25-110 m, a ten-round burst of the coax
+(through the gunner's sight) and of the hull MG (the radio operator's place), before, during and a
+second after (`exposure-mg-night-*`).
