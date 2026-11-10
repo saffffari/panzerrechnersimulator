@@ -216,6 +216,7 @@ mod spatial_audio;
 mod spatial_grid;
 mod street_plan;
 mod tank;
+mod tiger_gen2;
 mod vehicle_ground;
 mod source_point_support;
 mod static_wreck_support;
@@ -17915,6 +17916,10 @@ fn main() -> anyhow::Result<()> {
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(200.0),
         );
+    }
+    if args.len() >= 2 && args[1] == "tiger-gen2-check" {
+        // CPU only: the gen2 Tiger's hull, turret and gun split against the present bake.
+        return tiger_gen2::check();
     }
     if args.len() >= 2 && args[1] == "t34-seed" {
         return t34_canyon_training::write_seed(

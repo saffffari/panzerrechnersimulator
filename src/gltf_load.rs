@@ -412,6 +412,52 @@ pub fn load_glb_partitioned_subtrees(path: &str, subtrees: &[&str]) -> anyhow::R
     pages.into_iter().map(|page| page.finish(path)).collect()
 }
 
+/// Partition named descendant subtrees where one selection may lie inside another (a gun under
+/// a turret): a node's geometry goes to the innermost selected ancestor's page, page zero taking
+/// the rest. Returns the pages (remainder first, then `subtrees` order) and each selected node's
+/// world transform (its pivot). Missing and duplicate selections fail. `bytes` is the file's
+/// content (the caller may have prepared it); `path` names it in errors.
+pub(crate) fn load_glb_partitioned_nested_subtrees(path: &str, bytes: &[u8], subtrees: &[&str]) -> anyhow::Result<(Vec<CpuMesh>, Vec<Mat4>)> {
+    let (doc, buffers, images) = gltf::import_slice(bytes)
+        .with_context(|| format!("import nested-partitioned glTF resource {path:?}"))?;
+    let mut pages: Vec<_> = (0..=subtrees.len()).map(|_| MeshAccum::new()).collect();
+    let mut pivots = vec![None; subtrees.len()];
+
+    #[allow(clippy::too_many_arguments)]
+    fn split(
+        node: gltf::Node<'_>, parent: Mat4, inherited_page: usize,
+        names: &[&str], pivots: &mut [Option<Mat4>], pages: &mut [MeshAccum],
+        buffers: &[gltf::buffer::Data], images: &[gltf::image::Data],
+    ) -> anyhow::Result<()> {
+        let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+        let page_index = match names.iter().position(|name| node.name() == Some(*name)) {
+            Some(index) => {
+                anyhow::ensure!(pivots[index].is_none(), "duplicate selected subtree {:?}", names[index]);
+                pivots[index] = Some(world);
+                index + 1
+            }
+            None => inherited_page,
+        };
+        let page = &mut pages[page_index];
+        walk(&node, parent, buffers, images, &mut page.vertices, &mut page.indices,
+             &mut page.mats, &mut page.min, &mut page.max, false);
+        for child in node.children() {
+            split(child, world, page_index, names, pivots, pages, buffers, images)?;
+        }
+        Ok(())
+    }
+
+    if let Some(scene) = doc.default_scene().or_else(|| doc.scenes().next()) {
+        for node in scene.nodes() {
+            split(node, Mat4::IDENTITY, 0, subtrees, &mut pivots, &mut pages, &buffers, &images)?;
+        }
+    }
+    let pivots = pivots.into_iter().enumerate().map(|(index, pivot)|
+        pivot.ok_or_else(|| anyhow::anyhow!("missing selected subtree {:?} in {path}", subtrees[index])))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok((pages.into_iter().map(|page| page.finish(path)).collect::<anyhow::Result<Vec<_>>>()?, pivots))
+}
+
 struct MeshAccum {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,

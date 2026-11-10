@@ -26,6 +26,8 @@
 #   tools/launch_demo_20261101.sh --cabin-look pastel  the pastel palette itself inside the hull under the tinted look
 #   tools/launch_demo_20261101.sh --one-man       the player alone in the Tiger: the other four seats unmanned, he works
 #                                                 every post (KESSEL_ONE_MAN=1; singleplayer only)
+#   tools/launch_demo_20261101.sh --gen2          the gen2 Tiger's hull, turret and gun drawn as the player's tank: a first,
+#                                                 rough fit (src/tiger_gen2.rs says what is still the present Tiger's)
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
 #   tools/launch_demo_20261101.sh --canyon --t34s 5 --no-guns
 #                                                 a 1v5: five T-34s at the first-encounter knot (the deep platoons benched,
@@ -63,6 +65,7 @@ while (( $# )); do
         --windowed) WINDOWED=1 ;;
         --platoon) PLATOON=1 ;;
         --one-man) ONE_MAN=1 ;;
+        --gen2) export KESSEL_TIGER=gen2 ;;
         --res) RES=$2; RES_SET=1; shift ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;   # standard (default) | deltap-tinted | deltap | pastel ...
         --cabin-look) CABIN_LOOK=$2; shift ;;   # pastel: the palette itself inside the hull (tinted look)
