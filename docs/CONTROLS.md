@@ -176,9 +176,9 @@ are visible from the other seats; a fallen body and blood remain in its struck p
 2. **RMB = look closer.**
    Gunner: TZF magnification toggle. Buttoned Commander / Loader: look at a sight block or
    periscope and **click RMB** to bring your eye to it; it stays there until the next click,
-   which returns you to the cabin view. At a cupola block, **hold RMB and sweep the mouse
-   sideways** to step to the next block left or right round the ring (about 120 px a block; no
-   step back out on that release). Back in the cabin you face the block you were at.
+   which returns you to the cabin view. At a cupola block the **mouse turns your eye within the
+   block's view**, as far as the block shows the outside (the centre of the view never leaves
+   its field). Back in the cabin you face the block.
    Driver: **hold RMB** to lean toward the visor; look down-left and click its handwheel to open
    or close the physical shutters. Head-out Commander: hold RMB to raise/aim the P08;
    LMB fires it while aimed. **V** draws/holsters the P08 inside the turret or at the cupola;

@@ -446,9 +446,21 @@ struct WeatherLayouts {
     particles: wgpu::BindGroupLayout,
 }
 
+/// Wiped-glass grooves on the vision glass: off unless `KESSEL_GLASS_SCRATCHES=1` (review only;
+/// the owner had them taken off on 2026-11-09). Prepended to `glass_scratches.wgsl` wherever it is
+/// compiled, so the relay pane and the raymarch glass pass agree.
+pub fn glass_scratch_switch() -> String {
+    format!("const GLASS_SCRATCHES: bool = {};\n", std::env::var("KESSEL_GLASS_SCRATCHES").as_deref() == Ok("1"))
+}
+/// `rm_glass.wgsl`'s review switch: `KESSEL_GLASS_CABIN_SKY=1` lets an off-screen cabin surface in a
+/// pane's reflection take sky by the compartment's cover map (off since 2026-11-10: it flickered).
+pub fn glass_cabin_sky_switch() -> String {
+    format!("const GLASS_CABIN_SKY: bool = {};\n", std::env::var("KESSEL_GLASS_CABIN_SKY").as_deref() == Ok("1"))
+}
+
 /// The pane program: the shared wiped-glass groove field, then the relay itself.
 fn panel_shader_source() -> String {
-    format!("{}\n{}", include_str!("../shaders/glass_scratches.wgsl"), include_str!("../shaders/raster_optics.wgsl"))
+    format!("{}{}\n{}", glass_scratch_switch(), include_str!("../shaders/glass_scratches.wgsl"), include_str!("../shaders/raster_optics.wgsl"))
 }
 
 fn optic_particle_shader_source() -> String {
@@ -1824,7 +1836,12 @@ mod tests {
             }
         }
         for (index,spec) in specs.iter().take(7).enumerate() {
-            let (eye,forward,fov)=crate::game::tiger_periscopes::close_view(index);
+            let (eye,level,level_fov)=crate::game::tiger_periscopes::close_view(index);
+            // The game's view since 2026-11-09 (level, 20 degrees tall), and the earlier view
+            // (3 degrees up, 14 tall) the source-ray receipt was traced for.
+            let pitch3=3_f32.to_radians();
+            let legacy=Vec3::new(level.x,0.0,level.z).normalize()*pitch3.cos()+Vec3::Y*pitch3.sin();
+            for (forward,fov,receipt) in [(level,level_fov,false),(legacy,14_f32.to_radians(),true)] {
             let center=spec.entry_corners.iter().copied().sum::<Vec3>()*0.25;
             for model in [Mat4::IDENTITY,Mat4::from_translation(Vec3::new(32.0,4.0,-19.0))
                 *Mat4::from_rotation_y(0.9),Mat4::from_rotation_y(-0.6)*Mat4::from_rotation_x(0.18)] {
@@ -1851,12 +1868,16 @@ mod tests {
                             "cupola {index} field clipped by exterior capture");
                         let local_origin=model.inverse().transform_point3(capture.pos);
                         let local_ray=model.inverse().transform_vector3(outgoing).normalize();
-                        assert!(!cap_hit(local_origin,local_ray,true),
-                            "fitted cap still blocks cupola {index} field ({x},{y})");
+                        // The level view's lower half looks down past the horizon and may meet
+                        // the tank's own roof (tiger_periscopes' source roof test).
+                        if receipt || y>=0.0 {
+                            assert!(!cap_hit(local_origin,local_ray,true),
+                                "fitted cap still blocks cupola {index} field ({x},{y})");
+                        }
                         // The receipt's upper/lower samples use the level turret's up vector.
                         // A pitched camera keeps world-up, so only its center is that same ray;
                         // its full field still has the incident-direction check above.
-                        if index==1 && x==0.0 && (y==0.0
+                        if receipt && index==1 && x==0.0 && (y==0.0
                             || model.transform_vector3(Vec3::Y).distance(Vec3::Y)<0.0001) {
                             if let Some((_,expected,blocked))=reference.iter().find(|r|r.0==y) {
                                 let local=model.inverse().transform_vector3(outgoing).normalize();
@@ -1868,6 +1889,7 @@ mod tests {
                         }
                     }
                 }
+            }
             }
         }
     }

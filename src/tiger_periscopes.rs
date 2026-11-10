@@ -3,7 +3,7 @@
 //! separate exterior pupil views on these exact entrance faces. Optical materials are declared
 //! reconstructions because the export labels the internal faces as opaque `Material.001`.
 use crate::gltf_load::{load_glb_partitioned_roots, CpuMesh, Vertex};
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 #[path="tiger_side_ports.rs"]
 pub(crate) mod side_ports;
 #[path="tiger_roof_fitting.rs"]
@@ -67,43 +67,22 @@ pub struct FocusState {
     pub(super) latched: bool,
     #[serde(default)]
     pub(super) prev_aim: bool,
-    /// A press made while already at a block: its release steps back out, unless the mouse
-    /// swept sideways to the next block during it.
+    /// The eye's turn at the block (yaw, pitch; radians) from the block's own line of sight,
+    /// moved by the mouse while there and clamped to the field the block admits.
     #[serde(default)]
-    pub(super) release_pending: bool,
-    /// Sideways mouse travel (pixels) during a held press at a block.
-    #[serde(default)]
-    pub(super) sweep: f32,
-    /// The block the eye is moving from and how far it has got (0 at the old block, 1 there).
-    #[serde(default)]
-    pub(super) from: Option<usize>,
-    #[serde(default)]
-    pub(super) swing: f32,
+    pub(super) gaze: [f32; 2],
 }
 
-/// Sideways mouse travel, in raw pixels, that steps a held-RMB eye to the next cupola block
-/// (at the commander's 0.0022 rad/pixel look, the travel of a 15 degree head turn).
-pub const BLOCK_SWEEP_PIXELS: f32 = 120.0;
-/// Seconds to move the eye from one cupola block to its neighbour.
-const BLOCK_SWING_S: f32 = 0.28;
-
-/// The cupola block next to `index` on the ring, toward the viewer's right (`step` > 0) or left,
-/// as seen from inside facing the block (turret frame: forward +Z, so the right is -X).
-pub fn adjacent_block(index: usize, step: i32) -> usize {
-    let azimuth = |i: usize| {
-        let d = CUPOLA_CENTERS[i] - COMMANDER_EYE;
-        d.x.atan2(d.z)
-    };
-    let here = azimuth(index.min(6));
-    // Turning right from the inside decreases this azimuth (atan2(x, z) grows toward +X).
-    let sign = if step > 0 { -1.0 } else { 1.0 };
-    (0..CUPOLA_CENTERS.len()).filter(|&i| i != index)
-        .min_by(|&a, &b| {
-            let turn = |i: usize| (sign * (azimuth(i) - here)).rem_euclid(std::f32::consts::TAU);
-            turn(a).total_cmp(&turn(b))
-        })
-        .unwrap_or(index)
-}
+/// Mouse look at a block: the commander's cabin head-look rate (rad per raw pixel).
+const GAZE_SENS: f32 = 0.0022;
+/// The zoomed view's vertical frame at a cupola block (degrees).
+const BLOCK_VIEW_FOV_DEG: f32 = 20.0;
+/// How far the eye may turn at a cupola block (radians: either side, down, up). The centre of the
+/// view stays a quarter frame (5 degrees) inside the field the relay admits from the close eye, so
+/// at the limit the block's edge shows a quarter of the way in. Measured reach on the stop chain
+/// of every block about the level aim: 38.5 degrees either side, 21.7 down, 10.7 up
+/// (`gaze_limits_stay_inside_the_admitted_field`).
+pub const BLOCK_GAZE_LIMIT: [f32; 3] = [33.0_f32.to_radians(), 16.5_f32.to_radians(), 5.5_f32.to_radians()];
 
 /// Physical eye relief is kept outside the glass. The narrow display field frames the usable
 /// objective view; this is a close-inspection camera crop, not a claim of optical magnification.
@@ -122,20 +101,44 @@ pub fn close_view(index: usize) -> (Vec3, Vec3, f32) {
     }
     let target = CUPOLA_CENTERS[index.min(6)];
     let mut radial=target-COMMANDER_EYE;radial.y=0.0;
-    // A modest upward eye alignment sees over the retained roof fixtures. The objective and
-    // casing stay in place; objects still occupy the lower field where their source rays hit.
-    let pitch=3_f32.to_radians();
+    // Aimed at the horizon. From this eye the relay admits from 21.7 degrees below the horizon to
+    // 10.7 above it (`gaze_limits_stay_inside_the_admitted_field`); below about 6 degrees most of
+    // that is the tank's own roof and deck. Until 2026-11-09 the view was aimed 3 degrees up with a
+    // 14 degree frame (4 below to 10 above). The 20 degree frame (10 either way) lies inside the
+    // field; the mouse looks through the rest of it (`BLOCK_GAZE_LIMIT`).
+    // The eye keeps its place 25 mm back along the block's eye axis (3 degrees up); only the
+    // line of sight drops.
+    let (axis, pitch) = (3_f32.to_radians(), 0.0_f32);
+    let eye_axis = radial.normalize()*axis.cos()+Vec3::Y*axis.sin();
     let forward = radial.normalize()*pitch.cos()+Vec3::Y*pitch.sin();
-    (target - forward * 0.025, forward, 14_f32.to_radians())
+    (target - eye_axis * 0.025, forward, BLOCK_VIEW_FOV_DEG.to_radians())
+}
+
+/// The close view at a block turned by `gaze` (yaw right-positive about the turret's up, pitch
+/// up-positive), in the turret frame. The eye stays where it is; only its line of sight turns.
+pub fn gazed_view(index: usize, gaze: [f32; 2]) -> (Vec3, Vec3, f32) {
+    let (eye, forward, fov) = close_view(index);
+    let right = forward.cross(Vec3::Y).normalize();
+    let yawed = glam::Quat::from_axis_angle(Vec3::Y, -gaze[0]) * forward;
+    let pitched = glam::Quat::from_axis_angle(right, gaze[1]) * yawed;
+    (eye, pitched.normalize(), fov)
 }
 
 impl super::Game {
-    /// Read-only evidence of RMB acquisition, block steps and release; does not move or grant focus.
-    pub fn cupola_focus_receipt(&self) -> serde_json::Value {
-        serde_json::json!({"index":self.cupola_focus.index,"phase":self.cupola_focus.phase})
+    /// Read-only evidence of RMB acquisition, the eye's turn at the block and release; does not
+    /// move or grant focus.
+    /// Read-only: the roof hatch lids (driver, loader, radio operator, loader's second) open, and
+    /// the commander's hatch, for review stills.
+    pub fn roof_hatch_receipt(&self) -> String {
+        format!("roof {:?} phase {:?}, commander {}", self.roof_hatches.open, self.roof_hatches.phase, self.hatch_open)
     }
 
-    pub(super) fn update_cupola_focus(&mut self, aim: bool, look_dx: f32, dt: f32, renderer: &mut crate::renderer::Renderer) {
+    pub fn cupola_focus_receipt(&self) -> serde_json::Value {
+        serde_json::json!({"index":self.cupola_focus.index,"phase":self.cupola_focus.phase,
+            "gaze":self.cupola_focus.gaze})
+    }
+
+    pub(super) fn update_cupola_focus(&mut self, aim: bool, look: Vec2, dt: f32, renderer: &mut crate::renderer::Renderer) {
         let commander = matches!(self.station, super::Station::Commander) && !self.commander_outside;
         let loader = matches!(self.station, super::Station::Loader) && !self.grab && self.carry_mesh.is_none();
         let available = matches!(self.mode, super::Mode::Tank)
@@ -149,50 +152,23 @@ impl super::Game {
             return;
         }
         let pressed = aim && !self.cupola_focus.prev_aim;
-        let released = !aim && self.cupola_focus.prev_aim;
         self.cupola_focus.prev_aim = aim;
         let model = self.player.turret_model();
-        // RMB toggles. A press at a block arms the step back out on its release; sweeping the
-        // mouse sideways while it is held moves the eye to the next block instead.
-        if self.cupola_focus.latched {
-            if pressed {
-                self.cupola_focus.release_pending = true;
-                self.cupola_focus.sweep = 0.0;
+        // RMB toggles: a click at a block steps back out to the cabin, facing the block.
+        if self.cupola_focus.latched && pressed {
+            self.cupola_focus.latched = false;
+            if let Some(index) = self.cupola_focus.index.filter(|&i| commander && i < CUPOLA_CENTERS.len()) {
+                let to = model.transform_vector3(CUPOLA_CENTERS[index] - COMMANDER_EYE);
+                let tf = self.player.turret_forward();
+                self.head_yaw = (to.x.atan2(-to.z) - tf.x.atan2(-tf.z) + std::f32::consts::PI)
+                    .rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
             }
-            if aim {
-                let index = self.cupola_focus.index.unwrap_or(0);
-                let usable = |i: usize| self.expedition_runtime.is_none() || self.workshop.state.usable(i);
-                if commander && index < CUPOLA_CENTERS.len() && self.cupola_focus.phase >= 1.0 {
-                    self.cupola_focus.sweep += look_dx;
-                    if self.cupola_focus.sweep.abs() >= BLOCK_SWEEP_PIXELS {
-                        let step = self.cupola_focus.sweep.signum() as i32;
-                        self.cupola_focus.sweep = 0.0;
-                        // Past a block the workshop has taken out, to the next usable one.
-                        let mut next = adjacent_block(index, step);
-                        while next != index && !usable(next) { next = adjacent_block(next, step); }
-                        if next != index {
-                            let progress = self.cupola_focus.swing;
-                            self.cupola_focus.from = Some(match self.cupola_focus.from {
-                                Some(from) if progress < 0.5 => from,
-                                _ => index,
-                            });
-                            self.cupola_focus.swing = 0.0;
-                            self.cupola_focus.index = Some(next);
-                            self.cupola_focus.release_pending = false;
-                        }
-                    }
-                }
-            } else if released && self.cupola_focus.release_pending {
-                self.cupola_focus.latched = false;
-                self.cupola_focus.release_pending = false;
-                // Step back out facing the block the eye was at, which may not be the one it took.
-                if let Some(index) = self.cupola_focus.index.filter(|&i| commander && i < CUPOLA_CENTERS.len()) {
-                    let to = model.transform_vector3(CUPOLA_CENTERS[index] - COMMANDER_EYE);
-                    let tf = self.player.turret_forward();
-                    self.head_yaw = (to.x.atan2(-to.z) - tf.x.atan2(-tf.z) + std::f32::consts::PI)
-                        .rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-                }
-            }
+        } else if self.cupola_focus.latched && self.cupola_focus.phase >= 1.0
+            && self.cupola_focus.index.is_some_and(|i| i < CUPOLA_CENTERS.len()) {
+            // At a cupola block the mouse turns the eye within what the block shows.
+            let gaze = &mut self.cupola_focus.gaze;
+            gaze[0] = (gaze[0] + look.x * GAZE_SENS).clamp(-BLOCK_GAZE_LIMIT[0], BLOCK_GAZE_LIMIT[0]);
+            gaze[1] = (gaze[1] - look.y * GAZE_SENS).clamp(-BLOCK_GAZE_LIMIT[1], BLOCK_GAZE_LIMIT[2]);
         }
         if self.cupola_focus.index.is_none() {
             let eye = renderer.camera.pos;
@@ -222,28 +198,18 @@ impl super::Game {
                     self.cupola_focus.index = Some(i);
                     self.cupola_focus.saved_near = Some(renderer.camera.znear);
                     self.cupola_focus.latched = true;
-                    self.cupola_focus.release_pending = false;
-                    self.cupola_focus.sweep = 0.0;
+                    self.cupola_focus.gaze = [0.0; 2];
                 }
             }
         }
         let held = self.cupola_focus.latched && self.cupola_focus.index.is_some();
         self.cupola_focus.phase = super::tiger_driver_visor::advance_lean(self.cupola_focus.phase, held, dt);
-        self.cupola_focus.swing = (self.cupola_focus.swing + dt.max(0.0) / BLOCK_SWING_S).min(1.0);
-        if self.cupola_focus.swing >= 1.0 { self.cupola_focus.from = None; }
         if let Some(index) = self.cupola_focus.index {
             let t = self.cupola_focus.phase;
             let blend = t*t*(3.0-2.0*t);
-            let (mut eye, mut forward, mut fov) = close_view(index);
-            if let Some(from) = self.cupola_focus.from {
-                // The head turns from one block to the next across the ring's steel between them.
-                let s = self.cupola_focus.swing;
-                let s = s*s*(3.0-2.0*s);
-                let (from_eye, from_forward, from_fov) = close_view(from);
-                eye = from_eye.lerp(eye, s);
-                forward = from_forward.lerp(forward, s).normalize();
-                fov = from_fov + (fov - from_fov) * s;
-            }
+            let (eye, forward, fov) = if index < CUPOLA_CENTERS.len() {
+                gazed_view(index, self.cupola_focus.gaze)
+            } else { close_view(index) };
             renderer.camera.pos = renderer.camera.pos.lerp(model.transform_point3(eye), blend);
             let direction = renderer.camera.forward().lerp(model.transform_vector3(forward), blend).normalize();
             renderer.camera.set_forward(direction);
@@ -796,6 +762,48 @@ mod tests {
             "steep views must lose the field to the housing");
     }
 
+    /// The mouse's reach at a block (`BLOCK_GAZE_LIMIT`) keeps the centre of the view inside the
+    /// field the relay admits from the close eye, on every block, out to the corners of its box.
+    #[test]
+    fn gaze_limits_stay_inside_the_admitted_field() {
+        let (_,_,parts,_,_,_)=load_turret().unwrap();
+        let (mut reach_yaw,mut reach_down,mut reach_up)=(f32::INFINITY,f32::INFINITY,f32::INFINITY);
+        for (index,block) in parts.chunks_exact(CUPOLA_PART_COUNT).enumerate().take(CUPOLA_CENTERS.len()) {
+            let stops=relay_stops(block,index).unwrap();
+            let admitted=|gaze:[f32;2]| {
+                let (eye,dir,_)=gazed_view(index,gaze);
+                crate::renderer::relay_trace(&stops,eye,dir).is_some()
+            };
+            // The contiguous reach from the block's own line of sight, each way, in 0.1 degree steps.
+            let reach=|axis:usize,sign:f32| {
+                let mut k=0;
+                while k<600 {
+                    let mut g=[0.0;2];g[axis]=sign*((k+1) as f32*0.1).to_radians();
+                    if !admitted(g) {break;}
+                    k+=1;
+                }
+                (k as f32*0.1).to_radians()
+            };
+            let (l,r,d,u)=(reach(0,-1.0),reach(0,1.0),reach(1,-1.0),reach(1,1.0));
+            println!("block {index}: centre admitted to {:.1} left, {:.1} right, {:.1} down, {:.1} up (deg)",
+                l.to_degrees(),r.to_degrees(),d.to_degrees(),u.to_degrees());
+            reach_yaw=reach_yaw.min(l).min(r);reach_down=reach_down.min(d);reach_up=reach_up.min(u);
+            for sy in [-1.0,0.0,1.0] { for g1 in [-BLOCK_GAZE_LIMIT[1],0.0,BLOCK_GAZE_LIMIT[2]] {
+                let g=[sy*BLOCK_GAZE_LIMIT[0],g1];
+                assert!(admitted(g),"block {index}: gaze {:?} deg leaves the field",
+                    [g[0].to_degrees(),g[1].to_degrees()]);
+            }}
+        }
+        println!("narrowest reach: {:.2} either side, {:.2} down, {:.2} up (deg); limit {:.2}, {:.2}, {:.2}",
+            reach_yaw.to_degrees(),reach_down.to_degrees(),reach_up.to_degrees(),
+            BLOCK_GAZE_LIMIT[0].to_degrees(),BLOCK_GAZE_LIMIT[1].to_degrees(),BLOCK_GAZE_LIMIT[2].to_degrees());
+        let margin=(BLOCK_VIEW_FOV_DEG*0.25).to_radians();
+        for (limit,reach) in BLOCK_GAZE_LIMIT.iter().zip([reach_yaw,reach_down,reach_up]) {
+            assert!(*limit<=reach-margin+1e-3,"the limit keeps the view's centre a quarter frame inside the field");
+            assert!(*limit>0.0,"the eye can look around at a block");
+        }
+    }
+
     #[test]
     fn all_seven_keep_housing_and_register_closed_windows_and_opposed_mirrors() {
         let (_, _, parts, _, _, _) = load_turret().expect("registered cupola source");
@@ -854,7 +862,7 @@ mod tests {
             let block=&optics[i*CUPOLA_PART_COUNT..(i+1)*CUPOLA_PART_COUNT];
             let (eye,forward,fov)=close_view(i);
             let right=forward.cross(Vec3::Y).normalize();let up=right.cross(forward).normalize();
-            let mut clear=0;
+            let (mut clear,mut roof)=(0,0);
             for y in [-1.0,-0.5,0.0,0.5,1.0] {
                 for x in [-1.0,-0.5,0.0,0.5,1.0] {
                     let d=(forward+(right*x*(16.0/9.0)+up*y)*(fov*0.5).tan()).normalize();
@@ -866,10 +874,14 @@ mod tests {
                     assert!((back-eye).cross(d).length()<0.0001,"reverse ray missed eye line");
                     let blocked=first_hit(&parts,exit,outgoing).is_some();
                     if x==0.0 && y==0.0 {assert!(!blocked,"cupola {i} held-eye center meets an exterior fixture");}
-                    if !blocked {clear+=1;}
+                    // The frame's lower half looks down past the horizon (since 2026-11-09) and
+                    // may see the tank's own roof; the upper half must be clear of it.
+                    if y>=0.0 && !blocked {clear+=1;}
+                    if y<0.0 && blocked {roof+=1;}
                 }
             }
-            assert_eq!(clear,25,"cupola {i} source field still obstructed after roof-fitting correction");
+            println!("cupola {i}: upper half {clear}/15 clear, lower half {roof}/10 on the tank's own roof");
+            assert_eq!(clear,15,"cupola {i} source field still obstructed after roof-fitting correction");
         }
     }
 

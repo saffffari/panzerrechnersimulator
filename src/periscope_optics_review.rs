@@ -5,9 +5,12 @@
 //! KESSEL_RENDERER is unset), the one the range and the demo launcher run. Each still prints the
 //! eye's angle off the block's inner-window normal so the vignetting can be read against
 //! `relay_stop_chain_matches_the_complete_housing`.
-//! By day it first works the commander's RMB through the game itself (`focus_check`): one press
-//! takes the eye to the front block and keeps it there, a held press swept sideways steps to the
-//! next block on the ring, and a plain press steps back out facing that block; PASS/FAIL.
+//! By day it first works the commander's RMB through the game itself (`focus_check`): one click
+//! takes the eye to the front block and keeps it there, the mouse turns the eye within the block's
+//! field up to its limit, and a second click steps back out facing that block; PASS/FAIL.
+//! Each light also takes the driver's seat at the visor (`_driver`, and `_driver_lean_lamps`: leaning
+//! in with the cabin lamps lit). `KESSEL_PERISCOPE_FLICKER=N` adds N played frames per view for a
+//! frame-to-frame comparison.
 use crate::game::{self, tiger_periscopes};
 use crate::{world, DayPhase, TankInput};
 use glam::Vec3;
@@ -22,7 +25,18 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     for night in [false, true] {
         let light = if night { "night_lamps" } else { "day" };
         if std::env::var("KESSEL_PERISCOPE_VIEWS").is_ok_and(|o| !o.contains(light)) { continue; }
-        let (mut r, mut g) = game::Game::build_act(&device, &queue, night, &world::act(0))?;
+        // `KESSEL_PERISCOPE_CANYON=1`: the Canyon v2 course the demo launcher plays
+        // (`KESSEL_CANYON_MANIFEST`), built as start_canyon builds it, instead of the arena.
+        let canyon = std::env::var_os("KESSEL_PERISCOPE_CANYON").is_some();
+        let (mut r, mut g) = if canyon {
+            let path = std::env::var_os(crate::canyon::MANIFEST_ENV).map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(crate::canyon::V2_MANIFEST));
+            anyhow::ensure!(crate::act_manifest::select_runtime_manifest(Some(path))? == Some(1),
+                "the canyon course is an Act One map");
+            let (r, mut g) = game::Game::build_playtest_act(&device, &queue, night, &world::act(1))?;
+            g.enable_canyon_course()?;
+            (r, g)
+        } else { game::Game::build_act(&device, &queue, night, &world::act(0))? };
         g.mute_audio();
         g.debug_banish_enemies();
         g.set_cabin_lights(night);
@@ -36,6 +50,9 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         r.weather_shelter = 1.0;
         if !night && std::env::var("KESSEL_PERISCOPE_VIEWS").map_or(true, |o| o.contains("focus")) {
             focus_check(&mut g, &mut r, &device, &queue, prefix)?;
+            if let Some(n) = std::env::var("KESSEL_PERISCOPE_FLICKER").ok().and_then(|v| v.parse().ok()) {
+                flicker_frames(&mut g, &mut r, &device, &queue, prefix, n)?;
+            }
         }
         let tm = g.player.turret_model();
         let block = r.raster_optic_entries()[0].map(|c| tm.inverse().transform_point3(c));
@@ -85,62 +102,120 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
             println!("[periscope-optics] {light}_{tag}: eye {:.3} m from the glass, {angle:.0} deg off its axis",
                 eye.distance(block_centre));
         }
+        // The driver's own eye at the visor, as the game places it (its glass and the cabin lamps
+        // reflected in it).
+        // `_driver_lean_lamps`: leaning in to the visor (RMB held) with the cabin lamps lit by day.
+        for (tag, lean, lamps) in [("driver", false, night), ("driver_lean_lamps", true, true)] {
+            if !only.as_ref().map_or(true, |o| o.split(',').any(|v| v == format!("{light}_{tag}"))) { continue; }
+            g.station = game::Station::Driver;
+            g.set_cabin_lights(lamps);
+            for _ in 0..60 { g.update(&TankInput { aim: lean, ..Default::default() }, 1.0 / 60.0, &mut r); }
+            r.set_active_view(4);
+            r.reset_history();
+            let warmup = crate::converge_headless_screenshot(&mut r, &device, &queue, 24)?;
+            anyhow::ensure!(warmup.stable, "{light} {tag} exposure did not settle");
+            r.render_to_png(&device, &queue, &format!("{prefix}_{light}_{tag}.png"), r.iw * 3, r.ih * 3)?;
+            println!("[periscope-optics] {light}_{tag}: the driver's seat at the visor; hatches {}",
+                g.roof_hatch_receipt());
+            g.station = game::Station::Commander;
+            g.set_cabin_lights(night);
+        }
     }
     Ok(())
 }
 
-/// Drive the commander's RMB through `Game::update` and assert the toggle and the block step.
+/// Drive the commander's RMB and mouse through `Game::update`: the toggle, and the eye turning
+/// within the block's field while zoomed.
 fn focus_check(g: &mut game::Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device,
     queue: &wgpu::Queue, prefix: &str) -> anyhow::Result<()> {
     let dt = 1.0 / 60.0;
-    let mut frames = |g: &mut game::Game, r: &mut crate::renderer::Renderer, n: usize, aim: bool, dx: f32| {
-        for _ in 0..n { g.update(&TankInput { aim, look_dx: dx, ..Default::default() }, dt, r); }
+    let mut frames = |g: &mut game::Game, r: &mut crate::renderer::Renderer, n: usize, aim: bool, dx: f32, dy: f32| {
+        for _ in 0..n { g.update(&TankInput { aim, look_dx: dx, look_dy: dy, ..Default::default() }, dt, r); }
     };
     let state = |g: &game::Game| {
         let f = g.cupola_focus_receipt();
-        (f["index"].as_u64().map(|i| i as usize), f["phase"].as_f64().unwrap_or(0.0) as f32)
+        let gaze = [f["gaze"][0].as_f64().unwrap_or(0.0) as f32, f["gaze"][1].as_f64().unwrap_or(0.0) as f32];
+        (f["index"].as_u64().map(|i| i as usize), f["phase"].as_f64().unwrap_or(0.0) as f32, gaze)
     };
-    frames(g, r, 10, false, 0.0);
+    let limit = tiger_periscopes::BLOCK_GAZE_LIMIT;
+    frames(g, r, 10, false, 0.0, 0.0);
     // The head faces the front block (index 0) from the seat by default.
-    frames(g, r, 1, true, 0.0);
-    frames(g, r, 60, false, 0.0);
-    let (index, phase) = state(g);
+    frames(g, r, 1, true, 0.0, 0.0);
+    frames(g, r, 60, false, 0.0, 0.0);
+    let (index, phase, _) = state(g);
     let toggled_in = index == Some(0) && phase >= 1.0;
     println!("[periscope-optics] focus: one RMB click -> block {index:?}, phase {phase:.2} ({})",
         if toggled_in { "PASS: stays at the block after release" } else { "FAIL" });
-    // Held RMB, mouse swept right 200 px over five frames: one step to the right-hand neighbour.
-    let right = tiger_periscopes::adjacent_block(0, 1);
-    frames(g, r, 5, true, 40.0);
-    frames(g, r, 30, true, 0.0);
-    frames(g, r, 30, false, 0.0);
-    let (index, phase) = state(g);
-    let stepped = index == Some(right) && phase >= 1.0;
-    println!("[periscope-optics] focus: held RMB swept right -> block {index:?} (expected {right}), phase {phase:.2} ({})",
-        if stepped { "PASS: stepped and stays zoomed" } else { "FAIL" });
     r.set_active_view(4);
     r.reset_history();
     crate::converge_headless_screenshot(r, device, queue, 24)?;
-    r.render_to_png(device, queue, &format!("{prefix}_day_focus_stepped_right.png"), r.iw * 3, r.ih * 3)?;
-    // Swept back left past the front block: the left-hand neighbour of block 0.
-    let left = tiger_periscopes::adjacent_block(0, -1);
-    frames(g, r, 1, true, 0.0);
-    frames(g, r, 10, true, -30.0);
-    frames(g, r, 20, true, 0.0);
-    frames(g, r, 30, false, 0.0);
-    let (index, _) = state(g);
-    let back = index == Some(left);
-    println!("[periscope-optics] focus: held RMB swept left 300 px -> block {index:?} (expected {left}, two steps) ({})",
-        if back { "PASS" } else { "FAIL" });
-    // A plain click while at a block steps back out, the head left facing that block.
-    frames(g, r, 1, true, 0.0);
-    frames(g, r, 60, false, 0.0);
-    let (index, phase) = state(g);
+    r.render_to_png(device, queue, &format!("{prefix}_day_focus_centre.png"), r.iw * 3, r.ih * 3)?;
+    // The mouse moved right and down: the eye turns that way at the same block.
+    frames(g, r, 5, false, 20.0, 10.0);
+    let (index, _, gaze) = state(g);
+    let turned = index == Some(0) && gaze[0] > 0.0 && gaze[1] < 0.0;
+    println!("[periscope-optics] focus: mouse right/down -> block {index:?}, gaze {:.1}/{:.1} deg ({})",
+        gaze[0].to_degrees(), gaze[1].to_degrees(), if turned { "PASS: looks within the block" } else { "FAIL" });
+    // Pushed far past the field: the eye stops at the block's limit, still at block 0.
+    frames(g, r, 10, false, 400.0, -400.0);
+    let (index, _, gaze) = state(g);
+    let clamped = index == Some(0) && (gaze[0] - limit[0]).abs() < 1e-5 && (gaze[1] - limit[2]).abs() < 1e-5;
+    println!("[periscope-optics] focus: pushed far right/up -> block {index:?}, gaze {:.1}/{:.1} deg, limit {:.1}/{:.1} ({})",
+        gaze[0].to_degrees(), gaze[1].to_degrees(), limit[0].to_degrees(), limit[2].to_degrees(),
+        if clamped { "PASS: held at the edge of the block's field" } else { "FAIL" });
+    r.set_active_view(4);
+    r.reset_history();
+    crate::converge_headless_screenshot(r, device, queue, 24)?;
+    r.render_to_png(device, queue, &format!("{prefix}_day_focus_edge_right_up.png"), r.iw * 3, r.ih * 3)?;
+    // A second click steps back out, the head left facing the block.
+    frames(g, r, 1, true, 0.0, 0.0);
+    frames(g, r, 60, false, 0.0, 0.0);
+    let (index, phase, _) = state(g);
     let tm = g.player.turret_model();
-    let to = (tm.transform_point3(tiger_periscopes::CUPOLA_CENTERS[left]) - r.camera.pos).normalize();
+    let to = (tm.transform_point3(tiger_periscopes::CUPOLA_CENTERS[0]) - r.camera.pos).normalize();
     let facing = to.dot(r.camera.forward());
     let out = index.is_none() && phase <= 0.0 && facing > 0.95;
-    println!("[periscope-optics] focus: second click -> block {index:?}, phase {phase:.2}, facing block {left} {facing:.3} ({})",
+    println!("[periscope-optics] focus: second click -> block {index:?}, phase {phase:.2}, facing block 0 {facing:.3} ({})",
         if out { "PASS: zoomed out, facing the block" } else { "FAIL" });
-    anyhow::ensure!(toggled_in && stepped && back && out, "cupola focus toggle check failed");
+    anyhow::ensure!(toggled_in && turned && clamped && out, "cupola focus check failed");
+    Ok(())
+}
+
+/// KESSEL_PERISCOPE_FLICKER=N: N consecutive played frames (native grid) from the commander's seat
+/// facing the front block with the engine idling, then N driving, then N zoomed into the block,
+/// then N zoomed in while pulling away, then N zoomed in at speed after five seconds at full
+/// throttle (`_held_fast`). `KESSEL_PERISCOPE_CANYON=1` runs it all on the Canyon v2 course.
+/// for a frame-to-frame comparison of the block (`{prefix}_flicker_{seat,drive,held}_NNN.png`).
+fn flicker_frames(g: &mut game::Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device,
+    queue: &wgpu::Queue, prefix: &str, n: usize) -> anyhow::Result<()> {
+    let dt = 1.0 / 60.0;
+    for (tag, drive, click) in [("seat", 0.0, false), ("drive", 0.5, false), ("held", 0.0, true),
+        ("held_drive", 1.0, false), ("held_fast", 1.0, false)] {
+        if tag == "held_fast" {
+            // Zoomed in at speed: out of the block, five seconds at full throttle, back in.
+            g.update(&TankInput { aim: true, drive, ..Default::default() }, dt, r);
+            for _ in 0..300 { g.update(&TankInput { drive, ..Default::default() }, dt, r); }
+            g.update(&TankInput { aim: true, drive, ..Default::default() }, dt, r);
+            for _ in 0..30 { g.update(&TankInput { drive, ..Default::default() }, dt, r); }
+        }
+        if click {
+            g.update(&TankInput { aim: true, ..Default::default() }, dt, r);
+            for _ in 0..60 { g.update(&TankInput::default(), dt, r); }
+        }
+        for _ in 0..30 { g.update(&TankInput { drive, ..Default::default() }, dt, r); }
+        for i in 0..n {
+            g.update(&TankInput { drive, ..Default::default() }, dt, r);
+            r.render_to_png(device, queue, &format!("{prefix}_flicker_{tag}_{i:03}.png"), r.iw, r.ih)?;
+            let work = r.raster_optic_work_receipt();
+            let port0 = work["ports"].as_array().and_then(|p| p.iter().find(|v| v["port"] == 0)).cloned();
+            let ports: Vec<String> = work["ports"].as_array().map_or(Vec::new(), |p| p.iter()
+                .map(|v| format!("{}{}", v["port"], if v["refresh"] == true { "" } else { "s" })).collect());
+            println!("[periscope-optics] flicker {tag} {i:03}: speed {:.1} m/s camera {:?} port0 age {} extent {} fov {} ports [{}]",
+                g.player.speed, r.camera.pos.to_array(),
+                port0.as_ref().map_or(serde_json::Value::Null, |p| p["capture_age_frames"].clone()),
+                port0.as_ref().map_or(serde_json::Value::Null, |p| p["native_extent"].clone()),
+                port0.as_ref().map_or(serde_json::Value::Null, |p| p["capture_fov_y_deg"].clone()), ports.join(" "));
+        }
+    }
     Ok(())
 }

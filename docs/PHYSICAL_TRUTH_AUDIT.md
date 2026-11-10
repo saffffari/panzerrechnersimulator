@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-09 (vision blocks: the grey veil off the cupola glass, relay lenses opened to the housing); 2026-11-03 (vision blocks: the relay panes' finite stops, glass on the periscopes, side slits and visor); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-10 (vision ports: no sway at a held port, no cover-map sky in cabin reflections); 2026-11-09 (vision blocks: the grey veil off the cupola glass, relay lenses opened to the housing; the zoomed view level and 20 degrees tall with mouse look; glass reflections traced, no scratches); 2026-11-03 (vision blocks: the relay panes' finite stops, glass on the periscopes, side slits and visor); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -74,6 +74,35 @@ with and without `KESSEL_FX_LEGACY=1`; the kill bench (`gfxbench` with `KESSEL_B
   enters through it (named, open).
 
 
+## Vision ports: periscope flicker and zoomed artefacts while moving, 2026-11-10 (`src/game.rs` head sway, `shaders/rm_glass.wgsl` `pane_cabin_sky`)
+
+The owner, 10 November: "flickering on the periscopes still occuring and zooming in while moving
+lots of crazy artifacts happening". Reproduced on the Canyon v2 course at the launcher's settings
+(`periscope-optics` with `KESSEL_PERISCOPE_CANYON=1` and `KESSEL_PERISCOPE_FLICKER=40`: 40 played
+frames from the commander's seat idling and driving, zoomed while pulling away and at 6 m/s). The
+measure is one-frame pops: pixels more than 20 levels brighter or darker than both neighbouring
+frames.
+- Zoomed while moving: the head-sway offset (the head lagging the seat's acceleration) and the
+  crush shudder were added to the camera after the cupola focus had set the eye 25 mm from the
+  block's glass, so the eye wandered centimetres through and around the block every frame: the
+  relayed field, the housing's edge and the whole exterior jumped. An eye held at a vision port is
+  now braced at the block, as the gunner's eye at his browpad already was; the block still rides the
+  sprung turret with the eye on it. At 6 m/s, pixels changing by more than 25 levels from frame to
+  frame: 27,341 -> 1,678; pops 7,315 -> 1,428 a frame. `KESSEL_PORT_SWAY=1` keeps the sway.
+- Flicker from the seat: an off-screen cabin surface in a block's reflection took sky by the
+  compartment's cover map, one compare on 19 cm world texels; as the tank moved the answer flipped
+  per frame. Named approximation now: such a surface takes no sky (`pane_cabin_sky`), so sky through
+  an open hatch no longer lights a reflected, off-screen cabin surface; surfaces the frame shows keep
+  their own lit radiance. Seat while driving: 756 -> 292 pops a frame (268 with no glass drawn);
+  pixels popping in more than a fifth of the frames 1,098 -> 242. `KESSEL_GLASS_CABIN_SKY=1` asks the
+  map as before.
+- Tried and not kept (no measurable change): the near-field sky-visibility footprint moved ahead of
+  a held port; relay layers at the frame's grid (848x480) instead of 640x360.
+- Left: the zoomed exterior's own aliasing at 640x360 (horizon trees and roofs crawl as the tank
+  moves; the relay layer is sampled nearest), and one-pixel pops at the blocks' edges.
+- Stills: `cupola-blocks-20261109-ports_20261110_canyon_{held_fast,drive}_frames20-23_{before,after}.png`
+  (four consecutive frames, 5120x2880 nearest) and the side-by-side clips.
+
 ## Vision blocks: the grey veil off the cupola glass, wider relay lenses, 2026-11-09 (`shaders/rm_glass.wgsl` `pane_offscreen`, `src/tiger_periscopes.rs` `RELAY_LENS_HALF_DEPTH_M`)
 
 The owner: the cupola blocks are "too opaque", "mostly glass surface" head-on; he wants more of
@@ -98,12 +127,50 @@ each block to be the outside, a bit of black border kept, the glass's character 
   objective window is 3.5 cm tall against the inner window's 4.7 cm, so no unit-magnification
   relay admits more than about 74% of the pane's height; the rest is housing, drawn black. The
   relay prescription remains the declared reconstruction.
-- Not changed: the relay's image, parallax, transmittance and grooves; side slits, visor, loader.
-- Controls (no physics): RMB at a block is a toggle; held RMB swept sideways steps the eye to
-  the neighbouring cupola block (0.28 s head move across the ring's steel between them).
-- Gates: `relay_stop_chain_matches_the_complete_housing`, `every_raymarch_shader_validates_with_and_without_ray_queries`,
-  `raster_optics` tests, `periscope-optics PREFIX` (now opens with the focus check: click in,
-  sweep right and left, click out, PASS/FAIL, and the `_day_focus_stepped_right` still).
+- Not changed by the veil and lens work: the relay's image, parallax and transmittance. The later
+  items below (traced reflections, scratches) apply to every pane, the visor and slits included.
+- Controls (no physics): RMB at a block is a toggle. The held-RMB sweep to the next block was
+  taken out the same night at the owner's word ("no more rmb switch block"); instead the mouse
+  turns the eye at the block (`gazed_view`: the eye stays put, its line of sight turns), clamped
+  to `BLOCK_GAZE_LIMIT` (33 degrees either side, 16.5 down, 5.5 up): the centre of the view stays
+  a quarter frame inside the field the close eye's centre ray is admitted over by every block's
+  stop chain (measured by `gaze_limits_stay_inside_the_admitted_field`: 38.4 either side, 21.7
+  below the horizon, 10.7 above; it carries the stop chain's named 0.094% disagreement).
+- The zoomed block view (a display crop, not a magnification) was 14 degrees tall aimed 3 up,
+  so it showed 4 below to 10 above the horizon of that 32-degree field (owner: "they need more
+  vertical visibility"). It is now 20 degrees tall aimed level (10 either way, inside the
+  field), the eye still 25 mm back along the block's 3-degree eye axis; the mouse reaches the
+  rest. Below about 6 degrees much of the field is the tank's own roof and deck (the source
+  roof test now holds the frame's upper half clear and reports how much of the lower half meets
+  the roof: up to 8 of 10 samples on one block).
+- Flicker (owner, after the merge: "now the ports flicker"): measured over 40 played frames
+  (`periscope-optics` with `KESSEL_PERISCOPE_FLICKER=N`, the second temporal difference per
+  pixel). With the glass pass skipped the commander's seat showed none; the glass's depth-buffer
+  reflection march decided hit or miss per frame from a few samples and flipped as the seat
+  swayed by fractions of a millimetre. With ray queries the glass now traces every reflected ray
+  (`pane_offscreen`, the lit frame where the frame shows the hit); the march is the path without
+  them. Pixels over 25 levels: seat 168 -> 46, driving 684 -> 432. Left: a one-pixel column at
+  the left block's housing edge where the glass face and the frame share a depth (LessEqual, no
+  bias), and the zoomed exterior's 2-pixel steps (the relay layer is sampled at about half the
+  frame's grid while the tank settles).
+- A reflected ray from a pane inside the crew compartment that meets nothing now sees the sky only
+  as far as the compartment's cover map opens the pane (as `rm_reflect.wgsl` does), not the whole
+  sky. At the driver's visor this changed nothing measurable: there the cover map reads open with
+  every hatch closed (driver, loader, radio operator and commander lids shut in the review), an
+  open question for the cover map. The pale band under the driver's slit is the glass block's
+  own faces (its 97 mm edges) seen at grazing incidence: their Fresnel reflection is near total
+  and the reflected rays leave nearly along the line of sight out through the slit to the sky.
+  That is the law for exposed polished faces; whether the block's edges should be exposed (they
+  sit in the holder on the real part) is a model question left open.
+- Scratches off (owner: "scratches on the glass should be removed they are too noticeable"):
+  `glass_scratches.wgsl` returns no grooves unless `KESSEL_GLASS_SCRATCHES=1` (review), for both
+  the relay panes and the raymarch glass pass. Grime is a separate load (none at the start, laid
+  by firing, slush and snow, cleared by a wipe) and is unchanged.
+- Gates: `relay_stop_chain_matches_the_complete_housing`, `gaze_limits_stay_inside_the_admitted_field`,
+  `cupola_full_fields_are_reciprocal_and_clear_the_fitted_source_roof_cap`,
+  `every_raymarch_shader_validates_with_and_without_ray_queries`, `raster_optics` tests,
+  `periscope-optics PREFIX` (opens with the focus check: click in, look right/down, push to the
+  limit, click out, PASS/FAIL, and the `_day_focus_centre` / `_day_focus_edge_right_up` stills).
 
 ## Vision blocks: the relay panes' finite stops, and glass on every vision block, 2026-11-03 (`shaders/raster_optics.wgsl` `relay_trace`, `src/tiger_periscopes.rs` `relay_stops`, `src/tiger_side_ports.rs` `slab_thickness`, `shaders/rm_glass.wgsl`, `shaders/glass_scratches.wgsl`)
 
