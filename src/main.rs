@@ -11946,6 +11946,9 @@ const KIA_BLACK_SECONDS: f32 = 2.0;
 // takes ~15 s at 60 fps, so the showroom Tiger drifts around to show every side without hurrying.
 const MENU_SPIN_RATE: f32 = 0.007;
 
+/// Left edge of the in-play text lines (hint, crew line, crew-control status), 0..1 of the frame.
+const HUD_TEXT_LEFT: f32 = 0.025;
+
 // Act title-card hold (seconds): the between-acts/restart card that doubles as the loading screen.
 const ACT_CARD_DUR: f32 = 4.0;
 
@@ -14549,8 +14552,10 @@ impl WindowState {
             let pulse = 0.75 + 0.25 * (self.renderer.time * 9.0).sin();
             pixel_font::draw_centered(&mut self.renderer, prompt, 0.5, 0.895, 2, [1.0, 0.55, 0.18, pulse]);
         }
-        // What the outlined thing is and which button works it: small, bottom centre, in the
-        // outline's own colour (owner, 2026-10-03; play is otherwise wordless).
+        // What the outlined thing is and which button works it: small, in the outline's own
+        // colour (owner, 2026-10-03; play is otherwise wordless). The hint, the crew's line and
+        // the crew-control status stand at the bottom left since 9 November 2026 (the owner,
+        // 1 November: "move these text popups to the bottom left"): out of the middle of the view.
         // Mission guidance (src/mission.rs): the order sheet while it is held up and the net's
         // lines, display-resolution text outside the crush like the menus.
         if let Some(overlay) = self.game.mission_overlay() {
@@ -14571,16 +14576,16 @@ impl WindowState {
         let interaction_label = camp_hint.clone().or_else(|| self.game.hover_label_text()
             .map(|label| interaction_hint(&label, self.game.interact_kind())));
         if let Some(hint) = interaction_label {
-            pixel_font::draw_centered(&mut self.renderer, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
+            pixel_font::draw_left(&mut self.renderer, &hint, HUD_TEXT_LEFT, 0.94, 1, HOVER_OUTLINE_RGBA);
         }
         // The crew's intercom: one terse line, a few seconds, above the interaction hint
         // (solo with a living crew only; KESSEL_INTERCOM=0 silences it).
         if let Some(line) = self.game.intercom_line() {
             let line = line.to_owned();
-            pixel_font::draw_centered(&mut self.renderer, &line, 0.5, 0.865, 1, [0.80, 0.84, 0.70, 0.80]);
+            pixel_font::draw_left(&mut self.renderer, &line, HUD_TEXT_LEFT, 0.865, 1, [0.80, 0.84, 0.70, 0.80]);
         }
         if let Some(status) = self.game.crew_control_status() {
-            pixel_font::draw_centered(&mut self.renderer, &status, 0.5, 0.905, 1, [0.88, 0.88, 0.88, 0.85]);
+            pixel_font::draw_left(&mut self.renderer, &status, HUD_TEXT_LEFT, 0.905, 1, [0.88, 0.88, 0.88, 0.85]);
         }
         // A dot where the crosshair rests on something the hands can use.
         if (camp_hint.is_some() || self.game.hover_label_text().is_some()) && !self.game.sidearm_is_drawn() {

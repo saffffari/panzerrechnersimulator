@@ -152,6 +152,14 @@ pub fn draw_centered(r: &mut Renderer, text: &str, center_x: f32, top_y: f32, sc
     }
 }
 
+/// Draw `text` with its left edge at `left_x` and its top at `top_y` (both 0..1 of the frame):
+/// `draw_centered`'s type and shadow, left-aligned.
+pub fn draw_left(r: &mut Renderer, text: &str, left_x: f32, top_y: f32, scale: u32, color: [f32; 4]) {
+    let dot = (dot_pixels(r.ih) * scale.max(1)) as f32;
+    let center = left_x + width_dots(text) as f32 * dot * 0.5 / r.iw.max(1) as f32;
+    draw_centered(r, text, center, top_y, scale, color);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
