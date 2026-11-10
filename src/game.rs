@@ -9064,6 +9064,14 @@ const HOT_FRAGMENT_WHIZZ_RADIUS: f32 = 0.62;
 /// Space the two little metal contacts apart so they remain individual dings after cabin reverb.
 const HOT_FRAGMENT_AUDIO_CADENCE: f32 = 0.22;
 const HOT_FRAGMENT_WHIZZ_CADENCE: f32 = 0.12;
+/// Enemy crews' sight of a tank (`Game::enemy_clear_sight_point`): the range inside which its
+/// other points are tried when the centre is masked, and the detection rate with only a part in view.
+const SIGHT_POINTS_M: f32 = 600.0;
+const PART_IN_VIEW_RATE: f32 = 0.6;
+/// Inside this range a running Tiger is noticed by sound alone at this rate (meter units/s; one
+/// unit is a sighting): about two seconds. Authored; a T-34's crew is deaf to much, not to this.
+const HEARD_ENGINE_M: f32 = 60.0;
+const HEARD_ENGINE_RATE: f32 = 0.5;
 const CARRY_WALK_SLOW: f32 = 0.72; // walk-speed factor while lugging a round
 const N_CASING: usize = N_LOOSE; // one persistent case for every initially represented cartridge
 /// Settled brass aboard wakes when the turret tilts this far from the attitude it settled at
@@ -29355,6 +29363,9 @@ impl Game {
                         (true, None) => continue,  // foe team wiped — hold
                         _ => self.enemy_threat_center(i), // platoon mode: the nearest Tiger; // the Tiger — or the MAN, when dismounted
                     }};
+                    // With the centre masked (a trunk, a crate), lay on a part of the tank that is clear.
+                    let target = if self.brawl || target.distance_squared(self.enemy_threat_center(i)) > 16.0 { target }
+                        else { self.enemy_clear_sight_point(i, self.enemies[i].muzzle().0).map_or(target, |(point, _)| point) };
                     let laid = lay(&mut self.enemies[i], target);
                     // No snap shot on first sight: the crew needs its seconds to lay on.
                     if self.enemy_track_age.len() <= i { self.enemy_track_age.resize(i + 1, 0.0); }
@@ -29400,7 +29411,7 @@ impl Game {
             };
         }
         if self.stealth.spotted[i] && self.stealth.meters[i] >= 0.9
-            && self.optical_los_clear(self.enemies[i].center(), self.enemy_threat_center(i)) {
+            && self.enemy_clear_sight_point(i, self.enemies[i].center()).is_some() {
             return AiMode::Track;
         }
         match self.stealth.platoon_state(i) {
@@ -29558,7 +29569,12 @@ impl Game {
             // Line of sight: terrain (a rise, a hull-down position) between the tank and the player
             // kills the accrual — cover is camouflage.
             let contrast=if r>0.0 {self.weather_view.transmittance(ecenter,player_pos)}else{0.0};
-            rate[i] = if contrast>=crate::weather_visibility::RECOGNITION_CONTRAST && self.los_clear(ecenter, player_pos) {
+            // A part of the tank in view is found more slowly than the whole of it.
+            let in_view = if contrast>=crate::weather_visibility::RECOGNITION_CONTRAST {
+                self.enemy_clear_sight_point(i, ecenter).map(|(_, whole)| if whole { 1.0 } else { PART_IN_VIEW_RATE })
+            } else { None };
+            rate[i] = if let Some(in_view) = in_view {
+                let r = r * in_view;
                 let skill = f32::from(self.enemy_skill.get(i).copied().unwrap_or(42)) / 100.0;
                 // A crew that knows where to look (a flash, a sighting or a radio fix on the spot)
                 // picks the Tiger out sooner than one sweeping the whole front.
@@ -29568,6 +29584,12 @@ impl Game {
             } else {
                 0.0
             };
+            // A running Tiger this close is heard through a T-34's armour whichever way the crew
+            // is looking and whatever stands between (an authored distance, not a sound model).
+            if matches!(threat.map_or(recovery_threat::Kind::Tiger,|t|t.kind), recovery_threat::Kind::Tiger)
+                && self.engine_running() && dist < HEARD_ENGINE_M {
+                rate[i] = rate[i].max(HEARD_ENGINE_RATE);
+            }
         }
 
         if let Some(encounter) = &mut self.winter_encounter {
@@ -29612,6 +29634,28 @@ impl Game {
     /// both the optical and ballistic lane together.
     fn optical_los_clear(&self,from:Vec3,to:Vec3)->bool {
         self.weather_view.recognizable(from,to) && self.los_clear(from,to)
+    }
+
+    /// The points a crew can pick the tank enemy `i` engages out by: its centre, its turret roof,
+    /// its bow and stern, its two sides. For a man on foot or anything that is not a tank, the
+    /// centre alone. A sightline was one line to the centre, so one tree trunk or crate on that
+    /// line hid a 57-tonne tank at 30 m: on the wooded Canyon the T-34s sat beside the Tiger
+    /// unaware for five minutes (play record demo-20261110-014757; the owner: "t34 on canyon wont
+    /// shoot you if you are right in front of them").
+    fn enemy_sight_points(&self, i: usize) -> ([Vec3; 6], usize) {
+        let centre = self.enemy_threat_center(i);
+        let Some(tank) = self.enemy_threat_tank(i) else { return ([centre; 6], 1) };
+        let (f, r) = (tank.forward(), tank.right());
+        ([centre, centre + Vec3::Y * 1.0, centre + f * 2.6, centre - f * 2.6, centre + r * 1.5, centre - r * 1.5], 6)
+    }
+
+    /// The first of `enemy_sight_points` with a clear optical line from `from`, the centre first,
+    /// and whether it was the centre. The other points are tried only inside `SIGHT_POINTS_M`.
+    fn enemy_clear_sight_point(&self, i: usize, from: Vec3) -> Option<(Vec3, bool)> {
+        let (points, n) = self.enemy_sight_points(i);
+        if self.optical_los_clear(from, points[0]) { return Some((points[0], true)); }
+        if from.distance(points[0]) > SIGHT_POINTS_M { return None; }
+        points[1..n].iter().copied().find(|&p| self.optical_los_clear(from, p)).map(|p| (p, false))
     }
 
     fn los_clear(&self, from: Vec3, to: Vec3) -> bool {
