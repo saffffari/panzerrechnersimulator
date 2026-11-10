@@ -139,7 +139,10 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
 /// The actual instrument backlight's linear spectrum, shared by both rendering backends.
 /// This changes only the TPZ source, not the independent indicator lamps or exposure.
 // 2 November 2026: paler and dimmer (the owner: "the dial can be less orange but dimmer").
-pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.50, 0.14);
+// 9 November 2026: deep orange again, sRGB about (255, 134, 38), a little redder than the dome
+// lamp (the owner: "that light dial ive asked 1000000 times to make more orange"); the
+// brightness is unchanged. The paler one was linear (1.0, 0.50, 0.14).
+pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.24, 0.02);
 /// Ten percent below the 2026-10-30 output, plus the deeper-orange spectrum above.
 /// This is an owner-directed appearance calibration, not measured period photometry.
 pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.018 * CABIN_PRACTICAL_POWER_SCALE;
