@@ -225,9 +225,10 @@ fn fireball_sample(p: Plume, w: vec3<f32>, t: f32) -> Sample {
     // Its core peaks near 1,550 K (deep orange-yellow), the rolling surface 1,150-1,350 K orange.
     let kelvin = 900.0 + 650.0 * min(heat, 1.0) * (0.7 + 0.3 * (1.0 - smoothstep(0.0, 0.8, d)));
     if (heat > 0.02 && kelvin > 950.0) {
+        // Half its surface shows burning gas, half the soot rolling over it (sooty propellant fire).
         let k = 2.5 * smoothstep(950.0, 1200.0, kelvin);
         out.sigma_t += k;
-        out.emit += k * planck_radiance(kelvin);
+        out.emit += 0.5 * k * planck_radiance(kelvin);
     }
     // Stem: a cook-off's thin column of smoke back down to the hull while the cloud rises.
     if (p.d.y > 0.0) {
