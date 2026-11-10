@@ -87,6 +87,9 @@ pub(super) struct Cookoff {
     /// When the compartment last flashed and each opening last vented (the five hatches, then
     /// the open ring), on the cook-off clock (`POP_INTERVAL_S`).
     popped_s: [Option<f32>; 7],
+    /// With the generated takes on: the cook-off clock before which no further BR-25 / DS-10 take
+    /// starts (each take is eight seconds of rounds going, not one round).
+    take_next_s: Option<f32>,
 }
 
 /// The thrown turret's source, filled by a worker thread at start (it takes about two seconds).
@@ -428,7 +431,14 @@ impl Game {
     /// crew inside die in it (the compartment's gas at the propellant's flame: named, every man
     /// inside, not solved per body); the blast that throws them is the charge's TNT equivalent.
     fn cookoff_first_bang(&mut self, id: u32, at: Vec3, cause: cabin_heat::Cause, tnt_kg: f32) {
-        self.schedule_cookoff_bang(crate::audio::Sfx::KillExplosion, at, tnt_kg);
+        // With KESSEL_SFX_GENERATED=1: heard from far off (700 m and more) the magazine take DS-11
+        // is the bang's voice at its blast emission; near, the propellant's roar BR-24 joins it.
+        let far = at.distance(self.threat_center()) >= DISTANT_RECORDING_M;
+        let generated = crate::sfx_rows::generated_switch();
+        let seed = self.kill_tick ^ id;
+        let buf = if generated && far { self.cookoff_take_stereo("DS-11", seed) } else { None };
+        self.schedule_cookoff_bang_with(crate::audio::Sfx::KillExplosion, at, tnt_kg, buf);
+        if generated && !far { self.sfx_row_forced("BR-24", at, seed); }
         self.spawn_interior_blast(at, 0.65, 3.0, 0.11);
         self.fire_active = true;
         self.fire = FIRE_MAX;
@@ -471,6 +481,15 @@ impl Game {
     /// every opening.
     fn cookoff_pop(&mut self, at: Vec3, tnt_kg: f32, detonation: bool) {
         self.schedule_cookoff_bang(if detonation { crate::audio::Sfx::KillExplosion } else { crate::audio::Sfx::CookOff }, at, tnt_kg);
+        // With KESSEL_SFX_GENERATED=1 the rounds-going take (BR-25 near, DS-10 from 700 m and more)
+        // runs under the pops, at most one take in eight seconds.
+        if crate::sfx_rows::generated_switch() && self.cookoff.take_next_s.is_none_or(|t| self.cookoff.clock_s >= t) {
+            let far = at.distance(self.threat_center()) >= DISTANT_RECORDING_M;
+            let seed = self.kill_tick ^ self.cookoff.ignitions.wrapping_mul(0x9E37_79B9);
+            if self.sfx_row_forced(if far { "DS-10" } else { "BR-25" }, at, seed) {
+                self.cookoff.take_next_s = Some(self.cookoff.clock_s + 8.0);
+            }
+        }
         if self.cookoff.pop_due(0) {
             if detonation { self.spawn_interior_blast(at, 0.65, 3.0, 0.11); } else { self.spawn_interior_blast(at, 0.45, 2.0, 0.08); }
         }
@@ -497,10 +516,22 @@ impl Game {
     }
 
     fn schedule_cookoff_bang(&mut self, sfx: crate::audio::Sfx, at: Vec3, tnt_kg: f32) {
+        self.schedule_cookoff_bang_with(sfx, at, tnt_kg, None);
+    }
+
+    /// A generated take as an interleaved stereo source buffer (equal energy), if installed.
+    fn cookoff_take_stereo(&mut self, id: &str, seed: u32) -> Option<Vec<f32>> {
+        let files = crate::sfx_rows::takes(id, false);
+        if files.is_empty() { return None; }
+        let mono = self.generated_mono(&files[seed as usize % files.len()])?;
+        Some(mono.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect())
+    }
+
+    fn schedule_cookoff_bang_with(&mut self, sfx: crate::audio::Sfx, at: Vec3, tnt_kg: f32, buf: Option<Vec<f32>>) {
         self.scheduled.push(ScheduledSound {
             delay: at.distance(self.threat_center()) / speed_of_sound(),
             sfx, emission: crate::sound_propagation::Emission::blast(tnt_kg), muzzle: None, source: at,
-            source_in_player: true, buf: None,
+            source_in_player: true, buf,
             wave: Some(AcousticWave { emitted_at_s: self.enemy_report_audit.clock_s, speed_m_s: speed_of_sound() }),
             enemy_report: None,
         });

@@ -592,3 +592,59 @@ mod tests {
         assert!(((at(2.0) - at(20.0)) - 15.0).abs() < 0.05, "{}", at(2.0) - at(20.0));
     }
 }
+
+/// The artillery beyond the horizon (DS-12): its level at an ear in the open [E: an estimate of
+/// a duel tens of kilometres off, not a measurement], and the world direction it comes from
+/// (north-east of the map; a presentation choice, named in docs/PHYSICAL_TRUTH_AUDIT.md).
+pub(super) const HORIZON_RUMBLE_OPEN_DBA: f32 = 48.0;
+const HORIZON_RUMBLE_FROM: Vec3 = Vec3::new(0.7071, 0.0, -0.7071);
+/// The radio receiver's idle hiss in the crew headset (IN-32) [E].
+pub(super) const RADIO_IDLE_HEADSET_DBA: f32 = 42.0;
+/// Enemy vehicles beyond this are heard as one far drone (DS-13) when its take is voiced.
+pub(super) const FAR_ENGINES_M: f32 = 800.0;
+
+impl Game {
+    /// What the listener's enclosure and headset take off a far exterior bed, relative to an ear
+    /// in the open: (level change dB, low-pass for that change). The bed's own take already
+    /// carries the distance, so only the difference is applied.
+    fn far_bed_at_ear(&self, open_dba: f32) -> (f32, f32) {
+        let emission = Emission::from_level(&crate::sound_levels::T34_EXTERIOR_10M);
+        let path = |enclosure, headset| Path { distance_m: 10.0,
+            atmosphere: crate::sound_propagation::active_atmosphere(), occluded: false, enclosure, headset };
+        let open = propagate(&emission, &path(crate::sound_propagation::Enclosure::OnFoot, false));
+        let here = propagate(&emission, &path(self.listener_enclosure(), self.listener_headset()));
+        let mut diff = here.transfer_db;
+        for (d, o) in diff.iter_mut().zip(open.transfer_db.iter()) { *d -= *o; }
+        (open_dba + here.laf_db - open.laf_db, crate::audio::lowpass_for_transfer(&diff))
+    }
+
+    /// DS-12 on a battle map (one with enemies) while the player lives.
+    pub(super) fn horizon_rumble_voice(&self, facing: Vec3) -> Option<crate::audio::VehicleVoice> {
+        if self.enemies.is_empty() || !self.player.alive || self.tank_editor_scene.is_some() { return None; }
+        let (laf, lowpass_hz) = self.far_bed_at_ear(HORIZON_RUMBLE_OPEN_DBA);
+        Some(crate::audio::VehicleVoice { id: 0, ear_laf_dba: laf,
+            bearing_deg: bearing_deg_from(facing, HORIZON_RUMBLE_FROM), lowpass_hz, playback_speed: 1.0 })
+    }
+
+    /// IN-32 in the headset while aboard, alive, with the radio working (diotic: straight ahead).
+    pub(super) fn radio_idle_voice(&self) -> Option<crate::audio::VehicleVoice> {
+        if !self.player.alive || !self.listener_headset() || !self.module_ok(ModuleKind::Radio) { return None; }
+        Some(crate::audio::VehicleVoice { id: 0, ear_laf_dba: RADIO_IDLE_HEADSET_DBA, bearing_deg: 0.0,
+            lowpass_hz: 16_000.0, playback_speed: 1.0 })
+    }
+
+    /// With DS-13 voiced, the enemy vehicles beyond `FAR_ENGINES_M` leave the T-34 pool and are
+    /// heard as one far drone: their ear levels power-summed, from the loudest one's bearing.
+    pub(super) fn split_far_engines(&self, vehicles: &mut Vec<crate::audio::VehicleVoice>, listener: Vec3)
+        -> Option<crate::audio::VehicleVoice>
+    {
+        let bank = crate::sfx_rows::LOOP_FAR_ENGINES;
+        if !crate::sfx_rows::loop_wanted(bank) || crate::sfx_rows::loop_bank(bank).is_none() { return None; }
+        let (far, near): (Vec<_>, Vec<_>) = vehicles.iter().copied().partition(|v|
+            self.enemies.get(v.id).is_some_and(|e| e.center().distance(listener) > FAR_ENGINES_M));
+        *vehicles = near;
+        let loudest = far.iter().copied().max_by(|a, b| a.ear_laf_dba.total_cmp(&b.ear_laf_dba))?;
+        let power: f32 = far.iter().map(|v| 10f32.powf(v.ear_laf_dba / 10.0)).sum();
+        Some(crate::audio::VehicleVoice { id: 0, ear_laf_dba: 10.0 * power.log10(), playback_speed: 1.0, ..loudest })
+    }
+}

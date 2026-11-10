@@ -19103,8 +19103,16 @@ impl Game {
             a.set_running_gear_drive(running_gear, engine_ear, self.player.alive, telemetry.load);
             a.set_loose_track_voices(&self.loose_track_voices(r.camera.pos,r.camera.forward()),dt);
             // Other tanks' engines and tracks, propagated like every other source.
-            let vehicles = self.enemy_vehicle_voices(r.camera.pos, r.camera.forward());
+            let mut vehicles = self.enemy_vehicle_voices(r.camera.pos, r.camera.forward());
+            let far_engines = self.split_far_engines(&mut vehicles, r.camera.pos);
+            a.set_generated_loop(crate::sfx_rows::LOOP_FAR_ENGINES, far_engines.as_slice(), dt, 1, 1.0, true,
+                crate::sound_levels::SpectrumClass::Engine);
             a.set_vehicle_voices(&vehicles, dt);
+            // Generated beds where the game was silent (sfx_rows): the far artillery, the radio.
+            a.set_generated_loop(crate::sfx_rows::LOOP_HORIZON, self.horizon_rumble_voice(r.camera.forward()).as_slice(),
+                dt, 1, 2.0, true, crate::sound_levels::SpectrumClass::LowFrequencyBlast);
+            a.set_generated_loop(crate::sfx_rows::LOOP_RADIO, self.radio_idle_voice().as_slice(),
+                dt, 1, 0.5, false, crate::sound_levels::SpectrumClass::Mechanical);
             a.set_gun_elevation_voice(self.gun_elevation_voice(r.camera.pos, r.camera.forward(), elevation_rate), dt);
             a.set_fire_voices(&self.burning_fire_voices(r.camera.pos, r.camera.forward()), dt);
             a.set_starter(self.engine_crank_t > 0.0 && self.engine_crank_permitted());
@@ -25703,7 +25711,7 @@ impl Game {
         self.concussion_t = 0.0;
         self.concussion_dur = 7.5;
         if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::PenetrationHit,
-            entry_world, seed, "debug_own_penetration")
+            entry_world, seed, "debug_own_penetration", Some(&event))
         {
             self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, entry_world);
         }
@@ -27965,7 +27973,7 @@ impl Game {
                         self.stat_kills_by_player = self.stat_kills_by_player.saturating_add(1);
                     }
                     if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::PenetrationHit,
-                        impact_pos, projectile.seed, "enemy_penetration")
+                        impact_pos, projectile.seed, "enemy_penetration", Some(&event))
                     {
                         self.schedule_sound_from(crate::audio::Sfx::ImpactTank, impact_pos);
                         self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
@@ -27981,7 +27989,7 @@ impl Game {
                     let clangs = crate::audio::Sfx::ARMOR_CLANGS;
                     let pick = clangs[projectile.seed as usize % clangs.len()];
                     if !self.schedule_hit_recording(game_hit_sounds::hit_family(&event, false), pick,
-                        impact_pos, projectile.seed, "enemy_nonpenetration")
+                        impact_pos, projectile.seed, "enemy_nonpenetration", Some(&event))
                     {
                         let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(pick,event.terminal));
                         self.schedule_emission(pick,impact_pos,sound_emission_for(pick),None,voice);
@@ -28009,7 +28017,7 @@ impl Game {
                         self.allies[index].tank.hp = (self.allies[index].tank.hp - 30.0).max(1.0);
                     }
                     if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::PenetrationHit,
-                        impact_pos, projectile.seed, "ally_penetration")
+                        impact_pos, projectile.seed, "ally_penetration", Some(&event))
                     {
                         self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
                     }
@@ -28017,7 +28025,7 @@ impl Game {
                     let clangs = crate::audio::Sfx::ARMOR_CLANGS;
                     let pick = clangs[projectile.seed as usize % clangs.len()];
                     if !self.schedule_hit_recording(game_hit_sounds::hit_family(&event, false), pick,
-                        impact_pos, projectile.seed, "ally_nonpenetration")
+                        impact_pos, projectile.seed, "ally_nonpenetration", Some(&event))
                     {
                         let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(pick,event.terminal));
                         self.schedule_emission(pick,impact_pos,sound_emission_for(pick),None,voice);
@@ -28148,7 +28156,7 @@ impl Game {
                     let sfx=crate::audio::Sfx::ImpactTank;
                     let family = game_hit_sounds::hit_family(&event, penetrated);
                     let level = if penetrated { crate::audio::Sfx::PenetrationHit } else { sfx };
-                    if !self.schedule_hit_recording(family, level, impact_pos, projectile.seed, "own_tiger_on_foot") {
+                    if !self.schedule_hit_recording(family, level, impact_pos, projectile.seed, "own_tiger_on_foot", Some(&event)) {
                         let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(sfx,event.terminal));
                         self.schedule_emission(sfx,impact_pos,sound_emission_for(sfx),None,voice);
                     }
@@ -31050,7 +31058,7 @@ impl Game {
             self.spawn_blast(ring, 6.5, 20.0, 0.7);
             self.spawn_debris(ring, 11, 15.0, seed);
             if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::KillExplosion, ring,
-                seed.wrapping_add(0x7055), "enemy_catastrophic_kill")
+                seed.wrapping_add(0x7055), "enemy_catastrophic_kill", None)
             {
                 self.schedule_sound_from(crate::audio::Sfx::KillExplosion, ring);
             }
@@ -31064,7 +31072,7 @@ impl Game {
             self.spawn_blast(center, 6.5, 20.0, 0.7);
             self.spawn_debris(center, 8, 11.0, seed);
             if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::KillExplosion, center,
-                seed.wrapping_add(0x4B11), "enemy_kill")
+                seed.wrapping_add(0x4B11), "enemy_kill", None)
             {
                 self.schedule_sound_from(crate::audio::Sfx::KillExplosion, center);
             }
@@ -31147,7 +31155,7 @@ impl Game {
                     None => self.spawn_blast(ring, 9.0, 26.0, 0.85),
                 }
                 if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::TurretPop, ring,
-                    seed.wrapping_add(0x7055), "enemy_catastrophic_kill")
+                    seed.wrapping_add(0x7055), "enemy_catastrophic_kill", None)
                 {
                     self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring);
                 }

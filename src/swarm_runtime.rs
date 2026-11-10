@@ -232,7 +232,7 @@ impl Game {
 
     /// A generated take (decoded once, mono at the engine's rate), cached by file.
     pub(super) fn generated_mono(&mut self, path: &str) -> Option<std::sync::Arc<[f32]>> {
-        self.swarm.decoded.entry(path.to_string()).or_insert_with(|| decode_take(path).map(std::sync::Arc::from)).clone()
+        self.swarm.decoded.entry(path.to_string()).or_insert_with(|| crate::sfx_rows::decode_mono(path).map(std::sync::Arc::from)).clone()
     }
 
     /// Moments with no sound today, watched from the state (any mode, swarm or not): a track
@@ -282,6 +282,8 @@ impl Game {
     pub(super) fn sfx_row(&mut self, id: &str, at: Vec3, seed: u32) -> bool {
         let Some(row) = crate::sfx_rows::find(id) else { return false };
         if !crate::sfx_rows::wanted(row) || row.lpk_1m_db <= 0.0 { return false; }
+        // With the switch on, a looping row's take sounds as its fire's loop instead (no double).
+        if row.looping && crate::sfx_rows::generated_switch() { return false; }
         let files = crate::sfx_rows::takes(id, false);
         if files.is_empty() { return false; }
         let Some(mono) = self.generated_mono(&files[seed as usize % files.len()]) else { return false };
@@ -1320,26 +1322,3 @@ impl Game {
     }
 }
 
-/// Decode a take file to mono at the engine's rate (linear resampling).
-fn decode_take(path: &str) -> Option<Vec<f32>> {
-    use rodio::Source;
-    let file = crate::resource::open(path).ok()?;
-    let decoder = rodio::Decoder::new(std::io::BufReader::new(file)).ok()?;
-    let channels = decoder.channels().max(1) as usize;
-    let rate = decoder.sample_rate().max(1) as f32;
-    let samples: Vec<i16> = decoder.collect();
-    let mono: Vec<f32> = samples.chunks(channels).map(|c| c.iter().map(|&s| s as f32 / 32768.0).sum::<f32>() / channels as f32).collect();
-    if mono.is_empty() { return None; }
-    let out_rate = crate::acoustics::SAMPLE_RATE as f32;
-    let n = (mono.len() as f32 * out_rate / rate) as usize;
-    let mut out = Vec::with_capacity(n);
-    for k in 0..n {
-        let x = k as f32 * rate / out_rate;
-        let i = x as usize;
-        let f = x - i as f32;
-        let a = mono[i.min(mono.len() - 1)];
-        let b = mono[(i + 1).min(mono.len() - 1)];
-        out.push(a + (b - a) * f);
-    }
-    Some(out)
-}
