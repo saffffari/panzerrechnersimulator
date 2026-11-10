@@ -239,7 +239,15 @@ impl Game {
                     // The autonomous gunner has identified an armoured target. Prefer a real
                     // reachable AP cartridge; never change a chambered/held round's nature,
                     // reach through the breech, or manufacture ammunition when AP is exhausted.
-                    let armour_contact=self.crew_solo.fire_at_will&&self.crew_solo.gunner_target.is_some();
+                    // So too while a living enemy tank is within `ARMOUR_ABOUT_M`, whoever lays
+                    // the gun: with the player at the sight and the gunner on hold fire the loader
+                    // took the nearest round, and three high-explosive rounds in a row went at a
+                    // T-34 (the owner's run of 9 November 2026: "the last t34 was indestructable").
+                    const ARMOUR_ABOUT_M:f32=1500.0;
+                    let tiger=self.player.center();
+                    let armour_about=self.enemies.iter().enumerate().any(|(i,e)|e.alive
+                        &&self.enemy_active.get(i).copied().unwrap_or(false)&&e.center().distance(tiger)<=ARMOUR_ABOUT_M);
+                    let armour_contact=armour_about||(self.crew_solo.fire_at_will&&self.crew_solo.gunner_target.is_some());
                     let candidate=crate::interior_rig::SHELL_SLOTS.iter().enumerate().filter(|(i,_)|!self.slot_taken[*i])
                         .filter_map(|(i,_)|{
                             let model=self.loader_rack_model(i);let p=inv.transform_point3(model.w_axis.truncate());
