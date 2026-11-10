@@ -33,19 +33,41 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
 // The TZF's one eyepiece field at the centre (crush.wgsl `tzf_field_distance`, radius 0.45).
 const TZF_EYEPIECE_OFFSET: f32 = 0.0;
 
-// TZF 9b/9c Strichbild: etched BLACK glass markings in the focal plane (a real optic's reticle
-// is a dark etching, not a glowing overlay). Seven aiming triangles hang point-UP with their tips
-// on the aim line: the central Hauptdreieck's apex IS the aim point; the flanking triangles sit at
-// 4-Strich clear gaps for lead, and their known widths range a target (a ~6 m T-34 hull spans the
-// central 4-Strich base at ~1500 m). `d` in Strich (1/6400 circle) from the aim point, y down;
-// `min_w` the narrowest etched half-width drawn.
+// The gunner's Strichbild, redrawn on 9 November 2026 (the owner: "we need reticle to be elevation
+// lines too. currently its too filled in"). Etched BLACK glass markings in the focal plane, drawn
+// as lines, not filled shapes. `d` in Strich (1/6400 circle) from the aim point, y down; `min_w`
+// the narrowest etched half-width drawn.
+// - Seven triangles point-UP with their tips on the aim line, in outline: the central one's apex
+//   IS the aim point (4 Strich wide, 8 tall); three a side (2 wide, 4 tall) at 4-Strich clear
+//   gaps for lead, their known widths ranging a target as before.
+// - An elevation ladder under the aim point for the PzGr. 39: a stem and four rungs at the
+//   hold-over for 500, 1,000, 1,500 and 2,000 m (`STRICH_ELEVATION`, from the game's own flight
+//   model: `ballistics::PZGR_39` time of flight, drop = g t^2 / 2), the thousands the long rungs.
+//   An authored aid: the real TZF 9b set range on a rotating scale, not on a ladder.
+// - The outer horizontal bars at tip level.
+const STRICH_LINE: f32 = 0.16;
+const STRICH_ELEVATION: array<f32, 4> = array<f32, 4>(4.46, 9.54, 15.29, 21.81);
+fn strich_triangle_edge(d: vec2<f32>, cx: f32, half_base: f32, height: f32, w: f32) -> bool {
+    let x = abs(abs(d.x) - cx);
+    if (d.y < -w || d.y > height + w) { return false; }
+    let slope = half_base / height;
+    // The two sloping sides, and the base.
+    let side = abs(x - d.y * slope) <= w * sqrt(1.0 + slope * slope) && d.y >= 0.0 && d.y <= height;
+    let base = abs(d.y - height) <= w && x <= half_base + w;
+    return side || base;
+}
 fn strich_on(d: vec2<f32>, min_w: f32) -> bool {
-    // Central triangle: 4 Strich wide at the base, 8 tall, apex on the aim point.
-    if (d.y >= 0.0 && d.y <= 8.0 && abs(d.x) <= max(d.y * 0.25, min_w)) { return true; }
-    // Three flanking triangles per side: 2 Strich wide, 4 tall (edges at 6-8, 12-14, 18-20).
+    let w = max(STRICH_LINE, min_w);
+    if (strich_triangle_edge(d, 0.0, 2.0, 8.0, w)) { return true; }
     for (var i = 0; i < 3; i = i + 1) {
-        let cx = 7.0 + f32(i) * 6.0;
-        if (d.y >= 0.0 && d.y <= 4.0 && abs(abs(d.x) - cx) <= max(d.y * 0.25, min_w)) { return true; }
+        if (strich_triangle_edge(d, 7.0 + f32(i) * 6.0, 1.0, 4.0, w)) { return true; }
+    }
+    // The elevation ladder: the stem from under the central triangle's base to the last rung.
+    if (abs(d.x) <= w && d.y >= 8.0 && d.y <= STRICH_ELEVATION[3]) { return true; }
+    var rungs = STRICH_ELEVATION;
+    for (var k = 0; k < 4; k = k + 1) {
+        let half = select(1.2, 2.6, k % 2 == 1);
+        if (abs(d.y - rungs[k]) <= w && abs(d.x) <= half) { return true; }
     }
     // Outer horizontal reference bars at tip level, closing off the Strich row.
     return abs(d.y) <= max(0.25, min_w) && abs(d.x) >= 24.0 && abs(d.x) <= 30.0;
