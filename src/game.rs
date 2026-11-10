@@ -39090,8 +39090,11 @@ mod tests {
         let raw = Vec3::new(crate::rt_surface::srgb_to_linear(texel[0] as f32 / 255.0),
             crate::rt_surface::srgb_to_linear(texel[1] as f32 / 255.0),
             crate::rt_surface::srgb_to_linear(texel[2] as f32 / 255.0));
-        let radiance = Vec3::new(1.0,0.24,0.03).lerp(raw,0.18)*13.0*0.30
-            + Vec3::new(1.0,0.88,0.62)*7.0*0.18;
+        // The flash's colour and drawn radiance follow the one incandescence law
+        // (`incandescence::fx_glow` at MAIN_FLASH_EMISSIVE) since the hand-tinted orange was
+        // retired; the light carries the cube's radiance times its area over 4 (Lambert).
+        let _ = raw;
+        let radiance = Vec3::from_array(crate::incandescence::fx_glow(MAIN_FLASH_EMISSIVE));
         let area: f32 = mesh.indices.chunks_exact(3).map(|ids| {
             let p: [Vec3;3] = std::array::from_fn(|i| Vec3::from_array(mesh.vertices[ids[i] as usize].pos));
             (p[1]-p[0]).cross(p[2]-p[0]).length()*0.5
@@ -39100,7 +39103,9 @@ mod tests {
             let light = main_flash_light(Vec3::ZERO,remaining).unwrap();
             let expected = radiance*area*main_flash_edge(remaining).powi(2)/4.0;
             assert!((light.color*light.radiant_intensity-expected).length()<1e-4);
-            assert!(light.color.y < 0.45 && light.color.z < 0.18);
+            // Its colour is the Planck chroma at the flash's fx_kelvin (2,800 K), red full.
+            let chroma = Vec3::from_array(crate::incandescence::planck_chroma(crate::incandescence::fx_kelvin(MAIN_FLASH_EMISSIVE)));
+            assert!((light.color - chroma / chroma.max_element()).length() < 1e-4);
             assert!(light.radiant_intensity < 30.0);
         }
         assert!(main_flash_light(Vec3::ZERO,0.0).is_none());
