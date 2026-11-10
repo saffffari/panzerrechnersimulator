@@ -468,6 +468,13 @@ impl Game {
         let down=input.trigger||input.fire2||input.mg_coax;
         let pressed=down&&!self.workshop.primary_down;self.workshop.primary_down=down;
         if !down {self.workshop.primary_guard=false;}
+        // A vision block's retainer let go of part-way springs back. Left part-released, the block
+        // read unusable and its port stayed blank with no way to see why (the owner, 10 November
+        // 2026: "if i click on a periscope it goes blank and never comes back"). Mounts 0..=7 are
+        // the seven cupola blocks and the driver's.
+        if !down {for socket in &mut self.workshop.state.mounts[..8] {
+            if socket.tested&&socket.fastening>0.0&&socket.fastening<1.0 {socket.fastening=1.0;}
+        }}
         let previous_tool=self.workshop.tool_mount.take();
         if self.route_rack_inspection(down,pressed,dt,r) {
             input.fire=false;input.fire2=false;input.trigger=false;input.mg_coax=false;input.coax=false;
@@ -509,7 +516,9 @@ impl Game {
                 else if occupied.is_some()&&!state.tested {Some(Operation::Test)} else {None};
             if let Some(operation)=operation {
                 owns=true;
-                let requires_tool=matches!(mount,8..=14)&&matches!(operation,Operation::Release|Operation::Secure);
+                // The vision blocks' retainers (0..=7) need the toolbox too, so a click on a port
+                // while looking through it cannot start taking it out.
+                let requires_tool=matches!(mount,0..=14)&&matches!(operation,Operation::Release|Operation::Secure);
                 let cooling_ready=self.workshop.cooling_service_ready(mount,self.engine_on);
                 let carrier_ready=mount<24||self.workshop.engine.carrier_ready(mount,&self.workshop.state);
                 self.hover_label=Some(if !carrier_ready {"CARRIER - REMOVE BOTH ADJACENT SHOES, THEN WING RETAINER"}

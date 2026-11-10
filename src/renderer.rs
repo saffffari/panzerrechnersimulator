@@ -84,8 +84,10 @@ const CAMERA_EXPOSURE_ENV: &str = "KESSEL_CAMERA_EXPOSURE";
 /// Diagnostic A/B only: restore the former ordering (fullscreen sky before opaque draws).
 /// Shipping defaults to depth-gated sky; the transport and its samples are otherwise identical.
 const UNGATED_SKY_ENV: &str = "KESSEL_UNGATED_SKY";
-pub const INTERNAL_RES_PRESETS: [(u32, u32); 14] =
-    [(320, 180), (320, 240), (480, 270), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1024, 576), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
+// 848x480 (10 November 2026): six times on a 5120x2880 panel with 16-pixel side bars
+// (`KESSEL_PIXEL_PERFECT=1`); 800 wide needs bars on all four sides there.
+pub const INTERNAL_RES_PRESETS: [(u32, u32); 15] =
+    [(320, 180), (320, 240), (480, 270), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (848, 480), (960, 540), (1024, 576), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
 const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 /// The deltaP display look (docs/DELTAP_LOOK_20261101.md): `standard`, `deltap` (dithered
 /// colour), `deltap-pico8` (the 32-colour best pair), `deltap-raw` (tonemapped only).
