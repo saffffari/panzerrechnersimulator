@@ -62,6 +62,47 @@ pub struct FocusState {
     pub index: Option<usize>,
     pub phase: f32,
     pub(super) saved_near: Option<f32>,
+    /// RMB is a toggle: one press takes the eye to the block and keeps it there.
+    #[serde(default)]
+    pub(super) latched: bool,
+    #[serde(default)]
+    pub(super) prev_aim: bool,
+    /// A press made while already at a block: its release steps back out, unless the mouse
+    /// swept sideways to the next block during it.
+    #[serde(default)]
+    pub(super) release_pending: bool,
+    /// Sideways mouse travel (pixels) during a held press at a block.
+    #[serde(default)]
+    pub(super) sweep: f32,
+    /// The block the eye is moving from and how far it has got (0 at the old block, 1 there).
+    #[serde(default)]
+    pub(super) from: Option<usize>,
+    #[serde(default)]
+    pub(super) swing: f32,
+}
+
+/// Sideways mouse travel, in raw pixels, that steps a held-RMB eye to the next cupola block
+/// (at the commander's 0.0022 rad/pixel look, the travel of a 15 degree head turn).
+pub const BLOCK_SWEEP_PIXELS: f32 = 120.0;
+/// Seconds to move the eye from one cupola block to its neighbour.
+const BLOCK_SWING_S: f32 = 0.28;
+
+/// The cupola block next to `index` on the ring, toward the viewer's right (`step` > 0) or left,
+/// as seen from inside facing the block (turret frame: forward +Z, so the right is -X).
+pub fn adjacent_block(index: usize, step: i32) -> usize {
+    let azimuth = |i: usize| {
+        let d = CUPOLA_CENTERS[i] - COMMANDER_EYE;
+        d.x.atan2(d.z)
+    };
+    let here = azimuth(index.min(6));
+    // Turning right from the inside decreases this azimuth (atan2(x, z) grows toward +X).
+    let sign = if step > 0 { -1.0 } else { 1.0 };
+    (0..CUPOLA_CENTERS.len()).filter(|&i| i != index)
+        .min_by(|&a, &b| {
+            let turn = |i: usize| (sign * (azimuth(i) - here)).rem_euclid(std::f32::consts::TAU);
+            turn(a).total_cmp(&turn(b))
+        })
+        .unwrap_or(index)
 }
 
 /// Physical eye relief is kept outside the glass. The narrow display field frames the usable
@@ -89,12 +130,12 @@ pub fn close_view(index: usize) -> (Vec3, Vec3, f32) {
 }
 
 impl super::Game {
-    /// Read-only evidence of ordinary RMB acquisition/release; does not move or grant focus.
+    /// Read-only evidence of RMB acquisition, block steps and release; does not move or grant focus.
     pub fn cupola_focus_receipt(&self) -> serde_json::Value {
         serde_json::json!({"index":self.cupola_focus.index,"phase":self.cupola_focus.phase})
     }
 
-    pub(super) fn update_cupola_focus(&mut self, aim: bool, dt: f32, renderer: &mut crate::renderer::Renderer) {
+    pub(super) fn update_cupola_focus(&mut self, aim: bool, look_dx: f32, dt: f32, renderer: &mut crate::renderer::Renderer) {
         let commander = matches!(self.station, super::Station::Commander) && !self.commander_outside;
         let loader = matches!(self.station, super::Station::Loader) && !self.grab && self.carry_mesh.is_none();
         let available = matches!(self.mode, super::Mode::Tank)
@@ -104,9 +145,55 @@ impl super::Game {
         if !available {
             if let Some(near) = self.cupola_focus.saved_near { renderer.camera.znear = near; }
             self.cupola_focus = FocusState::default();
+            self.cupola_focus.prev_aim = aim;
             return;
         }
+        let pressed = aim && !self.cupola_focus.prev_aim;
+        let released = !aim && self.cupola_focus.prev_aim;
+        self.cupola_focus.prev_aim = aim;
         let model = self.player.turret_model();
+        // RMB toggles. A press at a block arms the step back out on its release; sweeping the
+        // mouse sideways while it is held moves the eye to the next block instead.
+        if self.cupola_focus.latched {
+            if pressed {
+                self.cupola_focus.release_pending = true;
+                self.cupola_focus.sweep = 0.0;
+            }
+            if aim {
+                let index = self.cupola_focus.index.unwrap_or(0);
+                let usable = |i: usize| self.expedition_runtime.is_none() || self.workshop.state.usable(i);
+                if commander && index < CUPOLA_CENTERS.len() && self.cupola_focus.phase >= 1.0 {
+                    self.cupola_focus.sweep += look_dx;
+                    if self.cupola_focus.sweep.abs() >= BLOCK_SWEEP_PIXELS {
+                        let step = self.cupola_focus.sweep.signum() as i32;
+                        self.cupola_focus.sweep = 0.0;
+                        // Past a block the workshop has taken out, to the next usable one.
+                        let mut next = adjacent_block(index, step);
+                        while next != index && !usable(next) { next = adjacent_block(next, step); }
+                        if next != index {
+                            let progress = self.cupola_focus.swing;
+                            self.cupola_focus.from = Some(match self.cupola_focus.from {
+                                Some(from) if progress < 0.5 => from,
+                                _ => index,
+                            });
+                            self.cupola_focus.swing = 0.0;
+                            self.cupola_focus.index = Some(next);
+                            self.cupola_focus.release_pending = false;
+                        }
+                    }
+                }
+            } else if released && self.cupola_focus.release_pending {
+                self.cupola_focus.latched = false;
+                self.cupola_focus.release_pending = false;
+                // Step back out facing the block the eye was at, which may not be the one it took.
+                if let Some(index) = self.cupola_focus.index.filter(|&i| commander && i < CUPOLA_CENTERS.len()) {
+                    let to = model.transform_vector3(CUPOLA_CENTERS[index] - COMMANDER_EYE);
+                    let tf = self.player.turret_forward();
+                    self.head_yaw = (to.x.atan2(-to.z) - tf.x.atan2(-tf.z) + std::f32::consts::PI)
+                        .rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                }
+            }
+        }
         if self.cupola_focus.index.is_none() {
             let eye = renderer.camera.pos;
             let look = renderer.camera.forward();
@@ -129,20 +216,34 @@ impl super::Game {
             }).max_by(|a,b|a.1.total_cmp(&b.1));
             if let Some((i, dot)) = candidate.filter(|(_, d)|*d > 0.95) {
                 let _ = dot;
-                self.hover_label = Some(if i>=side_ports::FIRST_INDEX {"SIDE VISION PORT - HOLD RMB"}
-                    else if loader { "PERISCOPE - HOLD RMB" } else { "VISION BLOCK - HOLD RMB" });
-                if aim {
+                self.hover_label = Some(if i>=side_ports::FIRST_INDEX {"SIDE VISION PORT - RMB"}
+                    else if loader { "PERISCOPE - RMB" } else { "VISION BLOCK - RMB" });
+                if pressed {
                     self.cupola_focus.index = Some(i);
                     self.cupola_focus.saved_near = Some(renderer.camera.znear);
+                    self.cupola_focus.latched = true;
+                    self.cupola_focus.release_pending = false;
+                    self.cupola_focus.sweep = 0.0;
                 }
             }
         }
-        let held = aim && self.cupola_focus.index.is_some();
+        let held = self.cupola_focus.latched && self.cupola_focus.index.is_some();
         self.cupola_focus.phase = super::tiger_driver_visor::advance_lean(self.cupola_focus.phase, held, dt);
+        self.cupola_focus.swing = (self.cupola_focus.swing + dt.max(0.0) / BLOCK_SWING_S).min(1.0);
+        if self.cupola_focus.swing >= 1.0 { self.cupola_focus.from = None; }
         if let Some(index) = self.cupola_focus.index {
             let t = self.cupola_focus.phase;
             let blend = t*t*(3.0-2.0*t);
-            let (eye, forward, fov) = close_view(index);
+            let (mut eye, mut forward, mut fov) = close_view(index);
+            if let Some(from) = self.cupola_focus.from {
+                // The head turns from one block to the next across the ring's steel between them.
+                let s = self.cupola_focus.swing;
+                let s = s*s*(3.0-2.0*s);
+                let (from_eye, from_forward, from_fov) = close_view(from);
+                eye = from_eye.lerp(eye, s);
+                forward = from_forward.lerp(forward, s).normalize();
+                fov = from_fov + (fov - from_fov) * s;
+            }
             renderer.camera.pos = renderer.camera.pos.lerp(model.transform_point3(eye), blend);
             let direction = renderer.camera.forward().lerp(model.transform_vector3(forward), blend).normalize();
             renderer.camera.set_forward(direction);
@@ -152,11 +253,14 @@ impl super::Game {
             renderer.reticle = false;
             if !held && t <= 0.0 {
                 if let Some(near) = self.cupola_focus.saved_near { renderer.camera.znear = near; }
+                let prev_aim = self.cupola_focus.prev_aim;
                 self.cupola_focus = FocusState::default();
+                self.cupola_focus.prev_aim = prev_aim;
             }
         }
     }
 }
+
 const HOUSINGS: [&str; 12] = [
     "gunner_hatch", "Turret_0129_housing", "Turret_0139_housing",
     "Turret_0140_housing", "Turret_0163_housing", "Turret_0164_housing",
@@ -169,6 +273,7 @@ const WINDOW_THICKNESS_M: f32 = 0.003892;
 /// a pane, from on-axis to 75 degrees off it, whose admission by the stop chain alone differs
 /// from a trace through the complete block with its housing triangles. Measured 2026-11-03:
 /// 211 of 225,792 rays (0.093%) disagree; rays both admit leave in directions within 4e-5.
+/// With the relay lenses opened to `RELAY_LENS_HALF_DEPTH_M` (2026-11-09): 213 (0.094%), 4.0e-5.
 #[cfg(test)]
 const RELAY_STOP_CHAIN_ERROR: f32 = 0.0015;
 
@@ -348,6 +453,14 @@ fn first_face(parts: &[OpticalPart], origin: Vec3, direction: Vec3) -> Option<(u
     best
 }
 
+/// Half the relay lenses' clear depth (across the tube, fore and aft). Until 2026-11-09 it was
+/// 17.5 mm, a 3.5 cm bundle in a tube the lower mirror spans 8 cm deep: the lens rim, not the
+/// housing, blacked out the top and bottom of every pane (half of it from the seat). 25 mm is the
+/// widest the lenses open before they stand outside the housing's bore by more than the measured
+/// stop-chain bound (`relay_stop_chain_matches_the_complete_housing`: 0.094% at 25 mm, 0.29% at
+/// 30 mm). The relay prescription remains the declared reconstruction.
+const RELAY_LENS_HALF_DEPTH_M: f32 = 0.025;
+
 /// Build a declared ideal relay from the exact chief-ray intersections, retaining both source
 /// folds and both windows. Two reciprocal afocal pairs keep image orientation and angular scale.
 fn cupola_relay(block:&[OpticalPart],index:usize)->anyhow::Result<Vec<OpticalPart>> {
@@ -400,7 +513,7 @@ fn cupola_relay(block:&[OpticalPart],index:usize)->anyhow::Result<Vec<OpticalPar
         let axis=(path[2]-path[1]).normalize();
         let center=path[1]+axis*(station-lengths[0]);
         let across=axis.cross(right).normalize();
-        let mesh=rectangle(&block[0].mesh,center,right*0.055,across*0.0175,axis);
+        let mesh=rectangle(&block[0].mesh,center,right*0.055,across*RELAY_LENS_HALF_DEPTH_M,axis);
         lenses.push(OpticalPart::lens(mesh,focal));
     }
     Ok(lenses)

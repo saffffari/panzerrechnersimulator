@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-03 (vision blocks: the relay panes' finite stops, glass on the periscopes, side slits and visor); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-09 (vision blocks: the grey veil off the cupola glass, relay lenses opened to the housing); 2026-11-03 (vision blocks: the relay panes' finite stops, glass on the periscopes, side slits and visor); 2026-11-02 (the player's own body: the Panzertruppe seen from its own eyes, head hidden for the owner alone; night lights: the rods retreat where a place is adapted to its own light, so fire-lit ground keeps its colour; the aerosol spectral by the Angstrom law and the raymarch surfaces crossing the clear air; the spring meadow: GPU blades over every green ground, flowers, butterflies, fireflies as modeled emitters; the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -68,6 +68,37 @@ with and without `KESSEL_FX_LEGACY=1`; the kill bench (`gfxbench` with `KESSEL_B
   gunner's sight; as for the TZF, a telescope's eyepiece is no cabin aperture, and no daylight
   enters through it (named, open).
 
+
+## Vision blocks: the grey veil off the cupola glass, wider relay lenses, 2026-11-09 (`shaders/rm_glass.wgsl` `pane_offscreen`, `src/tiger_periscopes.rs` `RELAY_LENS_HALF_DEPTH_M`)
+
+The owner: the cupola blocks are "too opaque", "mostly glass surface" head-on; he wants more of
+each block to be the outside, a bit of black border kept, the glass's character kept.
+- The veil was a bug in the glass pass, not glass. A vision block's reflected ray points back
+  into the compartment behind the eye, always off screen, so `pane_offscreen` traced it and lit
+  the cabin wall it met with `rm_sky_visibility`, the lifted open-ground cover test the
+  2026-11-03 entry had already taken off the block's own sky term. That test reaches above the
+  roof and gave the unseen wall the whole sky: by day the black housing behind each block's
+  admitted bundle read as a bright grey frame of "glass" around a narrow strip of the outside.
+  The miss now asks `rm_cabin_sky_visibility` for vision blocks (other panes unchanged). The
+  housing reads black by day as it did by night; the glass's reflection, glints, ghost and
+  grooves are the same law (`cupola_blocks_20261109_{before,after}_day_seat` and `_night_lamps_seat`).
+- The reconstructed relay lenses were opened from a 3.5 cm to a 5 cm clear depth across the tube
+  (`RELAY_LENS_HALF_DEPTH_M` 25 mm). A per-stop rejection map showed the first relay lens's
+  rim, not the housing, cut the top and bottom of every pane. 25 mm is the widest that keeps the
+  stop chain within its measured bound against the complete housing (213 of 225,792 rays,
+  0.094%; 30 mm measured 0.29%, past the 0.15% bound). Admitted pane on axis: 3 cm 11.5 -> 16.8%,
+  12 cm 37.0 -> 45.9%, 45 cm 51.3 -> 63.8%; from the seat (30 cm) 50 -> 56% of the front pane.
+  Other lens stations were tried and cross a fold. Without any relay lenses the upper mirror cuts
+  the field to under a quarter, so the relay stays. Result of the registered geometry: the
+  objective window is 3.5 cm tall against the inner window's 4.7 cm, so no unit-magnification
+  relay admits more than about 74% of the pane's height; the rest is housing, drawn black. The
+  relay prescription remains the declared reconstruction.
+- Not changed: the relay's image, parallax, transmittance and grooves; side slits, visor, loader.
+- Controls (no physics): RMB at a block is a toggle; held RMB swept sideways steps the eye to
+  the neighbouring cupola block (0.28 s head move across the ring's steel between them).
+- Gates: `relay_stop_chain_matches_the_complete_housing`, `every_raymarch_shader_validates_with_and_without_ray_queries`,
+  `raster_optics` tests, `periscope-optics PREFIX` (now opens with the focus check: click in,
+  sweep right and left, click out, PASS/FAIL, and the `_day_focus_stepped_right` still).
 
 ## Vision blocks: the relay panes' finite stops, and glass on every vision block, 2026-11-03 (`shaders/raster_optics.wgsl` `relay_trace`, `src/tiger_periscopes.rs` `relay_stops`, `src/tiger_side_ports.rs` `slab_thickness`, `shaders/rm_glass.wgsl`, `shaders/glass_scratches.wgsl`)
 

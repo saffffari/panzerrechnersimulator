@@ -175,7 +175,10 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    Carried tools own LMB; otherwise on foot it fires the selected weapon.
 2. **RMB = look closer.**
    Gunner: TZF magnification toggle. Buttoned Commander / Loader: look at a sight block or
-   periscope and **hold RMB** to bring your eye to it; release to return to the cabin view.
+   periscope and **click RMB** to bring your eye to it; it stays there until the next click,
+   which returns you to the cabin view. At a cupola block, **hold RMB and sweep the mouse
+   sideways** to step to the next block left or right round the ring (about 120 px a block; no
+   step back out on that release). Back in the cabin you face the block you were at.
    Driver: **hold RMB** to lean toward the visor; look down-left and click its handwheel to open
    or close the physical shutters. Head-out Commander: hold RMB to raise/aim the P08;
    LMB fires it while aimed. **V** draws/holsters the P08 inside the turret or at the cupola;
@@ -183,7 +186,7 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    Holster it to use a sight block, hatch handle or other hand equipment. A carried cartridge
    takes priority over the pistol. Closed armor blocks the bullet; an obstructed muzzle cannot
    launch a round through it. The side escape opening can be fired through while standing inside.
-   **B** explicitly toggles binoculars at eligible stations; held interior RMB stows them first.
+   **B** explicitly toggles binoculars at eligible stations; interior RMB stows them first.
    On foot: aim down the selected weapon's physical sights (hold).
 3. **E = interact with physical equipment and the tank's body.** Pick up the looked-at toolbox,
    extinguisher or available Panzerfaust tube, enter a station anchor, work a hatch or mount.
