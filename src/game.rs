@@ -8751,10 +8751,14 @@ fn manual_ram_eligible(breech: Breech, lever_open: f32, distance: f32, aim_dot: 
         && aim_dot > 0.86
 }
 
-/// A short intentional flick in any direction drives the round. Mouse and right-stick look
-/// share pixel-equivalent deltas, so distance/speed gates are independent of frame rate.
-const RAM_FLICK_PIXELS: f32 = 28.0;
-const RAM_FLICK_SPEED: f32 = 280.0;
+/// A firm shove in any direction drives the round: `RAM_FLICK_PIXELS` of travel at
+/// `RAM_FLICK_SPEED` or faster seats it; a shorter push leaves it part way in the tray, slipping
+/// back at `RAM_DECAY`, to be shoved again. Mouse and right-stick look share pixel-equivalent
+/// deltas, so distance/speed gates are independent of frame rate. Until 9 November 2026 a 28 px
+/// twitch at 280 px/s seated it (the owner: "my shells just instantly snap into breach there is no
+/// slamming them in ... you have to put a bit more into loading a shell"). Authored feel.
+const RAM_FLICK_PIXELS: f32 = 180.0;
+const RAM_FLICK_SPEED: f32 = 500.0;
 fn ram_motion_fraction(dt: f32, motion: Vec2) -> f32 {
     if !dt.is_finite() || dt <= 0.0 || !motion.is_finite() { return 0.0; }
     let distance = motion.length();
@@ -8790,8 +8794,9 @@ const CARRY_D_ROUND: f32 = 8.5;
 const CARRY_K_CASE: f32 = 90.0; // the empty case is light — snappier in the hands
 const CARRY_D_CASE: f32 = 11.0;
 const CASING_PULL_TIME: f32 = 0.30; // s to work the hot case out of the chamber
-/// Time for a lined-up round to be driven home once the interaction key commits the ram.
-const AUTO_RAM_SECONDS: f32 = 0.35;
+/// Time for a lined-up round to be driven home once the interaction key commits the ram: a
+/// steady push, slower than the shove (0.35 s until 9 November 2026).
+const AUTO_RAM_SECONDS: f32 = 0.9;
 
 // Centre of the actual circular rear bore in the source `tiger_gun.glb` Breech mesh.
 // Gun-local, so the case and its grip follow elevation and recoil with the breech.
@@ -40587,7 +40592,7 @@ mod tests {
     }
 
     #[test]
-    fn ram_requires_a_flick_in_any_direction_at_30_60_and_120_fps() {
+    fn ram_requires_a_firm_shove_in_any_direction_at_30_60_and_120_fps() {
         for fps in [30_u32, 60, 120] {
             let dt = 1.0 / fps as f32;
             for direction in [Vec2::X, -Vec2::X, Vec2::Y, -Vec2::Y, Vec2::ONE.normalize()] {
@@ -40603,7 +40608,11 @@ mod tests {
                 for _ in 0..(fps / 10) {
                     progress = manual_ram_step(progress, dt, true, true, direction * (600.0 * dt)).0;
                 }
-                assert_eq!(progress, 1.0, "short flick must seat at {fps} fps");
+                assert!((0.3..0.4).contains(&progress), "a short flick (60 px) only starts the round at {fps} fps: {progress}");
+                for _ in 0..(fps / 4) {
+                    progress = manual_ram_step(progress, dt, true, true, direction * (900.0 * dt)).0;
+                }
+                assert_eq!(progress, 1.0, "a firm shove must seat at {fps} fps");
                 assert_eq!(manual_ram_step(progress, dt, true, true, Vec2::ZERO), (1.0, true));
             }
         }
@@ -40643,9 +40652,9 @@ mod tests {
 
     #[test]
     fn held_ram_owns_alignment_until_seated_and_release_always_drops() {
-        let first = manual_ram_step(0.0, 1.0/120.0, true, true, Vec2::X * 4.0);
+        let first = manual_ram_step(0.0, 1.0/120.0, true, true, Vec2::X * 5.0);
         assert!(first.0 > 0.0 && first.1);
-        let finish = manual_ram_step(0.995, 1.0/120.0, true, true, Vec2::X * 4.0);
+        let finish = manual_ram_step(0.995, 1.0/120.0, true, true, Vec2::X * 5.0);
         assert_eq!(finish, (1.0, true));
         // Grip release applies at every stage, including a partly inserted cartridge.
         for progress in [0.0, 0.2, 0.7, 0.99] {
