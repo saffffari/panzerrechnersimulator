@@ -297,6 +297,15 @@ fn prepare_exterior_capture(radiance_scale:f32)->bool {
     needs_exterior_capture(radiance_scale) || benchmark_renders_black_eyepieces()
 }
 
+/// Low and Medium cull optic captures per instance and per terrain page. The test is exact: an
+/// instance or page is skipped only when its whole inflated envelope lies outside the capture
+/// frustum, so the image is unchanged. On the 4090 at Low it took the gunner's optic pass from
+/// 3.2 to 2.2 ms of GPU time but cost about 0.7 ms more CPU (2026-11-18, gfxbench live frame),
+/// so High keeps the one-range draw; the weak GPUs these presets are for are GPU-bound.
+pub(super) fn preset_culls_optics()->bool {
+    !crate::graphics::active_preset().is_desktop()
+}
+
 fn optic_culling_benchmark_gate(live_frame:Option<&str>,candidate:Option<&str>)->bool {
     live_frame==Some("1") && candidate==Some("1")
 }
@@ -1058,8 +1067,8 @@ impl Renderer {
         optical_capture:bool, viewport:Option<[u32;2]>, work:&mut RenderWorkStats)->OpticInstanceWork {
         let planes=super::frustum_planes(view_proj);
         let visible=self.inst_spatial_index.query(view_proj);
-        let filter_instances=optical_capture && benchmark_culls_optic_instances();
-        let filter_terrain=optical_capture && benchmark_culls_optic_terrain();
+        let filter_instances=optical_capture && (benchmark_culls_optic_instances() || preset_culls_optics());
+        let filter_terrain=optical_capture && (benchmark_culls_optic_terrain() || preset_culls_optics());
         let mut instance_work=OpticInstanceWork::default();
         let ao = if optical_capture { None } else { self.raster_ssao.as_ref() };
         let aa=self.geometry_aa.as_ref();

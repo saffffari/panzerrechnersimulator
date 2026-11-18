@@ -4,13 +4,14 @@ use crate::ui::Align;
 use anyhow::{ensure, Context};
 use serde_json::{json, Value};
 
-pub const RESOLUTIONS: [(u32, u32); 10] = [
+pub const RESOLUTIONS: [(u32, u32); 11] = [
     (320, 180),
     (480, 270),
     (480, 272),
     (640, 360),
     (800, 450),
     (960, 540),
+    (1024, 576),
     (1280, 720),
     (1600, 900),
     (1920, 1080),
@@ -28,6 +29,10 @@ pub const TABS: [&str; 6] = [
 ];
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
+    /// The quality preset (Low, Medium, High): choosing one sets the render grid, shadows and
+    /// light sampling below together and the renderer's sampling budgets (`graphics.rs`); the
+    /// rows below still fine-tune it.
+    pub preset: crate::graphics::GraphicsPreset,
     pub resolution: (u32, u32),
     pub window: (u32, u32),
     pub fullscreen: bool,
@@ -65,6 +70,7 @@ impl Settings {
 
     pub fn from_renderer(r: &Renderer) -> Self {
         Self {
+            preset: crate::graphics::active_preset(),
             resolution: (r.iw, r.ih),
             dither_pattern: r.display_dither_pattern.clamp(0.0,3.0) as u8,
             window: (1280, 720),
@@ -86,8 +92,23 @@ impl Settings {
                 .unwrap_or_else(|| DisplayTuning::at_resolution(r.iw, r.ih)),
         }
     }
+    /// The defaults with `preset`'s grid, shadows and light sampling.
+    pub fn for_preset(preset: crate::graphics::GraphicsPreset) -> Self {
+        let mut settings = Self::defaults();
+        settings.set_preset(preset);
+        settings
+    }
+    /// Choose a quality preset: its play grid, shadow map and light sampling with it.
+    pub fn set_preset(&mut self, preset: crate::graphics::GraphicsPreset) {
+        self.preset = preset;
+        self.resolution = preset.play_resolution();
+        self.shadows = preset.shadow_resolution();
+        self.full_transport = preset.full_transport();
+        (self.display.width, self.display.height) = self.resolution;
+    }
     pub fn defaults() -> Self {
         Self {
+            preset: crate::graphics::GraphicsPreset::High,
             resolution: (640, 360),
             dither_pattern: 0,
             window: (1280, 720),
@@ -118,8 +139,16 @@ impl Settings {
             fixed = Self::fixed_playtest(self.window);
             &fixed
         } else { self };
-        if settings.resolution != (r.iw, r.ih) || settings.shadows != r.shadow_res {
-            r.resize_shader_targets(device, queue, settings.resolution, settings.shadows)?;
+        // The preset is process state (`graphics::active_preset`): the rebuilt renderer and every
+        // later world build read their sampling budgets from it.
+        let previous_preset = crate::graphics::active_preset();
+        crate::graphics::set_active_preset(settings.preset);
+        if settings.resolution != (r.iw, r.ih) || settings.shadows != r.shadow_res
+            || crate::graphics::active_preset() != r.graphics_preset {
+            if let Err(error) = r.resize_shader_targets(device, queue, settings.resolution, settings.shadows) {
+                crate::graphics::set_active_preset(previous_preset);
+                return Err(error);
+            }
         }
         let mut display = settings.display;
         (display.width, display.height) = settings.resolution;
@@ -139,7 +168,7 @@ impl Settings {
         Ok(())
     }
     pub fn to_json(&self) -> Value {
-        json!({"version":1,"resolution":[self.resolution.0,self.resolution.1],
+        json!({"version":1,"preset":self.preset.key(),"resolution":[self.resolution.0,self.resolution.1],
         "window":[self.window.0,self.window.1],"fullscreen":self.fullscreen,"vsync":self.vsync,
         "shadows":self.shadows,"full_transport":self.full_transport,"optics":self.optics,"fps":self.fps,
         "exposure_ev":self.exposure_ev,"saturation":self.saturation,"warmth":self.warmth,"gamma":self.gamma,
@@ -161,6 +190,12 @@ impl Settings {
         };
         let resolution = pair("resolution")?;
         let window = pair("window")?;
+        // Preferences saved before the presets existed (or the launcher's fresh file) read as High.
+        let preset = match v.get("preset") {
+            None | Some(Value::Null) => crate::graphics::GraphicsPreset::High,
+            Some(value) => value.as_str().and_then(crate::graphics::GraphicsPreset::parse)
+                .context("unsupported quality preset")?,
+        };
         ensure!(
             crate::renderer::INTERNAL_RES_PRESETS.contains(&resolution),
             "unsupported render size"
@@ -195,6 +230,7 @@ impl Settings {
             sun_phase: sun_phase as u8,
             dither_pattern,
             sun_speed,
+            preset,
             resolution,
             window,
             shadows,
@@ -241,10 +277,11 @@ impl Settings {
                 / 100.0
         };
         match (tab, row) {
-            (0, 1) => cycle(&mut self.resolution, &RESOLUTIONS, up),
-            (0, 2) => cycle(&mut self.window, &WINDOWS, up),
-            (0, 3) => self.fullscreen = !self.fullscreen,
-            (0, 4) => self.vsync = !self.vsync,
+            (0, 1) => self.set_preset(self.preset.stepped(up)),
+            (0, 2) => cycle(&mut self.resolution, &RESOLUTIONS, up),
+            (0, 3) => cycle(&mut self.window, &WINDOWS, up),
+            (0, 4) => self.fullscreen = !self.fullscreen,
+            (0, 5) => self.vsync = !self.vsync,
             (1, 1) => cycle(&mut self.shadows, &SHADOWS, up),
             (1, 2) => self.full_transport = !self.full_transport,
             (1, 3) => cycle(&mut self.optics, &[1, 2, 3, 4], up),
@@ -288,6 +325,10 @@ impl Settings {
         let percent = |v: f32| format!("{:.0}%", v * 100.0);
         match tab {
             0 => vec![
+                (
+                    "Quality preset",
+                    format!("{} ({})", self.preset.label(), self.preset.target()),
+                ),
                 (
                     "Render resolution",
                     format!("{} x {}", self.resolution.0, self.resolution.1),
@@ -402,7 +443,7 @@ impl Menu {
     pub fn controls(&self) -> usize {
         if self.tab == 5 {
             1
-        } else if self.tab == 2 || self.tab == 3 {
+        } else if self.tab == 0 || self.tab == 2 || self.tab == 3 {
             5
         } else if self.tab == 4 {
             2
@@ -466,7 +507,7 @@ impl Menu {
             }
         }
         let hint = match self.tab {
-            0 => "RENDER SIZE CONTROLS SHARPNESS AND GPU COST",
+            0 => "QUALITY PRESET SETS RENDER SIZE, SHADOWS AND SAMPLING TOGETHER",
             1 => "HIGHER VALUES USE MORE GPU TIME",
             2 => "CAMERA / DISPLAY COLOR TREATMENT",
             4 => "SUN / SKY / WORLD LIGHTING CHANGE TOGETHER",
@@ -573,6 +614,36 @@ mod tests {
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), Some(s));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn quality_preset_row_sets_grid_shadows_and_sampling_and_survives_preferences() {
+        use crate::graphics::GraphicsPreset;
+        let mut s = Settings::defaults();
+        assert_eq!(s.rows(0)[0].0, "Quality preset");
+        assert_eq!(Menu { tab: 0, ..Default::default() }.controls(), s.rows(0).len());
+        // High -> Low -> Medium -> High with the right arrow.
+        for (preset, grid, shadows, full) in [
+            (GraphicsPreset::Low, (320, 180), 512, false),
+            (GraphicsPreset::Medium, (640, 360), 1024, false),
+            (GraphicsPreset::High, (1024, 576), 2048, true),
+        ] {
+            s.adjust(0, 1, true);
+            assert_eq!((s.preset, s.resolution, s.shadows, s.full_transport), (preset, grid, shadows, full));
+            assert_eq!((s.display.width, s.display.height), grid);
+            assert_eq!(Settings::from_json(&s.to_json()).unwrap(), s);
+        }
+        s.adjust(0, 1, false);
+        assert_eq!(s.preset, GraphicsPreset::Medium);
+        // The rows after the preset still fine-tune it without changing the preset.
+        s.adjust(0, 2, true);
+        assert_eq!((s.preset, s.resolution), (GraphicsPreset::Medium, (800, 450)));
+        // Files written before the presets read as High; an unknown preset is refused.
+        let mut old = s.to_json();
+        old.as_object_mut().unwrap().remove("preset");
+        assert_eq!(Settings::from_json(&old).unwrap().preset, GraphicsPreset::High);
+        old["preset"] = json!("potato");
+        assert!(Settings::from_json(&old).is_err());
+        assert_eq!(Settings::for_preset(GraphicsPreset::Low).resolution, (320, 180));
     }
 }
 

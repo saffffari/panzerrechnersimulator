@@ -187,7 +187,7 @@ impl TransportQuality {
             return IntegrationQuality { view_steps: view as u32, source_steps: source as u32,
                 solar_disk_samples: disk as u32, cloud_column_steps: cloud as u32 };
         }
-        if self == Self::Gameplay || preset == crate::graphics::GraphicsPreset::Low {
+        if self == Self::Gameplay || !preset.is_desktop() {
             IntegrationQuality {
                 view_steps: 12,
                 source_steps: 8,
@@ -6539,7 +6539,7 @@ impl Renderer {
             views,
             active_view: 0,
             render_work: Cell::new(RenderWorkStats::default()),
-            gpu_profile: crate::gpu_profile::GpuProfile::new(device),
+            gpu_profile: crate::gpu_profile::GpuProfile::new(device, queue),
             rt_degenerate_reported: std::collections::HashSet::new(),
             rt_on,
             rt_scene,
@@ -6603,7 +6603,9 @@ impl Renderer {
         anyhow::ensure!(self.shader_backend && !self.rt_on, "Resolution changes require the shader renderer");
         anyhow::ensure!([512,768,1024,1536,2048].contains(&shadows), "Unsupported shadow resolution");
         anyhow::ensure!(INTERNAL_RES_PRESETS.contains(&size), "Unsupported display resolution");
-        if (self.iw, self.ih) == size && self.shadow_res == shadows { return Ok(()); }
+        // A preset change rebuilds too: the raymarch budgets are read when the backend is built.
+        if (self.iw, self.ih) == size && self.shadow_res == shadows
+            && self.graphics_preset == crate::graphics::active_preset() { return Ok(()); }
         device.poll(wgpu::PollType::wait_indefinitely())?;
         MENU_SHADOW_RES.set(Some(shadows));
         let mut next = Self::new_at_resolution(device, queue, &[], &[], size);

@@ -1058,7 +1058,9 @@ fn run_gfxbench(
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
     let detected_preset = graphics::GraphicsPreset::for_adapter(info.device_type);
-    let active_preset = requested_preset.unwrap_or(detected_preset);
+    // The argument, else KESSEL_GRAPHICS_PRESET (the launcher's --quality), else the adapter's class.
+    let active_preset = requested_preset.or_else(|| std::env::var("KESSEL_GRAPHICS_PRESET").ok()
+        .and_then(|value| graphics::GraphicsPreset::parse(&value))).unwrap_or(detected_preset);
     graphics::set_active_preset(active_preset);
     println!(
         "[panzerrechnersystem] adapter: {} ({:?}, {:?}), graphics={}",
@@ -1155,6 +1157,8 @@ fn run_gfxbench(
         (p.len() == 2).then(|| (p[0], p[1])) });
     let bench_stills: Vec<u32> = std::env::var("KESSEL_BENCH_STILLS").ok()
         .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect()).unwrap_or_default();
+    let bench_traverse: Option<f32> = std::env::var("KESSEL_BENCH_TRAVERSE").ok()
+        .and_then(|v| v.trim().parse::<f32>().ok()).filter(|s| s.is_finite() && *s > 0.0);
     for i in 0..(frames + WARMUP) {
         // Five seconds after the kill the phase counters restart, so the end-of-run phases are
         // the settled state's, not the detonation's and the thrown turret's.
@@ -1191,7 +1195,13 @@ fn run_gfxbench(
         }
         let simulation_started = std::time::Instant::now();
         let mg_held = bench_mg.is_some_and(|(start, n)| i >= WARMUP + start && i < WARMUP + start + n);
-        let input = if mg_held { TankInput { mg_coax: true, coax: true, ..Default::default() } } else { TankInput::default() };
+        let mut input = if mg_held { TankInput { mg_coax: true, coax: true, ..Default::default() } } else { TankInput::default() };
+        // `KESSEL_BENCH_TRAVERSE=SECONDS`: the traverse key held, reversing every SECONDS, over the
+        // timed frames (the turret and every optic it carries move as in play).
+        if let Some(period) = bench_traverse.filter(|_| i >= WARMUP) {
+            let t = (i - WARMUP) as f32 / 60.0;
+            input.traverse = if (t / period) as u32 % 2 == 0 { 1.0 } else { -1.0 };
+        }
         g.update(&input, 1.0 / 60.0, &mut r);
         let simulation_ms = simulation_started.elapsed().as_secs_f64() * 1000.0;
         // Deterministic orbit: 22 m ring, 9 m up, one full sweep over the timed frames —
@@ -12320,6 +12330,9 @@ struct WindowState {
     pause_menu: ui::PauseMenuModel,
     graphics_menu: graphics_menu::Menu,
     graphics_settings: Option<graphics_menu::Settings>,
+    /// This machine's quality preset when nothing was chosen (the adapter's class, or
+    /// `KESSEL_GRAPHICS_PRESET`); "Restore defaults" returns to it.
+    default_graphics: graphics::GraphicsPreset,
     display_preview: display_preview::DisplayPreview,
     haptics_enabled: bool,
     menu_pointer: Option<glam::Vec2>,
@@ -12446,15 +12459,21 @@ impl WindowState {
             "[panzerrechnersystem] adapter: {} ({:?}, {:?})",
             info.name, info.device_type, info.backend
         );
+        // `KESSEL_GRAPHICS_PRESET` (the launcher's --quality) names the preset outright and wins
+        // over saved preferences; otherwise the adapter's class picks it until the player does.
+        let requested_graphics = std::env::var("KESSEL_GRAPHICS_PRESET").ok()
+            .and_then(|value| graphics::GraphicsPreset::parse(&value));
         let default_graphics = if graphics::fixed_playtest_graphics() {
             renderer::set_display_internal_resolution(Some(graphics::FIXED_PLAYTEST_RESOLUTION));
             graphics::GraphicsPreset::High
-        } else { graphics::GraphicsPreset::for_adapter(info.device_type) };
+        } else { requested_graphics.unwrap_or_else(|| graphics::GraphicsPreset::for_adapter_info(&info)) };
         graphics::set_active_preset(default_graphics);
         println!(
-            "[graphics] auto-selected {} for {:?}",
+            "[graphics] {} {} for {:?} {:?}",
+            if requested_graphics.is_some() { "requested" } else { "auto-selected" },
             default_graphics.label(),
             info.device_type,
+            info.name,
         );
         let (device, queue) = request_device(&adapter);
 
@@ -12524,6 +12543,7 @@ impl WindowState {
             pause_menu: ui::PauseMenuModel::default(),
             graphics_menu: graphics_menu::Menu::default(),
             graphics_settings: None,
+            default_graphics,
             display_preview: display_preview::DisplayPreview::default(),
             haptics_enabled: true,
             menu_pointer: None,
@@ -12581,14 +12601,34 @@ impl WindowState {
         let initial_graphics = if graphics::fixed_playtest_graphics() {
             Ok(Some(graphics_menu::Settings::fixed_playtest((out.config.width, out.config.height))))
         } else { graphics_menu::config_path().and_then(|p| graphics_menu::Settings::load(&p)) };
+        let initial_graphics = match initial_graphics {
+            Ok(settings) => settings,
+            Err(error) => { eprintln!("[graphics] saved preferences ignored: {error:#}"); None },
+        };
         match initial_graphics {
-            Ok(Some(settings)) => {
+            Some(mut settings) => {
+                if let Some(preset) = requested_graphics.filter(|_| !graphics::fixed_playtest_graphics()) {
+                    settings.set_preset(preset);
+                }
                 out.graphics_settings = Some(settings);
                 out.apply_graphics_preferences(true);
             }
-            Ok(None) => {},
-            Err(error) => eprintln!("[graphics] saved preferences ignored: {error:#}"),
+            None if !graphics::fixed_playtest_graphics() => {
+                // Nothing saved yet: the preset's own grid, shadows and sampling for live play,
+                // the window left as it opened.
+                let mut settings = graphics_menu::Settings::from_renderer(&out.renderer);
+                settings.set_preset(default_graphics);
+                settings.fullscreen = out.window.fullscreen().is_some();
+                settings.vsync = out.config.present_mode != wgpu::PresentMode::AutoNoVsync;
+                let size = (out.config.width, out.config.height);
+                if graphics_menu::WINDOWS.contains(&size) { settings.window = size; }
+                out.graphics_settings = Some(settings);
+                out.apply_graphics_preferences(false);
+            }
+            None => {},
         }
+        println!("[graphics] quality preset {} at {}x{}", graphics::active_preset().label(),
+            out.renderer.iw, out.renderer.ih);
         out.refresh_canyon_menu_detail();
         if let Some(config) = lan_config {
             let is_host = matches!(config.mode, lan::LanModeConfig::Host { .. });
@@ -12871,6 +12911,8 @@ impl WindowState {
             eprintln!("[graphics] apply failed: {error:#}");
             return;
         }
+        // Every later world build reads the preset from the menu model.
+        self.menu.graphics = graphics::active_preset();
         self.game.set_optic_update_budget(settings.optics);
         self.show_stats = settings.fps;
         if window_options {
@@ -12932,7 +12974,8 @@ impl WindowState {
                     let previous = self.graphics_settings.clone().unwrap();
                     self.graphics_menu.message.clear();
                     self.graphics_settings.as_mut().unwrap().adjust(self.graphics_menu.tab,row,code != KeyCode::ArrowLeft);
-                    self.apply_graphics_preferences(self.graphics_menu.tab == 0 && row != 1);
+                    // Display rows 3 to 5 (window size, fullscreen, VSync) touch the window.
+                    self.apply_graphics_preferences(self.graphics_menu.tab == 0 && row >= 3);
                     if !self.graphics_menu.message.is_empty() { self.graphics_settings = Some(previous); }
                 } else if row == controls + 1 && code == KeyCode::Enter {
                     match graphics_menu::config_path().and_then(|p|self.graphics_settings.as_ref().unwrap().save(&p)) {
@@ -12942,7 +12985,7 @@ impl WindowState {
                 } else if row == controls + 2 && code == KeyCode::Enter {
                     let previous = self.graphics_settings.clone();
                     self.graphics_menu.message.clear();
-                    self.graphics_settings = Some(graphics_menu::Settings::defaults());
+                    self.graphics_settings = Some(graphics_menu::Settings::for_preset(self.default_graphics));
                     self.apply_graphics_preferences(true);
                     if !self.graphics_menu.message.is_empty() { self.graphics_settings = previous; }
                 }
@@ -14260,6 +14303,18 @@ impl WindowState {
         game::set_one_man(self.menu.one_man);
     }
 
+    /// Left/right on the title's Graphics row: the quality preset, as on the Graphics page.
+    fn step_menu_graphics(&mut self, up: bool) {
+        if graphics::fixed_playtest_graphics() { return; }
+        self.menu.graphics = self.menu.graphics.stepped(up);
+        graphics::set_active_preset(self.menu.graphics);
+        if let Some(settings) = self.graphics_settings.as_mut() {
+            settings.set_preset(self.menu.graphics);
+            self.apply_graphics_preferences(false);
+        }
+        println!("[graphics] quality preset {} at {}x{}", self.menu.graphics.label(), self.renderer.iw, self.renderer.ih);
+    }
+
     /// Campaign, playtest, editor and checkpoint load. Legacy development views remain keyboard-accessible without
     /// expanding the player's title menu. Escape preserves the live pause/resume round trip.
     fn menu_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
@@ -14282,6 +14337,8 @@ impl WindowState {
             KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + self.menu.row_count() - 1) % self.menu.row_count(),
             KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % self.menu.row_count(),
             KeyCode::ArrowLeft | KeyCode::ArrowRight if self.menu.action() == Some(ui::MenuAction::Crew) => self.toggle_menu_crew(),
+            KeyCode::ArrowLeft | KeyCode::ArrowRight if self.menu.action() == Some(ui::MenuAction::Graphics) =>
+                self.step_menu_graphics(code == KeyCode::ArrowRight),
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.action() {
                 Some(ui::MenuAction::Graphics) => self.open_graphics(true),
                 Some(ui::MenuAction::Crew) => self.toggle_menu_crew(),
@@ -14317,6 +14374,11 @@ impl WindowState {
             KeyCode::F11 if !graphics::fixed_playtest_graphics() => {
                 self.menu.graphics = self.menu.graphics.toggled();
                 graphics::set_active_preset(self.menu.graphics);
+                // The same choice as the Graphics page's Quality preset row.
+                if let Some(settings) = self.graphics_settings.as_mut() {
+                    settings.set_preset(self.menu.graphics);
+                    self.apply_graphics_preferences(false);
+                }
             },
             _ => {},
         }
@@ -18357,7 +18419,7 @@ fn main() -> anyhow::Result<()> {
             .get(5)
             .map(|value| {
                 graphics::GraphicsPreset::parse(value).ok_or_else(|| {
-                    anyhow::anyhow!("gfxbench preset must be low, high or ultra (got {value:?})")
+                    anyhow::anyhow!("gfxbench preset must be low, medium, high or ultra (got {value:?})")
                 })
             })
             .transpose()?;

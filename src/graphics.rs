@@ -47,16 +47,24 @@ pub fn shader_backend_enabled() -> bool {
 /// The raymarch frame pipeline (src/renderer_raymarch.rs) replaces the shader backend's passes.
 pub fn raymarch_backend_enabled() -> bool { renderer_backend() == RendererBackend::Raymarch }
 
+/// The player's quality choice (the owner, 18 November 2026: "low medium and high", Low for a
+/// Raspberry Pi 5 at 30 to 60 fps, Medium for an Intel Core Ultra 5 laptop at 30 fps, High a flat
+/// 60 fps). Every preset renders the same scene and runs the same simulation; they differ only in
+/// the render grid and how finely the frame is sampled (CLAUDE.md, second principle, rule 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphicsPreset {
-    /// Gaming-laptop budget: fewer froxel slices, smaller shadow and sky maps, one shadowed lamp,
-    /// gameplay transport sampling and no hardware ray queries. Never changes the scene or the
-    /// simulation, only how finely the same frame is sampled.
+    /// Single-board and weakest GPUs (Raspberry Pi 5, VideoCore VII): the 320x180 grid, one
+    /// sample per pixel, the smallest shadow maps and sky cache, one shadowed lamp at 64 texels a
+    /// face, one relayed port refreshed per frame.
     Low,
-    /// The desktop reference (RTX 4080/4090 class). The previous "4090" preset, unchanged.
+    /// Integrated laptop graphics (Intel Core Ultra 5 with Arc graphics class): the 640x360 grid,
+    /// fewer froxel slices, smaller shadow and sky maps, one shadowed lamp, gameplay transport
+    /// sampling, two relayed ports refreshed per frame. Before 18 November 2026 this was "Low".
+    Medium,
+    /// The desktop reference (RTX 4080/4090 class) at the 1024x576 grid. Unchanged budgets.
     High,
-    /// Headroom on a 4090/5090: denser froxels, 4K sun shadows, finer sky cache and clouds, more
-    /// samples per pixel and an 800x450 grid.
+    /// Explicit only (`KESSEL_GRAPHICS_PRESET=ultra`, review captures); not a menu choice.
+    /// Denser froxels, 4K sun shadows, finer sky cache and clouds.
     Ultra,
 }
 
@@ -125,11 +133,13 @@ impl RaymarchQuality {
 }
 
 impl GraphicsPreset {
-    pub const ALL: [Self; 3] = [Self::Low, Self::High, Self::Ultra];
+    /// The menu's three choices, cheapest first. Ultra stays an explicit review setting.
+    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Low => "Low",
+            Self::Medium => "Medium",
             Self::High => "High",
             Self::Ultra => "Ultra",
         }
@@ -138,26 +148,67 @@ impl GraphicsPreset {
     pub const fn key(self) -> &'static str {
         match self {
             Self::Low => "low",
+            Self::Medium => "medium",
             Self::High => "high",
             Self::Ultra => "ultra",
         }
     }
 
-    /// The menu's graphics entry cycles Low -> High -> Ultra -> Low.
-    pub const fn toggled(self) -> Self {
+    /// The hardware each menu choice is sized for, shown beside it.
+    pub const fn target(self) -> &'static str {
         match self {
-            Self::Low => Self::High,
-            Self::High => Self::Ultra,
-            Self::Ultra => Self::Low,
+            Self::Low => "Raspberry Pi 5 class",
+            Self::Medium => "laptop graphics, 30 fps",
+            Self::High => "desktop GPU, 60 fps",
+            Self::Ultra => "review captures",
         }
     }
 
+    /// The menu cycles Low -> Medium -> High -> Low (Ultra, set only explicitly, steps to Low).
+    pub const fn toggled(self) -> Self {
+        match self {
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High | Self::Ultra => Self::Low,
+        }
+    }
+
+    /// One step through the menu's choices in either direction.
+    pub const fn stepped(self, up: bool) -> Self {
+        if up { return self.toggled(); }
+        match self {
+            Self::Low => Self::High,
+            Self::Medium => Self::Low,
+            Self::High | Self::Ultra => Self::Medium,
+        }
+    }
+
+    /// The grid a renderer is first built at when nothing else names one (headless tools, the
+    /// title world before saved preferences apply). Live play uses `play_resolution`.
     pub const fn internal_resolution(self) -> (u32, u32) {
         match self {
             Self::Low => (320, 180),
-            Self::High => (640, 360),
+            Self::Medium | Self::High => (640, 360),
             Self::Ultra => (800, 450),
         }
+    }
+
+    /// The render grid the menu's choice sets for live play. Each is a whole multiple of the
+    /// common panels: 320x180 is 6x on 1920x1080 and 16x on 5120x2880, 640x360 is 3x and 8x,
+    /// 1024x576 is 5x on 5120x2880 (the owner's grid since 2 November 2026).
+    pub const fn play_resolution(self) -> (u32, u32) {
+        match self {
+            Self::Low => (320, 180),
+            Self::Medium => (640, 360),
+            Self::High => (1024, 576),
+            Self::Ultra => (1280, 720),
+        }
+    }
+
+    /// Whether live play samples the full transport (`TransportQuality::Full`) or the gameplay
+    /// budget (`Gameplay`): fewer environment, smoke and glass-fog steps, the same law.
+    pub const fn full_transport(self) -> bool {
+        matches!(self, Self::High | Self::Ultra)
     }
 
     /// The authored terrain's render grid: its collision grid on every preset (the terrain is an
@@ -165,7 +216,7 @@ impl GraphicsPreset {
     /// 4090 512² of a 1024² grid.
     pub const fn authored_terrain_grid(self) -> &'static str {
         match self {
-            Self::Low | Self::High | Self::Ultra => "collision grid",
+            Self::Low | Self::Medium | Self::High | Self::Ultra => "collision grid",
         }
     }
 
@@ -174,6 +225,7 @@ impl GraphicsPreset {
             // At the 320x180 Low grid, a 512px map remains comfortably denser than the final
             // image. The renderer's 3x3 PCF masks the small texel increase.
             Self::Low => 512,
+            Self::Medium => 1024,
             Self::High => 2048,
             Self::Ultra => 4096,
         }
@@ -183,9 +235,10 @@ impl GraphicsPreset {
         matches!(self, Self::High | Self::Ultra)
     }
 
-    /// Periscope and vision-block relay views re-rendered per frame (raster_optics.rs). Low keeps
-    /// every visible pane drawn but refreshes the largest each frame and rotates one more
-    /// through the rest, so a small side pane may lag a frame or three.
+    /// Periscope and vision-block relay views re-rendered per frame (raster_optics.rs). Low and
+    /// Medium keep every visible pane drawn but refresh the largest each frame and rotate one more
+    /// through the rest, so a small side pane may lag a frame or three (a budget of 1 would never
+    /// refresh the others at all while the viewer holds still).
     /// `KESSEL_OPTIC_RELAYS_PER_FRAME=N` sets it outright (the largest port in view always
     /// refreshes; the others take turns at N - 1 a frame and show their last image between).
     pub fn optic_relays_per_frame(self) -> usize {
@@ -195,7 +248,7 @@ impl GraphicsPreset {
             return forced;
         }
         match self {
-            Self::Low => 2,
+            Self::Low | Self::Medium => 2,
             Self::High | Self::Ultra => usize::MAX,
         }
     }
@@ -207,7 +260,19 @@ impl GraphicsPreset {
 
     pub const fn raymarch(self) -> RaymarchQuality {
         match self {
+            // The leanest sampling of the same frame: one sample per pixel at 320x180, 32 froxel
+            // slices, half-size shadow maps, a 64-texel lamp cube, a 256-wide sky cache.
             Self::Low => RaymarchQuality {
+                vol_divisor: 6, vol_min: [64, 36], vol_slices: 32,
+                shadow_far_res: 512, shadow_near_res: 512, cloud_shadow_res: 64,
+                point_shadows: 1, point_face_res: 64,
+                sky_cache_width: 256, cloud_view_steps: 8, cloud_light_steps: 2,
+                budget_pixels: 57_600.0, max_samples: 1.0,
+                relay_effect_samples_per_pixel: 4.0,
+                relay_grain_samples_per_pixel: 0.5,
+            },
+            // The laptop budgets (the "Low" preset until 18 November 2026).
+            Self::Medium => RaymarchQuality {
                 vol_divisor: 6, vol_min: [80, 45], vol_slices: 48,
                 shadow_far_res: 1024, shadow_near_res: 512, cloud_shadow_res: 128,
                 point_shadows: 1, point_face_res: 128,
@@ -237,19 +302,30 @@ impl GraphicsPreset {
         }
     }
 
-    /// Integrated adapters default to Low.  Only an adapter explicitly reported as discrete
-    /// gets High automatically; an Other/virtual/software device is treated conservatively.
-    /// Ultra is always an explicit choice.  The menu choice can override this for the session.
+    /// Discrete adapters default to High and integrated ones to Medium; a software, virtual or
+    /// unknown device gets Low. Ultra is always an explicit choice. The menu choice and saved
+    /// preferences override this.
     pub const fn for_adapter(device_type: wgpu::DeviceType) -> Self {
         match device_type {
             wgpu::DeviceType::DiscreteGpu => Self::High,
+            wgpu::DeviceType::IntegratedGpu => Self::Medium,
             _ => Self::Low,
         }
     }
 
+    /// `for_adapter`, with the single-board GPUs that report themselves integrated (the
+    /// Raspberry Pi 5's VideoCore VII as "V3D 7.1", Mali, Adreno, PowerVR) sent to Low.
+    pub fn for_adapter_info(info: &wgpu::AdapterInfo) -> Self {
+        let name = info.name.to_ascii_lowercase();
+        let single_board = ["v3d", "videocore", "mali", "adreno", "powervr", "llvmpipe", "lavapipe"]
+            .iter().any(|tag| name.contains(tag));
+        if single_board { Self::Low } else { Self::for_adapter(info.device_type) }
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "low" | "laptop" => Some(Self::Low),
+            "low" | "pi" | "pi5" => Some(Self::Low),
+            "medium" | "laptop" => Some(Self::Medium),
             "high" | "4090" | "hero" => Some(Self::High),
             "ultra" => Some(Self::Ultra),
             _ => None,
@@ -308,10 +384,12 @@ mod tests {
 
     #[test]
     fn presets_match_the_three_shipping_budgets() {
+        assert_eq!(GraphicsPreset::ALL, [GraphicsPreset::Low, GraphicsPreset::Medium, GraphicsPreset::High]);
         assert_eq!(GraphicsPreset::Low.internal_resolution(), (320, 180));
         assert_eq!(GraphicsPreset::Low.authored_terrain_grid(), GraphicsPreset::High.authored_terrain_grid());
         assert_eq!(GraphicsPreset::Low.shadow_resolution(), 512);
-        assert!(!GraphicsPreset::Low.allows_hardware_rt());
+        assert!(!GraphicsPreset::Low.allows_hardware_rt() && !GraphicsPreset::Medium.allows_hardware_rt());
+        assert_eq!(GraphicsPreset::Medium.shadow_resolution(), 1024);
 
         assert_eq!(GraphicsPreset::High.internal_resolution(), (640, 360));
         assert_eq!(GraphicsPreset::High.authored_terrain_grid(), "collision grid");
@@ -324,24 +402,58 @@ mod tests {
     }
 
     #[test]
-    fn presets_parse_their_keys_and_the_old_names_and_cycle() {
+    fn play_grids_are_supported_and_whole_multiples_of_the_common_panels() {
+        assert_eq!(GraphicsPreset::Low.play_resolution(), (320, 180));
+        assert_eq!(GraphicsPreset::Medium.play_resolution(), (640, 360));
+        assert_eq!(GraphicsPreset::High.play_resolution(), (1024, 576));
         for preset in GraphicsPreset::ALL {
+            let (w, h) = preset.play_resolution();
+            assert!(crate::renderer::INTERNAL_RES_PRESETS.contains(&(w, h)), "{preset:?}");
+            assert!(crate::graphics_menu::RESOLUTIONS.contains(&(w, h)), "{preset:?} is not a menu size");
+            assert_eq!((5120 % w, 2880 % h, 5120 / w), (0, 0, 2880 / h), "{preset:?} on 5120x2880");
+            assert!([512, 768, 1024, 1536, 2048].contains(&preset.shadow_resolution()), "{preset:?}");
+        }
+        assert_eq!((1920 % 320, 1080 % 180, 1920 % 640, 1080 % 360), (0, 0, 0, 0));
+        assert!(!GraphicsPreset::Low.full_transport() && !GraphicsPreset::Medium.full_transport());
+        assert!(GraphicsPreset::High.full_transport());
+        // A relay budget of 1 never refreshes the smaller panes while the viewer holds still.
+        if std::env::var_os("KESSEL_OPTIC_RELAYS_PER_FRAME").is_none() {
+            for preset in GraphicsPreset::ALL { assert!(preset.optic_relays_per_frame() >= 2, "{preset:?}"); }
+        }
+    }
+
+    #[test]
+    fn presets_parse_their_keys_and_the_old_names_and_cycle() {
+        for preset in GraphicsPreset::ALL.into_iter().chain([GraphicsPreset::Ultra]) {
             assert_eq!(GraphicsPreset::parse(preset.key()), Some(preset));
             assert_eq!(GraphicsPreset::parse(preset.label()), Some(preset));
         }
-        assert_eq!(GraphicsPreset::parse("laptop"), Some(GraphicsPreset::Low));
+        // "laptop" named the laptop budgets, which are Medium now.
+        assert_eq!(GraphicsPreset::parse("laptop"), Some(GraphicsPreset::Medium));
+        assert_eq!(GraphicsPreset::parse("pi5"), Some(GraphicsPreset::Low));
         assert_eq!(GraphicsPreset::parse("4090"), Some(GraphicsPreset::High));
         let mut p = GraphicsPreset::Low;
         for _ in 0..3 { p = p.toggled(); }
         assert_eq!(p, GraphicsPreset::Low);
+        for preset in GraphicsPreset::ALL {
+            assert_eq!(preset.stepped(true).stepped(false), preset);
+            assert!(GraphicsPreset::ALL.contains(&preset.stepped(true)));
+        }
+        assert_eq!(GraphicsPreset::Ultra.toggled(), GraphicsPreset::Low);
     }
 
     #[test]
     fn raymarch_budgets_rise_monotonically_and_high_keeps_the_reference() {
-        let [low, high, ultra] = GraphicsPreset::ALL.map(GraphicsPreset::raymarch);
+        let [low, medium, high] = GraphicsPreset::ALL.map(GraphicsPreset::raymarch);
+        let ultra = GraphicsPreset::Ultra.raymarch();
         assert_eq!((high.vol_divisor, high.vol_slices, high.shadow_far_res, high.point_shadows), (4, 96, 2048, 2));
         assert_eq!(high.sample_budget(600, 600), 1.0);
-        for (a, b) in [(low, high), (high, ultra)] {
+        // Low draws one sample a pixel at its own grid; Medium is the old laptop table.
+        assert_eq!(low.sample_budget(320, 180), 1.0);
+        assert_eq!((medium.vol_slices, medium.shadow_far_res, medium.budget_pixels), (48, 1024, 115_200.0));
+        // Every preset keeps a shadowed lamp: a budget never removes an occluder (CLAUDE.md).
+        assert!(low.point_shadows >= 1);
+        for (a, b) in [(low, medium), (medium, high), (high, ultra)] {
             assert!(a.vol_slices < b.vol_slices && a.shadow_far_res < b.shadow_far_res);
             assert!(a.sky_cache_width < b.sky_cache_width && a.cloud_view_steps < b.cloud_view_steps);
             assert!(a.point_shadows <= b.point_shadows && b.point_shadows <= 2);
@@ -352,20 +464,27 @@ mod tests {
         // The gunner's sight pane (640x360) on High draws at most 460,800 grains a frame: at the
         // spark rate it drew 3.7 million for one burning wreck (44 ms, 2026-11-01).
         assert_eq!(high.relay_grain_budget([640, 360]), 460_800);
-        // A 240x136 relayed port on Low draws at most 261,120 effect samples a pass (it drew
+        // A 240x136 relayed port on Medium draws at most 261,120 effect samples a pass (it drew
         // 1.5 million sparks and 3.5 million grains in one HE strike before, 2026-10-28).
-        assert_eq!(low.relay_effect_budget([240, 136]), 261_120);
+        assert_eq!(medium.relay_effect_budget([240, 136]), 261_120);
     }
 
     #[test]
-    fn only_discrete_adapters_default_high() {
+    fn adapters_default_high_medium_or_low() {
+        let info = |name: &str, device_type| wgpu::AdapterInfo { name: name.into(), vendor: 0, device: 0,
+            device_type, driver: String::new(), driver_info: String::new(), backend: wgpu::Backend::Vulkan };
+        assert_eq!(GraphicsPreset::for_adapter_info(&info("V3D 7.1.7", wgpu::DeviceType::IntegratedGpu)), GraphicsPreset::Low);
+        assert_eq!(GraphicsPreset::for_adapter_info(&info("Intel(R) Arc(TM) Graphics (MTL)", wgpu::DeviceType::IntegratedGpu)),
+            GraphicsPreset::Medium);
+        assert_eq!(GraphicsPreset::for_adapter_info(&info("NVIDIA GeForce RTX 4090", wgpu::DeviceType::DiscreteGpu)),
+            GraphicsPreset::High);
         assert_eq!(
             GraphicsPreset::for_adapter(wgpu::DeviceType::DiscreteGpu),
             GraphicsPreset::High
         );
         assert_eq!(
             GraphicsPreset::for_adapter(wgpu::DeviceType::IntegratedGpu),
-            GraphicsPreset::Low
+            GraphicsPreset::Medium
         );
         assert_eq!(
             GraphicsPreset::for_adapter(wgpu::DeviceType::Cpu),

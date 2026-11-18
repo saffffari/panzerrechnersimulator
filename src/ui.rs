@@ -484,6 +484,10 @@ impl MenuModel {
     pub fn crew_label(&self) -> &'static str {
         if self.one_man { "Crew: Solo" } else { "Crew: Crewed" }
     }
+    /// The graphics row as shown: its quality preset.
+    pub fn graphics_label(&self) -> String {
+        format!("Graphics: {}", self.graphics.label())
+    }
     pub fn title_rows(&self) -> Vec<MenuAction> {
         title_actions(self.full, crate::graphics::fixed_playtest_graphics())
     }
@@ -539,6 +543,7 @@ mod title_menu_tests {
         let menu = MenuModel { full: false, ..MenuModel::default() };
         assert_eq!(MenuModel { one_man: false, ..MenuModel::default() }.crew_label(), "Crew: Crewed");
         assert_eq!(MenuModel { one_man: true, ..MenuModel::default() }.crew_label(), "Crew: Solo");
+        assert_eq!(MenuModel { graphics: GraphicsPreset::Medium, ..MenuModel::default() }.graphics_label(), "Graphics: Medium");
         for hidden in [MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest, MenuAction::LoadCheckpoint,
             MenuAction::Canyon, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition] {
             assert_eq!(menu.row_of(hidden), None, "{hidden:?} is hidden on the playtest menu");
@@ -1720,7 +1725,12 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
     }
     let step = m.row_step();
     for (i, action) in m.title_rows().into_iter().enumerate() {
-        let label = if action == MenuAction::Crew { m.crew_label() } else { action.label(m.full) };
+        let graphics_label: String;
+        let label = match action {
+            MenuAction::Crew => m.crew_label(),
+            MenuAction::Graphics => { graphics_label = m.graphics_label(); &graphics_label },
+            _ => action.label(m.full),
+        };
         let selected = i == m.selected;
         let text = if selected { format!(">  {label}  <") } else { label.to_owned() };
         let enabled = match action {
@@ -1745,7 +1755,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
     }
     let canyon_line: String;
     let detail = match m.action() {
-        Some(MenuAction::Graphics) => "RESOLUTION / QUALITY / COLOR / RETRO",
+        Some(MenuAction::Graphics) => "LEFT / RIGHT: QUALITY LOW / MEDIUM / HIGH    ENTER: RESOLUTION, COLOR, RETRO",
         Some(MenuAction::Singleplayer) => "ONE PLAYER / ACT ONE CAMPAIGN",
         Some(MenuAction::Coop) => "TWO PLAYERS / TOP & BOTTOM / LOCAL CREW CO-OP",
         Some(MenuAction::Playtest) => "ACT ONE / FULL CREW / SKIP INTRO & TUTORIAL",

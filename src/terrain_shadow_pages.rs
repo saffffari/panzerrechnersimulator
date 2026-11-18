@@ -150,7 +150,7 @@ fn build(mesh: &CpuMesh) -> Option<Prepared> {
         Some(index)
     }
     append(&mut nodes, &bounds, &offsets, 0, CELLS)?;
-    let source_order=super::raster_optics::benchmark_culls_optic_terrain()
+    let source_order=(super::raster_optics::benchmark_culls_optic_terrain() || super::raster_optics::preset_culls_optics())
         .then(||SourceOrderedPages::build(mesh)).flatten();
     Some(Prepared { indices, pages: Pages { nodes, source_order } })
 }

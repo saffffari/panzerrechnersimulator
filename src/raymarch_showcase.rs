@@ -623,8 +623,8 @@ fn run_fireflies(prefix: &str) -> anyhow::Result<()> {
     let frames: u32 = std::env::var("KESSEL_FIREFLY_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
     let manifest = crate::canyon::manifest_path();
     act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
-    let preset = match std::env::var("KESSEL_GRAPHICS_PRESET").as_deref() {
-        Ok("low") => graphics::GraphicsPreset::Low, Ok("ultra") => graphics::GraphicsPreset::Ultra, _ => graphics::GraphicsPreset::High };
+    let preset = std::env::var("KESSEL_GRAPHICS_PRESET").ok().and_then(|v| graphics::GraphicsPreset::parse(&v))
+        .unwrap_or(graphics::GraphicsPreset::High);
     graphics::set_active_preset(preset);
     let instance = crate::create_instance();
     let adapter = crate::request_adapter(&instance, None);
@@ -768,8 +768,8 @@ fn run_sky_live(prefix: &str) -> anyhow::Result<()> {
         "preserving existing showcase; choose a new prefix");
     let manifest = crate::canyon::manifest_path();
     act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
-    let preset = match std::env::var("KESSEL_GRAPHICS_PRESET").as_deref() {
-        Ok("low") => graphics::GraphicsPreset::Low, Ok("ultra") => graphics::GraphicsPreset::Ultra, _ => graphics::GraphicsPreset::High };
+    let preset = std::env::var("KESSEL_GRAPHICS_PRESET").ok().and_then(|v| graphics::GraphicsPreset::parse(&v))
+        .unwrap_or(graphics::GraphicsPreset::High);
     graphics::set_active_preset(preset);
     let instance = crate::create_instance();
     let adapter = crate::request_adapter(&instance, None);

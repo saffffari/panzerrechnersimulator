@@ -26,7 +26,11 @@
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
 #   tools/launch_demo_20261101.sh --duel-host     two-player duel on the Canyon: wait for the other player (UDP 28944)
 #   tools/launch_demo_20261101.sh --duel-join ADDRESS[:PORT]   join the host at that address
-#   tools/launch_demo_20261101.sh --res 640x360   render grid (default 1280x720, an exact 4x on the 5K panel)
+#   tools/launch_demo_20261101.sh --quality medium  the quality preset for this and later launches: low (320x180,
+#                                                 Raspberry Pi 5 class), medium (640x360, laptop graphics), high
+#                                                 (1024x576, desktop GPU). Without it the game keeps the preset
+#                                                 chosen in Graphics (high on a fresh install with a desktop GPU)
+#   tools/launch_demo_20261101.sh --res 640x360   render grid for this and later launches (default: the preset's)
 #   tools/launch_demo_20261101.sh --look deltap-tinted  the deltaP look (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered
 #                                                 colour, pyramid bloom); the default is the standard display at 1280x720,
 #                                                 the owner's pick of 2026-11-02 over deltaP's colour
@@ -61,7 +65,7 @@ RUNTIME="$ROOT/artifacts/runtime"
 # levels) on the 1024x576 grid, exactly 5x on the 5120x2880 panel. Agents: do not change these
 # defaults without asking the owner to confirm first; --look/--res still choose others per run.
 REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
-FULL_MENU=0 BERLIN=0 BRIDGE=0 KURSK=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+FULL_MENU=0 BERLIN=0 BRIDGE=0 KURSK=0 SKY_SET=0 COURSE= MODE=menu RES= QUALITY= WINDOWED=0 PLATOON=0 ONE_MAN=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 EXTRA_ENV=()
 while (( $# )); do
     case "$1" in
@@ -81,6 +85,8 @@ while (( $# )); do
         --gen2) EXTRA_ENV+=(KESSEL_TIGER=gen2) ;;
         --env) EXTRA_ENV+=("$2"); shift ;;   # NAME=VALUE for the game; inherited KESSEL_* are cleared below
         --res) RES=$2; RES_SET=1; shift ;;
+        --quality) QUALITY=$2; shift
+                   [[ "$QUALITY" =~ ^(low|medium|high)$ ]] || { printf 'unknown quality: %s (low, medium or high)\n' "$QUALITY" >&2; exit 2; } ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;   # standard (default) | deltap-tinted | deltap | pastel ...
         --cabin-look) CABIN_LOOK=$2; shift ;;   # pastel: the palette itself inside the hull (tinted look)
         --seed) SEED=$2; shift ;;
@@ -105,7 +111,8 @@ if (( BRIDGE )) && (( ! SKY_SET )); then SKY_START=16:00; fi
 if (( KURSK )) && (( ! SKY_SET )); then SKY_START=12:00; fi
 # Berlin, 30 April 1945: the late afternoon of the Reichstag's storming (the map's authored hour).
 if (( BERLIN )) && (( ! SKY_SET )); then SKY_START=17:30; fi
-if [[ -n "$LOOK" && $RES_SET == 0 ]]; then RES=1024x576; fi   # deltaP's grid: 5x on the 5120x2880 panel
+# The render grid follows the quality preset (High: 1024x576, deltaP's grid, 5x on the
+# 5120x2880 panel); --res still forces one.
 # (The standard look, when chosen with --look standard, uses the Canyon v2 document's dither profile.)
 cd "$ROOT"
 [[ -x "$BINARY" ]] || { printf 'release binary missing: %s (cargo build --release --locked)\n' "$BINARY" >&2; exit 1; }
@@ -119,18 +126,28 @@ if (( CHECK )); then exit 0; fi
 
 mkdir -p "$RUNTIME"/{state,cache,config,demo-state} captures
 CONFIG="$RUNTIME/demo-state/graphics${LOOK:+.$LOOK}.v1.json"
-python3 - "$CONFIG" "$RES" "$WINDOWED" "${LOOK:-standard}" <<'PY'
+python3 - "$CONFIG" "$RES" "$WINDOWED" "${LOOK:-standard}" "$QUALITY" <<'PY'
 import json, sys
 from pathlib import Path
-path, res, windowed, look = Path(sys.argv[1]), sys.argv[2], sys.argv[3] == '1', sys.argv[4]
-w, h = (int(v) for v in res.split('x'))
-if path.exists():
-    doc = json.loads(path.read_text())
-    doc['resolution'] = [w, h]; doc['display']['width'] = w; doc['display']['height'] = h
+path, res, windowed, look, quality = Path(sys.argv[1]), sys.argv[2], sys.argv[3] == '1', sys.argv[4], sys.argv[5]
+# The presets of src/graphics.rs: play grid, sun shadow map, full light sampling.
+PRESETS = {'low': ((320, 180), 512, False), 'medium': ((640, 360), 1024, False), 'high': ((1024, 576), 2048, True)}
+doc = json.loads(path.read_text()) if path.exists() else None
+preset = quality or (doc or {}).get('preset') or 'high'
+(w, h), shadows, full = PRESETS.get(preset, PRESETS['high'])
+if res:
+    w, h = (int(v) for v in res.split('x'))
+if doc is not None:
+    # A file from before the presets: the launcher used to force High's 1024x576 every launch.
+    migrate = 'preset' not in doc
+    if quality or migrate:
+        doc['preset'] = preset; doc['shadows'] = shadows; doc['full_transport'] = full
+    if quality or res or migrate:
+        doc['resolution'] = [w, h]; doc['display']['width'] = w; doc['display']['height'] = h
     doc['fullscreen'] = not windowed
 else:
-    doc = {'version': 1, 'resolution': [w, h], 'window': [1280, 720], 'fullscreen': not windowed,
-           'vsync': True, 'shadows': 2048, 'full_transport': True, 'optics': 1, 'fps': False,
+    doc = {'version': 1, 'preset': preset, 'resolution': [w, h], 'window': [1280, 720], 'fullscreen': not windowed,
+           'vsync': True, 'shadows': shadows, 'full_transport': full, 'optics': 1, 'fps': False,
            'exposure_ev': 0.0, 'saturation': 1.0, 'warmth': 0.0, 'gamma': 1.0,
            'storm': None, 'sun_phase': 0, 'sun_speed': 1.0, 'dither_pattern': 3,
            'display': {'width': w, 'height': h, 'palette_levels': 31.0, 'ordered_dither': 1.0,
@@ -139,6 +156,7 @@ else:
 if look == 'standard':
     doc['display'].update(palette_levels=31.0, ordered_dither=0.55, ldr_dither=0.65, retro_strength=1.0)
 path.write_text(json.dumps(doc, indent=2) + '\n')
+print(f"graphics: {doc.get('preset', 'high')} preset, {doc['resolution'][0]}x{doc['resolution'][1]} grid ({path.name})")
 PY
 
 # Drop inherited experiment flags so a stale shell cannot change the profile.
@@ -149,7 +167,10 @@ for kv in ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"}; do export "$kv"; done
 export XDG_STATE_HOME="$RUNTIME/state" XDG_CACHE_HOME="$RUNTIME/cache" XDG_CONFIG_HOME="$RUNTIME/config"
 export KESSEL_ASSET_ROOT="$ASSET_ROOT"
 export KESSEL_CANYON_MANIFEST="$ASSET_ROOT/assets/worldgen/workshops/${COURSE:-gaea-canyon-run-v2}/manifest.v1.json"
-export KESSEL_RENDERER=raymarch KESSEL_GRAPHICS_PRESET=high KESSEL_INTERNAL_RES="$RES"
+export KESSEL_RENDERER=raymarch
+# The saved preferences carry the preset and grid; these only force them when asked for.
+[[ -n "$QUALITY" ]] && export KESSEL_GRAPHICS_PRESET="$QUALITY"
+[[ -n "$RES" ]] && export KESSEL_INTERNAL_RES="$RES"
 export KESSEL_REAL_STEPS="$REAL_STEPS"   # the locked colour count (top of file)
 export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4 KESSEL_SOURCE_VISIBILITY=maps
 export KESSEL_GRAPHICS_CONFIG="$CONFIG" KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_TRANSPORT_QUALITY=full
@@ -181,7 +202,7 @@ export KESSEL_SESSION_LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).session.jsonl"
 
 LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).log"
 {
-    printf '[launcher] %s mode=%s res=%s look=%s windowed=%s platoon=%s one_man=%s order=%s forward=%s\n' "$(date --iso-8601=seconds)" "$MODE" "$RES" "${LOOK:-standard}" "$WINDOWED" "$PLATOON" "$ONE_MAN" "${ORDER:--}" "$FORWARD"
+    printf '[launcher] %s mode=%s quality=%s res=%s look=%s windowed=%s platoon=%s one_man=%s order=%s forward=%s\n' "$(date --iso-8601=seconds)" "$MODE" "${QUALITY:-saved}" "${RES:-preset}" "${LOOK:-standard}" "$WINDOWED" "$PLATOON" "$ONE_MAN" "${ORDER:--}" "$FORWARD"
     env | grep '^KESSEL_' | sort
 } > "$LOG"
 ln -sfn "$(basename -- "$LOG")" "$RUNTIME/demo-latest.log"

@@ -575,7 +575,7 @@ fn select_editor_graphics_preset(info: &wgpu::AdapterInfo) -> GraphicsPreset {
         .as_deref()
         .filter(|raw| GraphicsPreset::parse(raw).is_none())
     {
-        eprintln!("[edit] invalid KESSEL_GRAPHICS_PRESET={raw:?}; expected laptop or high/4090");
+        eprintln!("[edit] invalid KESSEL_GRAPHICS_PRESET={raw:?}; expected low, medium (laptop) or high (4090)");
     }
     let active = resolve_editor_graphics_preset(info.device_type, requested.as_deref());
     crate::graphics::set_active_preset(active);
@@ -9122,7 +9122,7 @@ mod tests {
     fn editor_graphics_policy_matches_live_play_and_honors_valid_override() {
         assert_eq!(
             resolve_editor_graphics_preset(wgpu::DeviceType::IntegratedGpu, None),
-            GraphicsPreset::Low
+            GraphicsPreset::Medium
         );
         assert_eq!(
             resolve_editor_graphics_preset(wgpu::DeviceType::DiscreteGpu, None),
@@ -9134,11 +9134,15 @@ mod tests {
         );
         assert_eq!(
             resolve_editor_graphics_preset(wgpu::DeviceType::DiscreteGpu, Some("laptop")),
+            GraphicsPreset::Medium
+        );
+        assert_eq!(
+            resolve_editor_graphics_preset(wgpu::DeviceType::DiscreteGpu, Some("low")),
             GraphicsPreset::Low
         );
         assert_eq!(
             resolve_editor_graphics_preset(wgpu::DeviceType::IntegratedGpu, Some("invalid")),
-            GraphicsPreset::Low
+            GraphicsPreset::Medium
         );
     }
 

@@ -19,7 +19,30 @@ pub struct GpuProfile {
 }
 
 impl GpuProfile {
-    pub fn new(device: &wgpu::Device) -> Option<Self> {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
+        let profile = Self::create(device)?;
+        profile.prime(device, queue);
+        Some(profile)
+    }
+
+    /// Write every slot once, so a slot a frame allocates but never writes still resolves.
+    /// Vulkan's query copy waits until every query in its range is available: a label whose pass
+    /// was never encoded, or was encoded in a command buffer submitted after the readback, hung
+    /// `read_frame` in `device.poll` on a fence that never signalled (gfxbench with
+    /// KESSEL_GPU_PROFILE=1, 9 and 18 November 2026). Such a slot now reads its filler pair,
+    /// about 0 ms. Without TIMESTAMP_QUERY_INSIDE_ENCODERS there is no way to write one here.
+    fn prime(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if !self.inside_encoders { return; }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("benchmark-query-prime"),
+        });
+        for index in 0..MAX_PASSES * 2 {
+            encoder.write_timestamp(&self.queries, index);
+        }
+        queue.submit([encoder.finish()]);
+    }
+
+    fn create(device: &wgpu::Device) -> Option<Self> {
         if !requested() || !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return None;
         }
@@ -149,6 +172,8 @@ impl GpuProfile {
             .collect();
         drop(mapped);
         self.readback.unmap();
+        // The next frame's slots start written (see `prime`).
+        self.prime(device, queue);
         Ok(samples)
     }
 }
